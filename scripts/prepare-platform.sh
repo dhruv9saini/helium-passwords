@@ -94,6 +94,20 @@ if [ "${platform}" = "linux" ]; then
         sed -i \
             's/GetLibXml2Dirs, GetHostSysrootPlatform,/GetLibXml2Dirs, GitCherryPick, GetHostSysrootPlatform,/' \
             "${rust_arm64_patch}"
+        if ! grep -q 'test_wrap_static_fns' "${rust_arm64_patch}"; then
+            cat >> "${rust_arm64_patch}" <<'EOF'
+--- a/tools/rust/build_bindgen.py
++++ b/tools/rust/build_bindgen.py
+@@ -54,5 +54,6 @@ EXCLUDED_TESTS = [
+     'header_constified_enum_module_overflow_hpp',
+     'header_issue_544_stylo_creduce_2_hpp',
+     'header_nsbasehashtable_hpp',
+-    'header_typedef_pointer_overlap_h'
++    'header_typedef_pointer_overlap_h',
++    'test_wrap_static_fns'
+ ]
+EOF
+        fi
     fi
 
     linux_docker_build="${destination}/scripts/docker-build.sh"

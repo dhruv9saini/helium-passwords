@@ -64,6 +64,8 @@ grep -q 'PageActionIconType::kMandatoryReauth' \
 if [ "${platform}" = "linux" ]; then
     grep -q 'GetLibXml2Dirs, GitCherryPick, GetHostSysrootPlatform,' \
         "${checkout}/patches/ungoogled-chromium/portablelinux/fix-compiling-on-arm64.patch"
+    grep -q 'test_wrap_static_fns' \
+        "${checkout}/patches/ungoogled-chromium/portablelinux/fix-compiling-on-arm64.patch"
 fi
 
 echo "target ready: ${platform} ${arch}"
