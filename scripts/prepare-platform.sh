@@ -95,6 +95,22 @@ if [ "${platform}" = "linux" ]; then
             's/GetLibXml2Dirs, GetHostSysrootPlatform,/GetLibXml2Dirs, GitCherryPick, GetHostSysrootPlatform,/' \
             "${rust_arm64_patch}"
     fi
+
+    linux_docker_build="${destination}/scripts/docker-build.sh"
+    if [ -f "${linux_docker_build}" ] && \
+        ! grep -q 'GIT_COMMITTER_EMAIL' "${linux_docker_build}"; then
+        tmp_docker_build="$(mktemp)"
+        awk '
+            { print }
+            $0 ~ /_extra_env\+=\(-e ARCH\)/ {
+                print "_extra_env+=(-e \"GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-Helium Passwords Builder}\")"
+                print "_extra_env+=(-e \"GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-builder@helium-passwords.invalid}\")"
+                print "_extra_env+=(-e \"GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-Helium Passwords Builder}\")"
+                print "_extra_env+=(-e \"GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-builder@helium-passwords.invalid}\")"
+            }
+        ' "${linux_docker_build}" > "${tmp_docker_build}"
+        mv "${tmp_docker_build}" "${linux_docker_build}"
+    fi
 fi
 
 overlay_dir="${destination}/patches/helium/passwords"
