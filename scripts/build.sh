@@ -20,11 +20,6 @@ arch="$2"
 checkout="${3:-}"
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-if [ -z "${checkout}" ]; then
-    checkout="$("${root_dir}/scripts/prepare-platform.sh" "${platform}")"
-else
-    checkout="$("${root_dir}/scripts/prepare-platform.sh" "${platform}" "${checkout}")"
-fi
 
 case "${arch}" in
     x86_64|arm64) ;;
@@ -34,6 +29,33 @@ case "${arch}" in
         exit 2
         ;;
 esac
+
+case "${platform}" in
+    linux|macos|windows) ;;
+    *)
+        echo "unknown platform: ${platform}" >&2
+        usage
+        exit 2
+        ;;
+esac
+
+if [ "${platform}" = "windows" ]; then
+    if command -v git >/dev/null 2>&1; then
+        git config --global core.longpaths true
+    fi
+
+    if command -v powershell.exe >/dev/null 2>&1; then
+        powershell.exe -NoLogo -NoProfile -NonInteractive -Command \
+            "New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force" \
+            >/dev/null || echo "warning: could not enable Windows long paths in the registry" >&2
+    fi
+fi
+
+if [ -z "${checkout}" ]; then
+    checkout="$("${root_dir}/scripts/prepare-platform.sh" "${platform}")"
+else
+    checkout="$("${root_dir}/scripts/prepare-platform.sh" "${platform}" "${checkout}")"
+fi
 
 case "${platform}" in
     linux)

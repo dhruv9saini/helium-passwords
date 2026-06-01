@@ -73,4 +73,9 @@ if [ "${platform}" = "macos" ]; then
         "${checkout}/.github/scripts/github_prepare_artifacts.sh"
 fi
 
+if [ "${platform}" = "windows" ]; then
+    grep -q 'core.longpaths true' "${root_dir}/scripts/build.sh"
+    grep -q 'LongPathsEnabled' "${root_dir}/scripts/build.sh"
+fi
+
 echo "target ready: ${platform} ${arch}"
