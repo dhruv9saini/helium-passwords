@@ -83,6 +83,8 @@ if [ "${platform}" = "windows" ]; then
     grep -q 'from_artifact: true' "${root_dir}/.github/workflows/windows-build.yml"
     grep -q "tar --exclude='./.git'" \
         "${root_dir}/scripts/materialize-platform-workspace.sh"
+    grep -q 'build-with-wasm-rollup.patch' \
+        "${root_dir}/scripts/prepare-platform.sh"
 fi
 
 echo "target ready: ${platform} ${arch}"

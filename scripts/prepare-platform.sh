@@ -74,8 +74,11 @@ fi
 core_series="${destination}/helium-chromium/patches/series"
 if [ -f "${core_series}" ]; then
     tmp_series="$(mktemp)"
-    awk '$0 != "helium/hop/disable-password-manager.patch" { print }' \
-        "${core_series}" > "${tmp_series}"
+    awk -v platform="${platform}" '
+        $0 == "helium/hop/disable-password-manager.patch" { next }
+        platform == "windows" && $0 == "ungoogled-chromium/build-with-wasm-rollup.patch" { next }
+        { print }
+    ' "${core_series}" > "${tmp_series}"
     mv "${tmp_series}" "${core_series}"
 elif [ "${skip_submodules}" != true ]; then
     echo "missing core patch series: ${core_series}" >&2
