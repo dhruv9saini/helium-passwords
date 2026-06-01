@@ -1,0 +1,330 @@
+name: Windows staged build
+
+on:
+  workflow_call:
+    inputs:
+      arch:
+        required: true
+        type: string
+      platform-ref:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  ARCH: ${{ inputs.arch }}
+  HELIUM_PLATFORM_REF: ${{ inputs['platform-ref'] }}
+  GIT_AUTHOR_NAME: Helium Passwords Builder
+  GIT_AUTHOR_EMAIL: builder@helium-passwords.invalid
+  GIT_COMMITTER_NAME: Helium Passwords Builder
+  GIT_COMMITTER_EMAIL: builder@helium-passwords.invalid
+
+jobs:
+  build-01:
+    name: build_part_01
+    runs-on: windows-2025
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enable Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
+      - name: Materialize Windows platform checkout
+        shell: bash
+        run: bash scripts/materialize-platform-workspace.sh windows
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Copy checkout to short path
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force C:\helium-windows -ErrorAction SilentlyContinue
+          Copy-Item -Path . -Destination C:\helium-windows -Recurse
+      - name: Install stage action dependencies
+        shell: bash
+        run: npm install
+        working-directory: ./.github/actions/stage
+      - name: Run Stage
+        id: stage
+        uses: ./.github/actions/stage
+        with:
+          arm: ${{ inputs.arch == 'arm64' }}
+          from_artifact: false
+
+  build-02:
+    name: build_part_02
+    runs-on: windows-2025
+    needs: build-01
+    if: ${{ needs.build-01.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enable Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
+      - name: Materialize Windows platform checkout
+        shell: bash
+        run: bash scripts/materialize-platform-workspace.sh windows
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Copy checkout to short path
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force C:\helium-windows -ErrorAction SilentlyContinue
+          Copy-Item -Path . -Destination C:\helium-windows -Recurse
+      - name: Install stage action dependencies
+        shell: bash
+        run: npm install
+        working-directory: ./.github/actions/stage
+      - name: Run Stage
+        id: stage
+        uses: ./.github/actions/stage
+        with:
+          arm: ${{ inputs.arch == 'arm64' }}
+          from_artifact: true
+
+  build-03:
+    name: build_part_03
+    runs-on: windows-2025
+    needs: build-02
+    if: ${{ needs.build-02.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enable Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
+      - name: Materialize Windows platform checkout
+        shell: bash
+        run: bash scripts/materialize-platform-workspace.sh windows
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Copy checkout to short path
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force C:\helium-windows -ErrorAction SilentlyContinue
+          Copy-Item -Path . -Destination C:\helium-windows -Recurse
+      - name: Install stage action dependencies
+        shell: bash
+        run: npm install
+        working-directory: ./.github/actions/stage
+      - name: Run Stage
+        id: stage
+        uses: ./.github/actions/stage
+        with:
+          arm: ${{ inputs.arch == 'arm64' }}
+          from_artifact: true
+
+  build-04:
+    name: build_part_04
+    runs-on: windows-2025
+    needs: build-03
+    if: ${{ needs.build-03.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enable Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
+      - name: Materialize Windows platform checkout
+        shell: bash
+        run: bash scripts/materialize-platform-workspace.sh windows
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Copy checkout to short path
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force C:\helium-windows -ErrorAction SilentlyContinue
+          Copy-Item -Path . -Destination C:\helium-windows -Recurse
+      - name: Install stage action dependencies
+        shell: bash
+        run: npm install
+        working-directory: ./.github/actions/stage
+      - name: Run Stage
+        id: stage
+        uses: ./.github/actions/stage
+        with:
+          arm: ${{ inputs.arch == 'arm64' }}
+          from_artifact: true
+
+  build-05:
+    name: build_part_05
+    runs-on: windows-2025
+    needs: build-04
+    if: ${{ needs.build-04.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enable Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
+      - name: Materialize Windows platform checkout
+        shell: bash
+        run: bash scripts/materialize-platform-workspace.sh windows
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Copy checkout to short path
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force C:\helium-windows -ErrorAction SilentlyContinue
+          Copy-Item -Path . -Destination C:\helium-windows -Recurse
+      - name: Install stage action dependencies
+        shell: bash
+        run: npm install
+        working-directory: ./.github/actions/stage
+      - name: Run Stage
+        id: stage
+        uses: ./.github/actions/stage
+        with:
+          arm: ${{ inputs.arch == 'arm64' }}
+          from_artifact: true
+
+  build-06:
+    name: build_part_06
+    runs-on: windows-2025
+    needs: build-05
+    if: ${{ needs.build-05.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Enable Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
+      - name: Materialize Windows platform checkout
+        shell: bash
+        run: bash scripts/materialize-platform-workspace.sh windows
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Copy checkout to short path
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force C:\helium-windows -ErrorAction SilentlyContinue
+          Copy-Item -Path . -Destination C:\helium-windows -Recurse
+      - name: Install stage action dependencies
+        shell: bash
+        run: npm install
+        working-directory: ./.github/actions/stage
+      - name: Run Stage
+        id: stage
+        uses: ./.github/actions/stage
+        with:
+          arm: ${{ inputs.arch == 'arm64' }}
+          from_artifact: true
+
+  exhausted:
+    name: fail if build needs more stages
+    runs-on: windows-2025
+    needs:
+      - build-01
+      - build-02
+      - build-03
+      - build-04
+      - build-05
+      - build-06
+    if: ${{ always() && !cancelled() && !failure() && needs.build-06.outputs.finished == 'false' }}
+    steps:
+      - shell: bash
+        run: |
+          echo "Windows ${ARCH} build did not finish within six staged jobs" >&2
+          exit 1
+
+  package:
+    name: package
+    runs-on: windows-2025
+    needs:
+      - build-01
+      - build-02
+      - build-03
+      - build-04
+      - build-05
+      - build-06
+    if: >-
+      ${{
+        always() &&
+        !cancelled() &&
+        !failure() &&
+        (
+          needs.build-01.outputs.finished == 'true' ||
+          needs.build-02.outputs.finished == 'true' ||
+          needs.build-03.outputs.finished == 'true' ||
+          needs.build-04.outputs.finished == 'true' ||
+          needs.build-05.outputs.finished == 'true' ||
+          needs.build-06.outputs.finished == 'true'
+        )
+      }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Save artifact collector
+        shell: bash
+        run: cp scripts/collect-artifacts.sh "${RUNNER_TEMP}/collect-artifacts.sh"
+      - name: Enable Windows long paths
+        shell: pwsh
+        run: |
+          git config --global core.longpaths true
+          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
+      - name: Materialize Windows platform checkout
+        shell: bash
+        run: bash scripts/materialize-platform-workspace.sh windows
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Copy checkout to short path
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force C:\helium-windows -ErrorAction SilentlyContinue
+          Copy-Item -Path . -Destination C:\helium-windows -Recurse
+      - name: Install stage action dependencies
+        shell: bash
+        run: npm install
+        working-directory: ./.github/actions/stage
+      - name: Finish build from staged artifact
+        id: stage
+        uses: ./.github/actions/stage
+        with:
+          arm: ${{ inputs.arch == 'arm64' }}
+          from_artifact: true
+      - name: Build installer and package
+        uses: ./.github/actions/stage
+        with:
+          arm: ${{ inputs.arch == 'arm64' }}
+          gen_installer: true
+          from_artifact: false
+      - name: Collect packaged artifacts
+        shell: bash
+        run: |
+          bash "${RUNNER_TEMP}/collect-artifacts.sh" \
+            windows \
+            "${ARCH}" \
+            /c/helium-windows \
+            "${GITHUB_WORKSPACE}/build/artifacts/windows-${ARCH}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: helium-passwords-windows-${{ inputs.arch }}
+          path: build/artifacts/windows-${{ inputs.arch }}/
+          if-no-files-found: error
+          compression-level: 0

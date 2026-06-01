@@ -46,8 +46,8 @@ Dispatch **Build Helium Passwords** with `create-release` enabled to run the
 selected full build, upload its packaged artifacts, and publish a prerelease.
 Leave `release-tag` blank to use the built Helium version.
 
-Linux and macOS release builds run through staged reusable workflows so
-Chromium compile state can be checkpointed between GitHub-hosted runner jobs
+Linux, macOS, and Windows release builds run through staged reusable workflows
+so Chromium compile state can be checkpointed between GitHub-hosted runner jobs
 instead of relying on one six-hour job.
 
 ## Patch Flow
