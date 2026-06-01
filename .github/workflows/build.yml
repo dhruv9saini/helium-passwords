@@ -67,7 +67,7 @@ jobs:
             runner: ubuntu-24.04
           - platform: linux
             arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-24.04
           - platform: macos
             arch: x86_64
             runner: macos-15-intel
@@ -113,12 +113,12 @@ jobs:
         run: bash scripts/ci-check-target.sh "${{ matrix.platform }}" "${{ matrix.arch }}"
 
       - name: Run full platform build
-        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true'
+        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform != 'linux'
         shell: bash
         run: bash scripts/build.sh "${{ matrix.platform }}" "${{ matrix.arch }}"
 
       - name: Collect packaged artifacts
-        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true'
+        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform != 'linux'
         shell: bash
         run: |
           bash scripts/collect-artifacts.sh \
@@ -128,7 +128,7 @@ jobs:
             "${GITHUB_WORKSPACE}/build/artifacts/${{ matrix.platform }}-${{ matrix.arch }}"
 
       - name: Upload packaged artifacts
-        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true'
+        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform != 'linux'
         uses: actions/upload-artifact@v7
         with:
           name: helium-passwords-${{ matrix.platform }}-${{ matrix.arch }}
@@ -136,10 +136,32 @@ jobs:
           if-no-files-found: error
           compression-level: 0
 
+  linux:
+    name: linux ${{ matrix.arch }} full
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' &&
+        (inputs['run-build'] == true || inputs['create-release'] == true) &&
+        (inputs.platform == 'all' || inputs.platform == 'linux')
+      }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        arch:
+          - x86_64
+          - arm64
+    uses: ./.github/workflows/linux-build.yml
+    with:
+      arch: ${{ matrix.arch }}
+      platform-ref: ${{ inputs['platform-ref'] }}
+
   release:
     name: Create release
-    needs: build
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs['create-release'] == true && !cancelled() && !failure() }}
+    needs:
+      - build
+      - linux
+    if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs['create-release'] == true && !cancelled() && !failure() }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
