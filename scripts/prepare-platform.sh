@@ -127,6 +127,15 @@ EOF
     fi
 fi
 
+if [ "${platform}" = "macos" ]; then
+    macos_artifacts="${destination}/.github/scripts/github_prepare_artifacts.sh"
+    if [ -f "${macos_artifacts}" ] && \
+        ! grep -q 'MACOS_CERTIFICATE:-' "${macos_artifacts}"; then
+        perl -0pi -e 's/(  # Prepar the certificate for app signing\n  echo \$MACOS_CERTIFICATE \| base64 --decode > "\$TMPDIR\/certificate\.p12"\n\n  security create-keychain -p "\$MACOS_CI_KEYCHAIN_PWD" build\.keychain\n  security default-keychain -s build\.keychain\n  security unlock-keychain -p "\$MACOS_CI_KEYCHAIN_PWD" build\.keychain\n  security import "\$TMPDIR\/certificate\.p12" -k build\.keychain -P "\$MACOS_CERTIFICATE_PWD" -T \/usr\/bin\/codesign\n  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "\$MACOS_CI_KEYCHAIN_PWD" build\.keychain\n)/  if [[ -n "\${MACOS_CERTIFICATE:-}" ]]; then\n$1  fi\n/s' \
+            "${macos_artifacts}"
+    fi
+fi
+
 overlay_dir="${destination}/patches/helium/passwords"
 rm -rf "${overlay_dir}"
 mkdir -p "${overlay_dir}"

@@ -68,4 +68,9 @@ if [ "${platform}" = "linux" ]; then
         "${checkout}/patches/ungoogled-chromium/portablelinux/fix-compiling-on-arm64.patch"
 fi
 
+if [ "${platform}" = "macos" ]; then
+    grep -q 'MACOS_CERTIFICATE:-' \
+        "${checkout}/.github/scripts/github_prepare_artifacts.sh"
+fi
+
 echo "target ready: ${platform} ${arch}"

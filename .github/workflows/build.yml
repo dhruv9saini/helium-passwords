@@ -113,12 +113,12 @@ jobs:
         run: bash scripts/ci-check-target.sh "${{ matrix.platform }}" "${{ matrix.arch }}"
 
       - name: Run full platform build
-        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform != 'linux'
+        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform == 'windows'
         shell: bash
         run: bash scripts/build.sh "${{ matrix.platform }}" "${{ matrix.arch }}"
 
       - name: Collect packaged artifacts
-        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform != 'linux'
+        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform == 'windows'
         shell: bash
         run: |
           bash scripts/collect-artifacts.sh \
@@ -128,7 +128,7 @@ jobs:
             "${GITHUB_WORKSPACE}/build/artifacts/${{ matrix.platform }}-${{ matrix.arch }}"
 
       - name: Upload packaged artifacts
-        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform != 'linux'
+        if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform == 'windows'
         uses: actions/upload-artifact@v7
         with:
           name: helium-passwords-${{ matrix.platform }}-${{ matrix.arch }}
@@ -156,11 +156,36 @@ jobs:
       arch: ${{ matrix.arch }}
       platform-ref: ${{ inputs['platform-ref'] }}
 
+  macos:
+    name: macos ${{ matrix.arch }} full
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' &&
+        (inputs['run-build'] == true || inputs['create-release'] == true) &&
+        (inputs.platform == 'all' || inputs.platform == 'macos')
+      }}
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-15-intel
+          - arch: arm64
+            runner: macos-15
+    uses: ./.github/workflows/macos-build.yml
+    with:
+      arch: ${{ matrix.arch }}
+      runner: ${{ matrix.runner }}
+      platform-ref: ${{ inputs['platform-ref'] }}
+    secrets: inherit
+
   release:
     name: Create release
     needs:
       - build
       - linux
+      - macos
     if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs['create-release'] == true && !cancelled() && !failure() }}
     runs-on: ubuntu-24.04
     permissions:
