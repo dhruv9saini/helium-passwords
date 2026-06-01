@@ -39,4 +39,15 @@ mkdir -p "${platform_parent}"
 
 "${root_dir}/scripts/prepare-platform.sh" "${platform}" "${platform_checkout}" >/dev/null
 
-rsync -a --delete --exclude='/.git' "${platform_checkout}/" "${GITHUB_WORKSPACE}/"
+if command -v rsync >/dev/null 2>&1; then
+    rsync -a --delete --exclude='/.git' "${platform_checkout}/" "${GITHUB_WORKSPACE}/"
+else
+    find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+    (
+        cd "${platform_checkout}"
+        tar --exclude='./.git' -cf - .
+    ) | (
+        cd "${GITHUB_WORKSPACE}"
+        tar -xf -
+    )
+fi

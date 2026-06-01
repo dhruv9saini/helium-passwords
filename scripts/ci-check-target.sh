@@ -81,6 +81,8 @@ if [ "${platform}" = "windows" ]; then
     grep -q 'Windows staged build' "${root_dir}/.github/workflows/windows-build.yml"
     grep -q 'C:\\helium-windows' "${root_dir}/.github/workflows/windows-build.yml"
     grep -q 'from_artifact: true' "${root_dir}/.github/workflows/windows-build.yml"
+    grep -q "tar --exclude='./.git'" \
+        "${root_dir}/scripts/materialize-platform-workspace.sh"
 fi
 
 echo "target ready: ${platform} ${arch}"
