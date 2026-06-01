@@ -98,6 +98,7 @@ jobs:
       GIT_AUTHOR_EMAIL: builder@helium-passwords.invalid
       GIT_COMMITTER_NAME: Helium Passwords Builder
       GIT_COMMITTER_EMAIL: builder@helium-passwords.invalid
+      WINDOWS_PLATFORM_CHECKOUT: /c/helium-windows
     steps:
       - name: Skip unselected target
         if: env.TARGET_SELECTED != 'true'
@@ -115,7 +116,9 @@ jobs:
       - name: Run full platform build
         if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform == 'windows'
         shell: bash
-        run: bash scripts/build.sh "${{ matrix.platform }}" "${{ matrix.arch }}"
+        run: |
+          rm -rf "${WINDOWS_PLATFORM_CHECKOUT}"
+          bash scripts/build.sh "${{ matrix.platform }}" "${{ matrix.arch }}" "${WINDOWS_PLATFORM_CHECKOUT}"
 
       - name: Collect packaged artifacts
         if: env.TARGET_SELECTED == 'true' && env.RUN_FULL_BUILD == 'true' && matrix.platform == 'windows'
@@ -124,7 +127,7 @@ jobs:
           bash scripts/collect-artifacts.sh \
             "${{ matrix.platform }}" \
             "${{ matrix.arch }}" \
-            "${GITHUB_WORKSPACE}/build/platforms/${{ matrix.platform }}" \
+            "${WINDOWS_PLATFORM_CHECKOUT}" \
             "${GITHUB_WORKSPACE}/build/artifacts/${{ matrix.platform }}-${{ matrix.arch }}"
 
       - name: Upload packaged artifacts

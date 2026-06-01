@@ -76,6 +76,9 @@ fi
 if [ "${platform}" = "windows" ]; then
     grep -q 'core.longpaths true' "${root_dir}/scripts/build.sh"
     grep -q 'LongPathsEnabled' "${root_dir}/scripts/build.sh"
+    grep -q 'windows_args+=(-j 2)' "${root_dir}/scripts/build.sh"
+    grep -q 'WINDOWS_PLATFORM_CHECKOUT: /c/helium-windows' \
+        "${root_dir}/.github/workflows/build.yml"
 fi
 
 echo "target ready: ${platform} ${arch}"

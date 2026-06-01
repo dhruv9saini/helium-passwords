@@ -75,6 +75,9 @@ case "${platform}" in
         ;;
     windows)
         windows_args=()
+        if [ "${CI:-}" = "true" ]; then
+            windows_args+=(-j 2)
+        fi
         if [ "${arch}" = "arm64" ]; then
             windows_args+=(--arm)
         fi
