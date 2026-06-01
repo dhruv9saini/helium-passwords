@@ -37,6 +37,9 @@ case "${arch}" in
 esac
 
 prepare_environment() {
+    export SCCACHE_DIR="${SCCACHE_DIR:-${RUNNER_TEMP:-${PWD}}/sccache}"
+    mkdir -p "${SCCACHE_DIR}"
+
     cp -va ./.github/scripts/ ./
     date +%s > ./epoch_job_start.txt
     ./github_prepare_xcode.sh
