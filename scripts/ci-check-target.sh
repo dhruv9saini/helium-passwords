@@ -54,6 +54,10 @@ grep -q 'r.PAYMENTS = r.AUTOFILL.createChild' \
     "${checkout}/patches/helium/passwords/restore-password-autofill.patch"
 grep -q 'chrome::ShowPaymentMethods' \
     "${checkout}/patches/helium/passwords/restore-password-ui.patch"
+grep -q 'bwi->GetProfile()->IsGuestSession()' \
+    "${checkout}/patches/helium/passwords/restore-password-ui.patch"
+! grep -q 'is_guest_session' \
+    "${checkout}/patches/helium/passwords/restore-password-ui.patch"
 grep -q 'kActionShowPaymentsBubbleOrPage' \
     "${checkout}/patches/helium/passwords/restore-password-ui.patch"
 grep -q 'PageActionIconType::kVirtualCardEnroll' \
