@@ -85,6 +85,8 @@ if [ "${platform}" = "windows" ]; then
         "${root_dir}/scripts/materialize-platform-workspace.sh"
     grep -q 'build-with-wasm-rollup.patch' \
         "${root_dir}/scripts/prepare-platform.sh"
+    grep -q '_ensure_rollup_optional_deps' \
+        "${root_dir}/scripts/prepare-platform.sh"
 fi
 
 echo "target ready: ${platform} ${arch}"

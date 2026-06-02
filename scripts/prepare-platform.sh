@@ -130,6 +130,61 @@ EOF
     fi
 fi
 
+if [ "${platform}" = "windows" ]; then
+    windows_build_py="${destination}/build.py"
+    if [ -f "${windows_build_py}" ] && \
+        ! grep -q '_ensure_rollup_optional_deps' "${windows_build_py}"; then
+        tmp_build_py="$(mktemp)"
+        awk '
+            { print }
+            $0 == "import argparse" {
+                print "import json"
+            }
+            $0 == "_PATCH_BIN_RELPATH = Path(\047third_party/git/usr/bin/patch.exe\047)" {
+                print ""
+                print "def _ensure_rollup_optional_deps(source_tree):"
+                print "    devtools_root = source_tree / \047third_party\047 / \047devtools-frontend\047 / \047src\047"
+                print "    rollup_package = devtools_root / \047node_modules\047 / \047rollup\047 / \047package.json\047"
+                print "    if not rollup_package.exists():"
+                print "        return"
+                print ""
+                print "    with rollup_package.open(encoding=ENCODING) as file:"
+                print "        rollup_version = json.load(file).get(\047version\047)"
+                print "    if not rollup_version:"
+                print "        return"
+                print ""
+                print "    package_name = \047@rollup/rollup-win32-x64-msvc\047"
+                print "    package_path = devtools_root / \047node_modules\047 / \047@rollup\047 / \047rollup-win32-x64-msvc\047"
+                print "    if package_path.exists():"
+                print "        return"
+                print ""
+                print "    npm = shutil.which(\047npm.cmd\047) or shutil.which(\047npm\047)"
+                print "    if npm is None:"
+                print "        raise RuntimeError(\047npm is required to restore Rollup Windows optional dependencies\047)"
+                print ""
+                print "    subprocess.run("
+                print "        ["
+                print "            npm,"
+                print "            \047install\047,"
+                print "            \047--ignore-scripts\047,"
+                print "            \047--no-audit\047,"
+                print "            \047--no-fund\047,"
+                print "            \047--no-save\047,"
+                print "            \047--package-lock=false\047,"
+                print "            f\047{package_name}@{rollup_version}\047,"
+                print "        ],"
+                print "        cwd=devtools_root,"
+                print "        check=True)"
+            }
+            $0 == "        downloads.unpack_downloads(download_info_win, downloads_cache, None, source_tree, extractors)" {
+                print ""
+                print "        _ensure_rollup_optional_deps(source_tree)"
+            }
+        ' "${windows_build_py}" > "${tmp_build_py}"
+        mv "${tmp_build_py}" "${windows_build_py}"
+    fi
+fi
+
 if [ "${platform}" = "macos" ]; then
     macos_artifacts="${destination}/.github/scripts/github_prepare_artifacts.sh"
     if [ -f "${macos_artifacts}" ] && \
