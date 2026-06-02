@@ -72,6 +72,8 @@ if [ "${platform}" = "macos" ]; then
     grep -q 'MACOS_CERTIFICATE:-' \
         "${checkout}/.github/scripts/github_prepare_artifacts.sh"
     grep -q 'SCCACHE_DIR' "${root_dir}/scripts/gha-macos-stage.sh"
+    grep -q 'retry_command ./github_fetch_resources.sh' \
+        "${root_dir}/scripts/gha-macos-stage.sh"
 fi
 
 if [ "${platform}" = "windows" ]; then

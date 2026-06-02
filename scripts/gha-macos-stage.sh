@@ -50,6 +50,25 @@ prepare_environment() {
     ./github_setup_env_toolchain.sh "${arch}" | tee -a github_actions_setup_env_toolchain.log
 }
 
+retry_command() {
+    local max_attempts=3
+    local delay_seconds=30
+    local attempt=1
+    local status=0
+
+    while true; do
+        "$@" && return 0
+        status=$?
+        if [ "${attempt}" -ge "${max_attempts}" ]; then
+            echo "command failed after ${attempt} attempts: $*" >&2
+            return "${status}"
+        fi
+        echo "command failed with status ${status}; retrying in ${delay_seconds}s: $*" >&2
+        sleep "${delay_seconds}"
+        attempt=$((attempt + 1))
+    done
+}
+
 run_build_stage() {
     sccache --show-stats || true
     ./github_build.sh "${arch}" 2>&1 | tee -a "github_actions_build_${arch}.log"
@@ -61,7 +80,8 @@ prepare_environment
 
 case "${mode}" in
     prepare-resources)
-        ./github_fetch_resources.sh "${arch}" | tee -a github_actions_retrieve_resources.log
+        retry_command ./github_fetch_resources.sh "${arch}" 2>&1 | \
+            tee -a github_actions_retrieve_resources.log
         ls -la
         ./github_pack_resources.sh | tee -a github_actions_retrieve_resources.log
         ;;
