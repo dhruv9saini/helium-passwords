@@ -87,6 +87,8 @@ if [ "${platform}" = "windows" ]; then
         "${root_dir}/scripts/prepare-platform.sh"
     grep -q '_ensure_rollup_optional_deps' \
         "${root_dir}/scripts/prepare-platform.sh"
+    grep -q "registry=https://registry.npmjs.org" \
+        "${root_dir}/scripts/prepare-platform.sh"
 fi
 
 echo "target ready: ${platform} ${arch}"
