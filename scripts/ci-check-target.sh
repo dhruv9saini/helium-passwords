@@ -91,6 +91,14 @@ if [ "${platform}" = "windows" ]; then
         "${root_dir}/scripts/prepare-platform.sh"
     grep -q "registry=https://registry.npmjs.org" \
         "${root_dir}/scripts/prepare-platform.sh"
+    grep -q 'HELIUM_WINDOWS_STAGED_OUT' \
+        "${checkout}/build.py"
+    grep -q 'BUILD_STATE_ROOT' \
+        "${checkout}/.github/actions/stage/index.js"
+    grep -q 'compressionLevel: 0' \
+        "${checkout}/.github/actions/stage/index.js"
+    ! grep -q 'artifacts.zip' \
+        "${checkout}/.github/actions/stage/index.js"
 fi
 
 echo "target ready: ${platform} ${arch}"

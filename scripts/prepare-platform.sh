@@ -136,6 +136,12 @@ if [ "${platform}" = "windows" ]; then
         ! grep -q '_ensure_rollup_optional_deps' "${windows_build_py}"; then
         tmp_build_py="$(mktemp)"
         awk '
+            $0 == "    if not args.ci or not (source_tree / \047out/Default\047).exists():" {
+                print "    _restore_staged_out(source_tree)"
+                print ""
+                print
+                next
+            }
             { print }
             $0 == "import argparse" {
                 print "import json"
@@ -143,6 +149,36 @@ if [ "${platform}" = "windows" ]; then
                 print "import tempfile"
             }
             $0 == "_PATCH_BIN_RELPATH = Path(\047third_party/git/usr/bin/patch.exe\047)" {
+                print ""
+                print "def _touch_tree(root):"
+                print "    now = time.time()"
+                print "    for current_root, _, files in os.walk(root):"
+                print "        try:"
+                print "            os.utime(current_root, (now, now))"
+                print "        except FileNotFoundError:"
+                print "            continue"
+                print "        for file_name in files:"
+                print "            file_path = Path(current_root) / file_name"
+                print "            try:"
+                print "                os.utime(file_path, (now, now))"
+                print "            except FileNotFoundError:"
+                print "                pass"
+                print ""
+                print "def _restore_staged_out(source_tree):"
+                print "    staged_out = os.environ.get(\047HELIUM_WINDOWS_STAGED_OUT\047)"
+                print "    if not staged_out:"
+                print "        return"
+                print ""
+                print "    staged_out_path = Path(staged_out)"
+                print "    if not staged_out_path.exists():"
+                print "        raise RuntimeError(f\047Staged Windows build output is missing: {staged_out_path}\047)"
+                print ""
+                print "    out_dir = source_tree / \047out\047 / \047Default\047"
+                print "    if out_dir.exists():"
+                print "        shutil.rmtree(out_dir)"
+                print "    out_dir.parent.mkdir(parents=True, exist_ok=True)"
+                print "    shutil.move(str(staged_out_path), str(out_dir))"
+                print "    _touch_tree(out_dir)"
                 print ""
                 print "def _ensure_rollup_optional_deps(source_tree):"
                 print "    devtools_root = source_tree / \047third_party\047 / \047devtools-frontend\047 / \047src\047"
@@ -194,6 +230,94 @@ if [ "${platform}" = "windows" ]; then
             }
         ' "${windows_build_py}" > "${tmp_build_py}"
         mv "${tmp_build_py}" "${windows_build_py}"
+    fi
+
+    windows_stage_action="${destination}/.github/actions/stage/index.js"
+    if [ -f "${windows_stage_action}" ] && \
+        ! grep -q 'HELIUM_WINDOWS_STAGED_OUT' "${windows_stage_action}"; then
+        tmp_stage_action="$(mktemp)"
+        awk '
+            $0 == "async function run() {" {
+                print ""
+                print "const BUILD_STATE_ROOT = \047C:\\\\helium-windows\\\\build\\\\src\\\\out\\\\Default\047;"
+                print "const STAGED_OUT_ENV = \047HELIUM_WINDOWS_STAGED_OUT\047;"
+                print ""
+                print "async function listBuildStateFiles() {"
+                print "    if (!existsSync(BUILD_STATE_ROOT)) {"
+                print "        throw new Error(`Missing Windows build state: ${BUILD_STATE_ROOT}`);"
+                print "    }"
+                print ""
+                print "    const globber = await glob.create(path.join(BUILD_STATE_ROOT, \047**\047), {matchDirectories: false});"
+                print "    const files = await globber.glob();"
+                print "    if (files.length === 0) {"
+                print "        throw new Error(`No Windows build state files found in ${BUILD_STATE_ROOT}`);"
+                print "    }"
+                print "    return files;"
+                print "}"
+                print ""
+                print "async function downloadBuildState(artifact, artifactName) {"
+                print "    const artifactInfo = await artifact.getArtifact(artifactName);"
+                print "    const stagedOut = \047C:\\\\helium-windows\\\\build\\\\staged-out-Default\047;"
+                print "    await io.rmRF(stagedOut);"
+                print "    await artifact.downloadArtifact(artifactInfo.artifact.id, {path: stagedOut});"
+                print "    process.env[STAGED_OUT_ENV] = stagedOut;"
+                print "}"
+                print ""
+                print "async function uploadBuildState(artifact, artifactName) {"
+                print "    const files = await listBuildStateFiles();"
+                print "    let lastError = null;"
+                print "    for (let i = 0; i < 5; ++i) {"
+                print "        try {"
+                print "            await artifact.deleteArtifact(artifactName);"
+                print "        } catch (e) {"
+                print "            // ignored"
+                print "        }"
+                print "        try {"
+                print "            await artifact.uploadArtifact(artifactName, files, BUILD_STATE_ROOT,"
+                print "                { retentionDays: 4, compressionLevel: 0 });"
+                print "            return;"
+                print "        } catch (e) {"
+                print "            lastError = e;"
+                print "            console.error(`Upload artifact failed: ${e}`);"
+                print "            await new Promise(r => setTimeout(r, 10000));"
+                print "        }"
+                print "    }"
+                print "    throw lastError || new Error(`Failed to upload ${artifactName}`);"
+                print "}"
+                print ""
+                print "async function run() {"
+                next
+            }
+            $0 == "    if (from_artifact && !same_runner) {" {
+                print "    if (from_artifact && !same_runner) {"
+                print "        await downloadBuildState(artifact, artifactName);"
+                print "    }"
+                skip_download = 1
+                next
+            }
+            skip_download {
+                if ($0 == "    }") {
+                    skip_download = 0
+                }
+                next
+            }
+            $0 == "    if (!gen_installer) {" {
+                print "    if (!gen_installer) {"
+                print "        await uploadBuildState(artifact, artifactName);"
+                print "    }"
+                skip_upload = 1
+                next
+            }
+            skip_upload {
+                if ($0 == "}") {
+                    skip_upload = 0
+                    print
+                }
+                next
+            }
+            { print }
+        ' "${windows_stage_action}" > "${tmp_stage_action}"
+        mv "${tmp_stage_action}" "${windows_stage_action}"
     fi
 fi
 
