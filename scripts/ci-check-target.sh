@@ -91,7 +91,9 @@ if [ "${platform}" = "windows" ]; then
     grep -q 'LongPathsEnabled' "${root_dir}/scripts/build.sh"
     grep -q 'windows_args+=(-j 2)' "${root_dir}/scripts/build.sh"
     grep -q 'Windows staged build' "${root_dir}/.github/workflows/windows-build.yml"
-    grep -q 'C:\\helium-windows' "${root_dir}/.github/workflows/windows-build.yml"
+    grep -Fq 'HELIUM_WINDOWS_ROOT: D:\h' "${root_dir}/.github/workflows/windows-build.yml"
+    grep -Fq 'HELIUM_WINDOWS_ROOT_BASH: /d/h' "${root_dir}/.github/workflows/windows-build.yml"
+    ! grep -Fq 'helium-windows' "${root_dir}/.github/workflows/windows-build.yml"
     grep -q 'from_artifact: true' "${root_dir}/.github/workflows/windows-build.yml"
     grep -q "tar --exclude='./.git'" \
         "${root_dir}/scripts/materialize-platform-workspace.sh"
@@ -104,6 +106,12 @@ if [ "${platform}" = "windows" ]; then
     grep -q 'HELIUM_WINDOWS_STAGED_OUT' \
         "${checkout}/build.py"
     grep -q 'BUILD_STATE_ROOT' \
+        "${checkout}/.github/actions/stage/index.js"
+    grep -q 'HELIUM_WINDOWS_ROOT' \
+        "${checkout}/.github/actions/stage/index.js"
+    grep -Fq "D:\\\\h" \
+        "${checkout}/.github/actions/stage/index.js"
+    ! grep -Fq 'helium-windows' \
         "${checkout}/.github/actions/stage/index.js"
     grep -q 'compressionLevel: 0' \
         "${checkout}/.github/actions/stage/index.js"

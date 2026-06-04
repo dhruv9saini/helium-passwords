@@ -233,13 +233,15 @@ if [ "${platform}" = "windows" ]; then
     fi
 
     windows_stage_action="${destination}/.github/actions/stage/index.js"
-    if [ -f "${windows_stage_action}" ] && \
-        ! grep -q 'HELIUM_WINDOWS_STAGED_OUT' "${windows_stage_action}"; then
-        tmp_stage_action="$(mktemp)"
-        awk '
+    if [ -f "${windows_stage_action}" ]; then
+        if ! grep -q 'HELIUM_WINDOWS_STAGED_OUT' "${windows_stage_action}"; then
+            tmp_stage_action="$(mktemp)"
+            awk '
             $0 == "async function run() {" {
                 print ""
-                print "const BUILD_STATE_ROOT = \047C:\\\\helium-windows\\\\build\\\\src\\\\out\\\\Default\047;"
+                print "const BUILD_ROOT = process.env.HELIUM_WINDOWS_ROOT || \047D:\\\\h\047;"
+                print "const BUILD_SRC_ROOT = path.join(BUILD_ROOT, \047build\\\\src\047);"
+                print "const BUILD_STATE_ROOT = path.join(BUILD_SRC_ROOT, \047out\\\\Default\047);"
                 print "const STAGED_OUT_ENV = \047HELIUM_WINDOWS_STAGED_OUT\047;"
                 print ""
                 print "async function listBuildStateFiles() {"
@@ -254,13 +256,13 @@ if [ "${platform}" = "windows" ]; then
                 print "    }"
                 print "    return files;"
                 print "}"
-                print ""
-                print "async function downloadBuildState(artifact, artifactName) {"
-                print "    const artifactInfo = await artifact.getArtifact(artifactName);"
-                print "    const stagedOut = \047C:\\\\helium-windows\\\\build\\\\staged-out-Default\047;"
-                print "    await io.rmRF(stagedOut);"
-                print "    await artifact.downloadArtifact(artifactInfo.artifact.id, {path: stagedOut});"
-                print "    process.env[STAGED_OUT_ENV] = stagedOut;"
+            print ""
+            print "async function downloadBuildState(artifact, artifactName) {"
+            print "    const artifactInfo = await artifact.getArtifact(artifactName);"
+                print "    const stagedOut = path.join(BUILD_ROOT, \047build\\\\staged-out-Default\047);"
+            print "    await io.rmRF(stagedOut);"
+            print "    await artifact.downloadArtifact(artifactInfo.artifact.id, {path: stagedOut});"
+            print "    process.env[STAGED_OUT_ENV] = stagedOut;"
                 print "}"
                 print ""
                 print "async function uploadBuildState(artifact, artifactName) {"
@@ -316,8 +318,47 @@ if [ "${platform}" = "windows" ]; then
                 next
             }
             { print }
-        ' "${windows_stage_action}" > "${tmp_stage_action}"
-        mv "${tmp_stage_action}" "${windows_stage_action}"
+            ' "${windows_stage_action}" > "${tmp_stage_action}"
+            mv "${tmp_stage_action}" "${windows_stage_action}"
+        fi
+
+        if grep -q 'helium-windows' "${windows_stage_action}"; then
+            tmp_stage_action="$(mktemp)"
+            awk '
+                $0 == "    const ROOT = \047C:\\\\helium-windows\\\\build\\\\src\047;" {
+                    print "    const ROOT = BUILD_SRC_ROOT;"
+                    next
+                }
+                $0 == "const BUILD_STATE_ROOT = \047C:\\\\helium-windows\\\\build\\\\src\\\\out\\\\Default\047;" {
+                    print "const BUILD_ROOT = process.env.HELIUM_WINDOWS_ROOT || \047D:\\\\h\047;"
+                    print "const BUILD_SRC_ROOT = path.join(BUILD_ROOT, \047build\\\\src\047);"
+                    print "const BUILD_STATE_ROOT = path.join(BUILD_SRC_ROOT, \047out\\\\Default\047);"
+                    next
+                }
+                $0 == "    const stagedOut = \047C:\\\\helium-windows\\\\build\\\\staged-out-Default\047;" {
+                    print "    const stagedOut = path.join(BUILD_ROOT, \047build\\\\staged-out-Default\047);"
+                    next
+                }
+                $0 == "        core.addPath(\047C:\\\\helium-windows\\\\build\\\\src\\\\third_party\\\\nsis\047);" {
+                    print "        core.addPath(path.join(BUILD_SRC_ROOT, \047third_party\\\\nsis\047));"
+                    next
+                }
+                $0 == "        const globber = await glob.create(\047C:\\\\helium-windows\\\\build\\\\helium*\047," {
+                    print "        const globber = await glob.create(path.join(BUILD_ROOT, \047build\\\\helium*\047),"
+                    next
+                }
+                $0 == "                    \047C:\\\\helium-windows\\\\build\047, { retentionDays: 4, compressionLevel: 0 });" {
+                    print "                    path.join(BUILD_ROOT, \047build\047), { retentionDays: 4, compressionLevel: 0 });"
+                    next
+                }
+                $0 == "        cwd: \047C:\\\\helium-windows\047," {
+                    print "        cwd: BUILD_ROOT,"
+                    next
+                }
+                { print }
+            ' "${windows_stage_action}" > "${tmp_stage_action}"
+            mv "${tmp_stage_action}" "${windows_stage_action}"
+        fi
     fi
 fi
 
