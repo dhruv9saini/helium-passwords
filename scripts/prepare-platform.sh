@@ -328,6 +328,15 @@ if [ "${platform}" = "macos" ]; then
         perl -0pi -e 's/(  # Prepar the certificate for app signing\n  echo \$MACOS_CERTIFICATE \| base64 --decode > "\$TMPDIR\/certificate\.p12"\n\n  security create-keychain -p "\$MACOS_CI_KEYCHAIN_PWD" build\.keychain\n  security default-keychain -s build\.keychain\n  security unlock-keychain -p "\$MACOS_CI_KEYCHAIN_PWD" build\.keychain\n  security import "\$TMPDIR\/certificate\.p12" -k build\.keychain -P "\$MACOS_CERTIFICATE_PWD" -T \/usr\/bin\/codesign\n  security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "\$MACOS_CI_KEYCHAIN_PWD" build\.keychain\n)/  if [[ -n "\${MACOS_CERTIFICATE:-}" ]]; then\n$1  fi\n/s' \
             "${macos_artifacts}"
     fi
+
+    sparkle_deltas="${destination}/devutils/generate_sparkle_deltas.py"
+    if [ -f "${sparkle_deltas}" ] && \
+        ! grep -q 'missing macOS dmg asset' "${sparkle_deltas}"; then
+        perl -0pi -e 's/  assert\(False\)\n/  print(f"missing macOS dmg asset for {arch}; skipping release")\n  return None\n/s' \
+            "${sparkle_deltas}"
+        perl -0pi -e 's/    x86_url = get_asset_url\(release, '\''x86_64'\''\)\n    arm_url = get_asset_url\(release, '\''arm64'\''\)\n    urls\[version\] = \(arm_url, x86_url\)\n/    x86_url = get_asset_url(release, '\''x86_64'\'')\n    arm_url = get_asset_url(release, '\''arm64'\'')\n    if x86_url is None or arm_url is None:\n      continue\n    urls[version] = (arm_url, x86_url)\n/s' \
+            "${sparkle_deltas}"
+    fi
 fi
 
 overlay_dir="${destination}/patches/helium/passwords"

@@ -75,6 +75,12 @@ fi
 if [ "${platform}" = "macos" ]; then
     grep -q 'MACOS_CERTIFICATE:-' \
         "${checkout}/.github/scripts/github_prepare_artifacts.sh"
+    grep -q 'missing macOS dmg asset' \
+        "${checkout}/devutils/generate_sparkle_deltas.py"
+    grep -q 'if x86_url is None or arm_url is None:' \
+        "${checkout}/devutils/generate_sparkle_deltas.py"
+    ! grep -q 'assert(False)' \
+        "${checkout}/devutils/generate_sparkle_deltas.py"
     grep -q 'SCCACHE_DIR' "${root_dir}/scripts/gha-macos-stage.sh"
     grep -q 'retry_command ./github_fetch_resources.sh' \
         "${root_dir}/scripts/gha-macos-stage.sh"
