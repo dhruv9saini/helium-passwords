@@ -84,6 +84,10 @@ if [ "${platform}" = "macos" ]; then
     grep -q 'SCCACHE_DIR' "${root_dir}/scripts/gha-macos-stage.sh"
     grep -q 'retry_command ./github_fetch_resources.sh' \
         "${root_dir}/scripts/gha-macos-stage.sh"
+    grep -q 'build_job_10' \
+        "${root_dir}/.github/workflows/macos-build.yml"
+    grep -q 'needs: build-10' \
+        "${root_dir}/.github/workflows/macos-build.yml"
 fi
 
 if [ "${platform}" = "windows" ]; then

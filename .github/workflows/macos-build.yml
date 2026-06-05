@@ -363,6 +363,226 @@ jobs:
           PROD_MACOS_NOTARIZATION_PWD: ${{ secrets.PROD_MACOS_NOTARIZATION_PWD }}
           PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64: ${{ secrets.PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64 }}
         run: bash "${RUNNER_TEMP}/gha-macos-stage.sh" build-resume "${ARCH}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: upload_part_build/
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: upload_logs/
+          if-no-files-found: error
+          overwrite: true
+      - if: steps.stage.outputs.status == 'finished'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.stage.outputs.file_name }}
+          path: |
+            release_asset/
+            ${{ steps.stage.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+          compression-level: 0
+
+  build-07:
+    name: build_job_07
+    runs-on: ${{ inputs.runner }}
+    needs: build-06
+    if: ${{ needs.build-06.outputs.status == 'running' }}
+    outputs:
+      status: ${{ steps.stage.outputs.status }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: cp scripts/gha-macos-stage.sh "${RUNNER_TEMP}/gha-macos-stage.sh"
+      - run: bash scripts/materialize-platform-workspace.sh macos
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+      - name: Build
+        id: stage
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.PROD_MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.PROD_MACOS_CERTIFICATE_PWD }}
+          MACOS_CERTIFICATE_NAME: ${{ secrets.PROD_MACOS_CERTIFICATE_NAME }}
+          MACOS_CI_KEYCHAIN_PWD: ${{ secrets.PROD_MACOS_CI_KEYCHAIN_PWD }}
+          PROD_MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_APPLE_ID }}
+          PROD_MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_TEAM_ID }}
+          PROD_MACOS_NOTARIZATION_PWD: ${{ secrets.PROD_MACOS_NOTARIZATION_PWD }}
+          PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64: ${{ secrets.PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64 }}
+        run: bash "${RUNNER_TEMP}/gha-macos-stage.sh" build-resume "${ARCH}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: upload_part_build/
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: upload_logs/
+          if-no-files-found: error
+          overwrite: true
+      - if: steps.stage.outputs.status == 'finished'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.stage.outputs.file_name }}
+          path: |
+            release_asset/
+            ${{ steps.stage.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+          compression-level: 0
+
+  build-08:
+    name: build_job_08
+    runs-on: ${{ inputs.runner }}
+    needs: build-07
+    if: ${{ needs.build-07.outputs.status == 'running' }}
+    outputs:
+      status: ${{ steps.stage.outputs.status }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: cp scripts/gha-macos-stage.sh "${RUNNER_TEMP}/gha-macos-stage.sh"
+      - run: bash scripts/materialize-platform-workspace.sh macos
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+      - name: Build
+        id: stage
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.PROD_MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.PROD_MACOS_CERTIFICATE_PWD }}
+          MACOS_CERTIFICATE_NAME: ${{ secrets.PROD_MACOS_CERTIFICATE_NAME }}
+          MACOS_CI_KEYCHAIN_PWD: ${{ secrets.PROD_MACOS_CI_KEYCHAIN_PWD }}
+          PROD_MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_APPLE_ID }}
+          PROD_MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_TEAM_ID }}
+          PROD_MACOS_NOTARIZATION_PWD: ${{ secrets.PROD_MACOS_NOTARIZATION_PWD }}
+          PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64: ${{ secrets.PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64 }}
+        run: bash "${RUNNER_TEMP}/gha-macos-stage.sh" build-resume "${ARCH}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: upload_part_build/
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: upload_logs/
+          if-no-files-found: error
+          overwrite: true
+      - if: steps.stage.outputs.status == 'finished'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.stage.outputs.file_name }}
+          path: |
+            release_asset/
+            ${{ steps.stage.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+          compression-level: 0
+
+  build-09:
+    name: build_job_09
+    runs-on: ${{ inputs.runner }}
+    needs: build-08
+    if: ${{ needs.build-08.outputs.status == 'running' }}
+    outputs:
+      status: ${{ steps.stage.outputs.status }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: cp scripts/gha-macos-stage.sh "${RUNNER_TEMP}/gha-macos-stage.sh"
+      - run: bash scripts/materialize-platform-workspace.sh macos
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+      - name: Build
+        id: stage
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.PROD_MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.PROD_MACOS_CERTIFICATE_PWD }}
+          MACOS_CERTIFICATE_NAME: ${{ secrets.PROD_MACOS_CERTIFICATE_NAME }}
+          MACOS_CI_KEYCHAIN_PWD: ${{ secrets.PROD_MACOS_CI_KEYCHAIN_PWD }}
+          PROD_MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_APPLE_ID }}
+          PROD_MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_TEAM_ID }}
+          PROD_MACOS_NOTARIZATION_PWD: ${{ secrets.PROD_MACOS_NOTARIZATION_PWD }}
+          PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64: ${{ secrets.PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64 }}
+        run: bash "${RUNNER_TEMP}/gha-macos-stage.sh" build-resume "${ARCH}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+          path: upload_part_build/
+          if-no-files-found: error
+          overwrite: true
+          compression-level: 0
+      - uses: actions/upload-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+          path: upload_logs/
+          if-no-files-found: error
+          overwrite: true
+      - if: steps.stage.outputs.status == 'finished'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.stage.outputs.file_name }}
+          path: |
+            release_asset/
+            ${{ steps.stage.outputs.file_name }}.hashes.md
+          if-no-files-found: error
+          compression-level: 0
+
+  build-10:
+    name: build_job_10
+    runs-on: ${{ inputs.runner }}
+    needs: build-09
+    if: ${{ needs.build-09.outputs.status == 'running' }}
+    outputs:
+      status: ${{ steps.stage.outputs.status }}
+    steps:
+      - uses: actions/checkout@v6
+      - run: cp scripts/gha-macos-stage.sh "${RUNNER_TEMP}/gha-macos-stage.sh"
+      - run: bash scripts/materialize-platform-workspace.sh macos
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v7
+        with:
+          name: github_build_logs_${{ inputs.arch }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: github_build_artifact_${{ inputs.arch }}
+      - name: Build
+        id: stage
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.PROD_MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.PROD_MACOS_CERTIFICATE_PWD }}
+          MACOS_CERTIFICATE_NAME: ${{ secrets.PROD_MACOS_CERTIFICATE_NAME }}
+          MACOS_CI_KEYCHAIN_PWD: ${{ secrets.PROD_MACOS_CI_KEYCHAIN_PWD }}
+          PROD_MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_APPLE_ID }}
+          PROD_MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.PROD_MACOS_NOTARIZATION_TEAM_ID }}
+          PROD_MACOS_NOTARIZATION_PWD: ${{ secrets.PROD_MACOS_NOTARIZATION_PWD }}
+          PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64: ${{ secrets.PROD_MACOS_SPECIAL_ENTITLEMENTS_PROFILE_B64 }}
+        run: bash "${RUNNER_TEMP}/gha-macos-stage.sh" build-resume "${ARCH}"
       - if: steps.stage.outputs.status != 'finished'
         run: |
           echo "macOS build did not finish after the final staged job" >&2
@@ -392,8 +612,8 @@ jobs:
   collect:
     name: collect
     runs-on: ${{ inputs.runner }}
-    needs: build-06
-    if: ${{ always() && !cancelled() && !failure() && contains(fromJSON('["success", "skipped"]'), needs.build-06.result) }}
+    needs: build-10
+    if: ${{ always() && !cancelled() && !failure() && contains(fromJSON('["success", "skipped"]'), needs.build-10.result) }}
     steps:
       - uses: actions/checkout@v6
       - run: bash scripts/materialize-platform-workspace.sh macos
