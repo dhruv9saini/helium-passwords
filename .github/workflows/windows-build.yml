@@ -65,7 +65,7 @@ jobs:
     if: ${{ needs.build-01.outputs.finished == 'false' }}
     outputs:
       finished: ${{ steps.stage.outputs.finished }}
-    steps:
+    steps: &windows_staged_steps
       - uses: actions/checkout@v6
       - name: Enable Windows long paths
         shell: pwsh
@@ -238,6 +238,114 @@ jobs:
           arm: ${{ inputs.arch == 'arm64' }}
           from_artifact: true
 
+  build-07:
+    name: build_part_07
+    runs-on: windows-2025
+    needs: build-06
+    if: ${{ needs.build-06.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-08:
+    name: build_part_08
+    runs-on: windows-2025
+    needs: build-07
+    if: ${{ needs.build-07.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-09:
+    name: build_part_09
+    runs-on: windows-2025
+    needs: build-08
+    if: ${{ needs.build-08.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-10:
+    name: build_part_10
+    runs-on: windows-2025
+    needs: build-09
+    if: ${{ needs.build-09.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-11:
+    name: build_part_11
+    runs-on: windows-2025
+    needs: build-10
+    if: ${{ needs.build-10.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-12:
+    name: build_part_12
+    runs-on: windows-2025
+    needs: build-11
+    if: ${{ needs.build-11.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-13:
+    name: build_part_13
+    runs-on: windows-2025
+    needs: build-12
+    if: ${{ needs.build-12.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-14:
+    name: build_part_14
+    runs-on: windows-2025
+    needs: build-13
+    if: ${{ needs.build-13.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-15:
+    name: build_part_15
+    runs-on: windows-2025
+    needs: build-14
+    if: ${{ needs.build-14.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-16:
+    name: build_part_16
+    runs-on: windows-2025
+    needs: build-15
+    if: ${{ needs.build-15.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-17:
+    name: build_part_17
+    runs-on: windows-2025
+    needs: build-16
+    if: ${{ needs.build-16.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-18:
+    name: build_part_18
+    runs-on: windows-2025
+    needs: build-17
+    if: ${{ needs.build-17.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
   exhausted:
     name: fail if build needs more stages
     runs-on: windows-2025
@@ -248,11 +356,23 @@ jobs:
       - build-04
       - build-05
       - build-06
-    if: ${{ always() && !cancelled() && !failure() && needs.build-06.outputs.finished == 'false' }}
+      - build-07
+      - build-08
+      - build-09
+      - build-10
+      - build-11
+      - build-12
+      - build-13
+      - build-14
+      - build-15
+      - build-16
+      - build-17
+      - build-18
+    if: ${{ always() && !cancelled() && !failure() && needs.build-18.outputs.finished == 'false' }}
     steps:
       - shell: bash
         run: |
-          echo "Windows ${ARCH} build did not finish within six staged jobs" >&2
+          echo "Windows ${ARCH} build did not finish within eighteen staged jobs" >&2
           exit 1
 
   package:
@@ -265,6 +385,18 @@ jobs:
       - build-04
       - build-05
       - build-06
+      - build-07
+      - build-08
+      - build-09
+      - build-10
+      - build-11
+      - build-12
+      - build-13
+      - build-14
+      - build-15
+      - build-16
+      - build-17
+      - build-18
     if: >-
       ${{
         always() &&
@@ -276,7 +408,19 @@ jobs:
           needs.build-03.outputs.finished == 'true' ||
           needs.build-04.outputs.finished == 'true' ||
           needs.build-05.outputs.finished == 'true' ||
-          needs.build-06.outputs.finished == 'true'
+          needs.build-06.outputs.finished == 'true' ||
+          needs.build-07.outputs.finished == 'true' ||
+          needs.build-08.outputs.finished == 'true' ||
+          needs.build-09.outputs.finished == 'true' ||
+          needs.build-10.outputs.finished == 'true' ||
+          needs.build-11.outputs.finished == 'true' ||
+          needs.build-12.outputs.finished == 'true' ||
+          needs.build-13.outputs.finished == 'true' ||
+          needs.build-14.outputs.finished == 'true' ||
+          needs.build-15.outputs.finished == 'true' ||
+          needs.build-16.outputs.finished == 'true' ||
+          needs.build-17.outputs.finished == 'true' ||
+          needs.build-18.outputs.finished == 'true'
         )
       }}
     steps:

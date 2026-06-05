@@ -249,10 +249,23 @@ if [ "${platform}" = "windows" ]; then
                 print "        throw new Error(`Missing Windows build state: ${BUILD_STATE_ROOT}`);"
                 print "    }"
                 print ""
-                print "    const globber = await glob.create(path.join(BUILD_STATE_ROOT, \047**\047), {matchDirectories: false});"
-                print "    const files = await globber.glob();"
+                print "    const files = await listFilesRecursive(BUILD_STATE_ROOT);"
                 print "    if (files.length === 0) {"
                 print "        throw new Error(`No Windows build state files found in ${BUILD_STATE_ROOT}`);"
+                print "    }"
+                print "    return files;"
+                print "}"
+                print ""
+                print "async function listFilesRecursive(root) {"
+                print "    const entries = await fs.readdir(root, {withFileTypes: true});"
+                print "    const files = [];"
+                print "    for (const entry of entries) {"
+                print "        const filePath = path.join(root, entry.name);"
+                print "        if (entry.isDirectory()) {"
+                print "            files.push(...await listFilesRecursive(filePath));"
+                print "        } else if (entry.isFile()) {"
+                print "            files.push(filePath);"
+                print "        }"
                 print "    }"
                 print "    return files;"
                 print "}"
@@ -320,6 +333,13 @@ if [ "${platform}" = "windows" ]; then
             { print }
             ' "${windows_stage_action}" > "${tmp_stage_action}"
             mv "${tmp_stage_action}" "${windows_stage_action}"
+        fi
+
+        if grep -q 'glob.create(path.join(BUILD_STATE_ROOT' "${windows_stage_action}"; then
+            perl -0pi -e 's/    const globber = await glob\.create\(path\.join\(BUILD_STATE_ROOT, '\''\*\*'\''\), \{matchDirectories: false\}\);\n    const files = await globber\.glob\(\);\n/    const files = await listFilesRecursive\(BUILD_STATE_ROOT\);\n/s' \
+                "${windows_stage_action}"
+            perl -0pi -e 's/(async function downloadBuildState\(artifact, artifactName\) \{)/async function listFilesRecursive\(root\) {\n    const entries = await fs.readdir\(root, {withFileTypes: true}\);\n    const files = \[];\n    for \(const entry of entries\) {\n        const filePath = path.join\(root, entry.name\);\n        if \(entry.isDirectory\(\)\) {\n            files.push\(...await listFilesRecursive\(filePath\)\);\n        } else if \(entry.isFile\(\)\) {\n            files.push\(filePath\);\n        }\n    }\n    return files;\n}\n\n$1/s' \
+                "${windows_stage_action}"
         fi
 
         if grep -q 'helium-windows' "${windows_stage_action}"; then
