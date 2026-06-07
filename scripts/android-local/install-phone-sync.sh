@@ -15,9 +15,11 @@ if [ ! -f "$cookiecloud_ext" ]; then
 fi
 
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-local-syncd" "$repo_root/cmd/helium-local-syncd"
+GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-sync" "$repo_root/cmd/helium-sync"
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-syncd" "$repo_root/cmd/helium-syncd"
 
 "$adb_bin" push "$work_dir/helium-local-syncd" /data/local/tmp/helium-local-syncd >/dev/null
+"$adb_bin" push "$work_dir/helium-sync" /data/local/tmp/helium-sync >/dev/null
 "$adb_bin" push "$work_dir/helium-syncd" /data/local/tmp/helium-syncd >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/cdp-cookiecloud.mjs" /data/local/tmp/cdp-cookiecloud.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/cdp-password-sync.mjs" /data/local/tmp/cdp-password-sync.mjs >/dev/null
@@ -30,6 +32,7 @@ GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-syncd" "$repo_root/cmd/hel
 set -eu
 ROOT='"$root"'
 install -Dm755 /data/local/tmp/helium-local-syncd \"\$ROOT/usr/local/bin/helium-local-syncd\"
+install -Dm755 /data/local/tmp/helium-sync \"\$ROOT/usr/local/bin/helium-sync\"
 install -Dm755 /data/local/tmp/helium-syncd \"\$ROOT/usr/local/bin/helium-syncd\"
 install -Dm755 /data/local/tmp/cdp-cookiecloud.mjs \"\$ROOT/usr/local/bin/cdp-cookiecloud\"
 install -Dm755 /data/local/tmp/cdp-password-sync.mjs \"\$ROOT/usr/local/bin/cdp-password-sync\"
