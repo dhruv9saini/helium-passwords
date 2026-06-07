@@ -52,10 +52,28 @@ cmp -s "${root_dir}/patches/helium-passwords/restore-password-ui.patch" \
 
 for sync_patch in "${root_dir}"/chromium/patches/*.patch; do
     sync_patch_name="$(basename "${sync_patch}")"
+    case "${sync_patch_name}" in
+        0003-helium-sync-android-profile-startup.patch|\
+        0004-helium-sync-android-oscrypt-provider.patch|\
+        0005-helium-sync-android-branding.patch)
+            ! grep -qx "helium/sync/${sync_patch_name}" \
+                "${checkout}/patches/series"
+            continue
+            ;;
+    esac
     grep -qx "helium/sync/${sync_patch_name}" \
         "${checkout}/patches/series"
-    cmp -s "${sync_patch}" \
-        "${checkout}/patches/helium/sync/${sync_patch_name}"
+    if [ "${sync_patch_name}" = "0001-helium-sync-overlay-files.patch" ]; then
+        tmp_patch="$(mktemp)"
+        "${root_dir}/scripts/chromium/filter-overlay-patch.sh" \
+            "${sync_patch}" > "${tmp_patch}"
+        cmp -s "${tmp_patch}" \
+            "${checkout}/patches/helium/sync/${sync_patch_name}"
+        rm -f "${tmp_patch}"
+    else
+        cmp -s "${sync_patch}" \
+            "${checkout}/patches/helium/sync/${sync_patch_name}"
+    fi
 done
 
 grep -q 'r.PAYMENTS = r.AUTOFILL.createChild' \
@@ -75,16 +93,22 @@ grep -q 'PageActionIconType::kMandatoryReauth' \
 
 grep -q 'HeliumPasswordSyncBridge' \
     "${checkout}/patches/helium/sync/0001-helium-sync-overlay-files.patch"
+! grep -q 'password_store_backend_factory.cc' \
+    "${checkout}/patches/helium/sync/0001-helium-sync-overlay-files.patch"
+! grep -q 'password_store_built_in_backend.cc' \
+    "${checkout}/patches/helium/sync/0001-helium-sync-overlay-files.patch"
+! grep -q 'password_store_factory_util.cc' \
+    "${checkout}/patches/helium/sync/0001-helium-sync-overlay-files.patch"
 grep -q 'HeliumSyncServiceFactory::GetInstance' \
     "${checkout}/patches/helium/sync/0002-helium-sync-profile-service.patch"
 grep -q 'HeliumSyncServiceFactory::GetForProfile(profile)' \
-    "${checkout}/patches/helium/sync/0003-helium-sync-android-profile-startup.patch"
+    "${root_dir}/chromium/patches/0003-helium-sync-android-profile-startup.patch"
 grep -q 'PosixKeyProvider' \
-    "${checkout}/patches/helium/sync/0004-helium-sync-android-oscrypt-provider.patch"
+    "${root_dir}/chromium/patches/0004-helium-sync-android-oscrypt-provider.patch"
 grep -q 'computer.helium.sync' \
-    "${checkout}/patches/helium/sync/0005-helium-sync-android-branding.patch"
+    "${root_dir}/chromium/patches/0005-helium-sync-android-branding.patch"
 grep -q 'Helium Sync' \
-    "${checkout}/patches/helium/sync/0005-helium-sync-android-branding.patch"
+    "${root_dir}/chromium/patches/0005-helium-sync-android-branding.patch"
 
 if [ "${platform}" = "linux" ]; then
     grep -q 'GetLibXml2Dirs, GitCherryPick, GetHostSysrootPlatform,' \

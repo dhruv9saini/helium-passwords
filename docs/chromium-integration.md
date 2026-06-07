@@ -69,7 +69,10 @@ gh workflow run build.yml -f platform=linux -f arch=x86_64 -f run-build=true
 
 `scripts/prepare-platform.sh` clones the official Helium platform repo, removes
 Helium's upstream password-disable patch, injects the restored-password patches,
-and then injects `chromium/patches/*.patch` as `patches/helium/sync/`.
+and then injects the desktop-safe sync patch subset as
+`patches/helium/sync/`. The desktop subset keeps the native sync service and
+profile service wiring, but excludes Android startup, OSCrypt, branding, and
+password-store replacement files.
 
 Android is still handled separately from the desktop Helium platform repos:
 

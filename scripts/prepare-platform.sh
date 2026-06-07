@@ -430,7 +430,19 @@ sync_overlay_entries=()
 for source_patch in "${root_dir}"/chromium/patches/*.patch; do
     [ -e "${source_patch}" ] || continue
     patch_name="$(basename "${source_patch}")"
-    cp "${source_patch}" "${sync_overlay_dir}/${patch_name}"
+    case "${patch_name}" in
+        0003-helium-sync-android-profile-startup.patch|\
+        0004-helium-sync-android-oscrypt-provider.patch|\
+        0005-helium-sync-android-branding.patch)
+            continue
+            ;;
+    esac
+    if [ "${patch_name}" = "0001-helium-sync-overlay-files.patch" ]; then
+        "${root_dir}/scripts/chromium/filter-overlay-patch.sh" \
+            "${source_patch}" > "${sync_overlay_dir}/${patch_name}"
+    else
+        cp "${source_patch}" "${sync_overlay_dir}/${patch_name}"
+    fi
     sync_overlay_entries+=("helium/sync/${patch_name}")
 done
 

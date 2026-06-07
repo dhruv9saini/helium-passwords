@@ -71,12 +71,16 @@ platform preparation, each listed patch is copied into the platform repo as
 `patches/helium/passwords/` and appended to that platform's `patches/series`.
 
 `chromium/patches/*.patch` is the canonical sync integration list. During
-platform preparation, each sync patch is copied into
-`patches/helium/sync/` and appended after the password patches.
+desktop platform preparation, only the desktop-safe subset is copied into
+`patches/helium/sync/` and appended after the password patches. Android-only
+startup, OSCrypt, branding, and password-store replacement files stay on the
+direct Android Chromium build path.
 
 The first sync patch is generated from `chromium/overlay/` so the full native
-sync component can be applied by Helium platform patch tooling. Keep the overlay
-and generated patch in sync when editing Chromium-side files.
+sync component can be applied by Helium platform patch tooling. Desktop
+platform preparation filters the Android password-store replacement file diffs
+out of that patch because current desktop Chromium owns those paths already.
+Keep the overlay and generated patch in sync when editing Chromium-side files.
 
 The wrapper also removes `helium/hop/disable-password-manager.patch` from the
 cloned `helium-chromium` submodule before platform builds apply patches.

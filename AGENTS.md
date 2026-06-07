@@ -25,11 +25,17 @@ restores Chromium's native password manager.
 - `patches/series` lists the password-manager restoration patches inherited
   from `helium-passwords`.
 - `chromium/overlay/` is the source tree for the native Chromium sync
-  component and Android password-store overrides.
-- `chromium/patches/` contains the patches actually injected into Helium
-  platform repos. `0001-helium-sync-overlay-files.patch` is generated from
-  `chromium/overlay/`; regenerate it whenever overlay files change. Android
-  builds are branded as `Helium Sync` with package `computer.helium.sync`.
+  component and Android password-store overrides. Desktop Linux/macOS/Windows
+  builds must use the desktop-safe overlay copy path so Android password-store
+  replacement files are not copied over upstream desktop Chromium files.
+- `chromium/patches/` contains the Chromium sync patches. Desktop Helium
+  platform repos receive only the desktop-safe patch subset: the filtered
+  native sync overlay patch plus desktop profile service wiring. Android-only
+  startup, OSCrypt, branding, and password-store override files stay on the
+  direct Android build path. `0001-helium-sync-overlay-files.patch` is
+  generated from `chromium/overlay/`; regenerate it whenever overlay files
+  change. Android builds are branded as `Helium Sync` with package
+  `computer.helium.sync`.
   Android extension/uBO experiments must use the explicit
   `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true` build-helper path, which writes
   Chromium's `is_desktop_android = true` GN arg. Use
@@ -61,9 +67,9 @@ restores Chromium's native password manager.
 
 `scripts/prepare-platform.sh` clones an official Helium platform repo, removes
 Helium's upstream password-disable patch from `helium-chromium`, copies
-password patches into `patches/helium/passwords/`, copies sync patches into
-`patches/helium/sync/`, and appends both groups to the platform
-`patches/series`.
+password patches into `patches/helium/passwords/`, copies the desktop-safe sync
+patch subset into `patches/helium/sync/`, and appends both groups to the
+platform `patches/series`.
 
 Run this after changing patch injection:
 

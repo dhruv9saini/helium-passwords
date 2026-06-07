@@ -95,7 +95,7 @@ Use port `9222` for Android Helium Sync through the local `socat` bridge; use po
 
 This setup does not replace Chromium's native password manager and does not install a password-manager extension. CookieCloud is only for cookies. Chroot Helium Sync uses its normal profile password store at `/root/.config/helium-sync`; Android Helium Sync uses the native Chromium profile store in `app_chrome/Default/Login Data`.
 
-The Android fork forces Chromium's built-in encrypted `Login Data` backend for the profile password store instead of the Android Google Password Manager backend. `chromium/patches/0004-helium-sync-android-oscrypt-provider.patch` makes Android initialize the stable `v10` OSCrypt provider needed by that built-in database.
+The Android fork forces Chromium's built-in encrypted `Login Data` backend for the profile password store instead of the Android Google Password Manager backend. The Android password-store replacement files live in `chromium/overlay/` and are copied only by the direct Android build path. `chromium/patches/0004-helium-sync-android-oscrypt-provider.patch` makes Android initialize the stable `v10` OSCrypt provider needed by that built-in database.
 
 The native Chromium overlays in `chromium/overlay/components/helium_sync` and `chromium/overlay/chrome/browser/helium_sync` serialize profile password entries through Chromium's password-manager APIs and store them in the local encrypted `helium-syncd` record API. `chromium/patches/0002-helium-sync-profile-service.patch` wires the profile service into browser startup, and `chromium/patches/0003-helium-sync-android-profile-startup.patch` starts it for Android profiles. The service stays inactive unless it can read a local token file.
 

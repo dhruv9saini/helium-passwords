@@ -26,7 +26,7 @@ prepare_linux_source() {
   setup_environment
   fetch_sources "$clone_sources" "$with_pgo"
   apply_patches
-  "$sync_repo_root/scripts/chromium/copy-overlay.sh" "$_src_dir"
+  "$sync_repo_root/scripts/chromium/copy-overlay.sh" --desktop "$_src_dir"
   apply_domsub
   helium_substitution
   helium_apply_translations
