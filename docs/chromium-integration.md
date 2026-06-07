@@ -71,17 +71,17 @@ gh workflow run build.yml -f platform=linux -f arch=x86_64 -f run-build=true
 Helium's upstream password-disable patch, injects the restored-password patches,
 and then injects `chromium/patches/*.patch` as `patches/helium/sync/`.
 
-Android is still handled separately until the Android fork is fully branded:
+Android is still handled separately from the desktop Helium platform repos:
 
 ```sh
 gh workflow run chromium-android.yml
 ```
 
 The Android workflow uses a reduced Chromium Android checkout and builds
-`chrome_public_apk` by default. It applies `chromium/patches/*.patch`, uses
+`HeliumSync.apk` by default. It applies `chromium/patches/*.patch`, uses
 `chromium/overlay/` for local development parity, sets Chromium's checkout to
-`small`, skips test-only Android CIPD payloads, and adds `cc_wrapper =
-"ccache"` to generated GN args.
+`small`, skips test-only Android CIPD payloads, changes the package to
+`computer.helium.sync`, and adds `cc_wrapper = "ccache"` to generated GN args.
 
 Full Chromium builds are expensive. Larger/self-hosted runners are preferred.
 Standard `ubuntu-24.04` runners can smoke-test wiring, but previous full builds

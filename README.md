@@ -85,8 +85,9 @@ cloned `helium-chromium` submodule before platform builds apply patches.
 
 The current Android path uses Chromium Android source plus this repo's sync
 patches, Android built-in password-store restoration, and local daemon/token
-configuration. The Android app must be branded and configured as the Helium
-Android fork before it is considered complete.
+configuration. `chromium/patches/0005-helium-sync-android-branding.patch`
+brands the APK as `Helium Sync` and changes the Android package to
+`computer.helium.sync`.
 
 See [docs/android-local-sync.md](docs/android-local-sync.md) for the current
 phone/chroot bridge details.

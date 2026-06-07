@@ -81,6 +81,10 @@ grep -q 'HeliumSyncServiceFactory::GetForProfile(profile)' \
     "${checkout}/patches/helium/sync/0003-helium-sync-android-profile-startup.patch"
 grep -q 'PosixKeyProvider' \
     "${checkout}/patches/helium/sync/0004-helium-sync-android-oscrypt-provider.patch"
+grep -q 'computer.helium.sync' \
+    "${checkout}/patches/helium/sync/0005-helium-sync-android-branding.patch"
+grep -q 'Helium Sync' \
+    "${checkout}/patches/helium/sync/0005-helium-sync-android-branding.patch"
 
 if [ "${platform}" = "linux" ]; then
     grep -q 'GetLibXml2Dirs, GitCherryPick, GetHostSysrootPlatform,' \

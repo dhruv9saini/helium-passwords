@@ -41,7 +41,33 @@ if ! pgrep -f 'helium-syncd.*127.0.0.1:44719' >/dev/null 2>&1; then
     >>"$log_dir/password-syncd.log" 2>&1 &
 fi
 
-if command -v socat >/dev/null 2>&1 && ! pgrep -f 'socat.*127.0.0.1:9222.*chrome_devtools_remote' >/dev/null 2>&1; then
-  nohup socat TCP-LISTEN:9222,bind=127.0.0.1,reuseaddr,fork ABSTRACT-CONNECT:chrome_devtools_remote \
-    >>"$log_dir/android-cdp-bridge.log" 2>&1 &
+android_devtools_socket() {
+  package=${HELIUM_ANDROID_PACKAGE:-computer.helium.sync}
+  pid=$(pidof "$package" 2>/dev/null | awk '{ print $1 }')
+  if [ -n "$pid" ] && grep -qa "@chrome_devtools_remote_$pid" /proc/net/unix; then
+    printf '%s\n' "chrome_devtools_remote_$pid"
+    return 0
+  fi
+  if grep -qa '@chrome_devtools_remote' /proc/net/unix; then
+    printf '%s\n' 'chrome_devtools_remote'
+    return 0
+  fi
+  return 1
+}
+
+if command -v socat >/dev/null 2>&1; then
+  if socket=$(android_devtools_socket); then
+    if ! pgrep -f "socat.*127.0.0.1:9222.*$socket" >/dev/null 2>&1; then
+      existing_pids=$(ps -A -o pid,args |
+        awk '/socat TCP-LISTEN:9222,bind=127[.]0[.]0[.]1/ { print $1 }')
+      if [ -n "$existing_pids" ]; then
+        kill $existing_pids >/dev/null 2>&1 || true
+      fi
+      nohup socat TCP-LISTEN:9222,bind=127.0.0.1,reuseaddr,fork ABSTRACT-CONNECT:"$socket" \
+        >>"$log_dir/android-cdp-bridge.log" 2>&1 &
+    fi
+  else
+    echo "Android DevTools socket not found; start Android Helium Sync first" \
+      >>"$log_dir/android-cdp-bridge.log" 2>&1
+  fi
 fi

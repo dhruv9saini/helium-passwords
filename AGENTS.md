@@ -26,14 +26,16 @@ restores Chromium's native password manager.
   component and Android password-store overrides.
 - `chromium/patches/` contains the patches actually injected into Helium
   platform repos. `0001-helium-sync-overlay-files.patch` is generated from
-  `chromium/overlay/`; regenerate it whenever overlay files change.
+  `chromium/overlay/`; regenerate it whenever overlay files change. Android
+  builds are branded as `Helium Sync` with package `computer.helium.sync`.
 - `cmd/helium-syncd` runs the localhost encrypted record daemon.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.
 - `cmd/helium-local-syncd` runs the phone-local CookieCloud-compatible API.
 - `internal/syncstore` stores append-only encrypted records.
 - `scripts/android-local` installs and configures the phone/chroot local sync
-  pieces.
+  pieces. The chroot launcher prefers a `helium` binary and only falls back to
+  `chromium` for temporary testing.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 

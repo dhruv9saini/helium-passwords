@@ -15,6 +15,18 @@ chmod 600 "$sync_config_dir/token" "$sync_config_dir/base_url" "$sync_config_dir
 mkdir -p /dev/shm
 chmod 1777 /dev/shm
 
+browser=${HELIUM_CHROOT_BROWSER:-}
+if [ -z "$browser" ]; then
+  if command -v helium >/dev/null 2>&1; then
+    browser=helium
+  elif command -v chromium >/dev/null 2>&1; then
+    browser=chromium
+  else
+    echo "Neither helium nor chromium is installed in the chroot" >&2
+    exit 1
+  fi
+fi
+
 pids=
 cleanup() {
   for pid in $pids; do
@@ -47,7 +59,7 @@ if command -v cdp-cookiecloud >/dev/null 2>&1 && [ -f "$cookiecloud_config" ]; t
   pids="$pids $!"
 fi
 
-chromium \
+"$browser" \
   --user-data-dir="$profile" \
   --no-sandbox \
   --password-store=basic \
