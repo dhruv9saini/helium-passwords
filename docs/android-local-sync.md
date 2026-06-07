@@ -44,7 +44,8 @@ From the Arch desktop:
 chromium-helium-local
 ```
 
-The installer places `chromium-helium-local` and `start-helium-local-sync` in
+The installer places `start-helium-local-sync` in `/usr/local/bin` and also
+places `chromium-helium-local` plus `start-helium-local-sync` in
 `/root/.config/x11/bin`; make sure that directory is in the desktop session
 `PATH`, or run `/root/.config/x11/bin/chromium-helium-local` directly.
 
@@ -118,4 +119,4 @@ Config lookup is profile-first:
 
 The chroot launcher mirrors `/root/.local/share/helium-sync/token` into `/root/.config/helium-sync/Default/helium-sync/token` and writes `base_url` and `device_name` beside it before starting Chromium. The local daemon keeps its passphrase and bearer token in `/root/.local/share/helium-sync`.
 
-`configure-android-chromium-sync.sh` copies the same bearer token into Android Helium Sync's app-private `helium-sync` directories and writes `base_url=http://127.0.0.1:44719` with `device_name=helium-android`. Android startup may briefly return an empty native password read before the built-in store is ready; the bridge retries empty startup reads and also does a delayed post-apply export after importing remote records.
+`configure-android-chromium-sync.sh` copies the same bearer token into Android Helium Sync's app-private `helium-sync` directories and writes `base_url=http://127.0.0.1:44719` with `device_name=helium-android`. It also marks the Android Chromium first-run flow complete and sets `EulaAccepted` in `Local State`; without that, Android stays in `FirstRunActivity` and the DevTools socket needed by CookieCloud does not come up. Android startup may briefly return an empty native password read before the built-in store is ready; the bridge retries empty startup reads and also does a delayed post-apply export after importing remote records.

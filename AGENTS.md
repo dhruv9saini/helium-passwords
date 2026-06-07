@@ -36,9 +36,12 @@ restores Chromium's native password manager.
 - `cmd/helium-local-syncd` runs the phone-local CookieCloud-compatible API.
 - `internal/syncstore` stores append-only encrypted records.
 - `scripts/android-local` installs and configures the phone/chroot local sync
-  pieces. The chroot launcher prefers a `helium` binary and only falls back to
-  `chromium` for temporary testing. The CDP chroot bridge folds records that
-  Chromium's native password API treats as the same origin and username.
+  pieces. The installer places `start-helium-local-sync` in `/usr/local/bin`
+  and the X11 helper path. `configure-android-chromium-sync.sh` also marks
+  Android Chromium first-run complete so DevTools starts in the real browser
+  activity. The chroot launcher prefers a `helium` binary and only falls back
+  to `chromium` for temporary testing. The CDP chroot bridge folds records
+  that Chromium's native password API treats as the same origin and username.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 

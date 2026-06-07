@@ -57,4 +57,57 @@ restorecon -R \"\$data_dir/helium-sync\" \"\$data_dir/app_chrome\" >/dev/null 2>
 '"
 fi
 
+if "$adb_bin" shell "su -c '
+set -eu
+package=\"$package\"
+data_dir=\$(dumpsys package \"\$package\" | sed -n \"s/.*dataDir=//p\" | head -n1)
+if [ -z \"\$data_dir\" ]; then
+  data_dir=\"/data/user/0/\$package\"
+fi
+uid=\$(cmd package list packages -U | sed -n \"s/^package:\$package uid://p\" | head -n1)
+if [ -z \"\$uid\" ]; then
+  echo \"Could not resolve package uid for \$package\" >&2
+  exit 1
+fi
+
+prefs=\"\$data_dir/shared_prefs/\${package}_preferences.xml\"
+mkdir -p \"\$data_dir/shared_prefs\" \"\$data_dir/app_chrome\"
+if [ ! -f \"\$prefs\" ] || ! grep -q \"</map>\" \"\$prefs\"; then
+  printf \"%s\n\" \"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\" \"<map>\" \"</map>\" >\"\$prefs\"
+fi
+for key in first_run_flow lightweight_first_run_flow skip_welcome_page Chrome.FirstRun.SkippedByPolicy; do
+  sed -i \"/name=\\\"\$key\\\"/d\" \"\$prefs\"
+done
+tmp_prefs=/data/local/tmp/helium-first-run-prefs.\$\$
+sed \"/<\\/map>/,\\\$d\" \"\$prefs\" >\"\$tmp_prefs\"
+printf \"%s\n\" \
+  \"    <boolean name=\\\"first_run_flow\\\" value=\\\"true\\\" />\" \
+  \"    <boolean name=\\\"lightweight_first_run_flow\\\" value=\\\"true\\\" />\" \
+  \"    <boolean name=\\\"skip_welcome_page\\\" value=\\\"true\\\" />\" \
+  \"    <boolean name=\\\"Chrome.FirstRun.SkippedByPolicy\\\" value=\\\"true\\\" />\" \
+  \"</map>\" >>\"\$tmp_prefs\"
+cp \"\$tmp_prefs\" \"\$prefs\"
+rm -f \"\$tmp_prefs\"
+
+local_state=\"\$data_dir/app_chrome/Local State\"
+if [ -f \"\$local_state\" ]; then
+  if grep -q \"\\\"EulaAccepted\\\"\" \"\$local_state\"; then
+    sed -i \"s/\\\"EulaAccepted\\\":[ ]*false/\\\"EulaAccepted\\\":true/\" \"\$local_state\"
+  else
+    sed -i \"s/^{/{\\\"EulaAccepted\\\":true,/\" \"\$local_state\"
+  fi
+else
+  printf \"%s\n\" \"{\\\"EulaAccepted\\\":true}\" >\"\$local_state\"
+fi
+
+chown \"\$uid:\$uid\" \"\$prefs\" \"\$local_state\"
+chmod 0660 \"\$prefs\"
+chmod 0600 \"\$local_state\"
+restorecon \"\$prefs\" \"\$local_state\" >/dev/null 2>&1 || true
+'"; then
+  echo "Marked Android Chromium first-run complete for $package."
+else
+  echo "Warning: could not mark Android Chromium first-run complete for $package." >&2
+fi
+
 echo "Configured native Android Chromium Sync for $package as $device_name."

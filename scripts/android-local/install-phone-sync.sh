@@ -33,6 +33,7 @@ install -Dm755 /data/local/tmp/helium-local-syncd \"\$ROOT/usr/local/bin/helium-
 install -Dm755 /data/local/tmp/helium-syncd \"\$ROOT/usr/local/bin/helium-syncd\"
 install -Dm755 /data/local/tmp/cdp-cookiecloud.mjs \"\$ROOT/usr/local/bin/cdp-cookiecloud\"
 install -Dm755 /data/local/tmp/cdp-password-sync.mjs \"\$ROOT/usr/local/bin/cdp-password-sync\"
+install -Dm755 /data/local/tmp/start-helium-local-sync-root.sh \"\$ROOT/usr/local/bin/start-helium-local-sync\"
 mkdir -p \"\$ROOT/root/.local/share/cookiecloud-extension\"
 rm -rf \"\$ROOT/root/.local/share/cookiecloud-extension/chrome-mv3\" \"\$ROOT/root/.local/share/helium-local-pass\"
 mkdir -p \"\$ROOT/root/.local/share/cookiecloud-extension/chrome-mv3\"
