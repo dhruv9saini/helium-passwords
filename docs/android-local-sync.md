@@ -36,6 +36,16 @@ The installer uses the CookieCloud extension tarball at:
 If that file is missing, `install-phone-sync.sh` fetches the official
 `easychen/CookieCloud` Chrome release asset and packs it into that path.
 
+Install the chroot browser package after a Linux ARM64 Helium Sync artifact has
+been built:
+
+```sh
+ADB=/path/to/adb scripts/android-local/install-chroot-helium.sh /path/to/helium-linux-arm64.tar.xz
+```
+
+The installer extracts the artifact to `/opt/helium-sync` inside the Arch chroot
+and exposes `/usr/local/bin/helium`.
+
 ## Run In Chroot
 
 From the Arch desktop:
@@ -49,8 +59,8 @@ places `chromium-helium-local` plus `start-helium-local-sync` in
 `/root/.config/x11/bin`; make sure that directory is in the desktop session
 `PATH`, or run `/root/.config/x11/bin/chromium-helium-local` directly.
 
-The wrapper prefers `helium` and falls back to `chromium`. Override with
-`HELIUM_CHROOT_BROWSER=/path/to/browser`.
+The wrapper prefers `helium` and falls back to `chromium` only for temporary
+testing. Override with `HELIUM_CHROOT_BROWSER=/path/to/browser`.
 
 The wrapper starts `helium-local-syncd`, `helium-syncd`, and
 `cdp-password-sync` first, starts `cdp-cookiecloud daemon` when

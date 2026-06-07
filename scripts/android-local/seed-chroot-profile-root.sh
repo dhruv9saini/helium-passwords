@@ -16,13 +16,25 @@ chmod 700 /tmp/runtime-root
 export TMPDIR=/tmp
 export XDG_RUNTIME_DIR=/tmp/runtime-root
 
+browser=${HELIUM_CHROOT_BROWSER:-}
+if [ -z "$browser" ]; then
+  if command -v helium >/dev/null 2>&1; then
+    browser=helium
+  elif command -v chromium >/dev/null 2>&1; then
+    browser=chromium
+  else
+    echo "Neither helium nor chromium is installed in the chroot" >&2
+    exit 1
+  fi
+fi
+
 existing_pids=$(ps -A -o pid,args |
-  awk '/[c]hromium .*remote-debugging-port=9223/ { print $1 }')
+  awk '/remote-debugging-port=9223/ { print $1 }')
 if [ -n "$existing_pids" ]; then
   kill $existing_pids >/dev/null 2>&1 || true
 fi
 
-chromium \
+"$browser" \
   --headless=new \
   --user-data-dir="$profile" \
   --no-sandbox \

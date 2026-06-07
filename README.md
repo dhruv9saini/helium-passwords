@@ -107,6 +107,16 @@ empty to skip the filter.
 See [docs/android-local-sync.md](docs/android-local-sync.md) for the current
 phone/chroot bridge details.
 
+The chroot should run a Linux ARM64 Helium Sync package when one is available.
+Install it with:
+
+```bash
+ADB=/path/to/adb scripts/android-local/install-chroot-helium.sh /path/to/helium-linux-arm64.tar.xz
+```
+
+The existing Chromium fallback is only for temporary bridge testing and should
+not be treated as the completed chroot browser install.
+
 ## License
 
 All code, patches, modified portions of imported code or patches, and any other
