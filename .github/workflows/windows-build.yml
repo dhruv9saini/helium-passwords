@@ -18,10 +18,10 @@ env:
   HELIUM_PLATFORM_REF: ${{ inputs['platform-ref'] }}
   HELIUM_WINDOWS_ROOT: D:\h
   HELIUM_WINDOWS_ROOT_BASH: /d/h
-  GIT_AUTHOR_NAME: Helium Passwords Builder
-  GIT_AUTHOR_EMAIL: builder@helium-passwords.invalid
-  GIT_COMMITTER_NAME: Helium Passwords Builder
-  GIT_COMMITTER_EMAIL: builder@helium-passwords.invalid
+  GIT_AUTHOR_NAME: Helium Sync Builder
+  GIT_AUTHOR_EMAIL: builder@helium-sync.invalid
+  GIT_COMMITTER_NAME: Helium Sync Builder
+  GIT_COMMITTER_EMAIL: builder@helium-sync.invalid
 
 jobs:
   build-01:
@@ -470,7 +470,7 @@ jobs:
             "${GITHUB_WORKSPACE}/build/artifacts/windows-${ARCH}"
       - uses: actions/upload-artifact@v7
         with:
-          name: helium-passwords-windows-${{ inputs.arch }}
+          name: helium-sync-windows-${{ inputs.arch }}
           path: build/artifacts/windows-${{ inputs.arch }}/
           if-no-files-found: error
           compression-level: 0

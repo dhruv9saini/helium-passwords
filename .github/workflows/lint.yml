@@ -20,7 +20,11 @@ jobs:
           submodules: true
 
       - name: Check shell scripts
-        run: bash -n scripts/*.sh
+        shell: bash
+        run: |
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find scripts -name '*.sh' -type f | sort)
 
       - name: Validate patch metadata
         run: ./helium-chromium/devutils/lint.py -t .
@@ -28,7 +32,10 @@ jobs:
       - name: Smoke-test overlay injection
         shell: bash
         run: |
-          checkout="$(bash scripts/prepare-platform.sh --skip-submodules linux /tmp/helium-passwords-linux-smoke)"
+          checkout="$(bash scripts/prepare-platform.sh --skip-submodules linux /tmp/helium-sync-linux-smoke)"
           grep -qx 'helium/passwords/restore-password-autofill.patch' "$checkout/patches/series"
           grep -qx 'helium/passwords/restore-password-ui.patch' "$checkout/patches/series"
+          grep -qx 'helium/sync/0001-helium-sync-overlay-files.patch' "$checkout/patches/series"
+          grep -qx 'helium/sync/0002-helium-sync-profile-service.patch' "$checkout/patches/series"
           test -f "$checkout/patches/helium/passwords/restore-password-autofill.patch"
+          test -f "$checkout/patches/helium/sync/0001-helium-sync-overlay-files.patch"

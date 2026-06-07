@@ -6,14 +6,14 @@ usage() {
 usage: scripts/prepare-platform.sh [--skip-submodules] <linux|macos|windows> [destination]
 
 Clone the official Helium platform repo, remove the upstream password-disable
-patch from helium-chromium, and append this repo's password overlay patches to
-the platform patch series.
+patch from helium-chromium, and append this repo's password and sync overlay
+patches to the platform patch series.
 EOF
 }
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-# shellcheck source=../helium-passwords.conf
-. "${root_dir}/helium-passwords.conf"
+# shellcheck source=../helium-sync.conf
+. "${root_dir}/helium-sync.conf"
 
 skip_submodules=false
 while [ "$#" -gt 0 ]; do
@@ -120,10 +120,10 @@ EOF
         awk '
             { print }
             $0 ~ /_extra_env\+=\(-e ARCH\)/ {
-                print "_extra_env+=(-e \"GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-Helium Passwords Builder}\")"
-                print "_extra_env+=(-e \"GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-builder@helium-passwords.invalid}\")"
-                print "_extra_env+=(-e \"GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-Helium Passwords Builder}\")"
-                print "_extra_env+=(-e \"GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-builder@helium-passwords.invalid}\")"
+                print "_extra_env+=(-e \"GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-Helium Sync Builder}\")"
+                print "_extra_env+=(-e \"GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-builder@helium-sync.invalid}\")"
+                print "_extra_env+=(-e \"GIT_COMMITTER_NAME=${GIT_COMMITTER_NAME:-Helium Sync Builder}\")"
+                print "_extra_env+=(-e \"GIT_COMMITTER_EMAIL=${GIT_COMMITTER_EMAIL:-builder@helium-sync.invalid}\")"
             }
         ' "${linux_docker_build}" > "${tmp_docker_build}"
         mv "${tmp_docker_build}" "${linux_docker_build}"
@@ -400,11 +400,11 @@ if [ "${platform}" = "macos" ]; then
     fi
 fi
 
-overlay_dir="${destination}/patches/helium/passwords"
-rm -rf "${overlay_dir}"
-mkdir -p "${overlay_dir}"
+password_overlay_dir="${destination}/patches/helium/passwords"
+rm -rf "${password_overlay_dir}"
+mkdir -p "${password_overlay_dir}"
 
-overlay_entries=()
+password_overlay_entries=()
 while IFS= read -r patch_path; do
     patch_path="${patch_path%$'\r'}"
     case "${patch_path}" in
@@ -418,16 +418,29 @@ while IFS= read -r patch_path; do
     fi
 
     patch_name="$(basename "${patch_path}")"
-    cp "${source_patch}" "${overlay_dir}/${patch_name}"
-    overlay_entries+=("helium/passwords/${patch_name}")
+    cp "${source_patch}" "${password_overlay_dir}/${patch_name}"
+    password_overlay_entries+=("helium/passwords/${patch_name}")
 done < "${root_dir}/patches/series"
 
+sync_overlay_dir="${destination}/patches/helium/sync"
+rm -rf "${sync_overlay_dir}"
+mkdir -p "${sync_overlay_dir}"
+
+sync_overlay_entries=()
+for source_patch in "${root_dir}"/chromium/patches/*.patch; do
+    [ -e "${source_patch}" ] || continue
+    patch_name="$(basename "${source_patch}")"
+    cp "${source_patch}" "${sync_overlay_dir}/${patch_name}"
+    sync_overlay_entries+=("helium/sync/${patch_name}")
+done
+
 tmp_series="$(mktemp)"
-awk '$0 !~ /^helium\/passwords\//' "${platform_series}" > "${tmp_series}"
+awk '$0 !~ /^helium\/(passwords|sync)\//' "${platform_series}" > "${tmp_series}"
 {
     cat "${tmp_series}"
     printf '\n'
-    printf '%s\n' "${overlay_entries[@]}"
+    printf '%s\n' "${password_overlay_entries[@]}"
+    printf '%s\n' "${sync_overlay_entries[@]}"
 } > "${platform_series}"
 rm -f "${tmp_series}"
 

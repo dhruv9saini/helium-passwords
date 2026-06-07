@@ -5,8 +5,8 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-check-target.sh <linux|macos|windows> <x86_64|arm64>
 
-Prepare one platform checkout and verify that the password overlay is injected
-for the requested target.
+Prepare one platform checkout and verify that the password and sync overlays
+are injected for the requested target.
 EOF
 }
 
@@ -50,6 +50,14 @@ cmp -s "${root_dir}/patches/helium-passwords/restore-password-autofill.patch" \
 cmp -s "${root_dir}/patches/helium-passwords/restore-password-ui.patch" \
     "${checkout}/patches/helium/passwords/restore-password-ui.patch"
 
+for sync_patch in "${root_dir}"/chromium/patches/*.patch; do
+    sync_patch_name="$(basename "${sync_patch}")"
+    grep -qx "helium/sync/${sync_patch_name}" \
+        "${checkout}/patches/series"
+    cmp -s "${sync_patch}" \
+        "${checkout}/patches/helium/sync/${sync_patch_name}"
+done
+
 grep -q 'r.PAYMENTS = r.AUTOFILL.createChild' \
     "${checkout}/patches/helium/passwords/restore-password-autofill.patch"
 grep -q 'chrome::ShowPaymentMethods' \
@@ -64,6 +72,15 @@ grep -q 'PageActionIconType::kVirtualCardEnroll' \
     "${checkout}/patches/helium/passwords/restore-password-ui.patch"
 grep -q 'PageActionIconType::kMandatoryReauth' \
     "${checkout}/patches/helium/passwords/restore-password-ui.patch"
+
+grep -q 'HeliumPasswordSyncBridge' \
+    "${checkout}/patches/helium/sync/0001-helium-sync-overlay-files.patch"
+grep -q 'HeliumSyncServiceFactory::GetInstance' \
+    "${checkout}/patches/helium/sync/0002-helium-sync-profile-service.patch"
+grep -q 'HeliumSyncServiceFactory::GetForProfile(profile)' \
+    "${checkout}/patches/helium/sync/0003-helium-sync-android-profile-startup.patch"
+grep -q 'PosixKeyProvider' \
+    "${checkout}/patches/helium/sync/0004-helium-sync-android-oscrypt-provider.patch"
 
 if [ "${platform}" = "linux" ]; then
     grep -q 'GetLibXml2Dirs, GitCherryPick, GetHostSysrootPlatform,' \

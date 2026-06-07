@@ -1,0 +1,28 @@
+diff --git a/chrome/browser/browser_process_impl.cc b/chrome/browser/browser_process_impl.cc
+--- a/chrome/browser/browser_process_impl.cc
++++ b/chrome/browser/browser_process_impl.cc
+@@ -277,7 +277,7 @@
+ #include "components/password_manager/core/browser/password_manager_switches.h"
+ #endif
+ 
+-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
++#if (BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_ANDROID)) && !BUILDFLAG(IS_MAC)
+ #include "components/os_crypt/async/browser/posix_key_provider.h"
+ #endif
+ 
+@@ -1577,12 +1577,13 @@
+           password_store, l10n_util::GetStringUTF8(IDS_PRODUCT_NAME), nullptr));
+ #endif  // BUILDFLAG(IS_LINUX)
+ 
+-#if BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC)
++#if (BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_ANDROID)) && !BUILDFLAG(IS_MAC)
+   // On other POSIX systems, this is the only key provider. On Linux, it is used
+   // as a fallback.
+   providers.emplace_back(
+       /*precedence=*/5u, std::make_unique<os_crypt_async::PosixKeyProvider>());
+-#endif  // BUILDFLAG(IS_POSIX) && !BUILDFLAG(IS_MAC) && !BUILDFLAG(IS_LINUX)
++#endif  // (BUILDFLAG(IS_POSIX) || BUILDFLAG(IS_ANDROID)) &&
++        // !BUILDFLAG(IS_MAC)
+ 
+ #if BUILDFLAG(IS_MAC)
+   if (base::FeatureList::IsEnabled(features::kUseKeychainKeyProvider)) {

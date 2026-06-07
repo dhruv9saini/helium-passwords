@@ -1,20 +1,34 @@
-# helium-passwords
+# helium-sync
 
-Password manager and autofill restoration overlay for
-[Helium Browser](https://github.com/imputnet/helium).
+Private fork-of-a-fork for Helium Browser.
 
-This is no longer a Linux packaging fork. The repo only keeps the password
-patches plus a small wrapper that clones the official Helium platform repo,
-injects the overlay, removes Helium's upstream password-disable patch, and runs
-that platform's native build.
+Base lineage:
+
+1. [`imputnet/helium`](https://github.com/imputnet/helium) removes Google
+   services, browser sync, and the built-in Chromium password manager.
+2. [`oof-baroomf/helium-passwords`](https://github.com/oof-baroomf/helium-passwords)
+   restores the native Chromium password manager.
+3. `oof-baroomf/helium-sync` adds local password-manager sync and cookie sync on
+   top of that restored-password Helium fork.
+
+## What This Repo Adds
+
+- Native password-manager restoration patches from `helium-passwords`.
+- A local encrypted record daemon, `helium-syncd`, for browser data.
+- A Chromium-side `helium_sync` component that observes Chromium's native
+  password store, serializes passwords through browser APIs, and syncs through
+  the local daemon.
+- A CookieCloud-compatible local cookie bridge for browsers that can expose
+  DevTools Protocol but cannot load the CookieCloud browser extension directly.
+- Android-local helper scripts for sharing the same daemon/token between the
+  Android browser process and the Arch chroot browser environment.
+
+Passwords must remain in Chromium's native password manager. Do not use a
+password-sync extension and do not copy raw profile databases.
 
 ## Targets
 
-The GitHub Actions target matrix covers the official desktop OS/architecture
-set and verifies that each platform checkout receives the password and payment
-overlay. Full Chromium builds still run through the local wrapper commands
-below on a matching host, or by dispatching the build workflow with
-`run-build` enabled.
+The desktop wrapper supports the official Helium platform repositories:
 
 | OS | Architectures |
 | --- | --- |
@@ -22,10 +36,13 @@ below on a matching host, or by dispatching the build workflow with
 | macOS | `x86_64`, `arm64` |
 | Windows | `x86_64`, `arm64` |
 
+Android is handled separately under `scripts/chromium/build-android-ci.sh` until
+a full Android Helium platform repository exists.
+
 ## Local Build
 
-Builds must run on the matching host OS. Chromium builds are large, so expect a
-long run and significant disk usage.
+Desktop builds must run on the matching host OS. Chromium builds are large, so
+expect a long run and significant disk usage.
 
 ```bash
 bash scripts/build.sh linux x86_64
@@ -37,27 +54,42 @@ bash scripts/build.sh windows arm64
 ```
 
 The wrapper clones platform repos under `build/platforms/` by default. Override
-repo URLs, clone ref, or the work directory in `helium-passwords.conf` or by
+repo URLs, clone ref, or the work directory in `helium-sync.conf` or by
 exporting the same variables before running a script.
 
-## Releases
+Go checks for the local daemon:
 
-Dispatch **Build Helium Passwords** with `create-release` enabled to run the
-selected full build, upload its packaged artifacts, and publish a prerelease.
-Leave `release-tag` blank to use the built Helium version.
-
-Linux, macOS, and Windows release builds run through staged reusable workflows
-so Chromium compile state can be checkpointed between GitHub-hosted runner jobs
-instead of relying on one six-hour job.
+```bash
+go test ./...
+go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-local-syncd
+```
 
 ## Patch Flow
 
-`patches/series` is the canonical overlay list. During platform preparation,
-each listed patch is copied into the platform repo as `patches/helium/passwords/`
-and appended to that platform's `patches/series`.
+`patches/series` is the canonical password-manager restoration list. During
+platform preparation, each listed patch is copied into the platform repo as
+`patches/helium/passwords/` and appended to that platform's `patches/series`.
+
+`chromium/patches/*.patch` is the canonical sync integration list. During
+platform preparation, each sync patch is copied into
+`patches/helium/sync/` and appended after the password patches.
+
+The first sync patch is generated from `chromium/overlay/` so the full native
+sync component can be applied by Helium platform patch tooling. Keep the overlay
+and generated patch in sync when editing Chromium-side files.
 
 The wrapper also removes `helium/hop/disable-password-manager.patch` from the
-cloned `helium-chromium` submodule before the platform build applies patches.
+cloned `helium-chromium` submodule before platform builds apply patches.
+
+## Android
+
+The current Android path uses Chromium Android source plus this repo's sync
+patches, Android built-in password-store restoration, and local daemon/token
+configuration. The Android app must be branded and configured as the Helium
+Android fork before it is considered complete.
+
+See [docs/android-local-sync.md](docs/android-local-sync.md) for the current
+phone/chroot bridge details.
 
 ## License
 

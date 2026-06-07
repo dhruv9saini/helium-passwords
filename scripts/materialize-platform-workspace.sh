@@ -31,7 +31,7 @@ case "${platform}" in
 esac
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-platform_parent="${RUNNER_TEMP:-/tmp}/helium-passwords-platform"
+platform_parent="${RUNNER_TEMP:-/tmp}/helium-sync-platform"
 platform_checkout="${platform_parent}/${platform}"
 
 rm -rf "${platform_parent}"

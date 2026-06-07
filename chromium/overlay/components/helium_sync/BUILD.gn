@@ -1,0 +1,23 @@
+# Copyright 2026 The Helium Authors
+
+source_set("helium_sync") {
+  sources = [
+    "helium_password_sync_bridge.cc",
+    "helium_password_sync_bridge.h",
+    "helium_sync_client.cc",
+    "helium_sync_client.h",
+  ]
+
+  deps = [
+    "//base",
+    "//components/password_manager/core/browser:password_form",
+    "//components/password_manager/core/browser/password_store:password_store_interface",
+    "//components/password_manager/core/browser/sync",
+    "//components/sync/protocol",
+    "//crypto",
+    "//net",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
+    "//url",
+  ]
+}

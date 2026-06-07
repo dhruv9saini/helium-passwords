@@ -1,4 +1,4 @@
-name: Build Helium Passwords
+name: Build Helium Sync
 
 on:
   push:
@@ -47,7 +47,7 @@ on:
         default: ""
 
 concurrency:
-  group: helium-passwords-build-${{ github.ref }}
+  group: helium-sync-build-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -94,10 +94,10 @@ jobs:
           github.event_name == 'workflow_dispatch' &&
           (inputs['run-build'] == true || inputs['create-release'] == true)
         }}
-      GIT_AUTHOR_NAME: Helium Passwords Builder
-      GIT_AUTHOR_EMAIL: builder@helium-passwords.invalid
-      GIT_COMMITTER_NAME: Helium Passwords Builder
-      GIT_COMMITTER_EMAIL: builder@helium-passwords.invalid
+      GIT_AUTHOR_NAME: Helium Sync Builder
+      GIT_AUTHOR_EMAIL: builder@helium-sync.invalid
+      GIT_COMMITTER_NAME: Helium Sync Builder
+      GIT_COMMITTER_EMAIL: builder@helium-sync.invalid
     steps:
       - name: Skip unselected target
         if: env.TARGET_SELECTED != 'true'
@@ -196,7 +196,7 @@ jobs:
       - name: Download packaged artifacts
         uses: actions/download-artifact@v7
         with:
-          pattern: helium-passwords-*
+          pattern: helium-sync-*
           path: release-artifacts
 
       - name: Create GitHub release
@@ -226,7 +226,7 @@ jobs:
           fi
 
           {
-            printf '# Helium Passwords %s\n\n' "${release_tag}"
+            printf '# Helium Sync %s\n\n' "${release_tag}"
             printf -- '- Source commit: `%s`\n' "${GITHUB_SHA}"
             printf -- '- Platform ref: `%s`\n' "${HELIUM_PLATFORM_REF}"
             printf -- '- Workflow run: %s/%s/actions/runs/%s\n\n' \

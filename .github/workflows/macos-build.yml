@@ -648,7 +648,7 @@ jobs:
           printf '%s\n' "${{ steps.version.outputs.version }}" > "${output_dir}/version.txt"
       - uses: actions/upload-artifact@v7
         with:
-          name: helium-passwords-macos-${{ inputs.arch }}
+          name: helium-sync-macos-${{ inputs.arch }}
           path: build/artifacts/macos-${{ inputs.arch }}/
           if-no-files-found: error
           compression-level: 0

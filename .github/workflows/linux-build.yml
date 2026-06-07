@@ -16,10 +16,10 @@ permissions:
 env:
   ARCH: ${{ inputs.arch }}
   HELIUM_PLATFORM_REF: ${{ inputs['platform-ref'] }}
-  GIT_AUTHOR_NAME: Helium Passwords Builder
-  GIT_AUTHOR_EMAIL: builder@helium-passwords.invalid
-  GIT_COMMITTER_NAME: Helium Passwords Builder
-  GIT_COMMITTER_EMAIL: builder@helium-passwords.invalid
+  GIT_AUTHOR_NAME: Helium Sync Builder
+  GIT_AUTHOR_EMAIL: builder@helium-sync.invalid
+  GIT_COMMITTER_NAME: Helium Sync Builder
+  GIT_COMMITTER_EMAIL: builder@helium-sync.invalid
 
 jobs:
   prep:
@@ -372,7 +372,7 @@ jobs:
           printf '%s\n' "${version}" > "${output_dir}/version.txt"
       - uses: actions/upload-artifact@v7
         with:
-          name: helium-passwords-linux-${{ inputs.arch }}
+          name: helium-sync-linux-${{ inputs.arch }}
           path: build/artifacts/linux-${{ inputs.arch }}/
           if-no-files-found: error
           compression-level: 0
