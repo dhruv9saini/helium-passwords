@@ -39,7 +39,6 @@ class HeliumPasswordSyncBridge
 
   struct RemotePasswordRecord {
     std::string key;
-    bool deleted = false;
     std::string origin_device;
     std::string payload_json;
   };

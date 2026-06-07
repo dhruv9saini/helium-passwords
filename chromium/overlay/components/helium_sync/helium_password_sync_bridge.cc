@@ -212,15 +212,6 @@ std::optional<Record> UpsertRecordForCredential(const Credential& credential) {
   return record;
 }
 
-Record TombstoneRecordForCredential(const Credential& credential) {
-  Record record;
-  record.kind = kPasswordKind;
-  record.key = PasswordRecordKey(credential);
-  record.deleted = true;
-  record.payload_json = "{}";
-  return record;
-}
-
 }  // namespace
 
 HeliumPasswordSyncBridge::HeliumPasswordSyncBridge(
@@ -258,7 +249,7 @@ void HeliumPasswordSyncBridge::PullAndApply() {
     return;
   }
   pull_in_flight_ = true;
-  client_->Latest({kPasswordKind}, /*include_deleted=*/true,
+  client_->Latest({kPasswordKind}, /*include_deleted=*/false,
                   base::BindOnce(&HeliumPasswordSyncBridge::OnPullComplete,
                                  weak_factory_.GetWeakPtr()));
 }
@@ -290,8 +281,7 @@ void HeliumPasswordSyncBridge::OnLoginsChanged(
   for (const auto& change : changes) {
     const Credential& credential = ChangeCredential(change);
     if (change.type() == password_manager::PasswordStoreChange::REMOVE) {
-      records.push_back(TombstoneRecordForCredential(credential));
-      known_keys_.erase(records.back().key);
+      known_keys_.erase(PasswordRecordKey(credential));
       continue;
     }
     std::optional<Record> record = UpsertRecordForCredential(credential);
@@ -311,21 +301,7 @@ void HeliumPasswordSyncBridge::OnLoginsRetained(
     return;
   }
 
-  std::set<std::string> current = KeysFor(retained_credentials);
-  std::vector<Record> records;
-  for (const std::string& previous_key : known_keys_) {
-    if (current.contains(previous_key)) {
-      continue;
-    }
-    Record record;
-    record.kind = kPasswordKind;
-    record.key = previous_key;
-    record.deleted = true;
-    record.payload_json = "{}";
-    records.push_back(std::move(record));
-  }
-  known_keys_ = std::move(current);
-  PushRecords(std::move(records));
+  known_keys_ = KeysFor(retained_credentials);
 }
 
 void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom(
@@ -425,16 +401,6 @@ void HeliumPasswordSyncBridge::ApplyRemotePasswords(
         existing != local_by_key.end()) {
       continue;
     }
-    if (remote.deleted) {
-      if (existing == local_by_key.end()) {
-        known_keys_.erase(remote.key);
-        continue;
-      }
-      profile_store_->RemoveLogin(FROM_HERE, *existing->second);
-      known_keys_.erase(remote.key);
-      continue;
-    }
-
     std::optional<base::Value> parsed =
         base::JSONReader::Read(remote.payload_json, base::JSON_PARSE_RFC);
     if (!parsed || !parsed->is_dict()) {
@@ -527,7 +493,9 @@ void HeliumPasswordSyncBridge::OnPullComplete(bool ok,
     }
     RemotePasswordRecord record;
     record.key = *key;
-    record.deleted = dict.FindBool("deleted").value_or(false);
+    if (dict.FindBool("deleted").value_or(false)) {
+      continue;
+    }
     if (const std::string* origin_device = dict.FindString("origin_device")) {
       record.origin_device = *origin_device;
     }

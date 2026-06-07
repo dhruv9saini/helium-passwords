@@ -128,7 +128,16 @@ class CDP {
       const out = details.filter(entry => !entry.isPasskey && entry.password).map(entry => {
         const domain = entry.affiliatedDomains?.[0] || {};
         return {
+          affiliatedDomains: entry.affiliatedDomains || [],
+          backupPassword: entry.backupPassword,
+          changePasswordUrl: entry.changePasswordUrl,
+          compromisedInfo: entry.compromisedInfo,
+          creationTime: entry.creationTime,
+          displayName: entry.displayName,
+          federationText: entry.federationText,
+          hidden: Boolean(entry.hidden),
           id: entry.id,
+          isPasskey: false,
           storedIn: entry.storedIn,
           url: domain.url || domain.signonRealm || "",
           signon_realm: domain.signonRealm || "",
@@ -161,13 +170,8 @@ class CDP {
   async changePassword(entry, payload) {
     return this.evaluate(`new Promise(async (resolve) => {
       try {
-        await chrome.passwordsPrivate.changeCredential(${JSON.stringify({
-          id: entry.id,
-          storedIn: entry.storedIn,
-          username: payload.username,
-          password: payload.password,
-          note: payload.note || "",
-        })});
+        const credential = ${JSON.stringify(passwordUiEntryForChange(entry, payload))};
+        await chrome.passwordsPrivate.changeCredential(credential);
         resolve({ok:true});
       } catch (error) {
         resolve({ok:false, error:String(error)});
@@ -232,7 +236,6 @@ async function pushLocalChanges(page, state) {
   }
   for (const key of Object.keys(state.fingerprints)) {
     if (seen.has(key)) continue;
-    records.push({ kind: "passwords", key, deleted: true, payload: {} });
     delete state.fingerprints[key];
   }
   if (records.length) {
@@ -247,49 +250,91 @@ async function pullRemoteChanges(page, state) {
     record.kind === "passwords" && record.origin_device !== args.device);
   if (!records.length) return 0;
 
-  let current = await page.snapshot();
-  const byKey = new Map();
-  for (const entry of current) {
-    const payload = payloadFromCredential(entry);
-    if (payload) byKey.set(keyFromPayload(payload), entry);
-  }
+  let indexes = buildCredentialIndexes(await page.snapshot());
   let applied = 0;
   for (const record of records) {
-    const existing = byKey.get(record.key);
     if (record.deleted) {
-      if (existing) {
-        const result = await page.removeCredential(existing);
-        if (!result.ok) continue;
-        byKey.delete(record.key);
-      }
       delete state.fingerprints[record.key];
-      applied++;
       continue;
     }
     const payload = normalizedPayload(record.payload);
-    if (!payload) continue;
+    if (!payload) {
+      logPasswordSyncWarning("invalid-payload", { key: record.key });
+      continue;
+    }
+    const existing = indexes.byKey.get(record.key) || findByOriginUser(indexes, payload);
     const fingerprint = fingerprintPayload(payload);
+    if (state.fingerprints[record.key] === fingerprint) {
+      continue;
+    }
     if (existing) {
       if (fingerprintPayload(payloadFromCredential(existing)) === fingerprint) {
         state.fingerprints[record.key] = fingerprint;
         continue;
       }
       const result = await page.changePassword(existing, payload);
-      if (!result.ok) continue;
+      if (!result.ok) {
+        logPasswordSyncWarning("change-failed", { key: record.key, error: errorText(result) });
+        continue;
+      }
     } else {
       const result = await page.addPassword(payload);
-      if (!result.ok) continue;
+      if (!result.ok) {
+        logPasswordSyncWarning("add-failed", { key: record.key, error: errorText(result) });
+        continue;
+      }
     }
     state.fingerprints[record.key] = fingerprint;
     applied++;
-    current = await page.snapshot();
-    byKey.clear();
-    for (const entry of current) {
-      const currentPayload = payloadFromCredential(entry);
-      if (currentPayload) byKey.set(keyFromPayload(currentPayload), entry);
-    }
+    indexes = buildCredentialIndexes(await page.snapshot());
   }
   return applied;
+}
+
+function errorText(result) {
+  return String(result?.error || "unknown error").slice(0, 500);
+}
+
+function logPasswordSyncWarning(reason, fields = {}) {
+  console.error(JSON.stringify({ action: "password-sync-warning", reason, ...fields }));
+}
+
+function buildCredentialIndexes(credentials) {
+  const byKey = new Map();
+  const byOriginUser = new Map();
+  for (const entry of credentials) {
+    const payload = payloadFromCredential(entry);
+    if (!payload) continue;
+    byKey.set(keyFromPayload(payload), entry);
+    for (const key of originUserKeysForEntry(entry)) {
+      byOriginUser.set(key, entry);
+    }
+  }
+  return { byKey, byOriginUser };
+}
+
+function passwordUiEntryForChange(entry, payload) {
+  const out = {
+    affiliatedDomains: entry.affiliatedDomains || [],
+    hidden: Boolean(entry.hidden),
+    id: entry.id,
+    isPasskey: Boolean(entry.isPasskey),
+    password: payload.password,
+    storedIn: entry.storedIn,
+    username: payload.username,
+  };
+  if (payload.note) out.note = payload.note;
+  for (const key of [
+    "backupPassword",
+    "changePasswordUrl",
+    "compromisedInfo",
+    "creationTime",
+    "displayName",
+    "federationText",
+  ]) {
+    if (entry[key] !== undefined) out[key] = entry[key];
+  }
+  return out;
 }
 
 function payloadFromCredential(credential) {
@@ -330,6 +375,36 @@ function keyFromPayload(payload) {
   return `credential/${crypto.createHash("sha256").update(material).digest("hex")}`;
 }
 
+function findByOriginUser(indexes, payload) {
+  for (const key of originUserKeysForPayload(payload)) {
+    const entry = indexes.byOriginUser.get(key);
+    if (entry) return entry;
+  }
+  return null;
+}
+
+function originUserKeysForEntry(entry) {
+  const keys = new Set(originUserKeysForPayload(payloadFromCredential(entry)));
+  for (const domain of entry.affiliatedDomains || []) {
+    addOriginUserKey(keys, domain.url || domain.signonRealm || "", entry.username);
+  }
+  return keys;
+}
+
+function originUserKeysForPayload(payload) {
+  const keys = new Set();
+  if (!payload) return keys;
+  addOriginUserKey(keys, payload.url, payload.username);
+  addOriginUserKey(keys, payload.signon_realm, payload.username);
+  return keys;
+}
+
+function addOriginUserKey(keys, value, username) {
+  if (!value) return;
+  keys.add(`${originRealm(value)}\0${username}`);
+  keys.add(`${value}\0${username}`);
+}
+
 function fingerprintPayload(payload) {
   return crypto.createHash("sha256").update(JSON.stringify([
     payload.url,
@@ -353,7 +428,7 @@ async function pushRecords(records) {
 }
 
 async function fetchLatest() {
-  const response = await fetch(`${trimSlash(args.server)}/v1/records/latest?kind=passwords&include_deleted=true`, {
+  const response = await fetch(`${trimSlash(args.server)}/v1/records/latest?kind=passwords`, {
     headers: { "Authorization": `Bearer ${token}` },
   });
   if (!response.ok) throw new Error(`latest failed: ${response.status} ${await response.text()}`);

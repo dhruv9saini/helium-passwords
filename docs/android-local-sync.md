@@ -93,6 +93,15 @@ at rest by `helium-syncd`. The chroot side uses `cdp-password-sync` to call
 `chrome.passwordsPrivate` inside `chrome://password-manager`; Android uses the
 native C++ bridge.
 
+Password sync is additive/update-only. Local deletion removes the local entry
+from that profile but does not publish a tombstone or delete it elsewhere.
+
+The chroot CDP bridge must follow `chrome.passwordsPrivate` semantics. When
+multiple remote records map to what Chromium considers the same origin and
+username, the bridge updates the existing native entry and marks the remote
+record applied in its state file instead of trying to create an unsupported
+duplicate row.
+
 Manual chroot password sync commands:
 
 ```sh

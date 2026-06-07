@@ -11,6 +11,8 @@ restores Chromium's native password manager.
 - Password sync must use Chromium's native password-manager APIs and the local
   encrypted daemon. Do not add a password-manager browser extension and do not
   copy raw profile databases.
+- Password sync is additive/update-only. Do not propagate password deletions
+  between devices unless this policy is explicitly changed.
 - Cookie sync may use the CookieCloud-compatible local bridge for environments
   that cannot load a CookieCloud extension directly.
 - Treat synced payloads as sensitive. Avoid logging decrypted cookies,
@@ -35,7 +37,8 @@ restores Chromium's native password manager.
 - `internal/syncstore` stores append-only encrypted records.
 - `scripts/android-local` installs and configures the phone/chroot local sync
   pieces. The chroot launcher prefers a `helium` binary and only falls back to
-  `chromium` for temporary testing.
+  `chromium` for temporary testing. The CDP chroot bridge folds records that
+  Chromium's native password API treats as the same origin and username.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 
