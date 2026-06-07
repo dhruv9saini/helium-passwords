@@ -30,6 +30,13 @@ restores Chromium's native password manager.
   platform repos. `0001-helium-sync-overlay-files.patch` is generated from
   `chromium/overlay/`; regenerate it whenever overlay files change. Android
   builds are branded as `Helium Sync` with package `computer.helium.sync`.
+  Android extension/uBO experiments must use the explicit
+  `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true` build-helper path, which writes
+  Chromium's `is_desktop_android = true` GN arg. Use
+  `scripts/android-local/install-android-ublock.sh` for rooted runtime uBO
+  testing; it verifies the pinned archive, adds the local Google AI Overview
+  cosmetic filter to Helium's annoyances list, and writes Android command-line
+  flags.
 - `cmd/helium-syncd` runs the localhost encrypted record daemon.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.

@@ -16,6 +16,7 @@ ccache_max_size=${CCACHE_MAXSIZE:-5G}
 phase=${CHROMIUM_ANDROID_PHASE:-all}
 touch_restored_out=${HELIUM_SYNC_TOUCH_RESTORED_OUT:-false}
 skip_system_deps=${CHROMIUM_ANDROID_SKIP_SYSTEM_DEPS:-false}
+enable_desktop_extensions=${CHROMIUM_ANDROID_DESKTOP_EXTENSIONS:-false}
 
 # Chromium bindgen treats TARGET as a Rust target triple env var and fails if the
 # workflow-level target-name variable leaks into the build environment.
@@ -121,6 +122,9 @@ ffmpeg_branding = "Chromium"
 proprietary_codecs = false
 root_extra_deps = ["//components/helium_sync", "//chrome/browser/helium_sync"]
 EOF
+  if [[ "$enable_desktop_extensions" == true ]]; then
+    echo 'is_desktop_android = true' >> "$out_dir/args.gn"
+  fi
   if [[ "$use_ccache" == true ]]; then
     echo 'cc_wrapper = "ccache"' >> "$out_dir/args.gn"
   fi

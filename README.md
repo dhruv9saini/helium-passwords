@@ -89,6 +89,21 @@ configuration. `chromium/patches/0005-helium-sync-android-branding.patch`
 brands the APK as `Helium Sync` and changes the Android package to
 `computer.helium.sync`.
 
+Chromium's Android extension support is only available through its experimental
+desktop-Android build path. Set `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true` when
+running `scripts/chromium/build-android-ci.sh` to write
+`is_desktop_android = true` into `args.gn`; uBO integration work must use that
+path rather than normal Android extension-disabled builds.
+
+For runtime uBO testing on a rooted phone, use
+`scripts/android-local/install-android-ublock.sh`. It verifies the uBO archive
+pinned in `helium-chromium/deps.ini`, installs it into the Android browser
+app's private profile area, and writes `chrome-command-line` flags under both
+`/data/local/tmp` and `/data/local` with `--load-extension`. The helper also
+adds the local Google AI Overview cosmetic filter to Helium's annoyances list;
+override it with `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTER` or set that env var
+empty to skip the filter.
+
 See [docs/android-local-sync.md](docs/android-local-sync.md) for the current
 phone/chroot bridge details.
 
