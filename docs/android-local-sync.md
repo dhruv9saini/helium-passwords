@@ -62,8 +62,9 @@ places `chromium-helium-local` plus `start-helium-local-sync` in
 The wrapper prefers `helium` and falls back to `chromium` only for temporary
 testing. Override with `HELIUM_CHROOT_BROWSER=/path/to/browser`.
 
-The wrapper starts `helium-local-syncd`, `helium-syncd`, and
-`cdp-password-sync` first, starts `cdp-cookiecloud daemon` when
+The wrapper starts `helium-local-syncd` and `helium-syncd` first, starts the
+CDP password bridge only when it is using the temporary `chromium` fallback,
+starts `cdp-cookiecloud daemon` when
 `/root/.local/share/helium-local-sync/cookiecloud-client.json` exists, then
 launches Helium Sync with:
 
@@ -112,6 +113,11 @@ multiple remote records map to what Chromium considers the same origin and
 username, the bridge updates the existing native entry and marks the remote
 record applied in its state file instead of trying to create an unsupported
 duplicate row.
+
+`HELIUM_CHROOT_CDP_PASSWORD_SYNC=auto` is the default. In auto mode the launcher
+uses native Helium password sync when the selected browser binary is `helium`,
+and uses `cdp-password-sync` only for the temporary `chromium` fallback. Set it
+to `true` or `false` to override that behavior for debugging.
 
 Manual chroot password sync commands:
 

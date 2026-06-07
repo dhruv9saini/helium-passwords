@@ -50,8 +50,10 @@ restores Chromium's native password manager.
   to `chromium` for temporary testing. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium
   Sync artifact to install `/usr/local/bin/helium` in the phone chroot. The
-  CDP chroot bridge folds records that Chromium's native password API treats as
-  the same origin and username.
+  launcher uses native password sync for `helium` and uses the CDP password
+  bridge only for the temporary `chromium` fallback. The CDP chroot bridge
+  folds records that Chromium's native password API treats as the same origin
+  and username.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 

@@ -10,6 +10,14 @@ password_server=${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}
 cdp=${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}
 
 mkdir -p "$profile" "$state_dir" /dev/shm
+sync_config_dir=$profile/Default/helium-sync
+mkdir -p "$sync_config_dir"
+if [ -s "$password_data_dir/token" ]; then
+  cp "$password_data_dir/token" "$sync_config_dir/token"
+  printf '%s\n' "$password_server" >"$sync_config_dir/base_url"
+  printf '%s\n' "${HELIUM_SYNC_DEVICE_NAME:-helium-chroot}" >"$sync_config_dir/device_name"
+  chmod 600 "$sync_config_dir/token" "$sync_config_dir/base_url" "$sync_config_dir/device_name"
+fi
 chmod 1777 /dev/shm
 mkdir -p /tmp/runtime-root
 chmod 700 /tmp/runtime-root
@@ -25,6 +33,15 @@ if [ -z "$browser" ]; then
   else
     echo "Neither helium nor chromium is installed in the chroot" >&2
     exit 1
+  fi
+fi
+browser_name=$(basename "$browser")
+cdp_password_sync=${HELIUM_CHROOT_CDP_PASSWORD_SYNC:-auto}
+if [ "$cdp_password_sync" = auto ]; then
+  if [ "$browser_name" = helium ]; then
+    cdp_password_sync=false
+  else
+    cdp_password_sync=true
   fi
 fi
 
@@ -71,7 +88,7 @@ if [ -f "$cookiecloud_config" ]; then
     --config-file "$cookiecloud_config"
 fi
 
-if [ -s "$password_data_dir/token" ]; then
+if [ "$cdp_password_sync" = true ] && [ -s "$password_data_dir/token" ]; then
   cdp-password-sync pull \
     --cdp "$cdp" \
     --server "$password_server" \

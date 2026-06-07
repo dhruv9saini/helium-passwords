@@ -26,6 +26,15 @@ if [ -z "$browser" ]; then
     exit 1
   fi
 fi
+browser_name=$(basename "$browser")
+cdp_password_sync=${HELIUM_CHROOT_CDP_PASSWORD_SYNC:-auto}
+if [ "$cdp_password_sync" = auto ]; then
+  if [ "$browser_name" = helium ]; then
+    cdp_password_sync=false
+  else
+    cdp_password_sync=true
+  fi
+fi
 
 pids=
 cleanup() {
@@ -37,7 +46,7 @@ trap cleanup EXIT INT TERM
 
 mkdir -p /root/.local/state/helium-sync
 
-if command -v cdp-password-sync >/dev/null 2>&1; then
+if [ "$cdp_password_sync" = true ] && command -v cdp-password-sync >/dev/null 2>&1; then
   cdp-password-sync daemon \
     --cdp "${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}" \
     --server "${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}" \
