@@ -116,9 +116,25 @@ chown -R \"\$uid:\$uid\" \"\$data_dir/app_chrome/helium-extensions\"
 find \"\$data_dir/app_chrome/helium-extensions\" -type d -exec chmod 0700 {} +
 find \"\$data_dir/app_chrome/helium-extensions\" -type f -exec chmod 0600 {} +
 restorecon -R \"\$data_dir/app_chrome/helium-extensions\" >/dev/null 2>&1 || true
-flags=\"_ --load-extension=\$ext_dir --extensions-on-chrome-urls\"
-printf \"%s\n\" \"\$flags\" >/data/local/tmp/chrome-command-line
-printf \"%s\n\" \"\$flags\" >/data/local/chrome-command-line
+write_command_line() {
+  file=\$1
+  flags=\"_\"
+  if [ -f \"\$file\" ]; then
+    for flag in \$(cat \"\$file\"); do
+      case \"\$flag\" in
+        _|--load-extension=*|--extensions-on-chrome-urls|--remote-debugging-socket-name=*) continue ;;
+      esac
+      case \" \$flags \" in
+        *\" \$flag \"*) ;;
+        *) flags=\"\$flags \$flag\" ;;
+      esac
+    done
+  fi
+  flags=\"\$flags --remote-debugging-socket-name=chrome_devtools_remote --load-extension=\$ext_dir --extensions-on-chrome-urls\"
+  printf \"%s\n\" \"\$flags\" >\"\$file\"
+}
+write_command_line /data/local/tmp/chrome-command-line
+write_command_line /data/local/chrome-command-line
 chmod 0644 /data/local/tmp/chrome-command-line /data/local/chrome-command-line
 restorecon /data/local/tmp/chrome-command-line /data/local/chrome-command-line >/dev/null 2>&1 || true
 '"
@@ -128,4 +144,4 @@ if [[ "$restart" == true ]]; then
   "$adb_bin" shell "monkey -p '$package' 1" >/dev/null
 fi
 
-echo "Installed pinned uBlock Origin $version for $package and wrote /data/local/chrome-command-line."
+echo "Installed pinned uBlock Origin $version for $package and preserved remote debugging flags in /data/local/chrome-command-line."

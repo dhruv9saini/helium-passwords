@@ -68,7 +68,7 @@ starts `cdp-cookiecloud daemon` when
 `/root/.local/share/helium-local-sync/cookiecloud-client.json` exists, then
 launches Helium Sync with:
 
-- profile: `/root/.config/helium-sync`
+- profile: `/root/.config/helium-passwords`
 - CookieCloud extension: `/root/.local/share/cookiecloud-extension/chrome-mv3`
 
 Configure CookieCloud in the extension UI or client config:
@@ -93,7 +93,7 @@ Use port `9222` for Android Helium Sync through the local `socat` bridge; use po
 
 ## Password Manager
 
-This setup does not replace Chromium's native password manager and does not install a password-manager extension. CookieCloud is only for cookies. Chroot Helium Sync uses its normal profile password store at `/root/.config/helium-sync`; Android Helium Sync uses the native Chromium profile store in `app_chrome/Default/Login Data`.
+This setup does not replace Chromium's native password manager and does not install a password-manager extension. CookieCloud is only for cookies. Chroot Helium Sync uses its normal profile password store at `/root/.config/helium-passwords`; Android Helium Sync uses the native Chromium profile store in `app_chrome/Default/Login Data`.
 
 The Android fork forces Chromium's built-in encrypted `Login Data` backend for the profile password store instead of the Android Google Password Manager backend. The Android password-store replacement files live in `chromium/overlay/` and are copied only by the direct Android build path. `chromium/patches/0004-helium-sync-android-oscrypt-provider.patch` makes Android initialize the stable `v10` OSCrypt provider needed by that built-in database.
 
@@ -101,9 +101,10 @@ The native Chromium overlays in `chromium/overlay/components/helium_sync` and `c
 
 The password payload format is `helium-password-v1`, a small JSON record with
 `url`, `signon_realm`, `username`, `password`, and `note`. Records are encrypted
-at rest by `helium-syncd`. The chroot side uses `cdp-password-sync` to call
-`chrome.passwordsPrivate` inside `chrome://password-manager`; Android uses the
-native C++ bridge.
+at rest by `helium-syncd`. Chroot Helium uses the native C++ bridge. The
+temporary Chromium fallback uses `cdp-password-sync` to call
+`chrome.passwordsPrivate` inside `chrome://password-manager`; Android also uses
+the native C++ bridge.
 
 Password sync is additive/update-only. Local deletion removes the local entry
 from that profile but does not publish a tombstone or delete it elsewhere.
@@ -133,6 +134,11 @@ Config lookup is profile-first:
 - `$HOME/.local/share/helium-sync/token`
 - Android app-data `helium-sync/token`
 
-The chroot launcher mirrors `/root/.local/share/helium-sync/token` into `/root/.config/helium-sync/Default/helium-sync/token` and writes `base_url` and `device_name` beside it before starting Chromium. The local daemon keeps its passphrase and bearer token in `/root/.local/share/helium-sync`.
+The chroot launcher mirrors `/root/.local/share/helium-sync/token` into `/root/.config/helium-passwords/Default/helium-sync/token` and writes `base_url` and `device_name` beside it before starting Chromium. The local daemon keeps its passphrase and bearer token in `/root/.local/share/helium-sync`.
+
+The Android uBO installer writes both `/data/local/tmp/chrome-command-line` and
+`/data/local/chrome-command-line`, preserves unrelated existing flags, and
+keeps `--remote-debugging-socket-name=chrome_devtools_remote` so the local
+CookieCloud bridge can still reach Android Helium Sync through `socat`.
 
 `configure-android-chromium-sync.sh` copies the same bearer token into Android Helium Sync's app-private `helium-sync` directories and writes `base_url=http://127.0.0.1:44719` with `device_name=helium-android`. It also marks the Android Chromium first-run flow complete and sets `EulaAccepted` in `Local State`; without that, Android stays in `FirstRunActivity` and the DevTools socket needed by CookieCloud does not come up. Android startup may briefly return an empty native password read before the built-in store is ready; the bridge retries empty startup reads and also does a delayed post-apply export after importing remote records.

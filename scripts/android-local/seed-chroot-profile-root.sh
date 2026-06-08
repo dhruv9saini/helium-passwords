@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-profile=${HELIUM_CHROOT_PROFILE:-/root/.config/helium-sync}
+profile=${HELIUM_CHROOT_PROFILE:-/root/.config/helium-passwords}
 state_dir=${XDG_STATE_HOME:-/root/.local/state}/helium-sync
 password_data_dir=${HELIUM_PASSWORD_SYNC_DATA:-/root/.local/share/helium-sync}
 cookiecloud_config=${HELIUM_COOKIECLOUD_CONFIG:-/root/.local/share/helium-local-sync/cookiecloud-client.json}
@@ -9,7 +9,22 @@ cookiecloud_server=${HELIUM_COOKIECLOUD_SERVER:-http://127.0.0.1:8088}
 password_server=${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}
 cdp=${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}
 
+cleanup_stale_chromium_singletons() {
+  local lock_target lock_pid
+
+  lock_target=$(readlink "$profile/SingletonLock" 2>/dev/null || true)
+  [ -n "$lock_target" ] || return 0
+  lock_pid=${lock_target##*-}
+  case "$lock_pid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  if ! ps -p "$lock_pid" >/dev/null 2>&1; then
+    rm -f "$profile/SingletonLock" "$profile/SingletonSocket" "$profile/SingletonCookie"
+  fi
+}
+
 mkdir -p "$profile" "$state_dir" /dev/shm
+cleanup_stale_chromium_singletons
 sync_config_dir=$profile/Default/helium-sync
 mkdir -p "$sync_config_dir"
 if [ -s "$password_data_dir/token" ]; then

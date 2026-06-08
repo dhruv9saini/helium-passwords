@@ -42,7 +42,7 @@ restores Chromium's native password manager.
   `scripts/android-local/install-android-ublock.sh` for rooted runtime uBO
   testing; it verifies the pinned archive, adds the local Google AI Overview
   cosmetic filter to Helium's annoyances list, and writes Android command-line
-  flags.
+  flags without dropping the DevTools socket flag needed by CookieCloud.
 - `cmd/helium-syncd` runs the localhost encrypted record daemon.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.
@@ -56,10 +56,12 @@ restores Chromium's native password manager.
   to `chromium` for temporary testing. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium
   Sync artifact to install `/usr/local/bin/helium` in the phone chroot. The
-  launcher uses native password sync for `helium` and uses the CDP password
-  bridge only for the temporary `chromium` fallback. The CDP chroot bridge
-  folds records that Chromium's native password API treats as the same origin
-  and username.
+  launcher defaults to `/root/.config/helium-passwords`, uses native password
+  sync for `helium`, and uses the CDP password bridge only for the temporary
+  `chromium` fallback. The launcher removes stale Chromium singleton files only
+  when their recorded PID is no longer running. The CDP chroot bridge folds
+  records that Chromium's native password API treats as the same origin and
+  username.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 

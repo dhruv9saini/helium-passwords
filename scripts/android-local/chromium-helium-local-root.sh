@@ -3,10 +3,26 @@ set -euo pipefail
 
 start-helium-local-sync
 
-profile=${HELIUM_LOCAL_CHROMIUM_PROFILE:-/root/.config/helium-sync}
+profile=${HELIUM_LOCAL_CHROMIUM_PROFILE:-/root/.config/helium-passwords}
 password_data_dir=${HELIUM_PASSWORD_SYNC_DATA:-/root/.local/share/helium-sync}
 sync_config_dir=$profile/Default/helium-sync
+
+cleanup_stale_chromium_singletons() {
+  local lock_target lock_pid
+
+  lock_target=$(readlink "$profile/SingletonLock" 2>/dev/null || true)
+  [ -n "$lock_target" ] || return 0
+  lock_pid=${lock_target##*-}
+  case "$lock_pid" in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  if ! ps -p "$lock_pid" >/dev/null 2>&1; then
+    rm -f "$profile/SingletonLock" "$profile/SingletonSocket" "$profile/SingletonCookie"
+  fi
+}
+
 mkdir -p "$profile"
+cleanup_stale_chromium_singletons
 mkdir -p "$sync_config_dir"
 cp "$password_data_dir/token" "$sync_config_dir/token"
 printf '%s\n' "${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}" >"$sync_config_dir/base_url"
@@ -14,6 +30,10 @@ printf '%s\n' "${HELIUM_SYNC_DEVICE_NAME:-helium-chroot}" >"$sync_config_dir/dev
 chmod 600 "$sync_config_dir/token" "$sync_config_dir/base_url" "$sync_config_dir/device_name"
 mkdir -p /dev/shm
 chmod 1777 /dev/shm
+mkdir -p /tmp/runtime-root
+chmod 700 /tmp/runtime-root
+export TMPDIR=/tmp
+export XDG_RUNTIME_DIR=/tmp/runtime-root
 
 browser=${HELIUM_CHROOT_BROWSER:-}
 if [ -z "$browser" ]; then

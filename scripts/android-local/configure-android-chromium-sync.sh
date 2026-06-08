@@ -3,7 +3,7 @@ set -euo pipefail
 
 adb_bin=${ADB:-adb}
 root=${ARCH_CHROOT:-/data/local/chroots/arch}
-package=${CHROMIUM_ANDROID_PACKAGE:-org.chromium.chrome}
+package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync}
 base_url=${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}
 device_name=${HELIUM_ANDROID_SYNC_DEVICE_NAME:-helium-android}
 token_src=${HELIUM_PASSWORD_SYNC_TOKEN:-$root/root/.local/share/helium-sync/token}

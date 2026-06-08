@@ -41,13 +41,25 @@ if ! command -v readelf >/dev/null 2>&1; then
 fi
 
 tar -tf "$artifact" >"$work_dir/members.txt"
-if ! grep -qxE '(\./)?helium' "$work_dir/members.txt"; then
-  echo "artifact does not contain a top-level helium executable: $artifact" >&2
+helium_member=$(
+  awk '$0 !~ /\/$/ && ($0 == "helium" || $0 == "./helium" || $0 ~ /\/helium$/) { print; exit }' \
+    "$work_dir/members.txt"
+)
+if [ -z "$helium_member" ]; then
+  echo "artifact does not contain a helium executable: $artifact" >&2
   exit 1
 fi
 
-tar -xOf "$artifact" ./helium >"$work_dir/helium" 2>/dev/null ||
-  tar -xOf "$artifact" helium >"$work_dir/helium"
+tar -xOf "$artifact" "$helium_member" >"$work_dir/helium"
+
+normalized_helium_member=${helium_member#./}
+if [ "$normalized_helium_member" = "helium" ]; then
+  strip_components=0
+else
+  strip_components=$(
+    awk -F/ '{ print NF - 1 }' <<<"$normalized_helium_member"
+  )
+fi
 
 artifact_machine=$(readelf -h "$work_dir/helium" |
   awk -F: '/Machine:/ { gsub(/^[ \t]+/, "", $2); print $2; exit }')
@@ -70,11 +82,18 @@ ROOT='"$root"'
 rm -rf \"\$ROOT/opt/helium-sync\"
 mkdir -p \"\$ROOT/opt/helium-sync\" \"\$ROOT/tmp\" \"\$ROOT/usr/local/bin\"
 cp /data/local/tmp/'"$tmp_name"' \"\$ROOT/tmp/'"$tmp_name"'\"
-/system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/'"$tmp_name"' -C /opt/helium-sync
+/system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/'"$tmp_name"' -C /opt/helium-sync \
+  --strip-components='"$strip_components"'
 rm -f \"\$ROOT/tmp/'"$tmp_name"'\"
 chmod 0755 \"\$ROOT/opt/helium-sync/helium\"
+if [ -f \"\$ROOT/opt/helium-sync/helium-wrapper\" ]; then
+  chmod 0755 \"\$ROOT/opt/helium-sync/helium-wrapper\"
+fi
 cat > \"\$ROOT/usr/local/bin/helium\" <<'\''WRAPPER'\''
 #!/usr/bin/env sh
+if [ -x /opt/helium-sync/helium-wrapper ]; then
+  exec /opt/helium-sync/helium-wrapper \"\$@\"
+fi
 exec /opt/helium-sync/helium \"\$@\"
 WRAPPER
 chmod 0755 \"\$ROOT/usr/local/bin/helium\"
