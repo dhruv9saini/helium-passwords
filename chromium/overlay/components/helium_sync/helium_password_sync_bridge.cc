@@ -92,7 +92,8 @@ std::string PasswordRecordKeyForValues(std::string_view signon_realm,
          base::HexEncodeLower(crypto::SHA256HashString(material));
 }
 
-std::string SignonRealmForCredential(const Credential& credential) {
+template <typename CredentialLike>
+std::string SignonRealmForCredential(const CredentialLike& credential) {
   if (!credential.signon_realm.empty()) {
     return credential.signon_realm;
   }
@@ -102,7 +103,8 @@ std::string SignonRealmForCredential(const Credential& credential) {
   return std::string();
 }
 
-std::string UrlForCredential(const Credential& credential) {
+template <typename CredentialLike>
+std::string UrlForCredential(const CredentialLike& credential) {
   if (credential.url.is_valid()) {
     return credential.url.spec();
   }
@@ -110,6 +112,13 @@ std::string UrlForCredential(const Credential& credential) {
 }
 
 std::string PasswordRecordKey(const Credential& credential) {
+  return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
+                                    UrlForCredential(credential),
+                                    credential.username_value);
+}
+
+std::string PasswordRecordKeyForForm(
+    const password_manager::PasswordForm& credential) {
   return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
                                     UrlForCredential(credential),
                                     credential.username_value);
@@ -296,12 +305,16 @@ void HeliumPasswordSyncBridge::OnLoginsChanged(
 
 void HeliumPasswordSyncBridge::OnLoginsRetained(
     password_manager::PasswordStoreInterface* store,
-    const password_manager::LoginsResult& retained_credentials) {
+    const std::vector<password_manager::PasswordForm>& retained_passwords) {
   if (store != profile_store_.get() || suppress_local_changes_ > 0) {
     return;
   }
 
-  known_keys_ = KeysFor(retained_credentials);
+  std::set<std::string> retained_keys;
+  for (const auto& credential : retained_passwords) {
+    retained_keys.insert(PasswordRecordKeyForForm(credential));
+  }
+  known_keys_ = std::move(retained_keys);
 }
 
 void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom(
@@ -415,14 +428,14 @@ void HeliumPasswordSyncBridge::ApplyRemotePasswords(
     if (existing == local_by_key.end()) {
       suppress_local_changes_ += 2;
       profile_store_->UpdateLogin(
-          password_manager::CloneStoredCredential(*credential),
+          password_manager::ToPasswordForm(*credential),
           base::BindOnce(
               &HeliumPasswordSyncBridge::AddRemoteLoginAfterUpdate,
               weak_factory_.GetWeakPtr(), std::move(*credential)));
     } else {
       suppress_local_changes_++;
       profile_store_->UpdateLogin(
-          std::move(*credential),
+          password_manager::ToPasswordForm(std::move(*credential)),
           base::BindOnce(
               &HeliumPasswordSyncBridge::OnRemoteWriteAndExportComplete,
                          weak_factory_.GetWeakPtr()));
@@ -530,7 +543,7 @@ void HeliumPasswordSyncBridge::AddRemoteLoginAfterUpdate(
     return;
   }
   profile_store_->AddLogin(
-      std::move(credential),
+      password_manager::ToPasswordForm(std::move(credential)),
       base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteWriteAndExportComplete,
                      weak_factory_.GetWeakPtr()));
 }

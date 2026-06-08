@@ -56,7 +56,8 @@ class HeliumPasswordSyncBridge
       const password_manager::PasswordStoreChangeList& changes) override;
   void OnLoginsRetained(
       password_manager::PasswordStoreInterface* store,
-      const password_manager::LoginsResult& retained_credentials) override;
+      const std::vector<password_manager::PasswordForm>& retained_passwords)
+      override;
 
   // PasswordStoreConsumer:
   void OnGetPasswordStoreResultsOrErrorFrom(

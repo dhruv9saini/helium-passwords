@@ -128,6 +128,26 @@ EOF
         ' "${linux_docker_build}" > "${tmp_docker_build}"
         mv "${tmp_docker_build}" "${linux_docker_build}"
     fi
+
+    linux_package_sh="${destination}/scripts/package.sh"
+    if [ -f "${linux_package_sh}" ] && \
+        ! grep -q 'HELIUM_SYNC_OPTIONAL_RELEASE_FILES' "${linux_package_sh}"; then
+        perl -0pi -e 's/vk_swiftshader_icd\.json\nxdg-mime\nxdg-settings"/vk_swiftshader_icd.json"\n\n# HELIUM_SYNC_OPTIONAL_RELEASE_FILES\n_optional_files="xdg-mime\nxdg-settings"/' \
+            "${linux_package_sh}"
+        perl -0pi -e 's/(for file in \$_files; do\n    cp -r "\$_build_dir\/src\/out\/Default\/\$file" "\$_tarball_dir" &\ndone\n)/$1\nfor file in \$_optional_files; do\n    if [ -e "\$_build_dir\/src\/out\/Default\/\$file" ]; then\n        cp -r "\$_build_dir\/src\/out\/Default\/\$file" "\$_tarball_dir" &\n    fi\ndone\n/s' \
+            "${linux_package_sh}"
+        perl -0pi -e 's/if command -v eu-strip >\/dev\/null 2>&1; then\n    _strip_cmd=eu-strip\nelse\n    _strip_cmd="strip --strip-unneeded"\nfi/if command -v eu-strip >\/dev\/null 2>\&1; then\n    _strip_cmd=eu-strip\nelif command -v llvm-strip >\/dev\/null 2>\&1; then\n    _strip_cmd=llvm-strip\nelse\n    _strip_cmd="strip --strip-unneeded"\nfi/s' \
+            "${linux_package_sh}"
+        perl -0pi -e 's/(find "\$_tarball_dir" -type f -exec file \{\} \+ \\\n    \| awk -F: '\''\/ELF\/ \{print \$1\}'\'' \\\n    \| xargs \$_strip_cmd)/$1 || echo "warning: could not strip release binaries; continuing" >\&2/' \
+            "${linux_package_sh}"
+        perl -0pi -e 's/(appimagetool \\\n    -u "\$_update_info" \\\n    "\$_app_dir" \\\n    "\$_release_name\.AppImage" "\$@" &)/if command -v appimagetool >\/dev\/null 2>\&1; then\n    $1\nelse\n    echo "warning: appimagetool not found; skipping AppImage" >\&2\nfi/s' \
+            "${linux_package_sh}"
+    fi
+    if [ -f "${linux_package_sh}" ] && \
+        ! grep -q 'HELIUM_SYNC_PACKAGE_PV_FALLBACK' "${linux_package_sh}"; then
+        perl -0pi -e 's/tar vcf - "\$_tarball_name" \\\n    \| pv -s"\$\{_size\}k" \\\n    \| xz -e9 > "\$TAR_PATH" &/# HELIUM_SYNC_PACKAGE_PV_FALLBACK\nif command -v pv >\/dev\/null 2>\&1; then\n    tar vcf - "\$_tarball_name" \\\n        | pv -s"\${_size}k" \\\n        | xz -e9 > "\$TAR_PATH" &\nelse\n    tar cf - "\$_tarball_name" \\\n        | xz -e9 > "\$TAR_PATH" &\nfi/s' \
+            "${linux_package_sh}"
+    fi
 fi
 
 if [ "${platform}" = "windows" ]; then

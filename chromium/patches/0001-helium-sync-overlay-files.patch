@@ -434,10 +434,10 @@ index 0000000..9747ead
 +}
 diff --git a/components/helium_sync/helium_password_sync_bridge.cc b/components/helium_sync/helium_password_sync_bridge.cc
 new file mode 100644
-index 0000000..792bce4
+index 0000000..fbeabd0
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.cc
-@@ -0,0 +1,565 @@
+@@ -0,0 +1,578 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_password_sync_bridge.h"
@@ -532,7 +532,8 @@ index 0000000..792bce4
 +         base::HexEncodeLower(crypto::SHA256HashString(material));
 +}
 +
-+std::string SignonRealmForCredential(const Credential& credential) {
++template <typename CredentialLike>
++std::string SignonRealmForCredential(const CredentialLike& credential) {
 +  if (!credential.signon_realm.empty()) {
 +    return credential.signon_realm;
 +  }
@@ -542,7 +543,8 @@ index 0000000..792bce4
 +  return std::string();
 +}
 +
-+std::string UrlForCredential(const Credential& credential) {
++template <typename CredentialLike>
++std::string UrlForCredential(const CredentialLike& credential) {
 +  if (credential.url.is_valid()) {
 +    return credential.url.spec();
 +  }
@@ -550,6 +552,13 @@ index 0000000..792bce4
 +}
 +
 +std::string PasswordRecordKey(const Credential& credential) {
++  return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
++                                    UrlForCredential(credential),
++                                    credential.username_value);
++}
++
++std::string PasswordRecordKeyForForm(
++    const password_manager::PasswordForm& credential) {
 +  return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
 +                                    UrlForCredential(credential),
 +                                    credential.username_value);
@@ -736,12 +745,16 @@ index 0000000..792bce4
 +
 +void HeliumPasswordSyncBridge::OnLoginsRetained(
 +    password_manager::PasswordStoreInterface* store,
-+    const password_manager::LoginsResult& retained_credentials) {
++    const std::vector<password_manager::PasswordForm>& retained_passwords) {
 +  if (store != profile_store_.get() || suppress_local_changes_ > 0) {
 +    return;
 +  }
 +
-+  known_keys_ = KeysFor(retained_credentials);
++  std::set<std::string> retained_keys;
++  for (const auto& credential : retained_passwords) {
++    retained_keys.insert(PasswordRecordKeyForForm(credential));
++  }
++  known_keys_ = std::move(retained_keys);
 +}
 +
 +void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom(
@@ -855,14 +868,14 @@ index 0000000..792bce4
 +    if (existing == local_by_key.end()) {
 +      suppress_local_changes_ += 2;
 +      profile_store_->UpdateLogin(
-+          password_manager::CloneStoredCredential(*credential),
++          password_manager::ToPasswordForm(*credential),
 +          base::BindOnce(
 +              &HeliumPasswordSyncBridge::AddRemoteLoginAfterUpdate,
 +              weak_factory_.GetWeakPtr(), std::move(*credential)));
 +    } else {
 +      suppress_local_changes_++;
 +      profile_store_->UpdateLogin(
-+          std::move(*credential),
++          password_manager::ToPasswordForm(std::move(*credential)),
 +          base::BindOnce(
 +              &HeliumPasswordSyncBridge::OnRemoteWriteAndExportComplete,
 +                         weak_factory_.GetWeakPtr()));
@@ -970,7 +983,7 @@ index 0000000..792bce4
 +    return;
 +  }
 +  profile_store_->AddLogin(
-+      std::move(credential),
++      password_manager::ToPasswordForm(std::move(credential)),
 +      base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteWriteAndExportComplete,
 +                     weak_factory_.GetWeakPtr()));
 +}
@@ -1005,10 +1018,10 @@ index 0000000..792bce4
 +}  // namespace helium_sync
 diff --git a/components/helium_sync/helium_password_sync_bridge.h b/components/helium_sync/helium_password_sync_bridge.h
 new file mode 100644
-index 0000000..ecf5932
+index 0000000..cb082b2
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.h
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,98 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
@@ -1067,7 +1080,8 @@ index 0000000..ecf5932
 +      const password_manager::PasswordStoreChangeList& changes) override;
 +  void OnLoginsRetained(
 +      password_manager::PasswordStoreInterface* store,
-+      const password_manager::LoginsResult& retained_credentials) override;
++      const std::vector<password_manager::PasswordForm>& retained_passwords)
++      override;
 +
 +  // PasswordStoreConsumer:
 +  void OnGetPasswordStoreResultsOrErrorFrom(
