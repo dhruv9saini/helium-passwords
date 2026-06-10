@@ -64,6 +64,10 @@ restores Chromium's native password manager.
   username.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
+- Android APKs intended for use on the phone must be official, non-debuggable
+  builds. Keep `is_official_build = true`, `is_debug = false`, and
+  `dcheck_always_on = false`; Chromium release builds that are not official
+  still compile DCHECKs and can crash normal web pages on renderer assertions.
 
 ## Patch Flow
 

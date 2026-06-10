@@ -114,7 +114,9 @@ generate_android_build_files() {
   cat > "$out_dir/args.gn" <<EOF
 target_os = "android"
 target_cpu = "$target_cpu"
+is_official_build = true
 is_debug = false
+dcheck_always_on = false
 is_component_build = false
 symbol_level = 0
 blink_symbol_level = 0
