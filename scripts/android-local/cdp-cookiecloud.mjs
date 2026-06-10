@@ -173,7 +173,7 @@ function readTextFile(path) {
 }
 
 function defaultConfigPath() {
-  return "/root/.local/share/helium-local-sync/cookiecloud-client.json";
+  return `${process.env.HOME || "/root"}/.local/share/helium-local-sync/cookiecloud-client.json`;
 }
 
 function toList(value) {

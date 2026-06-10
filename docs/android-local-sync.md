@@ -56,8 +56,9 @@ chromium-helium-local
 
 The installer places `start-helium-local-sync` in `/usr/local/bin` and also
 places `chromium-helium-local` plus `start-helium-local-sync` in
-`/root/.config/x11/bin`; make sure that directory is in the desktop session
-`PATH`, or run `/root/.config/x11/bin/chromium-helium-local` directly.
+`/root/.config/x11/bin` and `/home/dhruv/.config/x11/bin`; make sure the
+matching user directory is in the desktop session `PATH`, or run the helper
+from that directory directly.
 
 The wrapper prefers `helium` and falls back to `chromium` only for temporary
 testing. Override with `HELIUM_CHROOT_BROWSER=/path/to/browser`.
@@ -65,11 +66,18 @@ testing. Override with `HELIUM_CHROOT_BROWSER=/path/to/browser`.
 The wrapper starts `helium-local-syncd` and `helium-syncd` first, starts the
 CDP password bridge only when it is using the temporary `chromium` fallback,
 starts `cdp-cookiecloud daemon` when
-`/root/.local/share/helium-local-sync/cookiecloud-client.json` exists, then
+`$HOME/.local/share/helium-local-sync/cookiecloud-client.json` exists, then
 launches Helium Sync with:
 
-- profile: `/root/.config/helium-passwords`
-- CookieCloud extension: `/root/.local/share/cookiecloud-extension/chrome-mv3`
+- profile: `$HOME/.config/helium-passwords`
+- CookieCloud extension: `$HOME/.local/share/cookiecloud-extension/chrome-mv3`
+- Google AI Overview blocker extension:
+  `$HOME/.local/share/google-ai-overview-blocker`
+
+The chroot Google AI Overview blocker is a normal desktop Chromium extension.
+The Android main browser uses the compiled
+`0006-helium-sync-android-ai-overview-blocker.patch` Java hook instead, because
+Android command-line extension content scripts are not reliable in this fork.
 
 Configure CookieCloud in the extension UI or client config:
 
@@ -80,8 +88,8 @@ Configure CookieCloud in the extension UI or client config:
 The installer also provides a no-dependency CDP bridge:
 
 ```sh
-cdp-cookiecloud sync --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file /root/.local/share/helium-local-sync/cookiecloud-client.json
-cdp-cookiecloud daemon --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file /root/.local/share/helium-local-sync/cookiecloud-client.json
+cdp-cookiecloud sync --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
+cdp-cookiecloud daemon --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
 ```
 
 `upload` and `download` still exist for directed checks and accept
@@ -93,7 +101,7 @@ Use port `9222` for Android Helium Sync through the local `socat` bridge; use po
 
 ## Password Manager
 
-This setup does not replace Chromium's native password manager and does not install a password-manager extension. CookieCloud is only for cookies. Chroot Helium Sync uses its normal profile password store at `/root/.config/helium-passwords`; Android Helium Sync uses the native Chromium profile store in `app_chrome/Default/Login Data`.
+This setup does not replace Chromium's native password manager and does not install a password-manager extension. CookieCloud is only for cookies. Chroot Helium Sync uses its normal profile password store at `$HOME/.config/helium-passwords`; Android Helium Sync uses the native Chromium profile store in `app_chrome/Default/Login Data`.
 
 The Android fork forces Chromium's built-in encrypted `Login Data` backend for the profile password store instead of the Android Google Password Manager backend. The Android password-store replacement files live in `chromium/overlay/` and are copied only by the direct Android build path. `chromium/patches/0004-helium-sync-android-oscrypt-provider.patch` makes Android initialize the stable `v10` OSCrypt provider needed by that built-in database.
 
@@ -123,8 +131,8 @@ to `true` or `false` to override that behavior for debugging.
 Manual chroot password sync commands:
 
 ```sh
-cdp-password-sync once --cdp http://127.0.0.1:9223 --server http://127.0.0.1:44719 --token-file /root/.local/share/helium-sync/token --device helium-chroot
-cdp-password-sync daemon --cdp http://127.0.0.1:9223 --server http://127.0.0.1:44719 --token-file /root/.local/share/helium-sync/token --device helium-chroot
+cdp-password-sync once --cdp http://127.0.0.1:9223 --server http://127.0.0.1:44719 --token-file "$HOME/.local/share/helium-sync/token" --device helium-chroot
+cdp-password-sync daemon --cdp http://127.0.0.1:9223 --server http://127.0.0.1:44719 --token-file "$HOME/.local/share/helium-sync/token" --device helium-chroot
 ```
 
 Config lookup is profile-first:
@@ -134,11 +142,13 @@ Config lookup is profile-first:
 - `$HOME/.local/share/helium-sync/token`
 - Android app-data `helium-sync/token`
 
-The chroot launcher mirrors `/root/.local/share/helium-sync/token` into `/root/.config/helium-passwords/Default/helium-sync/token` and writes `base_url` and `device_name` beside it before starting Chromium. The local daemon keeps its passphrase and bearer token in `/root/.local/share/helium-sync`.
+The chroot launcher mirrors `$HOME/.local/share/helium-sync/token` into `$HOME/.config/helium-passwords/Default/helium-sync/token` and writes `base_url` and `device_name` beside it before starting Chromium. The local daemon keeps its passphrase and bearer token in `$HOME/.local/share/helium-sync`.
 
 The Android uBO installer writes both `/data/local/tmp/chrome-command-line` and
 `/data/local/chrome-command-line`, preserves unrelated existing flags, and
 keeps `--remote-debugging-socket-name=chrome_devtools_remote` so the local
 CookieCloud bridge can still reach Android Helium Sync through `socat`.
+It is for rooted runtime uBO testing; the installed Android app's main
+AI Overview blocker is the compiled Java hook.
 
 `configure-android-chromium-sync.sh` copies the same bearer token into Android Helium Sync's app-private `helium-sync` directories and writes `base_url=http://127.0.0.1:44719` with `device_name=helium-android`. It also marks the Android Chromium first-run flow complete and sets `EulaAccepted` in `Local State`; without that, Android stays in `FirstRunActivity` and the DevTools socket needed by CookieCloud does not come up. Android startup may briefly return an empty native password read before the built-in store is ready; the bridge retries empty startup reads and also does a delayed post-apply export after importing remote records.

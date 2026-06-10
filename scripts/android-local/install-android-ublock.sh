@@ -5,7 +5,30 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 adb_bin=${ADB:-adb}
 package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync}
 restart=${HELIUM_ANDROID_UBLOCK_RESTART:-true}
-ai_overview_filter=${HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTER:-'www.google.com##.dRpWwb.M8OgIe.bzXtMb'}
+default_ai_overview_filters=$(cat <<'EOF'
+www.google.*##:matches-path(/^\/search/) .dRpWwb.M8OgIe.bzXtMb
+www.google.*##:matches-path(/^\/search/) .GcKpu
+www.google.*##:matches-path(/^\/search/) .hdzaWe
+www.google.*##:matches-path(/^\/search/) .YzCcne
+www.google.*##:matches-path(/^\/search/) div[data-mcpr]:has-text(/^AI Overview$/i)
+www.google.*##:matches-path(/^\/search/) [data-aquarium]
+www.google.*##:matches-path(/^\/search/) [data-subtree="mfc"]
+www.google.*##:matches-path(/^\/search/) style + div[data-mcpr][style^="margin-bottom:"]:has(div[data-async-type="folsrch"])
+www.google.*##:matches-path(/^\/search/) style + div[data-mcpr][style^="margin-bottom:"] div[data-async-type="folsrch"]
+EOF
+)
+
+if [[ -n "${HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS+x}" ]]; then
+  ai_overview_filters=$HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS
+else
+  ai_overview_filters=$default_ai_overview_filters
+fi
+
+if [[ -n "${HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS_FILE:-}" ]]; then
+  ai_overview_filters=$(<"$HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS_FILE")
+elif [[ -n "${HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTER+x}" ]]; then
+  ai_overview_filters=$HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTER
+fi
 
 section_value() {
   local key=$1
@@ -82,14 +105,14 @@ if [[ ! -f "$extension_dir/manifest.json" ]]; then
 fi
 
 helium_annoyances="$extension_dir/assets/helium/annoyances.txt"
-if [[ -n "$ai_overview_filter" && -f "$helium_annoyances" ]]; then
-  if ! grep -Fqx "$ai_overview_filter" "$helium_annoyances"; then
-    {
-      printf '\n'
-      printf '! Local laptop uBO filter: hide Google AI Overviews.\n'
-      printf '%s\n' "$ai_overview_filter"
-    } >> "$helium_annoyances"
-  fi
+if [[ -n "$ai_overview_filters" && -f "$helium_annoyances" ]]; then
+  header='! Local laptop uBO filters: hide Google AI Overviews.'
+  grep -Fqx "$header" "$helium_annoyances" || printf '\n%s\n' "$header" >> "$helium_annoyances"
+  while IFS= read -r ai_overview_filter; do
+    [[ -z "${ai_overview_filter//[[:space:]]/}" ]] && continue
+    [[ "$ai_overview_filter" == '!'* ]] && continue
+    grep -Fqx "$ai_overview_filter" "$helium_annoyances" || printf '%s\n' "$ai_overview_filter" >> "$helium_annoyances"
+  done <<< "$ai_overview_filters"
 fi
 
 tar -C "$extension_dir" -cf "$work_dir/ublock-origin.tar" .
@@ -122,7 +145,7 @@ write_command_line() {
   if [ -f \"\$file\" ]; then
     for flag in \$(cat \"\$file\"); do
       case \"\$flag\" in
-        _|--load-extension=*|--extensions-on-chrome-urls|--remote-debugging-socket-name=*) continue ;;
+        _|--load-extension=*|--disable-extensions-except=*|--extensions-on-chrome-urls|--remote-debugging-socket-name=*) continue ;;
       esac
       case \" \$flags \" in
         *\" \$flag \"*) ;;

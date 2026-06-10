@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-data_dir=${HELIUM_LOCAL_SYNC_DATA:-/root/.local/share/helium-local-sync}
-password_data_dir=${HELIUM_PASSWORD_SYNC_DATA:-/root/.local/share/helium-sync}
-log_dir=${XDG_STATE_HOME:-/root/.local/state}/helium-local-sync
+home_dir=${HOME:-/root}
+data_dir=${HELIUM_LOCAL_SYNC_DATA:-$home_dir/.local/share/helium-local-sync}
+password_data_dir=${HELIUM_PASSWORD_SYNC_DATA:-$home_dir/.local/share/helium-sync}
+log_dir=${XDG_STATE_HOME:-$home_dir/.local/state}/helium-local-sync
 mkdir -p "$data_dir" "$password_data_dir" "$log_dir"
 
 ensure_secret() {

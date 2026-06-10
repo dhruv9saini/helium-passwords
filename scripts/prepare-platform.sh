@@ -453,7 +453,8 @@ for source_patch in "${root_dir}"/chromium/patches/*.patch; do
     case "${patch_name}" in
         0003-helium-sync-android-profile-startup.patch|\
         0004-helium-sync-android-oscrypt-provider.patch|\
-        0005-helium-sync-android-branding.patch)
+        0005-helium-sync-android-branding.patch|\
+        0006-helium-sync-android-ai-overview-blocker.patch)
             continue
             ;;
     esac

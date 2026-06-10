@@ -1,0 +1,181 @@
+diff --git a/chrome/android/chrome_java_sources.gni b/chrome/android/chrome_java_sources.gni
+--- a/chrome/android/chrome_java_sources.gni
++++ b/chrome/android/chrome_java_sources.gni
+@@ -70,6 +70,7 @@ chrome_java_sources = [
+   "java/src/org/chromium/chrome/browser/actor/ActorForegroundServiceUmaHelper.java",
+   "java/src/org/chromium/chrome/browser/announcement/AnnouncementNotificationManager.java",
+   "java/src/org/chromium/chrome/browser/app/ChromeActivity.java",
++  "java/src/org/chromium/chrome/browser/app/HeliumGoogleAiOverviewBlocker.java",
+   "java/src/org/chromium/chrome/browser/app/MainLayoutSwitcher.java",
+   "java/src/org/chromium/chrome/browser/app/appmenu/AppMenuPropertiesDelegateImpl.java",
+   "java/src/org/chromium/chrome/browser/app/bluetooth/BluetoothNotificationServiceImpl.java",
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java b/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java
+--- a/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/app/ChromeActivity.java
+@@ -260,5 +260,6 @@ import org.chromium.content_public.browser.DeviceUtils;
+ import org.chromium.content_public.browser.HostZoomMap;
+ import org.chromium.content_public.browser.LoadUrlParams;
++import org.chromium.content_public.browser.NavigationHandle;
+ import org.chromium.content_public.browser.SelectionPopupController;
+ import org.chromium.content_public.browser.WebContents;
+ import org.chromium.content_public.common.ContentSwitches;
+@@ -961,10 +962,18 @@ public abstract class ChromeActivity<C extends ChromeActivityComponent>
+                     @Override
+                     public void onPageLoadFinished(Tab tab, GURL url) {
+                         postDeferredStartupIfNeeded();
++                        HeliumGoogleAiOverviewBlocker.injectIfEligible(tab, url);
+                         OfflinePageUtils.showOfflineSnackbarIfNecessary(tab);
+                     }
+-
++
+                     @Override
++                    public void onDidFinishNavigationInPrimaryMainFrame(
++                            Tab tab, NavigationHandle navigation) {
++                        if (!navigation.hasCommitted() || navigation.isSameDocument()) return;
++                        HeliumGoogleAiOverviewBlocker.injectIfEligible(tab, navigation.getUrl());
++                    }
++
++                    @Override
+                     public void onCrash(Tab tab) {
+                         postDeferredStartupIfNeeded();
+                     }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/app/HeliumGoogleAiOverviewBlocker.java b/chrome/android/java/src/org/chromium/chrome/browser/app/HeliumGoogleAiOverviewBlocker.java
+new file mode 100644
+--- /dev/null
++++ b/chrome/android/java/src/org/chromium/chrome/browser/app/HeliumGoogleAiOverviewBlocker.java
+@@ -0,0 +1,135 @@
++// Copyright 2026 The Chromium Authors
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++package org.chromium.chrome.browser.app;
++
++import org.chromium.build.annotations.NullMarked;
++import org.chromium.chrome.browser.tab.Tab;
++import org.chromium.content_public.browser.RenderFrameHost;
++import org.chromium.content_public.browser.WebContents;
++import org.chromium.content_public.common.IsolatedWorldIds;
++import org.chromium.url.GURL;
++
++/** Hides Google AI Overview result blocks without changing Google result mode. */
++@NullMarked
++final class HeliumGoogleAiOverviewBlocker {
++    private static final int HELIUM_ISOLATED_WORLD_ID =
++            IsolatedWorldIds.ISOLATED_WORLD_ID_CONTENT_END + 1;
++
++    private static final String HIDE_SCRIPT =
++            "(() => {\n"
++                    + "  'use strict';\n"
++                    + "  if (!location.hostname.startsWith('www.google.') ||\n"
++                    + "      location.pathname !== '/search' ||\n"
++                    + "      document.documentElement.dataset.heliumAiOverviewBlocker === 'active') {\n"
++                    + "    return;\n"
++                    + "  }\n"
++                    + "  document.documentElement.dataset.heliumAiOverviewBlocker = 'active';\n"
++                    + "  const hiddenAttr = 'data-helium-hidden-ai-overview';\n"
++                    + "  const rootSelectors = [\n"
++                    + "    '[data-subtree=\"mfc\"]',\n"
++                    + "    '[data-aquarium]',\n"
++                    + "    '.YzCcne',\n"
++                    + "    '.GcKpu',\n"
++                    + "    '.hdzaWe',\n"
++                    + "    '.dRpWwb.M8OgIe.bzXtMb',\n"
++                    + "    'style + div[data-mcpr][style^=\"margin-bottom:\"]'\n"
++                    + "  ];\n"
++                    + "  const labelPattern = /\\bAI\\s+Overview\\b/i;\n"
++                    + "  const supportingPattern = /\\bGenerative AI is experimental\\b/i;\n"
++                    + "  const hide = (element) => {\n"
++                    + "    if (!(element instanceof HTMLElement) || element.hasAttribute(hiddenAttr)) {\n"
++                    + "      return;\n"
++                    + "    }\n"
++                    + "    element.setAttribute(hiddenAttr, 'true');\n"
++                    + "    element.style.setProperty('display', 'none', 'important');\n"
++                    + "  };\n"
++                    + "  const textLooksLikeAiOverview = (element) => {\n"
++                    + "    const text = (element.innerText || element.textContent || '').slice(0, 1200);\n"
++                    + "    return labelPattern.test(text) || supportingPattern.test(text);\n"
++                    + "  };\n"
++                    + "  const findContainer = (element) => {\n"
++                    + "    for (const selector of rootSelectors) {\n"
++                    + "      const container = element.closest(selector);\n"
++                    + "      if (container instanceof HTMLElement) {\n"
++                    + "        return container;\n"
++                    + "      }\n"
++                    + "    }\n"
++                    + "    let cursor = element;\n"
++                    + "    let last = element;\n"
++                    + "    for (let depth = 0; depth < 8 && cursor.parentElement; depth += 1) {\n"
++                    + "      if (cursor.parentElement.id === 'search' || cursor.parentElement.id === 'rso') {\n"
++                    + "        return cursor;\n"
++                    + "      }\n"
++                    + "      last = cursor.parentElement;\n"
++                    + "      cursor = cursor.parentElement;\n"
++                    + "    }\n"
++                    + "    return last;\n"
++                    + "  };\n"
++                    + "  const scan = () => {\n"
++                    + "    for (const selector of rootSelectors) {\n"
++                    + "      for (const element of document.querySelectorAll(selector)) {\n"
++                    + "        if (element instanceof HTMLElement && textLooksLikeAiOverview(element)) {\n"
++                    + "          hide(findContainer(element));\n"
++                    + "        }\n"
++                    + "      }\n"
++                    + "    }\n"
++                    + "    for (const element of document.querySelectorAll('h1,h2,h3,span,div')) {\n"
++                    + "      if (!(element instanceof HTMLElement) ||\n"
++                    + "          !labelPattern.test(element.textContent || '')) {\n"
++                    + "        continue;\n"
++                    + "      }\n"
++                    + "      const normalized = (element.textContent || '').replace(/\\s+/g, ' ').trim();\n"
++                    + "      if (normalized === 'AI Overview') {\n"
++                    + "        hide(findContainer(element));\n"
++                    + "      }\n"
++                    + "    }\n"
++                    + "  };\n"
++                    + "  const scheduleScan = (() => {\n"
++                    + "    let pending = false;\n"
++                    + "    return () => {\n"
++                    + "      if (pending) {\n"
++                    + "        return;\n"
++                    + "      }\n"
++                    + "      pending = true;\n"
++                    + "      requestAnimationFrame(() => {\n"
++                    + "        pending = false;\n"
++                    + "        scan();\n"
++                    + "      });\n"
++                    + "    };\n"
++                    + "  })();\n"
++                    + "  if (document.readyState === 'loading') {\n"
++                    + "    document.addEventListener('DOMContentLoaded', scheduleScan, { once: true });\n"
++                    + "  } else {\n"
++                    + "    scheduleScan();\n"
++                    + "  }\n"
++                    + "  new MutationObserver(scheduleScan).observe(document.documentElement, {\n"
++                    + "    childList: true,\n"
++                    + "    subtree: true\n"
++                    + "  });\n"
++                    + "})();";
++
++    private HeliumGoogleAiOverviewBlocker() {}
++
++    static void injectIfEligible(Tab tab, GURL url) {
++        if (tab.isIncognito() || !isGoogleSearchUrl(url)) return;
++
++        WebContents webContents = tab.getWebContents();
++        if (webContents == null) return;
++
++        RenderFrameHost frame = webContents.getMainFrame();
++        if (frame == null) return;
++
++        frame.executeJavaScriptInIsolatedWorld(
++                HIDE_SCRIPT, HELIUM_ISOLATED_WORLD_ID, /* callback= */ null);
++    }
++
++    private static boolean isGoogleSearchUrl(GURL url) {
++        return url != null
++                && url.isValid()
++                && "https".equals(url.getScheme())
++                && url.getHost().startsWith("www.google.")
++                && "/search".equals(url.getPath());
++    }
++}

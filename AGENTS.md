@@ -36,13 +36,19 @@ restores Chromium's native password manager.
   generated from `chromium/overlay/`; regenerate it whenever overlay files
   change. Android builds are branded as `Helium Sync` with package
   `computer.helium.sync`.
+  `chromium/patches/0006-helium-sync-android-ai-overview-blocker.patch`
+  blocks Google AI Overviews in the Android main browser with a small Java
+  `ChromeActivity` hook; do not rely on Android command-line extension content
+  scripts for that behavior.
   Android extension/uBO experiments must use the explicit
   `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true` build-helper path, which writes
   Chromium's `is_desktop_android = true` GN arg. Use
   `scripts/android-local/install-android-ublock.sh` for rooted runtime uBO
   testing; it verifies the pinned archive, adds the local Google AI Overview
-  cosmetic filter to Helium's annoyances list, and writes Android command-line
-  flags without dropping the DevTools socket flag needed by CookieCloud.
+  cosmetic filters to Helium's annoyances list, and writes Android command-line
+  flags without dropping the DevTools socket flag needed by CookieCloud. It
+  also strips extension-disabling flags if a previous experiment left them in
+  `chrome-command-line`.
 - `cmd/helium-syncd` runs the localhost encrypted record daemon.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.
@@ -56,12 +62,16 @@ restores Chromium's native password manager.
   to `chromium` for temporary testing. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium
   Sync artifact to install `/usr/local/bin/helium` in the phone chroot. The
-  launcher defaults to `/root/.config/helium-passwords`, uses native password
+  launcher defaults to `$HOME/.config/helium-passwords`, uses native password
   sync for `helium`, and uses the CDP password bridge only for the temporary
   `chromium` fallback. The launcher removes stale Chromium singleton files only
   when their recorded PID is no longer running. The CDP chroot bridge folds
   records that Chromium's native password API treats as the same origin and
-  username.
+  username. The installer places the CookieCloud extension and the Google AI
+  Overview blocker under both `/root/.local/share` and
+  `/home/dhruv/.local/share`; the launcher loads whichever copies live under
+  the invoking user's `$HOME`. The chroot AI Overview blocker is a normal
+  desktop Chromium extension loaded by that launcher.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 - Android APKs intended for use on the phone must be official, non-debuggable

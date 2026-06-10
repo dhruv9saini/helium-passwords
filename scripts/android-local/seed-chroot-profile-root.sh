@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-profile=${HELIUM_CHROOT_PROFILE:-/root/.config/helium-passwords}
-state_dir=${XDG_STATE_HOME:-/root/.local/state}/helium-sync
-password_data_dir=${HELIUM_PASSWORD_SYNC_DATA:-/root/.local/share/helium-sync}
-cookiecloud_config=${HELIUM_COOKIECLOUD_CONFIG:-/root/.local/share/helium-local-sync/cookiecloud-client.json}
+home_dir=${HOME:-/root}
+profile=${HELIUM_CHROOT_PROFILE:-$home_dir/.config/helium-passwords}
+state_dir=${XDG_STATE_HOME:-$home_dir/.local/state}/helium-sync
+password_data_dir=${HELIUM_PASSWORD_SYNC_DATA:-$home_dir/.local/share/helium-sync}
+cookiecloud_config=${HELIUM_COOKIECLOUD_CONFIG:-$home_dir/.local/share/helium-local-sync/cookiecloud-client.json}
 cookiecloud_server=${HELIUM_COOKIECLOUD_SERVER:-http://127.0.0.1:8088}
 password_server=${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}
 cdp=${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}
@@ -34,10 +35,11 @@ if [ -s "$password_data_dir/token" ]; then
   chmod 600 "$sync_config_dir/token" "$sync_config_dir/base_url" "$sync_config_dir/device_name"
 fi
 chmod 1777 /dev/shm
-mkdir -p /tmp/runtime-root
-chmod 700 /tmp/runtime-root
+runtime_dir=${XDG_RUNTIME_DIR:-/tmp/runtime-$(id -u)}
+mkdir -p "$runtime_dir"
+chmod 700 "$runtime_dir"
 export TMPDIR=/tmp
-export XDG_RUNTIME_DIR=/tmp/runtime-root
+export XDG_RUNTIME_DIR=$runtime_dir
 
 browser=${HELIUM_CHROOT_BROWSER:-}
 if [ -z "$browser" ]; then

@@ -99,14 +99,24 @@ running `scripts/chromium/build-android-ci.sh` to write
 `is_desktop_android = true` into `args.gn`; uBO integration work must use that
 path rather than normal Android extension-disabled builds.
 
+Google AI Overview blocking for the Android main browser is built into the
+Android fork by `chromium/patches/0006-helium-sync-android-ai-overview-blocker.patch`.
+It injects a small Java-owned isolated-world script on normal Google Search
+pages, so it does not use `udm=14` and does not remove other Google widgets.
+
 For runtime uBO testing on a rooted phone, use
 `scripts/android-local/install-android-ublock.sh`. It verifies the uBO archive
 pinned in `helium-chromium/deps.ini`, installs it into the Android browser
 app's private profile area, and writes `chrome-command-line` flags under both
 `/data/local/tmp` and `/data/local` with `--load-extension`. The helper also
-adds the local Google AI Overview cosmetic filter to Helium's annoyances list;
-override it with `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTER` or set that env var
-empty to skip the filter.
+adds local Google AI Overview cosmetic filters to Helium's annoyances list and
+strips extension-disabling command-line flags that would prevent content
+scripts from running.
+Override them with `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS`, point
+`HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS_FILE` at a newline-delimited filter
+file, or set `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS` empty to skip them.
+`HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTER` remains supported for a single
+legacy override.
 
 See [docs/android-local-sync.md](docs/android-local-sync.md) for the current
 phone/chroot bridge details.
