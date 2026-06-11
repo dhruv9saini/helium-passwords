@@ -30,7 +30,7 @@
   };
 
   const textLooksLikeAiOverview = (element) => {
-    const text = (element.innerText || element.textContent || '').slice(0, 1200);
+    const text = (element.textContent || '').slice(0, 1200);
     return labelPattern.test(text) || supportingPattern.test(text);
   };
 

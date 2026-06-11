@@ -5,6 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 adb_bin=${ADB:-adb}
 package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync}
 restart=${HELIUM_ANDROID_UBLOCK_RESTART:-true}
+allow_unstable=${HELIUM_ANDROID_UBLOCK_UNSTABLE_EXPERIMENT:-false}
 default_ai_overview_filters=$(cat <<'EOF'
 www.google.*##:matches-path(/^\/search/) .dRpWwb.M8OgIe.bzXtMb
 www.google.*##:matches-path(/^\/search/) .GcKpu
@@ -17,6 +18,20 @@ www.google.*##:matches-path(/^\/search/) style + div[data-mcpr][style^="margin-b
 www.google.*##:matches-path(/^\/search/) style + div[data-mcpr][style^="margin-bottom:"] div[data-async-type="folsrch"]
 EOF
 )
+
+if [[ "$allow_unstable" != true ]]; then
+  cat >&2 <<'EOF'
+Android uBlock runtime install is disabled by default.
+
+This helper writes --load-extension command-line flags and requires Chromium's
+experimental desktop-Android extension mode. That mode is not suitable for the
+daily phone APK; use the chroot Helium browser for uBO, and use the Android
+Java AI Overview blocker for the native Android browser.
+
+Set HELIUM_ANDROID_UBLOCK_UNSTABLE_EXPERIMENT=true only for isolated debugging.
+EOF
+  exit 64
+fi
 
 if [[ -n "${HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS+x}" ]]; then
   ai_overview_filters=$HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS

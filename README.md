@@ -93,25 +93,41 @@ configuration. `chromium/patches/0005-helium-sync-android-branding.patch`
 brands the APK as `Helium Sync` and changes the Android package to
 `computer.helium.sync`.
 
-Chromium's Android extension support is only available through its experimental
-desktop-Android build path. Set `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true` when
-running `scripts/chromium/build-android-ci.sh` to write
-`is_desktop_android = true` into `args.gn`; uBO integration work must use that
-path rather than normal Android extension-disabled builds.
+Phone APKs must use the normal Android build path, not Chromium's experimental
+desktop-Android extension path. `scripts/chromium/build-android-ci.sh` rejects
+`CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true` because it writes
+`is_desktop_android = true`, which Chromium documents as unstable prototype
+support. The same helper builds local phone APKs as release-style non-debug
+builds by default: `is_debug = false`, `dcheck_always_on = false`, and
+`is_official_build = false`. This keeps renderer DCHECKs off without paying the
+hours-long local cost of Chromium's official optimized Android build path. Set
+`CHROMIUM_ANDROID_OFFICIAL_BUILD=true` only for deliberate release/CI builds.
+The helper also pins local phone builds to `chrome_pgo_phase = 0`, so they do
+not require Chromium/V8 PGO profiles that are absent from a small local
+checkout, and sets `android_static_analysis = "off"` so local phone APK builds
+do not run Android Error Prone validation during the main app build. It also
+defaults `CHROMIUM_ANDROID_USE_SISO=auto`: existing Siso out
+dirs continue using Siso, because Chromium requires `gn clean` before switching
+that same out dir to Ninja, while fresh local out dirs use Ninja unless
+overridden. Use the chroot Helium browser for uBO and other extension workflows.
+When Siso is used locally, the helper defaults
+`CHROMIUM_ANDROID_SISO_GOMEMLIMIT=1536MiB`; this keeps Siso from pushing the
+laptop into sustained swap while still allowing multiple compiler jobs. Override
+that value only after watching `vmstat` for swap-out pressure. Existing Siso
+output dirs may also set `CHROMIUM_ANDROID_SISO_FLAGS="--batch=false"` to keep
+Siso's fast local path enabled in non-interactive resumes, but only keep that
+setting if `vmstat` shows no sustained swap-out.
 
 Google AI Overview blocking for the Android main browser is built into the
 Android fork by `chromium/patches/0006-helium-sync-android-ai-overview-blocker.patch`.
 It injects a small Java-owned isolated-world script on normal Google Search
 pages, so it does not use `udm=14` and does not remove other Google widgets.
 
-For runtime uBO testing on a rooted phone, use
-`scripts/android-local/install-android-ublock.sh`. It verifies the uBO archive
-pinned in `helium-chromium/deps.ini`, installs it into the Android browser
-app's private profile area, and writes `chrome-command-line` flags under both
-`/data/local/tmp` and `/data/local` with `--load-extension`. The helper also
-adds local Google AI Overview cosmetic filters to Helium's annoyances list and
-strips extension-disabling command-line flags that would prevent content
-scripts from running.
+For isolated runtime uBO debugging on a rooted phone,
+`scripts/android-local/install-android-ublock.sh` can still stage the pinned
+uBO archive and write `--load-extension` command-line flags, but it refuses to
+run unless `HELIUM_ANDROID_UBLOCK_UNSTABLE_EXPERIMENT=true` is set. Do not use
+that path for the daily phone browser.
 Override them with `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS`, point
 `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS_FILE` at a newline-delimited filter
 file, or set `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS` empty to skip them.

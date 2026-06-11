@@ -92,7 +92,7 @@ new file mode 100644
 +                    + "    element.style.setProperty('display', 'none', 'important');\n"
 +                    + "  };\n"
 +                    + "  const textLooksLikeAiOverview = (element) => {\n"
-+                    + "    const text = (element.innerText || element.textContent || '').slice(0, 1200);\n"
++                    + "    const text = (element.textContent || '').slice(0, 1200);\n"
 +                    + "    return labelPattern.test(text) || supportingPattern.test(text);\n"
 +                    + "  };\n"
 +                    + "  const findContainer = (element) => {\n"

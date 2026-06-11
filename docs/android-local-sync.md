@@ -144,11 +144,25 @@ Config lookup is profile-first:
 
 The chroot launcher mirrors `$HOME/.local/share/helium-sync/token` into `$HOME/.config/helium-passwords/Default/helium-sync/token` and writes `base_url` and `device_name` beside it before starting Chromium. The local daemon keeps its passphrase and bearer token in `$HOME/.local/share/helium-sync`.
 
-The Android uBO installer writes both `/data/local/tmp/chrome-command-line` and
-`/data/local/chrome-command-line`, preserves unrelated existing flags, and
-keeps `--remote-debugging-socket-name=chrome_devtools_remote` so the local
-CookieCloud bridge can still reach Android Helium Sync through `socat`.
-It is for rooted runtime uBO testing; the installed Android app's main
-AI Overview blocker is the compiled Java hook.
+The Android uBO installer is disabled by default because it writes
+`--load-extension` command-line flags and depends on Chromium's experimental
+desktop-Android extension mode. Do not use it for the daily phone browser.
+Keep only `--remote-debugging-socket-name=chrome_devtools_remote` in
+`/data/local/tmp/chrome-command-line` and `/data/local/chrome-command-line` so
+the local CookieCloud bridge can still reach Android Helium Sync through
+`socat`. The installed Android app's main AI Overview blocker is the compiled
+Java hook.
+
+Local Android Chromium resumes should keep Siso memory-bounded. The Android
+build helper defaults `CHROMIUM_ANDROID_SISO_GOMEMLIMIT=1536MiB`; raise it only
+after checking that `vmstat` is not showing sustained swap-out. On existing
+Siso output dirs, `CHROMIUM_ANDROID_SISO_FLAGS="--batch=false"` may be tested
+for local non-interactive resumes, but keep it only if it does not create
+sustained swap-out.
+
+The local phone APK build also sets `android_static_analysis = "off"`. That is
+intentional for this laptop path: Android Error Prone validation can create a
+multi-gigabyte `chrome_java__errorprone` Java process and push the machine into
+swap. Re-enable static analysis only for deliberate CI/release validation.
 
 `configure-android-chromium-sync.sh` copies the same bearer token into Android Helium Sync's app-private `helium-sync` directories and writes `base_url=http://127.0.0.1:44719` with `device_name=helium-android`. It also marks the Android Chromium first-run flow complete and sets `EulaAccepted` in `Local State`; without that, Android stays in `FirstRunActivity` and the DevTools socket needed by CookieCloud does not come up. Android startup may briefly return an empty native password read before the built-in store is ready; the bridge retries empty startup reads and also does a delayed post-apply export after importing remote records.

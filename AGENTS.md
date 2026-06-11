@@ -39,16 +39,14 @@ restores Chromium's native password manager.
   `chromium/patches/0006-helium-sync-android-ai-overview-blocker.patch`
   blocks Google AI Overviews in the Android main browser with a small Java
   `ChromeActivity` hook; do not rely on Android command-line extension content
-  scripts for that behavior.
-  Android extension/uBO experiments must use the explicit
-  `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true` build-helper path, which writes
-  Chromium's `is_desktop_android = true` GN arg. Use
-  `scripts/android-local/install-android-ublock.sh` for rooted runtime uBO
-  testing; it verifies the pinned archive, adds the local Google AI Overview
-  cosmetic filters to Helium's annoyances list, and writes Android command-line
-  flags without dropping the DevTools socket flag needed by CookieCloud. It
-  also strips extension-disabling flags if a previous experiment left them in
-  `chrome-command-line`.
+  scripts for that behavior. Keep that injected script cheap: do not use
+  layout-forcing DOM reads such as `innerText` inside mutation-driven scans.
+  Android extension/uBO experiments must not be used for the daily phone APK.
+  Chromium marks desktop-Android extension support as experimental and unstable;
+  the Android build helper rejects `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true`.
+  Use the chroot Helium browser for uBO/extension workflows. The Android main
+  browser uses the Java AI Overview blocker and local sync bridge, not
+  command-line extension content scripts.
 - `cmd/helium-syncd` runs the localhost encrypted record daemon.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.
@@ -74,10 +72,25 @@ restores Chromium's native password manager.
   desktop Chromium extension loaded by that launcher.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
-- Android APKs intended for use on the phone must be official, non-debuggable
-  builds. Keep `is_official_build = true`, `is_debug = false`, and
-  `dcheck_always_on = false`; Chromium release builds that are not official
-  still compile DCHECKs and can crash normal web pages on renderer assertions.
+- Android APKs intended for local phone use should be release-style,
+  non-debuggable builds: keep `is_debug = false` and
+  `dcheck_always_on = false`; do not set `is_desktop_android = true`.
+  Default `is_official_build = false` for local laptop builds because Chromium's
+  official Android path enables expensive optimized/LTO-style work and is too
+  slow for iteration here. Use `CHROMIUM_ANDROID_OFFICIAL_BUILD=true` only for
+  deliberate release/CI builds. Local phone builds must also keep
+  `chrome_pgo_phase = 0` unless the matching Chromium/V8 PGO profiles have
+  explicitly been fetched into the checkout. Keep `android_static_analysis =
+  "off"` for local phone builds so Android Error Prone validation does not
+  dominate RAM and swap during the main app build. The helper defaults
+  `CHROMIUM_ANDROID_USE_SISO=auto`: preserve Siso for an existing Siso out dir,
+  because Chromium requires `gn clean` before switching that out dir to Ninja;
+  use Ninja for a fresh local out dir unless explicitly overridden. When Siso is
+  active, keep `CHROMIUM_ANDROID_SISO_GOMEMLIMIT=1536MiB` unless a build monitor
+  shows there is no swap-out pressure at a higher limit. For existing Siso out
+  dirs, `CHROMIUM_ANDROID_SISO_FLAGS="--batch=false"` can be tested during
+  local non-interactive resumes so Siso keeps its fast local path enabled, but
+  revert it immediately if `vmstat` shows sustained swap-out.
 
 ## Patch Flow
 

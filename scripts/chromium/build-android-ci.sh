@@ -17,10 +17,36 @@ phase=${CHROMIUM_ANDROID_PHASE:-all}
 touch_restored_out=${HELIUM_SYNC_TOUCH_RESTORED_OUT:-false}
 skip_system_deps=${CHROMIUM_ANDROID_SKIP_SYSTEM_DEPS:-false}
 enable_desktop_extensions=${CHROMIUM_ANDROID_DESKTOP_EXTENSIONS:-false}
+official_build=${CHROMIUM_ANDROID_OFFICIAL_BUILD:-false}
+use_siso=${CHROMIUM_ANDROID_USE_SISO:-auto}
+siso_gomemlimit=${CHROMIUM_ANDROID_SISO_GOMEMLIMIT:-1536MiB}
+siso_flags=${CHROMIUM_ANDROID_SISO_FLAGS:-}
 
 # Chromium bindgen treats TARGET as a Rust target triple env var and fails if the
 # workflow-level target-name variable leaks into the build environment.
 unset TARGET
+
+if [[ "$enable_desktop_extensions" == true ]]; then
+  echo "CHROMIUM_ANDROID_DESKTOP_EXTENSIONS is disabled for phone APK builds." >&2
+  echo "Chromium marks desktop-Android extensions as experimental and unstable; use the chroot browser for extensions." >&2
+  exit 64
+fi
+
+case "$official_build" in
+  true|false) ;;
+  *)
+    echo "CHROMIUM_ANDROID_OFFICIAL_BUILD must be true or false" >&2
+    exit 64
+    ;;
+esac
+
+case "$use_siso" in
+  auto|true|false) ;;
+  *)
+    echo "CHROMIUM_ANDROID_USE_SISO must be auto, true, or false" >&2
+    exit 64
+    ;;
+esac
 
 setup_ccache() {
   if [[ "$use_ccache" != true ]]; then
@@ -111,22 +137,32 @@ EOF
 generate_android_build_files() {
   cd "$workspace/src"
   mkdir -p "$out_dir"
+  local effective_use_siso=$use_siso
+  if [[ "$effective_use_siso" == auto ]]; then
+    if [[ -f "$out_dir/.siso_deps" ]]; then
+      effective_use_siso=true
+    elif [[ -f "$out_dir/.ninja_deps" ]]; then
+      effective_use_siso=false
+    else
+      effective_use_siso=false
+    fi
+  fi
   cat > "$out_dir/args.gn" <<EOF
 target_os = "android"
 target_cpu = "$target_cpu"
-is_official_build = true
+is_official_build = $official_build
 is_debug = false
 dcheck_always_on = false
 is_component_build = false
+use_siso = $effective_use_siso
+chrome_pgo_phase = 0
+android_static_analysis = "off"
 symbol_level = 0
 blink_symbol_level = 0
 ffmpeg_branding = "Chromium"
 proprietary_codecs = false
 root_extra_deps = ["//components/helium_sync", "//chrome/browser/helium_sync"]
 EOF
-  if [[ "$enable_desktop_extensions" == true ]]; then
-    echo 'is_desktop_android = true' >> "$out_dir/args.gn"
-  fi
   if [[ "$use_ccache" == true ]]; then
     echo 'cc_wrapper = "ccache"' >> "$out_dir/args.gn"
   fi
@@ -150,9 +186,20 @@ build_android_target() {
   setup_ccache
   generate_android_build_files
   touch_out_dir
+  if [[ "$use_siso" != false && -n "$siso_gomemlimit" && -z "${GOMEMLIMIT:-}" ]]; then
+    export GOMEMLIMIT="$siso_gomemlimit"
+  fi
+
+  build_args=(-j "$autoninja_jobs" -C "$out_dir")
+  if [[ -f "$out_dir/.siso_deps" && -n "$siso_flags" ]]; then
+    # Space-delimited Siso-only flags, for simple switches like --batch=false.
+    read -r -a extra_siso_args <<< "$siso_flags"
+    build_args+=("${extra_siso_args[@]}")
+  fi
+  build_args+=("$target")
 
   set +e
-  autoninja -j "$autoninja_jobs" -C "$out_dir" "$target"
+  autoninja "${build_args[@]}"
   build_status="$?"
   set -e
   if [[ "$build_status" -ne 0 ]]; then
