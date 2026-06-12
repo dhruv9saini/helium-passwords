@@ -31,6 +31,33 @@ wire_after_match() {
   chmod 755 "$file"
 }
 
+replace_match() {
+  file=$1
+  pattern=$2
+  line=$3
+
+  [ -f "$file" ] || return 0
+
+  tmp="$root/tmp/$(basename "$file").$$"
+  awk -v pattern="$pattern" -v line="$line" '
+    $0 ~ pattern {
+      print line
+      next
+    }
+    {
+      print
+    }
+  ' "$file" >"$tmp"
+  cat "$tmp" >"$file"
+  rm -f "$tmp"
+  chmod 755 "$file"
+}
+
+replace_match \
+  "$root/arch-desktop-resume-root.sh" \
+  "^[[:space:]]*(nohup[[:space:]]+)?[^#]*arch-desktop-session-watch[.]sh.*>>.*LOG.*2>&1[[:space:]]*&[[:space:]]*$" \
+  "nohup \"\$ROOT/arch-desktop-session-watch.sh\" >>\"\$LOG\" 2>&1 &"
+
 wire_after_match \
   "$root/arch-desktop-resume-root.sh" \
   "arch-desktop-display-mode-root.sh\" apply" \
@@ -47,7 +74,7 @@ wire_after_match \
   "$root/arch-desktop-resume-root.sh" \
   "arch-desktop-display-watch-root.sh\" >>" \
   "arch-desktop-session-watch[.]sh.*&" \
-  "\"$root/arch-desktop-display-watch-root.sh\" >>\"\$LOG\" 2>&1 &"
+  "nohup \"$root/arch-desktop-display-watch-root.sh\" >>\"\$LOG\" 2>&1 &"
 
 wire_after_match \
   "$root/arch-desktop-hibernate-root.sh" \

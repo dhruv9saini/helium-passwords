@@ -8,7 +8,7 @@ DISPLAY_MODE="$ROOT/arch-desktop-display-mode-root.sh"
 START_X11="$ROOT/start-arch-xmonad-root.sh"
 STOP_X11="$ROOT/stop-arch-x11-root.sh"
 SESSION_WATCH="$ROOT/arch-desktop-session-watch.sh"
-INTERVAL=${ARCH_DESKTOP_DISPLAY_WATCH_INTERVAL:-2}
+INTERVAL=${ARCH_DESKTOP_DISPLAY_WATCH_INTERVAL:-30}
 
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
@@ -23,7 +23,7 @@ fingerprint() {
 restart_session_watch() {
   [ -x "$SESSION_WATCH" ] || return 0
   pkill -f '[a]rch-desktop-session-watch.sh' >/dev/null 2>&1 || true
-  "$SESSION_WATCH" >>"$STATE_DIR/controller.log" 2>&1 &
+  nohup "$SESSION_WATCH" >>"$STATE_DIR/controller.log" 2>&1 &
 }
 
 restart_x11_for_display() {

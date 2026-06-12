@@ -97,7 +97,11 @@ restores Chromium's native password manager.
   `scripts/android-local/arch-desktop-display-watch-root.sh` polls that
   fingerprint while Arch Desktop is running. When a monitor is plugged or
   unplugged after startup, it reapplies display mode and restarts the X11 layer
-  so Termux:X11 reads the new resolution.
+  so Termux:X11 reads the new resolution. The resume wiring starts both the
+  session watcher and display watcher with `nohup`; otherwise manual root/ADB
+  launch paths can leave watchers tied to their parent shell. Keep the display
+  watcher poll interval conservative; `cmd display get-displays` can take
+  several seconds on the phone, so the default interval is 30 seconds.
   `scripts/android-local/wire-arch-desktop-display-mode-root.sh` idempotently
   wires `apply` plus the display watcher into `arch-desktop-resume-root.sh` and
   watcher shutdown plus `reset` into `arch-desktop-hibernate-root.sh`.
