@@ -56,9 +56,21 @@ android_devtools_socket() {
   return 1
 }
 
+android_cdp_bridge_healthy() {
+  command -v curl >/dev/null 2>&1 || return 1
+  curl -fsS --max-time 2 http://127.0.0.1:9222/json/version >/dev/null 2>&1
+}
+
 if command -v socat >/dev/null 2>&1; then
   if socket=$(android_devtools_socket); then
-    if ! pgrep -f "socat.*127.0.0.1:9222.*$socket" >/dev/null 2>&1; then
+    restart_bridge=0
+    if pgrep -f "socat.*127.0.0.1:9222.*$socket" >/dev/null 2>&1; then
+      android_cdp_bridge_healthy || restart_bridge=1
+    else
+      restart_bridge=1
+    fi
+
+    if [ "$restart_bridge" -eq 1 ]; then
       existing_pids=$(ps -A -o pid,args |
         awk '/socat TCP-LISTEN:9222,bind=127[.]0[.]0[.]1/ { print $1 }')
       if [ -n "$existing_pids" ]; then

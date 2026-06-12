@@ -101,7 +101,7 @@ native_size() {
 }
 
 detect_android_external() {
-  cmd display get-displays 2>/dev/null | tr '\n' ' ' | sed 's/Display id/\nDisplay id/g' | while IFS= read -r line; do
+  cmd display get-displays 2>/dev/null | while IFS= read -r line; do
     case "$line" in
       Display\ id*) ;;
       *) continue ;;

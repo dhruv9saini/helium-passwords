@@ -104,6 +104,12 @@ restores Chromium's native password manager.
   does not enter tablet/taskbar/freeform mode on the phone screen. Startup and
   stop both lazily unmount `/data/local/chroots/arch/tmp/.X11-unix` before
   removing it because that socket path may be a live mount.
+- Arch Desktop startup also keeps Android Helium Sync
+  (`computer.helium.sync`) out of inactive/idle background states and sticky
+  unfreezes the running native browser process when present. CookieCloud uses
+  that app's DevTools socket through the local `socat` bridge on `127.0.0.1:9222`,
+  and Android can otherwise freeze the native browser as soon as Termux:X11 is
+  foregrounded.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 - Android APKs intended for local phone use should be release-style,

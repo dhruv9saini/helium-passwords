@@ -34,6 +34,24 @@ configure_android_desktop_flags() {
 
 configure_android_desktop_flags
 
+keep_android_helium_awake() {
+  package=${HELIUM_ANDROID_PACKAGE:-computer.helium.sync}
+
+  cmd activity set-inactive "$package" false >/dev/null 2>&1 || true
+  cmd activity set-standby-bucket "$package" active >/dev/null 2>&1 || true
+  cmd activity set-bg-restriction-level "$package" unrestricted >/dev/null 2>&1 || true
+  cmd deviceidle whitelist +"$package" >/dev/null 2>&1 || true
+  cmd appops set "$package" RUN_IN_BACKGROUND allow >/dev/null 2>&1 || true
+  cmd appops set "$package" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || true
+  cmd appops set "$package" WAKE_LOCK allow >/dev/null 2>&1 || true
+  cmd activity unfreeze --sticky "$package" >/dev/null 2>&1 || true
+
+  pid=$(pidof "$package" 2>/dev/null | awk '{ print $1 }')
+  [ -z "$pid" ] || cmd activity unfreeze --sticky "$pid" >/dev/null 2>&1 || true
+}
+
+keep_android_helium_awake
+
 start_termux_x11_activity() {
   target_display_id=0
   if [ -f "$DISPLAY_TARGET" ]; then
