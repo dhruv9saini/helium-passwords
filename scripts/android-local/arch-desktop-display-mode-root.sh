@@ -144,9 +144,7 @@ write_target() {
   chmod 600 "$target_file" 2>/dev/null || true
 }
 
-apply_mode() {
-  save_state
-
+target_record() {
   external_record=$(detect_android_external || true)
 
   if [ -n "$external_record" ]; then
@@ -154,13 +152,41 @@ apply_mode() {
     display_id=${1:-0}
     target_size=${2:-$(native_size)}
     target_density=${3:-$external_density}
+    printf 'external %s %s %s %s\n' "$display_id" "$target_size" "$target_density" "$target_size"
+  else
+    target_size=$(native_size)
+    printf 'native 0 reset reset %s\n' "$target_size"
+  fi
+}
+
+print_target() {
+  set -- $(target_record)
+  printf 'target_source=%s\n' "$1"
+  printf 'target_display_id=%s\n' "$2"
+  printf 'target_size=%s\n' "$3"
+  printf 'target_density=%s\n' "$4"
+  printf 'target_x11_mode=exact\n'
+  printf 'target_x11_resolution=%s\n' "$5"
+}
+
+apply_mode() {
+  save_state
+
+  set -- $(target_record)
+  target_source=$1
+  display_id=$2
+  target_size=$3
+  target_density=$4
+  target_x11_resolution=$5
+
+  if [ "$target_source" = external ]; then
     wm size "$target_size" || true
     wm density "$target_density" || true
     if [ "$display_id" != 0 ]; then
       wm size "$target_size" -d "$display_id" >/dev/null 2>&1 || true
       wm density "$target_density" -d "$display_id" >/dev/null 2>&1 || true
     fi
-    write_target external "$display_id" "$target_size" "$target_density" "$target_size"
+    write_target "$target_source" "$display_id" "$target_size" "$target_density" "$target_x11_resolution"
     wm scaling auto || true
     wm user-rotation lock 1 || {
       settings put system accelerometer_rotation 0 || true
@@ -169,10 +195,9 @@ apply_mode() {
     settings put global policy_control immersive.full=com.termux.x11 || true
     cmd statusbar collapse >/dev/null 2>&1 || true
   else
-    target_size=$(native_size)
     wm size reset || true
     wm density reset || true
-    write_target native 0 reset reset "$target_size"
+    write_target "$target_source" "$display_id" "$target_size" "$target_density" "$target_x11_resolution"
   fi
 }
 
@@ -190,8 +215,14 @@ case "${1:-status}" in
     wm user-rotation
     [ ! -f "$target_file" ] || cat "$target_file"
     ;;
+  fingerprint)
+    target_record
+    ;;
+  target)
+    print_target
+    ;;
   *)
-    echo "usage: $0 [apply|reset|status]" >&2
+    echo "usage: $0 [apply|reset|status|fingerprint|target]" >&2
     exit 2
     ;;
 esac

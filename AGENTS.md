@@ -91,10 +91,16 @@ restores Chromium's native password manager.
   does not lock rotation or set immersive policy. Do not use DRM/sysfs connector
   status as an external-display fallback on the OnePlus 13; it can report false
   positives such as `5120x2560` and corrupt Launcher3's layout scaling.
-  `reset` restores the saved size, density, rotation, and `policy_control`.
+  `fingerprint` prints the target source/display/size/density without changing
+  Android state, and `target` prints the corresponding target env. `reset`
+  restores the saved size, density, rotation, and `policy_control`.
+  `scripts/android-local/arch-desktop-display-watch-root.sh` polls that
+  fingerprint while Arch Desktop is running. When a monitor is plugged or
+  unplugged after startup, it reapplies display mode and restarts the X11 layer
+  so Termux:X11 reads the new resolution.
   `scripts/android-local/wire-arch-desktop-display-mode-root.sh` idempotently
-  wires `apply` into `arch-desktop-resume-root.sh` and `reset` into
-  `arch-desktop-hibernate-root.sh`.
+  wires `apply` plus the display watcher into `arch-desktop-resume-root.sh` and
+  watcher shutdown plus `reset` into `arch-desktop-hibernate-root.sh`.
 - `scripts/android-local/start-arch-xmonad-root.sh` and
   `scripts/android-local/stop-arch-x11-root.sh` are also installed by
   `install-phone-sync.sh`. Startup reads
@@ -103,7 +109,9 @@ restores Chromium's native password manager.
   `target_source=external`; otherwise it deletes those globals so Launcher3
   does not enter tablet/taskbar/freeform mode on the phone screen. Startup and
   stop both lazily unmount `/data/local/chroots/arch/tmp/.X11-unix` before
-  removing it because that socket path may be a live mount.
+  removing it because that socket path may be a live mount. Startup honors
+  `ARCH_X11_OPEN_ACTIVITY=0`; the controller app uses that so it can open the
+  Termux:X11 Activity itself after the root resume script finishes.
 - Arch Desktop startup also keeps Android Helium Sync
   (`computer.helium.sync`) out of inactive/idle background states and sticky
   unfreezes the running native browser process when present. CookieCloud uses

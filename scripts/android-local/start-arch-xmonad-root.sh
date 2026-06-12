@@ -67,7 +67,9 @@ start_termux_x11_activity() {
   fi
 }
 
-start_termux_x11_activity
+if [ "${ARCH_X11_OPEN_ACTIVITY:-1}" != 0 ]; then
+  start_termux_x11_activity
+fi
 
 set_termux_x11_preferences() {
   pref="$TERMUX_PREFIX/bin/termux-x11-preference"
@@ -89,7 +91,9 @@ set_termux_x11_preferences() {
 
 for _ in 1 2 3 4 5; do
   set_termux_x11_preferences && break
-  start_termux_x11_activity
+  if [ "${ARCH_X11_OPEN_ACTIVITY:-1}" != 0 ]; then
+    start_termux_x11_activity
+  fi
   sleep 1
 done
 
