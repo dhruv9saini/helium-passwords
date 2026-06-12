@@ -17,16 +17,47 @@
     '.dRpWwb.M8OgIe.bzXtMb',
     'style + div[data-mcpr][style^="margin-bottom:"]'
   ];
+  const adSelectors = [
+    '#tads',
+    '#tadsb',
+    '#bottomads',
+    '[data-text-ad]',
+    '.uEierd',
+    'ins.adsbygoogle',
+    'iframe[src*="googlesyndication.com"]',
+    'iframe[src*="doubleclick.net"]',
+    'iframe[src*="googleadservices.com"]',
+    'iframe[id^="google_ads_iframe_"]',
+    'div[id^="google_ads_iframe_"]',
+    'div[id^="div-gpt-ad"]'
+  ];
 
   const labelPattern = /\bAI\s+Overview\b/i;
   const supportingPattern = /\bGenerative AI is experimental\b/i;
+  const adLabelPattern = /^(ad|ads|sponsored)$/i;
 
   const hide = (element) => {
     if (!(element instanceof HTMLElement) || element.hasAttribute(hiddenAttr)) {
       return;
     }
     element.setAttribute(hiddenAttr, 'true');
+    element.setAttribute('aria-hidden', 'true');
     element.style.setProperty('display', 'none', 'important');
+    element.style.setProperty('visibility', 'hidden', 'important');
+    element.style.setProperty('height', '0', 'important');
+    element.style.setProperty('min-height', '0', 'important');
+    element.style.setProperty('margin', '0', 'important');
+    element.style.setProperty('padding', '0', 'important');
+  };
+
+  const installStyle = () => {
+    if (document.getElementById('helium-content-blocker-style')) {
+      return;
+    }
+    const style = document.createElement('style');
+    style.id = 'helium-content-blocker-style';
+    style.textContent = `${adSelectors.join(',')}{display:none!important;visibility:hidden!important;height:0!important;min-height:0!important;margin:0!important;padding:0!important;}`;
+    (document.head || document.documentElement).appendChild(style);
   };
 
   const textLooksLikeAiOverview = (element) => {
@@ -54,7 +85,27 @@
     return last;
   };
 
+  const findAdContainer = (element) => {
+    const direct = element.closest('[data-text-ad],.uEierd,#tads,#tadsb,#bottomads,[aria-label="Ads"],[aria-label="Sponsored"]');
+    if (direct instanceof HTMLElement) {
+      return direct;
+    }
+
+    let cursor = element;
+    let last = element;
+    for (let depth = 0; depth < 6 && cursor.parentElement; depth += 1) {
+      if (cursor.parentElement.id === 'search' || cursor.parentElement.id === 'rso') {
+        return cursor;
+      }
+      last = cursor.parentElement;
+      cursor = cursor.parentElement;
+    }
+    return last;
+  };
+
   const scan = () => {
+    installStyle();
+
     for (const selector of rootSelectors) {
       for (const element of document.querySelectorAll(selector)) {
         if (element instanceof HTMLElement && textLooksLikeAiOverview(element)) {
@@ -63,13 +114,21 @@
       }
     }
 
+    for (const selector of adSelectors) {
+      for (const element of document.querySelectorAll(selector)) {
+        hide(element);
+      }
+    }
+
     for (const element of document.querySelectorAll('h1,h2,h3,span,div')) {
-      if (!(element instanceof HTMLElement) || !labelPattern.test(element.textContent || '')) {
+      const normalized = (element.textContent || '').replace(/\s+/g, ' ').trim();
+      if (!(element instanceof HTMLElement) || !(labelPattern.test(element.textContent || '') || adLabelPattern.test(normalized))) {
         continue;
       }
-      const normalized = (element.textContent || '').replace(/\s+/g, ' ').trim();
       if (normalized === 'AI Overview') {
         hide(findContainer(element));
+      } else if (adLabelPattern.test(normalized)) {
+        hide(findAdContainer(element));
       }
     }
   };

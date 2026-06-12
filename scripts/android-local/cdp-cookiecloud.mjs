@@ -28,18 +28,27 @@ if (
 
 class CDP {
   static async connect(baseURL) {
-    const targets = await fetch(trimSlash(baseURL) + "/json/list").then((response) => response.json());
+    const normalized = trimSlash(baseURL);
+    const version = await fetch(normalized + "/json/version").then((response) => response.json()).catch(() => ({}));
+    if (version.webSocketDebuggerUrl) {
+      const client = new CDP(version.webSocketDebuggerUrl, true);
+      await client.open();
+      return client;
+    }
+
+    const targets = await fetch(normalized + "/json/list").then((response) => response.json());
     const page = targets.find((target) => target.type === "page" && !String(target.url).startsWith("chrome")) ||
       targets.find((target) => target.type === "page");
     if (!page) throw new Error(`no CDP page target at ${baseURL}`);
-    const client = new CDP(page.webSocketDebuggerUrl);
+    const client = new CDP(page.webSocketDebuggerUrl, false);
     await client.open();
     await client.call("Network.enable");
     return client;
   }
 
-  constructor(webSocketURL) {
+  constructor(webSocketURL, browserTarget) {
     this.webSocketURL = webSocketURL;
+    this.browserTarget = browserTarget;
     this.nextID = 0;
     this.pending = new Map();
   }
@@ -74,6 +83,18 @@ class CDP {
       if (message.error) throw new Error(`${method}: ${JSON.stringify(message.error)}`);
       return message;
     });
+  }
+
+  getAllCookies() {
+    return this.call(this.browserTarget ? "Storage.getCookies" : "Network.getAllCookies");
+  }
+
+  async setCookie(params) {
+    if (!this.browserTarget) {
+      return this.call("Network.setCookie", params);
+    }
+    await this.call("Storage.setCookies", { cookies: [params] });
+    return { result: { success: true } };
   }
 
   close() {
@@ -202,7 +223,7 @@ async function withCDP(cdpURL, callback) {
 
 async function upload(cdpURL) {
   return await withCDP(cdpURL, async (cdp) => {
-    const cookies = await cdp.call("Network.getAllCookies");
+    const cookies = await cdp.getAllCookies();
     const include = new Set((options.include || "").split(",").map((item) => item.trim()).filter(Boolean));
     const blacklist = new Set((options.blacklist || "").split(",").map((item) => item.trim()).filter(Boolean));
     const cookie_data = {};
@@ -261,7 +282,7 @@ async function download(cdpURL) {
         if (sameSite) params.sameSite = sameSite;
         const expires = Number(cookie.expirationDate || cookie.expires || 0);
         if (expires > 0) params.expires = expires;
-        const result = await cdp.call("Network.setCookie", params);
+        const result = await cdp.setCookie(params);
         if (result.result?.success) applied++;
       }
     }

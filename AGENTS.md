@@ -60,13 +60,18 @@ restores Chromium's native password manager.
   to `chromium` for temporary testing. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium
   Sync artifact to install `/usr/local/bin/helium` in the phone chroot. The
-  launcher defaults to `$HOME/.config/helium-passwords`, uses native password
-  sync for `helium`, and uses the CDP password bridge only for the temporary
-  `chromium` fallback. The launcher removes stale Chromium singleton files only
-  when their recorded PID is no longer running. The CDP chroot bridge folds
-  records that Chromium's native password API treats as the same origin and
-  username. The installer places the CookieCloud extension and the Google AI
-  Overview blocker under both `/root/.local/share` and
+  launcher defaults to `$HOME/.config/helium-passwords`, starts the CDP
+  password bridge by default for the chroot browser, and only disables it when
+  `HELIUM_CHROOT_CDP_PASSWORD_SYNC=false` is set. The bridge uses Chromium's
+  native `chrome.passwordsPrivate` API; it is not a password extension. The
+  launcher removes stale Chromium singleton files only when their recorded PID
+  is no longer running. The CDP chroot bridge folds records that Chromium's
+  native password API treats as the same origin and username. The
+  `cdp-cookiecloud` bridge uses browser-level `Storage.getCookies` and
+  `Storage.setCookies` when CDP exposes a browser websocket, because chroot
+  page targets can be missing or still starting. The installer places the
+  CookieCloud extension and the Google AI Overview blocker under both
+  `/root/.local/share` and
   `/home/dhruv/.local/share`; the launcher loads whichever copies live under
   the invoking user's `$HOME`. The chroot AI Overview blocker is a normal
   desktop Chromium extension loaded by that launcher.

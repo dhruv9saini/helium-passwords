@@ -34,7 +34,8 @@ if [ -s "$password_data_dir/token" ]; then
   printf '%s\n' "${HELIUM_SYNC_DEVICE_NAME:-helium-chroot}" >"$sync_config_dir/device_name"
   chmod 600 "$sync_config_dir/token" "$sync_config_dir/base_url" "$sync_config_dir/device_name"
 fi
-chmod 1777 /dev/shm
+chmod 1777 /dev/shm 2>/dev/null || true
+mkdir -p "$home_dir/.local/share/pki/nssdb"
 runtime_dir=${XDG_RUNTIME_DIR:-/tmp/runtime-$(id -u)}
 mkdir -p "$runtime_dir"
 chmod 700 "$runtime_dir"
@@ -55,11 +56,7 @@ fi
 browser_name=$(basename "$browser")
 cdp_password_sync=${HELIUM_CHROOT_CDP_PASSWORD_SYNC:-auto}
 if [ "$cdp_password_sync" = auto ]; then
-  if [ "$browser_name" = helium ]; then
-    cdp_password_sync=false
-  else
-    cdp_password_sync=true
-  fi
+  cdp_password_sync=true
 fi
 
 existing_pids=$(ps -A -o pid,args |
@@ -72,6 +69,10 @@ fi
   --headless=new \
   --user-data-dir="$profile" \
   --no-sandbox \
+  --disable-gpu-sandbox \
+  --in-process-gpu \
+  --disable-dev-shm-usage \
+  --no-zygote \
   --password-store=basic \
   --remote-debugging-address=127.0.0.1 \
   --remote-debugging-port=9223 \

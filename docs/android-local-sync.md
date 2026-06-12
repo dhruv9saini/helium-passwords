@@ -64,8 +64,8 @@ The wrapper prefers `helium` and falls back to `chromium` only for temporary
 testing. Override with `HELIUM_CHROOT_BROWSER=/path/to/browser`.
 
 The wrapper starts `helium-local-syncd` and `helium-syncd` first, starts the
-CDP password bridge only when it is using the temporary `chromium` fallback,
-starts `cdp-cookiecloud daemon` when
+CDP password bridge by default for the chroot browser, starts
+`cdp-cookiecloud daemon` when
 `$HOME/.local/share/helium-local-sync/cookiecloud-client.json` exists, then
 launches Helium Sync with:
 
@@ -85,7 +85,9 @@ Configure CookieCloud in the extension UI or client config:
 - mode: `up` on the source browser, `down` on the destination browser
 - uuid/password: same values on both sides
 
-The installer also provides a no-dependency CDP bridge:
+The installer also provides a no-dependency CDP bridge. It uses browser-level
+CDP `Storage.getCookies` and `Storage.setCookies` when available so cookie sync
+does not depend on a responsive page renderer target:
 
 ```sh
 cdp-cookiecloud sync --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
@@ -109,10 +111,10 @@ The native Chromium overlays in `chromium/overlay/components/helium_sync` and `c
 
 The password payload format is `helium-password-v1`, a small JSON record with
 `url`, `signon_realm`, `username`, `password`, and `note`. Records are encrypted
-at rest by `helium-syncd`. Chroot Helium uses the native C++ bridge. The
-temporary Chromium fallback uses `cdp-password-sync` to call
-`chrome.passwordsPrivate` inside `chrome://password-manager`; Android also uses
-the native C++ bridge.
+at rest by `helium-syncd`. The chroot bridge uses `cdp-password-sync` to call
+Chromium's native `chrome.passwordsPrivate` API inside
+`chrome://password-manager`; it is not a password-manager extension. Android
+uses the native C++ bridge.
 
 Password sync is additive/update-only. Local deletion removes the local entry
 from that profile but does not publish a tombstone or delete it elsewhere.
@@ -124,9 +126,8 @@ record applied in its state file instead of trying to create an unsupported
 duplicate row.
 
 `HELIUM_CHROOT_CDP_PASSWORD_SYNC=auto` is the default. In auto mode the launcher
-uses native Helium password sync when the selected browser binary is `helium`,
-and uses `cdp-password-sync` only for the temporary `chromium` fallback. Set it
-to `true` or `false` to override that behavior for debugging.
+starts `cdp-password-sync` for the chroot browser. Set it to `false` only when
+debugging a Helium build with a verified native C++ chroot password-sync bridge.
 
 Manual chroot password sync commands:
 
