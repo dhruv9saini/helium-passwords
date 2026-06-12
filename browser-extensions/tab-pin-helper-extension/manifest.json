@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "Helium Tab Pin Helper",
+  "version": "1.0.0",
+  "description": "Pins tabs imported from the laptop Helium session.",
+  "permissions": [
+    "tabs"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  }
+}

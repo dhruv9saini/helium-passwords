@@ -1,0 +1,9 @@
+{
+  "manifest_version": 3,
+  "name": "Blank New Tab",
+  "version": "1.0.0",
+  "description": "Replace Chromium's new tab page with an empty page.",
+  "chrome_url_overrides": {
+    "newtab": "blank.html"
+  }
+}

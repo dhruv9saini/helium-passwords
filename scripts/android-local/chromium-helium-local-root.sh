@@ -7,6 +7,7 @@ home_dir=${HOME:-/root}
 profile=${HELIUM_LOCAL_CHROMIUM_PROFILE:-$home_dir/.config/helium-passwords}
 password_data_dir=${HELIUM_PASSWORD_SYNC_DATA:-$home_dir/.local/share/helium-sync}
 sync_config_dir=$profile/Default/helium-sync
+state_dir=${HELIUM_SYNC_STATE_DIR:-$home_dir/.local/state/helium-sync}
 
 cleanup_stale_chromium_singletons() {
   local lock_target lock_pid
@@ -29,6 +30,13 @@ cp "$password_data_dir/token" "$sync_config_dir/token"
 printf '%s\n' "${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}" >"$sync_config_dir/base_url"
 printf '%s\n' "${HELIUM_SYNC_DEVICE_NAME:-helium-chroot}" >"$sync_config_dir/device_name"
 chmod 600 "$sync_config_dir/token" "$sync_config_dir/base_url" "$sync_config_dir/device_name"
+mkdir -p "$state_dir"
+
+profile_prepare=${HELIUM_PROFILE_PREPARE:-$home_dir/.config/x11/bin/helium-prepare-profile}
+if [ -x "$profile_prepare" ]; then
+  "$profile_prepare" "$profile" >>"$state_dir/profile-prepare.log" 2>&1 || true
+fi
+
 mkdir -p /dev/shm
 chmod 1777 /dev/shm 2>/dev/null || true
 mkdir -p "$home_dir/.local/share/pki/nssdb"
@@ -63,9 +71,6 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-state_dir=${HELIUM_SYNC_STATE_DIR:-$home_dir/.local/state/helium-sync}
-mkdir -p "$state_dir"
-
 if [ "$cdp_password_sync" = true ] && command -v cdp-password-sync >/dev/null 2>&1; then
   cdp-password-sync daemon \
     --cdp "${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}" \
@@ -89,17 +94,28 @@ if command -v cdp-cookiecloud >/dev/null 2>&1 && [ -f "$cookiecloud_config" ]; t
 fi
 
 extension_paths=
-cookiecloud_extension=$home_dir/.local/share/cookiecloud-extension/chrome-mv3
-if [ -d "$cookiecloud_extension" ]; then
-  extension_paths=$cookiecloud_extension
-fi
-ai_overview_extension=$home_dir/.local/share/google-ai-overview-blocker
-if [ -d "$ai_overview_extension" ]; then
+add_extension_path() {
+  local extension_path=$1
+  [ -d "$extension_path" ] || return 0
   if [ -n "$extension_paths" ]; then
-    extension_paths="$extension_paths,$ai_overview_extension"
+    extension_paths="$extension_paths,$extension_path"
   else
-    extension_paths=$ai_overview_extension
+    extension_paths=$extension_path
   fi
+}
+
+add_extension_path "$home_dir/.local/share/cookiecloud-extension/chrome-mv3"
+add_extension_path "$home_dir/.local/share/google-ai-overview-blocker"
+add_extension_path "$home_dir/.local/share/blank-new-tab-extension"
+add_extension_path "$home_dir/.local/share/tab-pin-helper-extension"
+
+cleanup_startup_tabs=${HELIUM_CLEANUP_STARTUP_TABS:-$home_dir/.config/x11/bin/helium-cleanup-startup-tabs}
+if [ -x "$cleanup_startup_tabs" ]; then
+  (
+    sleep 5
+    "$cleanup_startup_tabs" >>"$state_dir/cleanup-startup-tabs.log" 2>&1 || true
+  ) &
+  pids="$pids $!"
 fi
 
 browser_args=()

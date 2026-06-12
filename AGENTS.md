@@ -73,8 +73,37 @@ restores Chromium's native password manager.
   CookieCloud extension and the Google AI Overview blocker under both
   `/root/.local/share` and
   `/home/dhruv/.local/share`; the launcher loads whichever copies live under
-  the invoking user's `$HOME`. The chroot AI Overview blocker is a normal
-  desktop Chromium extension loaded by that launcher.
+  the invoking user's `$HOME`. The installer also places the blank-new-tab and
+  tab-pin helper extensions under both chroot users and installs
+  `helium-prepare-profile` plus `helium-cleanup-startup-tabs` into each X11 bin
+  directory. The launcher runs profile prep before Helium starts, sets Google
+  search, requests Helium vertical layout through `helium.browser.layout = 2`,
+  restores the last session, and loads the helper extensions. The chroot AI
+  Overview blocker is a normal desktop Chromium extension loaded by that
+  launcher.
+- `scripts/android-local/arch-desktop-display-mode-root.sh` is installed at
+  `/data/local/chroots/arch/arch-desktop-display-mode-root.sh`. It is the
+  reversible mirrored-display workaround for Termux:X11: `apply` saves current
+  Android display overrides, uses Android display-manager output for a reported
+  external display's resolution, locks landscape, and sets immersive fullscreen
+  for Termux:X11 only in that external-display case. If Android only reports
+  the built-in screen, it resets Android `wm size`/`wm density` to native and
+  does not lock rotation or set immersive policy. Do not use DRM/sysfs connector
+  status as an external-display fallback on the OnePlus 13; it can report false
+  positives such as `5120x2560` and corrupt Launcher3's layout scaling.
+  `reset` restores the saved size, density, rotation, and `policy_control`.
+  `scripts/android-local/wire-arch-desktop-display-mode-root.sh` idempotently
+  wires `apply` into `arch-desktop-resume-root.sh` and `reset` into
+  `arch-desktop-hibernate-root.sh`.
+- `scripts/android-local/start-arch-xmonad-root.sh` and
+  `scripts/android-local/stop-arch-x11-root.sh` are also installed by
+  `install-phone-sync.sh`. Startup reads
+  `/root/.local/state/x11/android-display-target.env` before launching
+  Termux:X11. It only enables Android desktop/freeform globals when
+  `target_source=external`; otherwise it deletes those globals so Launcher3
+  does not enter tablet/taskbar/freeform mode on the phone screen. Startup and
+  stop both lazily unmount `/data/local/chroots/arch/tmp/.X11-unix` before
+  removing it because that socket path may be a live mount.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 - Android APKs intended for local phone use should be release-style,
