@@ -1,13 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-start-helium-local-sync
-
 home_dir=${HOME:-/root}
 profile=${HELIUM_LOCAL_CHROMIUM_PROFILE:-$home_dir/.config/helium-passwords}
 password_data_dir=${HELIUM_PASSWORD_SYNC_DATA:-$home_dir/.local/share/helium-sync}
 sync_config_dir=$profile/Default/helium-sync
 state_dir=${HELIUM_SYNC_STATE_DIR:-$home_dir/.local/state/helium-sync}
+mkdir -p "$state_dir" "$password_data_dir"
+
+ensure_secret() {
+  local path=$1
+  local bytes=$2
+  if [ -s "$path" ]; then
+    return 0
+  fi
+  umask 077
+  head -c "$bytes" /dev/urandom | base64 >"$path"
+}
 
 cleanup_stale_chromium_singletons() {
   local lock_target lock_pid
@@ -25,15 +34,23 @@ cleanup_stale_chromium_singletons() {
 
 mkdir -p "$profile"
 cleanup_stale_chromium_singletons
+ensure_secret "$password_data_dir/passphrase" 32
+ensure_secret "$password_data_dir/token" 32
 mkdir -p "$sync_config_dir"
 cp "$password_data_dir/token" "$sync_config_dir/token"
 printf '%s\n' "${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}" >"$sync_config_dir/base_url"
 printf '%s\n' "${HELIUM_SYNC_DEVICE_NAME:-helium-chroot}" >"$sync_config_dir/device_name"
 chmod 600 "$sync_config_dir/token" "$sync_config_dir/base_url" "$sync_config_dir/device_name"
-mkdir -p "$state_dir"
+
+if [ "${HELIUM_START_LOCAL_SYNC:-1}" = 1 ]; then
+  start-helium-local-sync >>"$state_dir/start-helium-local-sync.log" 2>&1 &
+fi
 
 profile_prepare=${HELIUM_PROFILE_PREPARE:-$home_dir/.config/x11/bin/helium-prepare-profile}
-if [ -x "$profile_prepare" ]; then
+if [ -x "$profile_prepare" ] &&
+  { [ "${HELIUM_PROFILE_PREPARE_ON_LAUNCH:-0}" = 1 ] ||
+    [ ! -f "$profile/Default/Preferences" ] ||
+    [ ! -f "$profile/Local State" ]; }; then
   "$profile_prepare" "$profile" >>"$state_dir/profile-prepare.log" 2>&1 || true
 fi
 

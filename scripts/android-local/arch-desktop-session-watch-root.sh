@@ -4,8 +4,9 @@ set -eu
 ROOT=${ARCH_CHROOT:-/data/local/chroots/arch}
 STATE_DIR="$ROOT/root/.local/state/x11"
 LOG="$STATE_DIR/controller.log"
-INTERVAL=${ARCH_DESKTOP_SESSION_WATCH_INTERVAL:-5}
+INTERVAL=${ARCH_DESKTOP_SESSION_WATCH_INTERVAL:-2}
 STARTUP_GRACE_SECONDS=${ARCH_DESKTOP_SESSION_STARTUP_GRACE_SECONDS:-60}
+MISSES_BEFORE_HIBERNATE=${ARCH_DESKTOP_SESSION_MISSES_BEFORE_HIBERNATE:-2}
 
 seen_x11=0
 misses=0
@@ -41,7 +42,7 @@ while :; do
   else
     if [ "$seen_x11" = 1 ]; then
       misses=$((misses + 1))
-      if [ "$misses" -ge 3 ]; then
+      if [ "$misses" -ge "$MISSES_BEFORE_HIBERNATE" ]; then
         hibernate_and_exit "Termux:X11 left all displays"
       fi
     elif [ $(( $(date +%s) - start_time )) -ge "$STARTUP_GRACE_SECONDS" ]; then

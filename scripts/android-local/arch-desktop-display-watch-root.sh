@@ -20,6 +20,15 @@ fingerprint() {
   "$DISPLAY_MODE" fingerprint 2>/dev/null || printf 'unknown 0 reset reset unknown\n'
 }
 
+session_running() {
+  [ "$(cat "$STATE_DIR/session.state" 2>/dev/null || true)" = running ]
+}
+
+termux_x11_activity_visible() {
+  dumpsys activity activities 2>/dev/null |
+    grep -Eq 'topResumedActivity=.*com[.]termux[.]x11/[.]MainActivity|Resumed: ActivityRecord[{].* com[.]termux[.]x11/[.]MainActivity|windows=[[]Window[{].*com[.]termux[.]x11/com[.]termux[.]x11[.]MainActivity'
+}
+
 restart_session_watch() {
   [ -x "$SESSION_WATCH" ] || return 0
   pkill -f '[a]rch-desktop-session-watch.sh' >/dev/null 2>&1 || true
@@ -31,6 +40,13 @@ restart_x11_for_display() {
   new=$2
 
   log "display target changed: $old -> $new"
+
+  if ! session_running || ! termux_x11_activity_visible; then
+    log "Termux:X11 is not visible; hibernating instead of reopening"
+    "$ROOT/arch-desktop-hibernate-root.sh" >>"$LOG" 2>&1 || true
+    exit 0
+  fi
+
   pkill -f '[a]rch-desktop-session-watch.sh' >/dev/null 2>&1 || true
   "$DISPLAY_MODE" apply >>"$LOG" 2>&1 || true
   "$STOP_X11" >>"$LOG" 2>&1 || true

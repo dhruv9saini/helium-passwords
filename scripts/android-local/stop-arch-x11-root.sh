@@ -74,5 +74,6 @@ umount -l "$ROOT/tmp/.X11-unix" >/dev/null 2>&1 || true
 rm -rf "$ROOT/tmp/.X11-unix" "$ROOT/tmp/.X1-lock" >/dev/null 2>&1 || true
 setenforce 1 || true
 am force-stop com.termux.x11 >/dev/null 2>&1 || true
+am force-stop org.lineageos.jelly >/dev/null 2>&1 || true
 
 log "Termux:X11 Arch desktop stopped"

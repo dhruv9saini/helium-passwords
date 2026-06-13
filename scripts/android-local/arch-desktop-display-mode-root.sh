@@ -5,7 +5,10 @@ root=${ARCH_CHROOT:-/data/local/chroots/arch}
 state_dir=$root/root/.local/state/x11
 state_file=$state_dir/android-display-before-arch.env
 target_file=$state_dir/android-display-target.env
+launcher_prefs=/data/user/0/com.android.launcher3/shared_prefs/com.android.launcher3.prefs.xml
+launcher_prefs_state=$state_dir/launcher3-prefs-before-arch.xml
 external_density=${ARCH_DESKTOP_EXTERNAL_WM_DENSITY:-160}
+desktop_global_keys="force_desktop_mode_on_external_displays enable_freeform_support force_resizable_activities freeform_window_management enable_non_resizable_multi_window"
 
 mkdir -p "$state_dir" 2>/dev/null || true
 
@@ -15,6 +18,10 @@ sed_value() {
 
 save_state() {
   [ -f "$state_file" ] && return 0
+
+  if [ -f "$launcher_prefs" ] && [ ! -f "$launcher_prefs_state" ]; then
+    cp -p "$launcher_prefs" "$launcher_prefs_state" 2>/dev/null || true
+  fi
 
   size_override=$(wm size | sed_value 's/^Override size: //p')
   density_override=$(wm density | sed_value 's/^Override density: //p')
@@ -28,7 +35,32 @@ save_state() {
     printf 'policy_control=%s\n' "$policy_control"
     printf 'accelerometer_rotation=%s\n' "$accelerometer_rotation"
     printf 'user_rotation=%s\n' "$user_rotation"
+    for key in $desktop_global_keys; do
+      value=$(settings get global "$key" 2>/dev/null || printf null)
+      printf '%s=%s\n' "$key" "$value"
+    done
   } >"$state_file"
+}
+
+clear_arch_global_display_settings() {
+  settings delete global policy_control >/dev/null 2>&1 || true
+  for key in $desktop_global_keys; do
+    settings put global "$key" 0 >/dev/null 2>&1 || true
+  done
+}
+
+restore_launcher_prefs() {
+  [ -f "$launcher_prefs_state" ] || return 0
+  [ -f "$launcher_prefs" ] || {
+    rm -f "$launcher_prefs_state"
+    return 0
+  }
+
+  if ! cmp -s "$launcher_prefs_state" "$launcher_prefs" 2>/dev/null; then
+    am force-stop com.android.launcher3 >/dev/null 2>&1 || true
+    cp -p "$launcher_prefs_state" "$launcher_prefs" 2>/dev/null || true
+  fi
+  rm -f "$launcher_prefs_state"
 }
 
 restore_state() {
@@ -36,6 +68,9 @@ restore_state() {
     wm size reset || true
     wm density reset || true
     wm user-rotation free || true
+    clear_arch_global_display_settings
+    restore_launcher_prefs
+    rm -f "$target_file"
     return 0
   }
 
@@ -44,6 +79,11 @@ restore_state() {
   policy_control=null
   accelerometer_rotation=null
   user_rotation=0
+  force_desktop_mode_on_external_displays=null
+  enable_freeform_support=null
+  force_resizable_activities=null
+  freeform_window_management=null
+  enable_non_resizable_multi_window=null
   # shellcheck disable=SC1090
   . "$state_file"
 
@@ -59,11 +99,7 @@ restore_state() {
     wm density "$density" || true
   fi
 
-  if [ "${policy_control:-null}" = null ] || [ -z "${policy_control:-}" ]; then
-    settings delete global policy_control >/dev/null 2>&1 || true
-  else
-    settings put global policy_control "$policy_control" || true
-  fi
+  clear_arch_global_display_settings
 
   if [ "${accelerometer_rotation:-null}" = 1 ]; then
     wm user-rotation free || true
@@ -74,6 +110,7 @@ restore_state() {
     settings put system user_rotation "${user_rotation:-0}" || true
   fi
 
+  restore_launcher_prefs
   rm -f "$state_file" "$target_file"
 }
 
@@ -101,29 +138,24 @@ native_size() {
 }
 
 detect_android_external() {
-  cmd display get-displays 2>/dev/null | while IFS= read -r line; do
-    case "$line" in
-      Display\ id*) ;;
-      *) continue ;;
-    esac
+  for id in $(cmd display get-displays --ids-only 2>/dev/null); do
+    [ "$id" != 0 ] || continue
 
-    id=$(printf '%s' "$line" | sed -n 's/^Display id \([0-9][0-9]*\):.*/\1/p')
-    case "$line" in
-      *"type EXTERNAL"*) ;;
-      *)
-        [ -n "$id" ] && [ "$id" != 0 ] || continue
-        case "$line" in
-          *"Built-in Screen"*) continue ;;
-        esac
-        ;;
-    esac
+    size=$(
+      cmd display get-active-mode "$id" 2>/dev/null |
+        sed -n 's/.*Resolution: \([0-9][0-9]*\)x\([0-9][0-9]*\).*/\1x\2/p' |
+        tail -n 1
+    )
+    if [ -z "$size" ]; then
+      size=$(wm size -d "$id" 2>/dev/null | sed_value 's/^Physical size: //p')
+    fi
 
-    size=$(printf '%s' "$line" | sed -n 's/.*real \([0-9][0-9]*\) x \([0-9][0-9]*\).*/\1x\2/p')
-    density=$(printf '%s' "$line" | sed -n 's/.*density \([0-9][0-9]*\).*/\1/p')
     [ -n "$size" ] || continue
-    printf '%s %s %s\n' "${id:-0}" "$size" "${density:-$external_density}"
-    break
-  done | head -n 1
+    printf '%s %s %s\n' "$id" "$size" "$external_density"
+    return 0
+  done
+
+  return 1
 }
 
 write_target() {
@@ -132,12 +164,14 @@ write_target() {
   size=$3
   density=$4
   x11_resolution=$5
+  android_mode=${6:-mirror}
 
   {
     printf 'target_source=%s\n' "$source"
     printf 'target_display_id=%s\n' "$display_id"
     printf 'target_size=%s\n' "$size"
     printf 'target_density=%s\n' "$density"
+    printf 'target_android_display_mode=%s\n' "$android_mode"
     printf 'target_x11_mode=custom\n'
     printf 'target_x11_resolution=%s\n' "$x11_resolution"
   } >"$target_file"
@@ -151,11 +185,11 @@ target_record() {
     set -- $external_record
     display_id=${1:-0}
     target_size=${2:-$(native_size)}
-    target_density=${3:-$external_density}
-    printf 'external %s %s %s %s\n' "$display_id" "$target_size" "$target_density" "$target_size"
+    target_density=${ARCH_DESKTOP_MIRROR_WM_DENSITY:-$external_density}
+    printf 'external %s %s %s %s extended\n' "$display_id" "$target_size" "$target_density" "$target_size"
   else
     target_size=$(native_size)
-    printf 'native 0 reset reset %s\n' "$target_size"
+    printf 'native 0 reset reset %s native\n' "$target_size"
   fi
 }
 
@@ -165,6 +199,7 @@ print_target() {
   printf 'target_display_id=%s\n' "$2"
   printf 'target_size=%s\n' "$3"
   printf 'target_density=%s\n' "$4"
+  printf 'target_android_display_mode=%s\n' "$6"
   printf 'target_x11_mode=custom\n'
   printf 'target_x11_resolution=%s\n' "$5"
 }
@@ -183,29 +218,27 @@ apply_mode() {
   target_size=$3
   target_density=$4
   target_x11_resolution=$5
+  target_android_display_mode=$6
 
   if [ "$target_source" = external ]; then
-    # Termux:X11 reads the external display resolution when launched on that
-    # display. Do not set global wm size/density here; that corrupts the phone
-    # launcher layout while the external monitor is connected.
+    for key in $desktop_global_keys; do
+      settings put global "$key" 1 >/dev/null 2>&1 || true
+    done
     wm size reset || true
     wm density reset || true
-    if [ "$display_id" != 0 ]; then
-      wm size "$target_size" -d "$display_id" >/dev/null 2>&1 || true
-      wm density "$target_density" -d "$display_id" >/dev/null 2>&1 || true
-    fi
-    write_target "$target_source" "$display_id" "$target_size" "$target_density" "$target_x11_resolution"
+    wm size "$target_size" -d "$display_id" >/dev/null 2>&1 || true
+    wm density "$target_density" -d "$display_id" >/dev/null 2>&1 || true
+    wm set-display-windowing-mode -d "$display_id" 1 >/dev/null 2>&1 || true
+    write_target "$target_source" "$display_id" "$target_size" "$target_density" "$target_x11_resolution" "$target_android_display_mode"
     wm scaling auto || true
-    wm user-rotation lock 0 || {
-      settings put system accelerometer_rotation 0 || true
-      settings put system user_rotation 0 || true
-    }
-    settings put global policy_control immersive.full=com.termux.x11 || true
     cmd statusbar collapse >/dev/null 2>&1 || true
   else
     wm size reset || true
     wm density reset || true
-    write_target "$target_source" "$display_id" "$target_size" "$target_density" "$target_x11_resolution"
+    for key in $desktop_global_keys; do
+      settings put global "$key" 0 >/dev/null 2>&1 || true
+    done
+    write_target "$target_source" "$display_id" "$target_size" "$target_density" "$target_x11_resolution" "$target_android_display_mode"
   fi
 }
 

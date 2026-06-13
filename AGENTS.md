@@ -87,20 +87,21 @@ restores Chromium's native password manager.
   launcher.
 - `scripts/android-local/arch-desktop-display-mode-root.sh` is installed at
   `/data/local/chroots/arch/arch-desktop-display-mode-root.sh`. It is the
-  reversible mirrored-display workaround for Termux:X11: `apply` saves current
-  Android display overrides, uses Android display-manager output for a reported
-  external display's resolution, and sets immersive fullscreen for Termux:X11
-  only in that external-display case. External mode must not set global Android
-  `wm size` or `wm density`; Termux:X11 gets the external resolution when its
-  Activity is launched on the external display, and global overrides corrupt
-  Launcher3's phone-screen layout. External mode locks the phone display to
-  portrait (`wm user-rotation lock 0`) so Launcher3 does not switch into its
-  sparse landscape workspace and stretch status-bar notification icons. If
-  Android only reports the built-in screen, it resets Android `wm size`/`wm
-  density` to native and does not set immersive policy. Do not use DRM/sysfs
-  connector status as an external-display fallback on the OnePlus 13; it can
-  report false positives such as `5120x2560` and corrupt Launcher3's layout
-  scaling.
+  reversible external-display setup for Termux:X11: `apply` saves current
+  Android display overrides, rotation, and Launcher3 prefs, uses Android
+  display-manager output for a reported external display's resolution, enables
+  desktop/freeform hosting, and launches Termux:X11 on the external display.
+  The HDMI mirror approach leaves a centered sub-rectangle on the OnePlus
+  13/crDroid path, so the default target is `extended`, not `mirror`. Do not set
+  global `policy_control` for this flow; Termux:X11 fullscreen preference is
+  the display-specific path, and global immersive state can leak back onto the
+  phone launcher. `reset` restores saved display size/density/rotation, clears
+  Arch Desktop's global desktop/freeform and immersive flags, and restores the
+  saved Launcher3 prefs file if Android rewrote it. If Android only reports the
+  built-in screen, it resets Android `wm size`/`wm density` to native and does
+  not set immersive policy. Do not use DRM/sysfs connector status as an
+  external-display fallback on the OnePlus 13; it can report false positives
+  such as `5120x2560` and corrupt Launcher3's layout scaling.
   Termux:X11's `exact` resolution preference only accepts a fixed preset list
   and rejects common monitor modes like `2560x1440`; startup must use custom
   resolution mode for the detected external resolution.
@@ -115,8 +116,11 @@ restores Chromium's native password manager.
   shade, and keeps Termux:X11's own notification permission denied so its icon
   does not reappear.
   `fingerprint` prints the target source/display/size/density without changing
-  Android state, and `target` prints the corresponding target env. `reset`
-  restores the saved size, density, rotation, and `policy_control`.
+  Android state, and `target` prints the corresponding target env. The current
+  known-good Launcher3 backup is
+  `/sdcard/Download/launcher3-home-backup-20260612-202958.tar.gz` on the phone
+  and `/home/dhruv/phone-backups/launcher3-20260612-202958` on this computer;
+  `/home/dhruv/phone-backups/launcher3-latest` points at it.
   `scripts/android-local/arch-desktop-display-watch-root.sh` polls that
   fingerprint while Arch Desktop is running. When a monitor is plugged or
   unplugged after startup, it reapplies display mode and restarts the X11 layer
@@ -133,21 +137,39 @@ restores Chromium's native password manager.
   `scripts/android-local/wire-arch-desktop-display-mode-root.sh` idempotently
   wires `apply` plus the display watcher into `arch-desktop-resume-root.sh` and
   watcher shutdown plus `reset` into `arch-desktop-hibernate-root.sh`.
+  `scripts/android-local/arch-desktop-resume-root.sh` and
+  `scripts/android-local/arch-desktop-hibernate-root.sh` are now canonical.
+  Resume skips `stop-arch-x11-root.sh` when there are no Arch Desktop/X11
+  processes or X socket, because cold start must not pay the stop script's
+  grace sleep. Resume starts Termux:X11 from the Arch Desktop path itself,
+  which is still user-initiated and avoids waiting for the controller app to
+  open it after the root script returns.
 - `scripts/android-local/start-arch-xmonad-root.sh` and
   `scripts/android-local/stop-arch-x11-root.sh` are also installed by
   `install-phone-sync.sh`. Startup reads
   `/root/.local/state/x11/android-display-target.env` before launching
-  Termux:X11. It only enables Android desktop/freeform globals when
-  `target_source=external`; otherwise it deletes those globals so Launcher3
-  does not enter tablet/taskbar/freeform mode on the phone screen. Startup and
+  Termux:X11. The default external-display mode is `extended`, so startup
+  enables Android desktop/freeform globals and launches Termux:X11 on the
+  detected external display. Startup and
   stop both lazily unmount `/data/local/chroots/arch/tmp/.X11-unix` before
-  removing it because that socket path may be a live mount. Startup honors
-  `ARCH_X11_OPEN_ACTIVITY=0`; the controller app uses that so it can open the
-  Termux:X11 Activity itself after the root resume script finishes. Use the
-  built-in Termux:X11 trackpad path by default; the old browser-based
-  `x11-phone-trackpad` web helper is opt-in through `ARCH_X11_WEB_TRACKPAD=1`
-  because it can fight browser focus. Pointer speed is controlled by
-  `ARCH_X11_POINTER_SPEED` and defaults to `75`.
+  removing it because that socket path may be a live mount. The old Jelly web
+  trackpad relay is off by default; only enable it deliberately with
+  `ARCH_X11_WEB_TRACKPAD=1` for extended-display experiments. Pointer speed is
+  controlled by `ARCH_X11_POINTER_SPEED` and defaults to `70`. If Termux:X11 is
+  closed, the display watcher must hibernate instead of reopening it. XMonad
+  startup uses the cached compiled binary unless
+  `/root/.config/xmonad/xmonad.hs` is newer or `ARCH_X11_RECOMPILE=1` is set;
+  do not recompile on every cold start.
+- `android/arch-desktop-controller` is the tiny launcher app installed as
+  `net.dhruv.archdesktop` / "Arch Desktop". It must only run
+  `/data/local/chroots/arch/arch-desktop-resume-root.sh` and then finish. Do
+  not call `startActivity()` for `com.termux.x11` from this app; the root resume
+  script starts Termux:X11 with `am start --display <external-id>`, and a
+  normal app-level launch moves Termux:X11 back onto the phone display, causing
+  the external monitor to show a scaled mirror. Build it with
+  `scripts/android-local/build-arch-desktop-controller.sh`; the private signing
+  key stays outside the repo at
+  `/home/dhruv/.local/state/arch-desktop-controller/debug.keystore`.
 - Arch Desktop startup also keeps Android Helium Sync
   (`computer.helium.sync`) out of inactive/idle background states and sticky
   unfreezes the running native browser process when present. CookieCloud uses

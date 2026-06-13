@@ -36,8 +36,11 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-display-mode-root.sh" /data/local/tmp/arch-desktop-display-mode-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-display-watch-root.sh" /data/local/tmp/arch-desktop-display-watch-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-session-watch-root.sh" /data/local/tmp/arch-desktop-session-watch-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-resume-root.sh" /data/local/tmp/arch-desktop-resume-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-hibernate-root.sh" /data/local/tmp/arch-desktop-hibernate-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/android-ui-preferences-root.sh" /data/local/tmp/android-ui-preferences-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/helium-phone-ui-service-root.sh" /data/local/tmp/helium-phone-ui-service-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/x11-phone-trackpad-server.mjs" /data/local/tmp/x11-phone-trackpad-server.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/wire-arch-desktop-display-mode-root.sh" /data/local/tmp/wire-arch-desktop-display-mode-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/start-arch-xmonad-root.sh" /data/local/tmp/start-arch-xmonad-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/stop-arch-x11-root.sh" /data/local/tmp/stop-arch-x11-root.sh >/dev/null
@@ -63,13 +66,14 @@ install -Dm755 /data/local/tmp/start-helium-local-sync-root.sh \"\$ROOT/usr/loca
 install -Dm755 /data/local/tmp/arch-desktop-display-mode-root.sh \"\$ROOT/arch-desktop-display-mode-root.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-display-watch-root.sh \"\$ROOT/arch-desktop-display-watch-root.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-session-watch-root.sh \"\$ROOT/arch-desktop-session-watch.sh\"
+install -Dm755 /data/local/tmp/arch-desktop-resume-root.sh \"\$ROOT/arch-desktop-resume-root.sh\"
+install -Dm755 /data/local/tmp/arch-desktop-hibernate-root.sh \"\$ROOT/arch-desktop-hibernate-root.sh\"
 install -Dm755 /data/local/tmp/android-ui-preferences-root.sh \"\$ROOT/android-ui-preferences-root.sh\"
 install -Dm755 /data/local/tmp/helium-phone-ui-service-root.sh /data/adb/service.d/99-helium-phone-ui.sh
 \"\$ROOT/android-ui-preferences-root.sh\"
 install -Dm755 /data/local/tmp/wire-arch-desktop-display-mode-root.sh \"\$ROOT/wire-arch-desktop-display-mode-root.sh\"
 install -Dm755 /data/local/tmp/start-arch-xmonad-root.sh \"\$ROOT/start-arch-xmonad-root.sh\"
 install -Dm755 /data/local/tmp/stop-arch-x11-root.sh \"\$ROOT/stop-arch-x11-root.sh\"
-\"\$ROOT/wire-arch-desktop-display-mode-root.sh\"
 mkdir -p \"\$ROOT/root/.local/share/cookiecloud-extension\"
 rm -rf \"\$ROOT/root/.local/share/cookiecloud-extension/chrome-mv3\" \"\$ROOT/root/.local/share/google-ai-overview-blocker\" \"\$ROOT/root/.local/share/blank-new-tab-extension\" \"\$ROOT/root/.local/share/tab-pin-helper-extension\" \"\$ROOT/root/.local/share/helium-local-pass\"
 mkdir -p \"\$ROOT/root/.local/share/cookiecloud-extension/chrome-mv3\"
@@ -89,6 +93,7 @@ install -Dm755 /data/local/tmp/start-helium-local-sync-root.sh \"\$ROOT/root/.co
 install -Dm755 /data/local/tmp/chromium-helium-local-root.sh \"\$ROOT/root/.config/x11/bin/chromium-helium-local\"
 install -Dm755 /data/local/tmp/helium-prepare-profile-root.py \"\$ROOT/root/.config/x11/bin/helium-prepare-profile\"
 install -Dm755 /data/local/tmp/helium-cleanup-startup-tabs-root.py \"\$ROOT/root/.config/x11/bin/helium-cleanup-startup-tabs\"
+install -Dm755 /data/local/tmp/x11-phone-trackpad-server.mjs \"\$ROOT/root/.config/x11/bin/x11-phone-trackpad-server.mjs\"
 install -Dm755 /data/local/tmp/seed-chroot-profile-root.sh \"\$ROOT/usr/local/bin/seed-helium-chroot-profile\"
 if [ -n \"\$CHROOT_UID\" ] && [ -n \"\$CHROOT_GID\" ] && [ -d \"\$ROOT/\$CHROOT_HOME\" ]; then
   rm -rf \"\$ROOT/\$CHROOT_HOME/.local/share/cookiecloud-extension/chrome-mv3\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\"
@@ -101,13 +106,14 @@ if [ -n \"\$CHROOT_UID\" ] && [ -n \"\$CHROOT_GID\" ] && [ -d \"\$ROOT/\$CHROOT_
   install -Dm755 /data/local/tmp/chromium-helium-local-root.sh \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\"
   install -Dm755 /data/local/tmp/helium-prepare-profile-root.py \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-prepare-profile\"
   install -Dm755 /data/local/tmp/helium-cleanup-startup-tabs-root.py \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-cleanup-startup-tabs\"
+  install -Dm755 /data/local/tmp/x11-phone-trackpad-server.mjs \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\"
   for sync_dir in helium-sync helium-local-sync; do
     if [ -d \"\$ROOT/root/.local/share/\$sync_dir\" ]; then
       mkdir -p \"\$ROOT/\$CHROOT_HOME/.local/share/\$sync_dir\"
       cp -a \"\$ROOT/root/.local/share/\$sync_dir/.\" \"\$ROOT/\$CHROOT_HOME/.local/share/\$sync_dir/\"
     fi
   done
-  chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/cookiecloud-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/start-helium-local-sync\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-prepare-profile\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-cleanup-startup-tabs\"
+  chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/cookiecloud-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/start-helium-local-sync\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-prepare-profile\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-cleanup-startup-tabs\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\"
   for sync_dir in helium-sync helium-local-sync; do
     if [ -d \"\$ROOT/\$CHROOT_HOME/.local/share/\$sync_dir\" ]; then
       chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/\$sync_dir\"
