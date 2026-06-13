@@ -85,12 +85,31 @@ restores Chromium's native password manager.
   `/data/local/chroots/arch/arch-desktop-display-mode-root.sh`. It is the
   reversible mirrored-display workaround for Termux:X11: `apply` saves current
   Android display overrides, uses Android display-manager output for a reported
-  external display's resolution, locks landscape, and sets immersive fullscreen
-  for Termux:X11 only in that external-display case. If Android only reports
-  the built-in screen, it resets Android `wm size`/`wm density` to native and
-  does not lock rotation or set immersive policy. Do not use DRM/sysfs connector
-  status as an external-display fallback on the OnePlus 13; it can report false
-  positives such as `5120x2560` and corrupt Launcher3's layout scaling.
+  external display's resolution, and sets immersive fullscreen for Termux:X11
+  only in that external-display case. External mode must not set global Android
+  `wm size` or `wm density`; Termux:X11 gets the external resolution when its
+  Activity is launched on the external display, and global overrides corrupt
+  Launcher3's phone-screen layout. External mode locks the phone display to
+  portrait (`wm user-rotation lock 0`) so Launcher3 does not switch into its
+  sparse landscape workspace and stretch status-bar notification icons. If
+  Android only reports the built-in screen, it resets Android `wm size`/`wm
+  density` to native and does not set immersive policy. Do not use DRM/sysfs
+  connector status as an external-display fallback on the OnePlus 13; it can
+  report false positives such as `5120x2560` and corrupt Launcher3's layout
+  scaling.
+  Termux:X11's `exact` resolution preference only accepts a fixed preset list
+  and rejects common monitor modes like `2560x1440`; startup must use custom
+  resolution mode for the detected external resolution.
+  The launcher also keeps Termux:X11's mouse helper and extra key bar disabled
+  (`showMouseHelper=false`, `showAdditionalKbd=false`,
+  `additionalKbdVisible=false`) so the external monitor shows only the chroot
+  desktop. Phone UI preferences live in
+  `scripts/android-local/android-ui-preferences-root.sh`; the installer deploys
+  it to `/data/local/chroots/arch/android-ui-preferences-root.sh` and wires a
+  `/data/adb/service.d/99-helium-phone-ui.sh` boot hook. It hides left-side app
+  notification icons from the status bar while leaving notifications in the
+  shade, and keeps Termux:X11's own notification permission denied so its icon
+  does not reappear.
   `fingerprint` prints the target source/display/size/density without changing
   Android state, and `target` prints the corresponding target env. `reset`
   restores the saved size, density, rotation, and `policy_control`.
@@ -102,6 +121,11 @@ restores Chromium's native password manager.
   launch paths can leave watchers tied to their parent shell. Keep the display
   watcher poll interval conservative; `cmd display get-displays` can take
   several seconds on the phone, so the default interval is 30 seconds.
+  `scripts/android-local/arch-desktop-session-watch-root.sh` is installed as
+  `/data/local/chroots/arch/arch-desktop-session-watch.sh`; it must detect
+  Termux:X11 visibility across all Android displays, not just phone-screen
+  focus, because the phone can be used as a trackpad while Termux:X11 remains
+  resumed on the external monitor.
   `scripts/android-local/wire-arch-desktop-display-mode-root.sh` idempotently
   wires `apply` plus the display watcher into `arch-desktop-resume-root.sh` and
   watcher shutdown plus `reset` into `arch-desktop-hibernate-root.sh`.

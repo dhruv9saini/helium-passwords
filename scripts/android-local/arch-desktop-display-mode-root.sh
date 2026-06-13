@@ -138,7 +138,7 @@ write_target() {
     printf 'target_display_id=%s\n' "$display_id"
     printf 'target_size=%s\n' "$size"
     printf 'target_density=%s\n' "$density"
-    printf 'target_x11_mode=exact\n'
+    printf 'target_x11_mode=custom\n'
     printf 'target_x11_resolution=%s\n' "$x11_resolution"
   } >"$target_file"
   chmod 600 "$target_file" 2>/dev/null || true
@@ -165,12 +165,17 @@ print_target() {
   printf 'target_display_id=%s\n' "$2"
   printf 'target_size=%s\n' "$3"
   printf 'target_density=%s\n' "$4"
-  printf 'target_x11_mode=exact\n'
+  printf 'target_x11_mode=custom\n'
   printf 'target_x11_resolution=%s\n' "$5"
 }
 
 apply_mode() {
   save_state
+  if [ -x "$root/android-ui-preferences-root.sh" ]; then
+    "$root/android-ui-preferences-root.sh" || true
+  else
+    cmd statusbar send-disable-flag notification-icons >/dev/null 2>&1 || true
+  fi
 
   set -- $(target_record)
   target_source=$1
@@ -180,17 +185,20 @@ apply_mode() {
   target_x11_resolution=$5
 
   if [ "$target_source" = external ]; then
-    wm size "$target_size" || true
-    wm density "$target_density" || true
+    # Termux:X11 reads the external display resolution when launched on that
+    # display. Do not set global wm size/density here; that corrupts the phone
+    # launcher layout while the external monitor is connected.
+    wm size reset || true
+    wm density reset || true
     if [ "$display_id" != 0 ]; then
       wm size "$target_size" -d "$display_id" >/dev/null 2>&1 || true
       wm density "$target_density" -d "$display_id" >/dev/null 2>&1 || true
     fi
     write_target "$target_source" "$display_id" "$target_size" "$target_density" "$target_x11_resolution"
     wm scaling auto || true
-    wm user-rotation lock 1 || {
+    wm user-rotation lock 0 || {
       settings put system accelerometer_rotation 0 || true
-      settings put system user_rotation 1 || true
+      settings put system user_rotation 0 || true
     }
     settings put global policy_control immersive.full=com.termux.x11 || true
     cmd statusbar collapse >/dev/null 2>&1 || true

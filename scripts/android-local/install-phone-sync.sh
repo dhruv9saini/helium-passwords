@@ -35,6 +35,9 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/helium-cleanup-startup-tabs-root.py" /data/local/tmp/helium-cleanup-startup-tabs-root.py >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-display-mode-root.sh" /data/local/tmp/arch-desktop-display-mode-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-display-watch-root.sh" /data/local/tmp/arch-desktop-display-watch-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-session-watch-root.sh" /data/local/tmp/arch-desktop-session-watch-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/android-ui-preferences-root.sh" /data/local/tmp/android-ui-preferences-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/helium-phone-ui-service-root.sh" /data/local/tmp/helium-phone-ui-service-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/wire-arch-desktop-display-mode-root.sh" /data/local/tmp/wire-arch-desktop-display-mode-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/start-arch-xmonad-root.sh" /data/local/tmp/start-arch-xmonad-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/stop-arch-x11-root.sh" /data/local/tmp/stop-arch-x11-root.sh >/dev/null
@@ -59,6 +62,10 @@ install -Dm755 /data/local/tmp/cdp-password-sync.mjs \"\$ROOT/usr/local/bin/cdp-
 install -Dm755 /data/local/tmp/start-helium-local-sync-root.sh \"\$ROOT/usr/local/bin/start-helium-local-sync\"
 install -Dm755 /data/local/tmp/arch-desktop-display-mode-root.sh \"\$ROOT/arch-desktop-display-mode-root.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-display-watch-root.sh \"\$ROOT/arch-desktop-display-watch-root.sh\"
+install -Dm755 /data/local/tmp/arch-desktop-session-watch-root.sh \"\$ROOT/arch-desktop-session-watch.sh\"
+install -Dm755 /data/local/tmp/android-ui-preferences-root.sh \"\$ROOT/android-ui-preferences-root.sh\"
+install -Dm755 /data/local/tmp/helium-phone-ui-service-root.sh /data/adb/service.d/99-helium-phone-ui.sh
+\"\$ROOT/android-ui-preferences-root.sh\"
 install -Dm755 /data/local/tmp/wire-arch-desktop-display-mode-root.sh \"\$ROOT/wire-arch-desktop-display-mode-root.sh\"
 install -Dm755 /data/local/tmp/start-arch-xmonad-root.sh \"\$ROOT/start-arch-xmonad-root.sh\"
 install -Dm755 /data/local/tmp/stop-arch-x11-root.sh \"\$ROOT/stop-arch-x11-root.sh\"

@@ -34,6 +34,10 @@ configure_android_desktop_flags() {
 
 configure_android_desktop_flags
 
+if [ -x "$ROOT/android-ui-preferences-root.sh" ]; then
+  "$ROOT/android-ui-preferences-root.sh" || true
+fi
+
 keep_android_helium_awake() {
   package=${HELIUM_ANDROID_PACKAGE:-computer.helium.sync}
 
@@ -77,16 +81,15 @@ set_termux_x11_preferences() {
 
   display_resolution_args="displayResolutionMode:native"
   if [ -f "$DISPLAY_TARGET" ]; then
-    target_x11_mode=native
     target_x11_resolution=
     # shellcheck disable=SC1090
     . "$DISPLAY_TARGET" 2>/dev/null || true
-    if [ "${target_x11_mode:-native}" = exact ] && [ -n "${target_x11_resolution:-}" ]; then
-      display_resolution_args="displayResolutionMode:exact displayResolutionExact:${target_x11_resolution} displayResolutionCustom:${target_x11_resolution}"
+    if [ -n "${target_x11_resolution:-}" ]; then
+      display_resolution_args="displayResolutionMode:custom displayResolutionCustom:${target_x11_resolution}"
     fi
   fi
 
-  /debug_ramdisk/su -mm -g "$TERMUX_UID" -G 3003 "$TERMUX_UID" -c "export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX PATH=$TERMUX_PREFIX/bin:/system/bin:/system/xbin; /system/bin/timeout -k 1 5 termux-x11-preference touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:125 hardwareKbdScancodesWorkaround:true filterOutWinkey:false showMouseHelper:true fullscreen:true $display_resolution_args" >/dev/null 2>&1
+  /debug_ramdisk/su -mm -g "$TERMUX_UID" -G 3003 "$TERMUX_UID" -c "export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX PATH=$TERMUX_PREFIX/bin:/system/bin:/system/xbin; /system/bin/timeout -k 1 5 termux-x11-preference touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:125 hardwareKbdScancodesWorkaround:true filterOutWinkey:false showMouseHelper:false showAdditionalKbd:false additionalKbdVisible:false useTermuxEKBarBehaviour:false fullscreen:true $display_resolution_args" >/dev/null 2>&1
 }
 
 for _ in 1 2 3 4 5; do
