@@ -47,6 +47,10 @@ restores Chromium's native password manager.
   Use the chroot Helium browser for uBO/extension workflows. The Android main
   browser uses the Java AI Overview blocker and local sync bridge, not
   command-line extension content scripts.
+  `cdp-password-sync` must create its password-manager CDP target in the
+  background and must not navigate an existing user tab to
+  `chrome://password-manager/passwords`; otherwise the daemon steals focus on
+  every sync interval.
 - `cmd/helium-syncd` runs the localhost encrypted record daemon.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.
@@ -139,7 +143,11 @@ restores Chromium's native password manager.
   stop both lazily unmount `/data/local/chroots/arch/tmp/.X11-unix` before
   removing it because that socket path may be a live mount. Startup honors
   `ARCH_X11_OPEN_ACTIVITY=0`; the controller app uses that so it can open the
-  Termux:X11 Activity itself after the root resume script finishes.
+  Termux:X11 Activity itself after the root resume script finishes. Use the
+  built-in Termux:X11 trackpad path by default; the old browser-based
+  `x11-phone-trackpad` web helper is opt-in through `ARCH_X11_WEB_TRACKPAD=1`
+  because it can fight browser focus. Pointer speed is controlled by
+  `ARCH_X11_POINTER_SPEED` and defaults to `75`.
 - Arch Desktop startup also keeps Android Helium Sync
   (`computer.helium.sync`) out of inactive/idle background states and sticky
   unfreezes the running native browser process when present. CookieCloud uses

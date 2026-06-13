@@ -78,6 +78,7 @@ fi
 set_termux_x11_preferences() {
   pref="$TERMUX_PREFIX/bin/termux-x11-preference"
   [ -x "$pref" ] || return 0
+  pointer_speed=${ARCH_X11_POINTER_SPEED:-75}
 
   display_resolution_args="displayResolutionMode:native"
   if [ -f "$DISPLAY_TARGET" ]; then
@@ -89,7 +90,7 @@ set_termux_x11_preferences() {
     fi
   fi
 
-  /debug_ramdisk/su -mm -g "$TERMUX_UID" -G 3003 "$TERMUX_UID" -c "export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX PATH=$TERMUX_PREFIX/bin:/system/bin:/system/xbin; /system/bin/timeout -k 1 5 termux-x11-preference touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:125 hardwareKbdScancodesWorkaround:true filterOutWinkey:false showMouseHelper:false showAdditionalKbd:false additionalKbdVisible:false useTermuxEKBarBehaviour:false fullscreen:true $display_resolution_args" >/dev/null 2>&1
+  /debug_ramdisk/su -mm -g "$TERMUX_UID" -G 3003 "$TERMUX_UID" -c "export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX PATH=$TERMUX_PREFIX/bin:/system/bin:/system/xbin; /system/bin/timeout -k 1 5 termux-x11-preference touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:true filterOutWinkey:false showMouseHelper:false showAdditionalKbd:false additionalKbdVisible:false useTermuxEKBarBehaviour:false fullscreen:true $display_resolution_args" >/dev/null 2>&1
 }
 
 for _ in 1 2 3 4 5; do
@@ -137,4 +138,4 @@ chroot "$ROOT" /usr/bin/env -i \
   LC_CTYPE=C.utf8 \
 	  TERM=xterm-256color \
 		  PATH=/root/.config/x11/bin:/root/.local/bin:/root/.local/share/mise/shims:/root/.cabal/bin:/root/.ghcup/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin \
-		  /bin/bash -lc 'mkdir -p /tmp/runtime-root /root/.config/xmonad /root/.cache/xmonad /root/.local/share/xmonad /root/.local/state/x11 /root/Downloads; chmod 700 /tmp/runtime-root; rm -rf /root/.xmonad; xrdb -merge /root/.config/Xresources || true; xsettingsd >>/root/.local/state/x11/xsettingsd.log 2>&1 & xsetroot -solid "#111111" || true; x11-apple-input-setup || true; x11-lorie-input-setup || true; x11-clip-watch >>/root/.local/state/x11/clip-watch.log 2>&1 & x11-phone-trackpad >>/root/.local/state/x11/phone-trackpad.log 2>&1 & xmonad --recompile || true; XMONAD_BIN=$(find /root/.cache/xmonad /root/.local/share/xmonad /root/.config/xmonad -maxdepth 1 -type f -name "xmonad-*" -perm -111 2>/dev/null | sort | tail -n 1); [ -n "$XMONAD_BIN" ] || exit 1; dbus-run-session -- sh -lc "exec \"$XMONAD_BIN\""' </dev/null >>"$LOG" 2>&1 &
+		  /bin/bash -lc 'mkdir -p /tmp/runtime-root /root/.config/xmonad /root/.cache/xmonad /root/.local/share/xmonad /root/.local/state/x11 /root/Downloads; chmod 700 /tmp/runtime-root; rm -rf /root/.xmonad; xrdb -merge /root/.config/Xresources || true; xsettingsd >>/root/.local/state/x11/xsettingsd.log 2>&1 & xsetroot -solid "#111111" || true; x11-apple-input-setup || true; x11-lorie-input-setup || true; x11-clip-watch >>/root/.local/state/x11/clip-watch.log 2>&1 & if [ "${ARCH_X11_WEB_TRACKPAD:-0}" = 1 ]; then x11-phone-trackpad >>/root/.local/state/x11/phone-trackpad.log 2>&1 & fi; xmonad --recompile || true; XMONAD_BIN=$(find /root/.cache/xmonad /root/.local/share/xmonad /root/.config/xmonad -maxdepth 1 -type f -name "xmonad-*" -perm -111 2>/dev/null | sort | tail -n 1); [ -n "$XMONAD_BIN" ] || exit 1; dbus-run-session -- sh -lc "exec \"$XMONAD_BIN\""' </dev/null >>"$LOG" 2>&1 &

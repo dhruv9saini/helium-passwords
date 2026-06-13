@@ -34,27 +34,43 @@ class CDP {
   static async openPasswordManager(baseURL) {
     const normalized = trimSlash(baseURL);
     let createdID = "";
-    let target;
-    const createURL = `${normalized}/json/new?${encodeURIComponent("chrome://password-manager/passwords")}`;
-    const createResponse = await fetch(createURL, { method: "PUT" }).catch(() => null);
-    if (createResponse?.ok) {
-      target = await createResponse.json();
-      createdID = target.id || "";
-    } else {
-      const targets = await fetch(`${normalized}/json/list`).then((response) => response.json());
-      target = targets.find((item) => item.type === "page" && item.url.startsWith("chrome://password-manager")) ||
-        targets.find((item) => item.type === "page");
+    let targets = await this.targets(normalized);
+    let target = targets.find((item) => item.type === "page" && item.url.startsWith("chrome://password-manager"));
+
+    if (!target) {
+      const browser = await this.openBrowser(normalized);
+      try {
+        const created = await browser.call("Target.createTarget", {
+          url: "chrome://password-manager/passwords",
+          background: true,
+          focus: false,
+        });
+        createdID = created.targetId || "";
+      } finally {
+        await browser.close({ closeCreatedTarget: false });
+      }
+      targets = await this.targets(normalized);
+      target = targets.find((item) => item.id === createdID) ||
+        targets.find((item) => item.type === "page" && item.url.startsWith("chrome://password-manager"));
     }
     if (!target?.webSocketDebuggerUrl) throw new Error(`no CDP page target at ${baseURL}`);
 
     const client = new CDP(normalized, target.webSocketDebuggerUrl, createdID);
     await client.open();
     await client.call("Runtime.enable");
-    if (!createdID) {
-      await client.call("Page.enable").catch(() => {});
-      await client.call("Page.navigate", { url: "chrome://password-manager/passwords" }).catch(() => {});
-    }
     await client.waitForPasswordsPrivate();
+    return client;
+  }
+
+  static async targets(normalizedBaseURL) {
+    return fetch(`${normalizedBaseURL}/json/list`).then((response) => response.json());
+  }
+
+  static async openBrowser(normalizedBaseURL) {
+    const version = await fetch(`${normalizedBaseURL}/json/version`).then((response) => response.json());
+    if (!version.webSocketDebuggerUrl) throw new Error(`no browser CDP target at ${normalizedBaseURL}`);
+    const client = new CDP(normalizedBaseURL, version.webSocketDebuggerUrl, "");
+    await client.open();
     return client;
   }
 
@@ -190,11 +206,12 @@ class CDP {
     })`);
   }
 
-  async close() {
+  async close(options = {}) {
+    const closeCreatedTarget = options.closeCreatedTarget !== false;
     try {
       this.ws?.close();
     } finally {
-      if (this.createdID) {
+      if (closeCreatedTarget && this.createdID) {
         await fetch(`${this.baseURL}/json/close/${encodeURIComponent(this.createdID)}`).catch(() => {});
       }
     }
