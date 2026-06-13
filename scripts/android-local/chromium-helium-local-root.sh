@@ -77,7 +77,9 @@ fi
 browser_name=$(basename "$browser")
 cdp_password_sync=${HELIUM_CHROOT_CDP_PASSWORD_SYNC:-auto}
 if [ "$cdp_password_sync" = auto ]; then
-  cdp_password_sync=true
+  cdp_password_sync=once
+elif [ "$cdp_password_sync" = true ]; then
+  cdp_password_sync=once
 fi
 
 pids=
@@ -88,7 +90,26 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [ "$cdp_password_sync" = true ] && command -v cdp-password-sync >/dev/null 2>&1; then
+start_password_sync_once() {
+  (
+    cdp_url=${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}
+    for _ in $(seq 1 30); do
+      if curl -fsS --max-time 1 "$cdp_url/json/version" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 1
+    done
+    cdp-password-sync once \
+      --cdp "$cdp_url" \
+      --server "${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}" \
+      --token-file "$password_data_dir/token" \
+      --device "${HELIUM_SYNC_DEVICE_NAME:-helium-chroot}" \
+      --state-file "$state_dir/cdp-password-sync-state.json"
+  ) >>"$state_dir/cdp-password-sync.log" 2>&1 &
+  pids="$pids $!"
+}
+
+if [ "$cdp_password_sync" = daemon ] && command -v cdp-password-sync >/dev/null 2>&1; then
   cdp-password-sync daemon \
     --cdp "${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}" \
     --server "${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}" \
@@ -97,6 +118,8 @@ if [ "$cdp_password_sync" = true ] && command -v cdp-password-sync >/dev/null 2>
     --state-file "$state_dir/cdp-password-sync-state.json" \
     >>"$state_dir/cdp-password-sync.log" 2>&1 &
   pids="$pids $!"
+elif [ "$cdp_password_sync" = once ] && command -v cdp-password-sync >/dev/null 2>&1; then
+  start_password_sync_once
 fi
 
 cookiecloud_config=${HELIUM_COOKIECLOUD_CONFIG:-$home_dir/.local/share/helium-local-sync/cookiecloud-client.json}

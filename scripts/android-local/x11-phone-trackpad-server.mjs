@@ -2,12 +2,13 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 
-const host = "127.0.0.1";
+const host = process.env.X11_PHONE_TRACKPAD_HOST || "127.0.0.1";
 const port = Number(process.env.X11_PHONE_TRACKPAD_PORT || 8765);
 const helperPath = `${process.env.HOME}/.local/bin/x11-pointer-helper`;
 const display = process.env.DISPLAY || ":1";
 const defaultSensitivity = Number(process.env.X11_PHONE_TRACKPAD_SENSITIVITY || 1.00);
 const defaultScrollSensitivity = Number(process.env.X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY || 0.24);
+const authToken = process.env.X11_PHONE_TRACKPAD_TOKEN || "";
 
 let helper = spawn(helperPath, {
   env: { ...process.env, DISPLAY: display },
@@ -270,6 +271,11 @@ const server = http.createServer((request, response) => {
   }
 
   if (request.method === "POST" && request.url === "/cmd") {
+    if (authToken && request.headers["x-arch-desktop-token"] !== authToken) {
+      response.writeHead(403);
+      response.end();
+      return;
+    }
     let body = "";
     request.setEncoding("utf8");
     request.on("data", (chunk) => {

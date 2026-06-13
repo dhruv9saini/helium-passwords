@@ -8,7 +8,7 @@ target_file=$state_dir/android-display-target.env
 launcher_prefs=/data/user/0/com.android.launcher3/shared_prefs/com.android.launcher3.prefs.xml
 launcher_prefs_state=$state_dir/launcher3-prefs-before-arch.xml
 external_density=${ARCH_DESKTOP_EXTERNAL_WM_DENSITY:-160}
-desktop_global_keys="force_desktop_mode_on_external_displays enable_freeform_support force_resizable_activities freeform_window_management enable_non_resizable_multi_window"
+desktop_global_keys="enable_freeform_support force_resizable_activities freeform_window_management enable_non_resizable_multi_window"
 
 mkdir -p "$state_dir" 2>/dev/null || true
 
@@ -44,6 +44,8 @@ save_state() {
 
 clear_arch_global_display_settings() {
   settings delete global policy_control >/dev/null 2>&1 || true
+  settings put global force_desktop_mode_on_external_displays 1 >/dev/null 2>&1 || true
+  settings put global force_allow_on_external 1 >/dev/null 2>&1 || true
   for key in $desktop_global_keys; do
     settings put global "$key" 0 >/dev/null 2>&1 || true
   done
@@ -79,7 +81,6 @@ restore_state() {
   policy_control=null
   accelerometer_rotation=null
   user_rotation=0
-  force_desktop_mode_on_external_displays=null
   enable_freeform_support=null
   force_resizable_activities=null
   freeform_window_management=null
@@ -140,6 +141,7 @@ native_size() {
 detect_android_external() {
   for id in $(cmd display get-displays --ids-only 2>/dev/null); do
     [ "$id" != 0 ] || continue
+    cmd display enable-display "$id" >/dev/null 2>&1 || true
 
     size=$(
       cmd display get-active-mode "$id" 2>/dev/null |
@@ -221,9 +223,12 @@ apply_mode() {
   target_android_display_mode=$6
 
   if [ "$target_source" = external ]; then
+    settings put global force_desktop_mode_on_external_displays 1 >/dev/null 2>&1 || true
+    settings put global force_allow_on_external 1 >/dev/null 2>&1 || true
     for key in $desktop_global_keys; do
       settings put global "$key" 1 >/dev/null 2>&1 || true
     done
+    cmd display enable-display "$display_id" >/dev/null 2>&1 || true
     wm size reset || true
     wm density reset || true
     wm size "$target_size" -d "$display_id" >/dev/null 2>&1 || true
@@ -235,6 +240,8 @@ apply_mode() {
   else
     wm size reset || true
     wm density reset || true
+    settings put global force_desktop_mode_on_external_displays 1 >/dev/null 2>&1 || true
+    settings put global force_allow_on_external 1 >/dev/null 2>&1 || true
     for key in $desktop_global_keys; do
       settings put global "$key" 0 >/dev/null 2>&1 || true
     done

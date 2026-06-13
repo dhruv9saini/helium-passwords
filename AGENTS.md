@@ -160,16 +160,32 @@ restores Chromium's native password manager.
   startup uses the cached compiled binary unless
   `/root/.config/xmonad/xmonad.hs` is newer or `ARCH_X11_RECOMPILE=1` is set;
   do not recompile on every cold start.
-- `android/arch-desktop-controller` is the tiny launcher app installed as
-  `net.dhruv.archdesktop` / "Arch Desktop". It must only run
-  `/data/local/chroots/arch/arch-desktop-resume-root.sh` and then finish. Do
-  not call `startActivity()` for `com.termux.x11` from this app; the root resume
-  script starts Termux:X11 with `am start --display <external-id>`, and a
-  normal app-level launch moves Termux:X11 back onto the phone display, causing
-  the external monitor to show a scaled mirror. Build it with
+- `android/arch-desktop-controller` is the phone-side controller app installed
+  as `net.dhruv.archdesktop` / "Arch Desktop". It runs
+  `/data/local/chroots/arch/arch-desktop-resume-root.sh`, stays open as the
+  phone trackpad/control surface, and runs
+  `/data/local/chroots/arch/arch-desktop-hibernate-root.sh` from Back or the
+  Hibernate button. Do not call `startActivity()` for `com.termux.x11` from this
+  app; the root resume script starts Termux:X11 with
+  `am start --display <external-id>`, and a normal app-level launch moves
+  Termux:X11 back onto the phone display, causing the external monitor to show
+  a scaled mirror. The controller sends pointer events by keeping one root
+  `x11-pointer-helper` process open and writing commands to its stdin; do not
+  route native controller input through the old HTTP trackpad server, because
+  Android app UIDs on this ROM cannot reach the root/chroot loopback listener.
+  The old Jelly/web trackpad relay remains off by default; only enable it
+  deliberately with `ARCH_X11_WEB_TRACKPAD=1`. Build the controller with
   `scripts/android-local/build-arch-desktop-controller.sh`; the private signing
   key stays outside the repo at
   `/home/dhruv/.local/state/arch-desktop-controller/debug.keystore`.
+  Termux:X11 is still the external-display renderer, but launch it with
+  `--activity-exclude-from-recents` from root scripts and never launch it from
+  the controller app. Display-mode setup explicitly enables connected external
+  displays with `cmd display enable-display` and sets both
+  `force_desktop_mode_on_external_displays` and `force_allow_on_external`.
+  Those two display allow flags are persistent phone preferences in
+  `android-ui-preferences-root.sh`; hibernate only resets Arch-session
+  freeform/windowing keys.
 - Arch Desktop startup also keeps Android Helium Sync
   (`computer.helium.sync`) out of inactive/idle background states and sticky
   unfreezes the running native browser process when present. CookieCloud uses
