@@ -17,6 +17,7 @@ fi
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-local-syncd" "$repo_root/cmd/helium-local-syncd"
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-sync" "$repo_root/cmd/helium-sync"
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-syncd" "$repo_root/cmd/helium-syncd"
+input_display_assoc_jar=$("$repo_root/scripts/android-local/build-input-display-assoc.sh")
 tar -C "$repo_root/browser-extensions/google-ai-overview-blocker" \
   -cf "$work_dir/google-ai-overview-blocker.tar" .
 tar -C "$repo_root/browser-extensions/blank-new-tab-extension" \
@@ -39,8 +40,20 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-resume-root.sh" /data/local/tmp/arch-desktop-resume-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-hibernate-root.sh" /data/local/tmp/arch-desktop-hibernate-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/android-ui-preferences-root.sh" /data/local/tmp/android-ui-preferences-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/chroot-tailnet-dns-root.sh" /data/local/tmp/chroot-tailnet-dns-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/fix-magic-keyboard-layout-root.sh" /data/local/tmp/fix-magic-keyboard-layout-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/x11-lorie-input-setup-root.sh" /data/local/tmp/x11-lorie-input-setup-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/x11-hibernate-hold-osd-root.sh" /data/local/tmp/x11-hibernate-hold-osd-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/xmonad-browser-zoom-fix-root.sh" /data/local/tmp/xmonad-browser-zoom-fix-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/android-raw-pointer-forwarder-root.sh" /data/local/tmp/android-raw-pointer-forwarder-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/fix-terminal-colors-root.sh" /data/local/tmp/fix-terminal-colors-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/restart-raw-pointer-root.sh" /data/local/tmp/restart-raw-pointer-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/merge-helium-laptop-extensions-root.sh" /data/local/tmp/merge-helium-laptop-extensions-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/input-display-assoc-root.sh" /data/local/tmp/input-display-assoc-root.sh >/dev/null
+"$adb_bin" push "$input_display_assoc_jar" /data/local/tmp/input-display-assoc.jar >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/helium-phone-ui-service-root.sh" /data/local/tmp/helium-phone-ui-service-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/x11-phone-trackpad-server.mjs" /data/local/tmp/x11-phone-trackpad-server.mjs >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/x11-key-helper-root.sh" /data/local/tmp/x11-key-helper-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/wire-arch-desktop-display-mode-root.sh" /data/local/tmp/wire-arch-desktop-display-mode-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/start-arch-xmonad-root.sh" /data/local/tmp/start-arch-xmonad-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/stop-arch-x11-root.sh" /data/local/tmp/stop-arch-x11-root.sh >/dev/null
@@ -69,8 +82,23 @@ install -Dm755 /data/local/tmp/arch-desktop-session-watch-root.sh \"\$ROOT/arch-
 install -Dm755 /data/local/tmp/arch-desktop-resume-root.sh \"\$ROOT/arch-desktop-resume-root.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-hibernate-root.sh \"\$ROOT/arch-desktop-hibernate-root.sh\"
 install -Dm755 /data/local/tmp/android-ui-preferences-root.sh \"\$ROOT/android-ui-preferences-root.sh\"
+install -Dm755 /data/local/tmp/chroot-tailnet-dns-root.sh \"\$ROOT/chroot-tailnet-dns-root.sh\"
+install -Dm755 /data/local/tmp/fix-magic-keyboard-layout-root.sh \"\$ROOT/fix-magic-keyboard-layout-root.sh\"
+install -Dm755 /data/local/tmp/x11-hibernate-hold-osd-root.sh \"\$ROOT/x11-hibernate-hold-osd-root.sh\"
+install -Dm755 /data/local/tmp/xmonad-browser-zoom-fix-root.sh \"\$ROOT/xmonad-browser-zoom-fix-root.sh\"
+install -Dm755 /data/local/tmp/android-raw-pointer-forwarder-root.sh \"\$ROOT/android-raw-pointer-forwarder-root.sh\"
+install -Dm755 /data/local/tmp/fix-terminal-colors-root.sh \"\$ROOT/fix-terminal-colors-root.sh\"
+install -Dm755 /data/local/tmp/restart-raw-pointer-root.sh \"\$ROOT/restart-raw-pointer-root.sh\"
+install -Dm755 /data/local/tmp/merge-helium-laptop-extensions-root.sh \"\$ROOT/merge-helium-laptop-extensions-root.sh\"
+install -Dm755 /data/local/tmp/input-display-assoc-root.sh \"\$ROOT/input-display-assoc-root.sh\"
+install -Dm644 /data/local/tmp/input-display-assoc.jar \"\$ROOT/input-display-assoc.jar\"
 install -Dm755 /data/local/tmp/helium-phone-ui-service-root.sh /data/adb/service.d/99-helium-phone-ui.sh
 \"\$ROOT/android-ui-preferences-root.sh\"
+\"\$ROOT/chroot-tailnet-dns-root.sh\"
+\"\$ROOT/fix-magic-keyboard-layout-root.sh\"
+\"\$ROOT/input-display-assoc-root.sh\" apply
+\"\$ROOT/xmonad-browser-zoom-fix-root.sh\"
+\"\$ROOT/fix-terminal-colors-root.sh\"
 install -Dm755 /data/local/tmp/wire-arch-desktop-display-mode-root.sh \"\$ROOT/wire-arch-desktop-display-mode-root.sh\"
 install -Dm755 /data/local/tmp/start-arch-xmonad-root.sh \"\$ROOT/start-arch-xmonad-root.sh\"
 install -Dm755 /data/local/tmp/stop-arch-x11-root.sh \"\$ROOT/stop-arch-x11-root.sh\"
@@ -94,6 +122,8 @@ install -Dm755 /data/local/tmp/chromium-helium-local-root.sh \"\$ROOT/root/.conf
 install -Dm755 /data/local/tmp/helium-prepare-profile-root.py \"\$ROOT/root/.config/x11/bin/helium-prepare-profile\"
 install -Dm755 /data/local/tmp/helium-cleanup-startup-tabs-root.py \"\$ROOT/root/.config/x11/bin/helium-cleanup-startup-tabs\"
 install -Dm755 /data/local/tmp/x11-phone-trackpad-server.mjs \"\$ROOT/root/.config/x11/bin/x11-phone-trackpad-server.mjs\"
+install -Dm755 /data/local/tmp/x11-key-helper-root.sh \"\$ROOT/root/.local/bin/x11-key-helper\"
+install -Dm755 /data/local/tmp/x11-lorie-input-setup-root.sh \"\$ROOT/root/.local/bin/x11-lorie-input-setup\"
 install -Dm755 /data/local/tmp/seed-chroot-profile-root.sh \"\$ROOT/usr/local/bin/seed-helium-chroot-profile\"
 if [ -n \"\$CHROOT_UID\" ] && [ -n \"\$CHROOT_GID\" ] && [ -d \"\$ROOT/\$CHROOT_HOME\" ]; then
   rm -rf \"\$ROOT/\$CHROOT_HOME/.local/share/cookiecloud-extension/chrome-mv3\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\"
@@ -107,13 +137,15 @@ if [ -n \"\$CHROOT_UID\" ] && [ -n \"\$CHROOT_GID\" ] && [ -d \"\$ROOT/\$CHROOT_
   install -Dm755 /data/local/tmp/helium-prepare-profile-root.py \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-prepare-profile\"
   install -Dm755 /data/local/tmp/helium-cleanup-startup-tabs-root.py \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-cleanup-startup-tabs\"
   install -Dm755 /data/local/tmp/x11-phone-trackpad-server.mjs \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\"
+  install -Dm755 /data/local/tmp/x11-key-helper-root.sh \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-key-helper\"
+  install -Dm755 /data/local/tmp/x11-lorie-input-setup-root.sh \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-lorie-input-setup\"
   for sync_dir in helium-sync helium-local-sync; do
     if [ -d \"\$ROOT/root/.local/share/\$sync_dir\" ]; then
       mkdir -p \"\$ROOT/\$CHROOT_HOME/.local/share/\$sync_dir\"
       cp -a \"\$ROOT/root/.local/share/\$sync_dir/.\" \"\$ROOT/\$CHROOT_HOME/.local/share/\$sync_dir/\"
     fi
   done
-  chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/cookiecloud-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/start-helium-local-sync\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-prepare-profile\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-cleanup-startup-tabs\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\"
+  chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/cookiecloud-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/start-helium-local-sync\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-prepare-profile\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-cleanup-startup-tabs\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-key-helper\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-lorie-input-setup\"
   for sync_dir in helium-sync helium-local-sync; do
     if [ -d \"\$ROOT/\$CHROOT_HOME/.local/share/\$sync_dir\" ]; then
       chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/\$sync_dir\"

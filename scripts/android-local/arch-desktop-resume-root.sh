@@ -29,6 +29,9 @@ pkill -f '[a]rch-desktop-session-watch.sh' >/dev/null 2>&1 || true
 pkill -f '[a]rch-desktop-display-watch-root.sh' >/dev/null 2>&1 || true
 
 "$ROOT/arch-desktop-display-mode-root.sh" apply >>"$LOG" 2>&1 || true
+[ ! -x "$ROOT/chroot-tailnet-dns-root.sh" ] || "$ROOT/chroot-tailnet-dns-root.sh" >>"$LOG" 2>&1 || true
+[ ! -x "$ROOT/fix-magic-keyboard-layout-root.sh" ] || "$ROOT/fix-magic-keyboard-layout-root.sh" >>"$LOG" 2>&1 || true
+[ ! -x "$ROOT/input-display-assoc-root.sh" ] || "$ROOT/input-display-assoc-root.sh" apply >>"$LOG" 2>&1 || true
 
 if arch_desktop_processes_running; then
   "$ROOT/stop-arch-x11-root.sh" >>"$LOG" 2>&1 || true

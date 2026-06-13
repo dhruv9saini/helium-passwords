@@ -36,6 +36,7 @@ kill_arg_contains() {
 log "stopping Termux:X11 Arch desktop"
 
 am broadcast -a com.termux.x11.ACTION_STOP -p com.termux.x11 >/dev/null 2>&1 || true
+[ ! -x "$ROOT/input-display-assoc-root.sh" ] || "$ROOT/input-display-assoc-root.sh" clear >>"$LOG" 2>&1 || true
 
 kill_pattern '[s]tart-arch-xmonad-root.sh'
 kill_pattern '[t]ermux-x11-preference'
@@ -47,6 +48,9 @@ kill_pattern '[x]settingsd'
 kill_pattern '[x]11-clip-watch'
 kill_pattern '[x]11-phone-trackpad'
 kill_pattern '[x]11-pointer-helper'
+kill_pattern '[x]11-key-helper'
+kill_pattern '[a]ndroid-raw-pointer-forwarder-root.sh'
+kill_pattern '[g]etevent -l /dev/input/event'
 kill_pattern '[c]dp-password-sync'
 kill_pattern '[c]dp-cookiecloud'
 kill_pattern '[h]elium-local-syncd'
@@ -61,6 +65,7 @@ kill_pattern '[s]u -M.*10409.*termux-x11'
 kill_pattern '[s]u -M.*10409.*termux-x11-preference'
 kill_arg_contains 'x11-clip-watch' TERM
 kill_arg_contains 'x11-phone-trackpad' TERM
+kill_arg_contains 'x11-key-helper' TERM
 
 sleep 2
 
@@ -68,6 +73,9 @@ kill_pattern_hard '[s]tart-arch-xmonad-root.sh'
 kill_pattern_hard '[t]ermux-x11-preference'
 kill_pattern_hard '[x]monad-aarch64-linux'
 kill_pattern_hard '[z]utty'
+kill_pattern_hard '[x]11-key-helper'
+kill_pattern_hard '[a]ndroid-raw-pointer-forwarder-root.sh'
+kill_pattern_hard '[g]etevent -l /dev/input/event'
 kill_pattern_hard '[c]dp-password-sync'
 kill_pattern_hard '[c]dp-cookiecloud'
 kill_pattern_hard '[h]elium-local-syncd'
@@ -79,6 +87,7 @@ kill_pattern_hard '[s]u -M.*10409.*termux-x11'
 kill_pattern_hard '[s]u -M.*10409.*termux-x11-preference'
 kill_arg_contains 'x11-clip-watch' KILL
 kill_arg_contains 'x11-phone-trackpad' KILL
+kill_arg_contains 'x11-key-helper' KILL
 
 umount -l "$ROOT/tmp/.X11-unix" >/dev/null 2>&1 || true
 rm -rf "$ROOT/tmp/.X11-unix" "$ROOT/tmp/.X1-lock" >/dev/null 2>&1 || true

@@ -144,6 +144,13 @@ restores Chromium's native password manager.
   grace sleep. Resume starts Termux:X11 from the Arch Desktop path itself,
   which is still user-initiated and avoids waiting for the controller app to
   open it after the root script returns.
+  `scripts/android-local/input-display-assoc-root.sh` uses the tiny
+  `android/input-display-assoc` `app_process` helper to call Android's runtime
+  input/display association APIs. Resume applies it after display detection;
+  stop and hibernate clear it. A healthy external-display session should show
+  the external mouse/keyboard in `dumpsys input` with `AssociatedDisplayPort`
+  set to the monitor port and `AssociatedDisplayUniqueIdByDescriptor` set to
+  the monitor `local:...` unique id.
 - `scripts/android-local/start-arch-xmonad-root.sh` and
   `scripts/android-local/stop-arch-x11-root.sh` are also installed by
   `install-phone-sync.sh`. Startup reads
@@ -160,6 +167,14 @@ restores Chromium's native password manager.
   startup uses the cached compiled binary unless
   `/root/.config/xmonad/xmonad.hs` is newer or `ARCH_X11_RECOMPILE=1` is set;
   do not recompile on every cold start.
+  Do not start Termux:X11 with `--activity-no-user-action`; on the OnePlus
+  13/crDroid external-display path that leaves the external window
+  `NOT_FOCUSABLE`, so hardware mouse/keyboard events never reach it. After
+  setting Termux:X11 preferences, startup sends one tap to the external display
+  before X clients are launched so Android grants Termux:X11 pointer capture.
+  Verify with `dumpsys input`: `FocusedWindows` should list
+  `com.termux.x11/.MainActivity` on the external display and `Pointer Capture`
+  should be `ABSOLUTE` with Termux:X11 as the current capture window.
 - `android/arch-desktop-controller` is the phone-side controller app installed
   as `net.dhruv.archdesktop` / "Arch Desktop". It runs
   `/data/local/chroots/arch/arch-desktop-resume-root.sh`, stays open as the
@@ -170,9 +185,11 @@ restores Chromium's native password manager.
   `am start --display <external-id>`, and a normal app-level launch moves
   Termux:X11 back onto the phone display, causing the external monitor to show
   a scaled mirror. The controller sends pointer events by keeping one root
-  `x11-pointer-helper` process open and writing commands to its stdin; do not
-  route native controller input through the old HTTP trackpad server, because
-  Android app UIDs on this ROM cannot reach the root/chroot loopback listener.
+  `x11-pointer-helper` process open and writing commands to its stdin. Hardware
+  keyboard events go through `/root/.local/bin/x11-key-helper`, a tiny stdin
+  wrapper around `xdotool key/key{down,up}`. Do not route native controller
+  input through the old HTTP trackpad server, because Android app UIDs on this
+  ROM cannot reach the root/chroot loopback listener.
   The old Jelly/web trackpad relay remains off by default; only enable it
   deliberately with `ARCH_X11_WEB_TRACKPAD=1`. Build the controller with
   `scripts/android-local/build-arch-desktop-controller.sh`; the private signing

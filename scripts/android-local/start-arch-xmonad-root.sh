@@ -69,10 +69,10 @@ start_termux_x11_activity() {
 
   if [ "${target_android_display_mode:-mirror}" = extended ] && [ -n "${target_display_id:-}" ] && [ "${target_display_id:-0}" != 0 ]; then
     cmd display enable-display "$target_display_id" >/dev/null 2>&1 || true
-    am start --user 0 --display "$target_display_id" --activity-exclude-from-recents --activity-no-animation --activity-no-user-action -n com.termux.x11/.MainActivity >/dev/null 2>&1 ||
-      am start --user 0 --activity-exclude-from-recents --activity-no-animation --activity-no-user-action -n com.termux.x11/.MainActivity >/dev/null 2>&1 || true
+    am start --user 0 --display "$target_display_id" --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 ||
+      am start --user 0 --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 || true
   else
-    am start --user 0 --activity-exclude-from-recents --activity-no-animation --activity-no-user-action -n com.termux.x11/.MainActivity >/dev/null 2>&1 || true
+    am start --user 0 --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 || true
   fi
 }
 
@@ -98,6 +98,24 @@ set_termux_x11_preferences() {
   /debug_ramdisk/su -mm -g "$TERMUX_UID" -G 3003 "$TERMUX_UID" -c "export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX PATH=$TERMUX_PREFIX/bin:/system/bin:/system/xbin; /system/bin/timeout -k 1 2 termux-x11-preference touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:true filterOutWinkey:false showMouseHelper:false showAdditionalKbd:false additionalKbdVisible:false useTermuxEKBarBehaviour:false fullscreen:true $display_resolution_args" >/dev/null 2>&1
 }
 
+prime_termux_x11_pointer_capture() {
+  target_display_id=0
+  target_android_display_mode=mirror
+  if [ -f "$DISPLAY_TARGET" ]; then
+    # shellcheck disable=SC1090
+    . "$DISPLAY_TARGET" 2>/dev/null || true
+  fi
+
+  [ "${target_android_display_mode:-mirror}" = extended ] || return 0
+  [ -n "${target_display_id:-}" ] || return 0
+  [ "${target_display_id:-0}" != 0 ] || return 0
+
+  (
+    sleep 1
+    input touchscreen -d "$target_display_id" tap 1 1 >/dev/null 2>&1 || true
+  ) &
+}
+
 set_termux_x11_preferences || true
 (
   for _ in 1 2 3; do
@@ -105,6 +123,7 @@ set_termux_x11_preferences || true
     sleep 1
   done
 ) &
+prime_termux_x11_pointer_capture
 
 open_phone_trackpad_activity() {
   target_source=native
@@ -142,6 +161,12 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   [ -S "$ROOT/tmp/.X11-unix/X1" ] && break
   sleep 1
 done
+
+if [ "${ARCH_X11_RAW_POINTER:-0}" != 0 ] && [ -x "$ROOT/android-raw-pointer-forwarder-root.sh" ]; then
+  /system/bin/pkill -f '[a]ndroid-raw-pointer-forwarder-root.sh' >/dev/null 2>&1 || true
+  /system/bin/pkill -f '[g]etevent -l /dev/input/event' >/dev/null 2>&1 || true
+  nohup "$ROOT/android-raw-pointer-forwarder-root.sh" >>"$LOG" 2>&1 &
+fi
 
 chroot "$ROOT" /usr/bin/env -i \
   HOME=/root \

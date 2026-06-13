@@ -24,6 +24,7 @@ pkill -f '[a]rch-desktop-display-watch-root.sh' >/dev/null 2>&1 || true
 pkill -f '[a]rch-desktop-session-watch.sh' >/dev/null 2>&1 || true
 
 "$ROOT/stop-arch-x11-root.sh" >>"$LOG" 2>&1 || true
+[ ! -x "$ROOT/input-display-assoc-root.sh" ] || "$ROOT/input-display-assoc-root.sh" clear >>"$LOG" 2>&1 || true
 "$ROOT/arch-desktop-display-mode-root.sh" reset >>"$LOG" 2>&1 || true
 
 printf 'stopped\n' >"$STATE"
