@@ -9,4 +9,5 @@
 - [x] With no external monitor, Arch Desktop should open normal phone Termux:X11 with Termux's mouse helper and extra keyboard visible.
 - [x] Install/load the migrated browser extensions and settings for chroot Helium.
 - [x] Stop CookieCloud/CDP cookie sync from deleting or expiring cookies while browsing.
-- [ ] Deploy changes to the phone and verify live state.
+- [x] Prevent duplicate Arch Desktop resume requests from queueing and restarting the chroot.
+- [x] Deploy changes to the phone and verify live state.

@@ -33,10 +33,9 @@ public final class MainActivity extends Activity {
     private static final String HIBERNATE_SCRIPT = "/data/local/chroots/arch/arch-desktop-hibernate-root.sh";
     private static final String HIBERNATE_OSD_SCRIPT = "/data/local/chroots/arch/x11-hibernate-hold-osd-root.sh";
     private static final String RUNNING_CHECK_SCRIPT =
-            "sh -c 'state=$(cat /data/local/chroots/arch/root/.local/state/x11/session.state 2>/dev/null || true); "
-                    + "[ \"$state\" = running ] && "
-                    + "{ pgrep -f \"[t]ermux-x11 com.termux.x11 :1\" >/dev/null 2>&1 || "
-                    + "[ -S /data/local/chroots/arch/tmp/.X11-unix/X1 ]; }'";
+            "sh -c '{ pgrep -f \"[t]ermux-x11 com.termux.x11 :1\" >/dev/null 2>&1 || "
+                    + "[ -S /data/local/chroots/arch/tmp/.X11-unix/X1 ]; } && "
+                    + "! pgrep -f \"[a]rch-desktop-hibernate-root.sh\" >/dev/null 2>&1'";
     private static final String POINTER_HELPER_COMMAND =
             "chroot /data/local/chroots/arch /usr/bin/env DISPLAY=:1 "
                     + "XDG_RUNTIME_DIR=/tmp/runtime-root "

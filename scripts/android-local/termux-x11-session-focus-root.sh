@@ -26,7 +26,7 @@ termux_pref() {
 
 set_preferences() {
   load_target
-  pointer_speed=${ARCH_X11_POINTER_SPEED:-55}
+  pointer_speed=${ARCH_X11_POINTER_SPEED:-105}
   hardware_scancodes=${ARCH_X11_HARDWARE_SCANCODES:-false}
   display_resolution_args="displayResolutionMode:native"
   if [ -n "${target_x11_resolution:-}" ]; then

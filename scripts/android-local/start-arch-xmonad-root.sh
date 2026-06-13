@@ -109,6 +109,22 @@ else
   /system/bin/pkill -f '[g]etevent -l /dev/input/event' >/dev/null 2>&1 || true
 fi
 
+reapply_x11_input_setup() {
+  (
+    for delay in 2 5 10; do
+      sleep "$delay"
+      [ -S "$ROOT/tmp/.X11-unix/X1" ] || continue
+      /system/bin/chroot "$ROOT" /usr/bin/env \
+        DISPLAY=:1 \
+        XDG_RUNTIME_DIR=/tmp/runtime-root \
+        PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin \
+        sh -lc 'x11-lorie-input-setup >/dev/null 2>&1 || true'
+    done
+  ) >>"$LOG" 2>&1 &
+}
+
+reapply_x11_input_setup
+
 chroot "$ROOT" /usr/bin/env -i \
   HOME=/root \
 	  USER=root \

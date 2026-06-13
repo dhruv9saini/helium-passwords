@@ -8,19 +8,53 @@ LOG="$STATE_DIR/controller.log"
 STATE="$STATE_DIR/session.state"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
-while ! mkdir "$LOCK" 2>/dev/null; do
-  sleep 1
-done
-trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
-
 log() {
   printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"
+}
+
+release_lock() {
+  rm -f "$LOCK/pid" >/dev/null 2>&1 || true
+  rmdir "$LOCK" >/dev/null 2>&1 || true
 }
 
 arch_desktop_processes_running() {
   pgrep -f '[t]ermux-x11 com.termux.x11 :1|[x]monad-aarch64-linux|[d]bus-run-session -- sh -lc|[x]11-phone-trackpad|[c]hromium --user-data-dir=/root/.config/helium-passwords|[h]elium --user-data-dir=/root/.config/helium-passwords' >/dev/null 2>&1 ||
     [ -S "$ROOT/tmp/.X11-unix/X1" ]
 }
+
+lock_owner_alive() {
+  [ -s "$LOCK/pid" ] || return 1
+  pid=$(cat "$LOCK/pid" 2>/dev/null || true)
+  case "$pid" in
+    ''|*[!0-9]*) return 1 ;;
+  esac
+  [ -d "/proc/$pid" ]
+}
+
+acquire_lock_or_skip_duplicate() {
+  while ! mkdir "$LOCK" 2>/dev/null; do
+    if arch_desktop_processes_running; then
+      log "resume skipped; existing session is already running"
+      printf 'running\n' >"$STATE"
+      exit 0
+    fi
+    if lock_owner_alive; then
+      log "resume skipped; another start is already in progress"
+      exit 0
+    fi
+    rm -f "$LOCK/pid" >/dev/null 2>&1 || true
+    if rmdir "$LOCK" >/dev/null 2>&1; then
+      log "resume removed stale controller lock"
+      continue
+    fi
+    log "resume skipped; controller lock busy"
+    exit 0
+  done
+  printf '%s\n' "$$" >"$LOCK/pid" 2>/dev/null || true
+  trap 'release_lock' EXIT
+}
+
+acquire_lock_or_skip_duplicate
 
 log "resume requested"
 printf 'resuming\n' >"$STATE"

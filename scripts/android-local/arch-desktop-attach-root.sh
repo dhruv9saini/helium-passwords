@@ -7,13 +7,22 @@ LOCK="$STATE_DIR/controller.lock"
 LOG="$STATE_DIR/controller.log"
 mkdir -p "$STATE_DIR" 2>/dev/null || true
 
-while ! mkdir "$LOCK" 2>/dev/null; do
-  sleep 1
-done
-trap 'rmdir "$LOCK" 2>/dev/null || true' EXIT
+if [ "${ARCH_DESKTOP_ATTACH_LOCKLESS:-0}" != 1 ]; then
+  while ! mkdir "$LOCK" 2>/dev/null; do
+    printf '%s attach skipped; controller lock busy\n' "$(date '+%F %T')" >>"$LOG"
+    exit 0
+  done
+  printf '%s\n' "$$" >"$LOCK/pid" 2>/dev/null || true
+  trap 'release_lock' EXIT
+fi
 
 log() {
   printf '%s %s\n' "$(date '+%F %T')" "$*" >>"$LOG"
+}
+
+release_lock() {
+  rm -f "$LOCK/pid" >/dev/null 2>&1 || true
+  rmdir "$LOCK" >/dev/null 2>&1 || true
 }
 
 log "attach requested"

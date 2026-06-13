@@ -177,9 +177,12 @@ restores Chromium's native password manager.
   removing it because that socket path may be a live mount. The old Jelly web
   trackpad relay is off by default; only enable it deliberately with
   `ARCH_X11_WEB_TRACKPAD=1` for extended-display experiments. Pointer speed is
-  controlled by `ARCH_X11_POINTER_SPEED` and defaults to `55`; the controller
+  controlled by `ARCH_X11_POINTER_SPEED` and defaults to `105`; the controller
   app handles its own phone-trackpad movement separately. X11 key repeat is
   set by `x11-lorie-input-setup` and defaults to delay `180` / rate `45`.
+  Startup reapplies that X11 input setup after short delays because Termux:X11
+  can reset key repeat and modifier maps while external devices finish
+  enumerating.
   If Termux:X11 is closed, the display watcher must hibernate instead of
   reopening it. XMonad
   startup uses the cached compiled binary unless
@@ -223,6 +226,11 @@ restores Chromium's native password manager.
   Those two display allow flags are persistent phone preferences in
   `android-ui-preferences-root.sh`; hibernate only resets Arch-session
   freeform/windowing keys.
+  Running-session detection must use the real Termux:X11 process/socket, not
+  only `session.state`, because a stale `resuming` state can otherwise queue
+  repeated full restarts. Resume and attach scripts must not queue behind
+  `controller.lock`; duplicate requests exit immediately if another start is
+  in progress or if the session is already running.
 - Arch Desktop startup also keeps Android Helium Sync
   (`computer.helium.sync`) out of inactive/idle background states and sticky
   unfreezes the running native browser process when present. CookieCloud uses
