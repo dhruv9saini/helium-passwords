@@ -148,6 +148,9 @@ add_extension_path "$home_dir/.local/share/cookiecloud-extension/chrome-mv3"
 add_extension_path "$home_dir/.local/share/google-ai-overview-blocker"
 add_extension_path "$home_dir/.local/share/blank-new-tab-extension"
 add_extension_path "$home_dir/.local/share/tab-pin-helper-extension"
+for extension_path in "$profile"/Default/Extensions/*/*; do
+  add_extension_path "$extension_path"
+done
 for extension_path in "$home_dir"/.local/share/browserpass/extension-* "$home_dir"/.local/share/helium-extensions/*; do
   add_extension_path "$extension_path"
 done

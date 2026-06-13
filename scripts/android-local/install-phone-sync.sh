@@ -39,6 +39,7 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-session-watch-root.sh" /data/local/tmp/arch-desktop-session-watch-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-resume-root.sh" /data/local/tmp/arch-desktop-resume-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-hibernate-root.sh" /data/local/tmp/arch-desktop-hibernate-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-attach-root.sh" /data/local/tmp/arch-desktop-attach-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/android-ui-preferences-root.sh" /data/local/tmp/android-ui-preferences-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/chroot-tailnet-dns-root.sh" /data/local/tmp/chroot-tailnet-dns-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/fix-magic-keyboard-layout-root.sh" /data/local/tmp/fix-magic-keyboard-layout-root.sh >/dev/null
@@ -57,6 +58,7 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/wire-arch-desktop-display-mode-root.sh" /data/local/tmp/wire-arch-desktop-display-mode-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/start-arch-xmonad-root.sh" /data/local/tmp/start-arch-xmonad-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/stop-arch-x11-root.sh" /data/local/tmp/stop-arch-x11-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/termux-x11-session-focus-root.sh" /data/local/tmp/termux-x11-session-focus-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/seed-chroot-profile-root.sh" /data/local/tmp/seed-chroot-profile-root.sh >/dev/null
 "$adb_bin" push "$cookiecloud_ext" /data/local/tmp/cookiecloud-extension-chrome-mv3.tar.xz >/dev/null
 "$adb_bin" push "$work_dir/google-ai-overview-blocker.tar" /data/local/tmp/google-ai-overview-blocker.tar >/dev/null
@@ -81,6 +83,7 @@ install -Dm755 /data/local/tmp/arch-desktop-display-watch-root.sh \"\$ROOT/arch-
 install -Dm755 /data/local/tmp/arch-desktop-session-watch-root.sh \"\$ROOT/arch-desktop-session-watch.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-resume-root.sh \"\$ROOT/arch-desktop-resume-root.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-hibernate-root.sh \"\$ROOT/arch-desktop-hibernate-root.sh\"
+install -Dm755 /data/local/tmp/arch-desktop-attach-root.sh \"\$ROOT/arch-desktop-attach-root.sh\"
 install -Dm755 /data/local/tmp/android-ui-preferences-root.sh \"\$ROOT/android-ui-preferences-root.sh\"
 install -Dm755 /data/local/tmp/chroot-tailnet-dns-root.sh \"\$ROOT/chroot-tailnet-dns-root.sh\"
 install -Dm755 /data/local/tmp/fix-magic-keyboard-layout-root.sh \"\$ROOT/fix-magic-keyboard-layout-root.sh\"
@@ -102,6 +105,7 @@ install -Dm755 /data/local/tmp/helium-phone-ui-service-root.sh /data/adb/service
 install -Dm755 /data/local/tmp/wire-arch-desktop-display-mode-root.sh \"\$ROOT/wire-arch-desktop-display-mode-root.sh\"
 install -Dm755 /data/local/tmp/start-arch-xmonad-root.sh \"\$ROOT/start-arch-xmonad-root.sh\"
 install -Dm755 /data/local/tmp/stop-arch-x11-root.sh \"\$ROOT/stop-arch-x11-root.sh\"
+install -Dm755 /data/local/tmp/termux-x11-session-focus-root.sh \"\$ROOT/termux-x11-session-focus-root.sh\"
 mkdir -p \"\$ROOT/root/.local/share/cookiecloud-extension\"
 rm -rf \"\$ROOT/root/.local/share/cookiecloud-extension/chrome-mv3\" \"\$ROOT/root/.local/share/google-ai-overview-blocker\" \"\$ROOT/root/.local/share/blank-new-tab-extension\" \"\$ROOT/root/.local/share/tab-pin-helper-extension\" \"\$ROOT/root/.local/share/helium-local-pass\"
 mkdir -p \"\$ROOT/root/.local/share/cookiecloud-extension/chrome-mv3\"

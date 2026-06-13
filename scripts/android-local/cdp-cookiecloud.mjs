@@ -147,6 +147,85 @@ function buildURL(cookie) {
   return `${cookie.secure ? "https" : "http"}://${domain}${cookie.path || "/"}`;
 }
 
+function cookieKey(cookie) {
+  return [
+    String(cookie.domain || ""),
+    String(cookie.path || "/"),
+    String(cookie.name || ""),
+  ].join("\u0000");
+}
+
+function cookieIsExpired(cookie, now = Date.now() / 1000) {
+  const expires = Number(cookie.expirationDate || cookie.expires || 0);
+  return Number.isFinite(expires) && expires > 0 && expires <= now;
+}
+
+function normalizeCookieForPayload(cookie) {
+  if (!cookie || !cookie.name || !cookie.domain) return null;
+  if (cookieIsExpired(cookie)) return null;
+  const out = {
+    name: String(cookie.name),
+    value: String(cookie.value || ""),
+    domain: String(cookie.domain),
+    path: cookie.path || "/",
+    secure: !!cookie.secure,
+    httpOnly: !!cookie.httpOnly,
+    sameSite: cookie.sameSite || "unspecified",
+  };
+  const expires = Number(cookie.expirationDate || cookie.expires || 0);
+  if (Number.isFinite(expires) && expires > 0) {
+    out.expirationDate = expires;
+  }
+  return out;
+}
+
+function mergeCookiePayload(basePayload, localPayload) {
+  const merged = {
+    cookie_data: {},
+    local_storage_data: {
+      ...(basePayload.local_storage_data || {}),
+      ...(localPayload.local_storage_data || {}),
+    },
+    update_time: new Date().toISOString(),
+  };
+  const byKey = new Map();
+
+  const addCookie = (cookie) => {
+    const normalized = normalizeCookieForPayload(cookie);
+    if (!normalized) return;
+    byKey.set(cookieKey(normalized), normalized);
+  };
+
+  for (const cookies of Object.values(basePayload.cookie_data || {})) {
+    if (!Array.isArray(cookies)) continue;
+    for (const cookie of cookies) addCookie(cookie);
+  }
+  for (const cookies of Object.values(localPayload.cookie_data || {})) {
+    if (!Array.isArray(cookies)) continue;
+    for (const cookie of cookies) addCookie(cookie);
+  }
+
+  for (const cookie of byKey.values()) {
+    merged.cookie_data[cookie.domain] ||= [];
+    merged.cookie_data[cookie.domain].push(cookie);
+  }
+  for (const cookies of Object.values(merged.cookie_data)) {
+    cookies.sort((a, b) => cookieKey(a).localeCompare(cookieKey(b)));
+  }
+  return merged;
+}
+
+async function readRemotePayload() {
+  const response = await fetch(trimSlash(options.server) + "/get/" + encodeURIComponent(options.uuid));
+  if (!response.ok) {
+    if (response.status === 404) return { cookie_data: {}, local_storage_data: {} };
+    throw new Error(`CookieCloud download failed: ${response.status} ${await response.text()}`);
+  }
+  const record = await response.json();
+  if (!record.encrypted) return { cookie_data: {}, local_storage_data: {} };
+  return JSON.parse(cookieCloudDecrypt(options.uuid, record.encrypted, options.password));
+}
+
 function trimSlash(value) {
   return String(value).replace(/\/+$/, "");
 }
@@ -231,23 +310,17 @@ async function upload(cdpURL) {
       if (!cookie.domain) continue;
       if (include.size > 0 && ![...include].some((item) => cookie.domain.includes(item))) continue;
       if ([...blacklist].some((item) => cookie.domain.includes(item))) continue;
-      cookie_data[cookie.domain] ||= [];
-      cookie_data[cookie.domain].push({
-        name: cookie.name,
-        value: cookie.value,
-        domain: cookie.domain,
-        path: cookie.path || "/",
-        secure: !!cookie.secure,
-        httpOnly: !!cookie.httpOnly,
-        sameSite: cookie.sameSite || "unspecified",
-        expirationDate: cookie.expires && cookie.expires > 0 ? cookie.expires : undefined,
-      });
+      const normalized = normalizeCookieForPayload(cookie);
+      if (!normalized) continue;
+      cookie_data[normalized.domain] ||= [];
+      cookie_data[normalized.domain].push(normalized);
     }
-    const payload = {
+    const localPayload = {
       cookie_data,
       local_storage_data: {},
       update_time: new Date().toISOString(),
     };
+    const payload = mergeCookiePayload(await readRemotePayload(), localPayload);
     const encrypted = cookieCloudEncrypt(options.uuid, JSON.stringify(payload), options.password);
     const response = await fetch(trimSlash(options.server) + "/update", {
       method: "POST",
@@ -261,32 +334,34 @@ async function upload(cdpURL) {
 
 async function download(cdpURL) {
   return await withCDP(cdpURL, async (cdp) => {
-    const response = await fetch(trimSlash(options.server) + "/get/" + encodeURIComponent(options.uuid));
-    if (!response.ok) throw new Error(`CookieCloud download failed: ${response.status} ${await response.text()}`);
-    const record = await response.json();
-    const payload = JSON.parse(cookieCloudDecrypt(options.uuid, record.encrypted, options.password));
+    const payload = await readRemotePayload();
     let applied = 0;
+    let skipped = 0;
     for (const cookies of Object.values(payload.cookie_data || {})) {
       if (!Array.isArray(cookies)) continue;
       for (const cookie of cookies) {
+        const normalized = normalizeCookieForPayload(cookie);
+        if (!normalized) {
+          skipped++;
+          continue;
+        }
         const params = {
-          name: cookie.name,
-          value: cookie.value,
-          domain: cookie.domain,
-          path: cookie.path || "/",
-          secure: !!cookie.secure,
-          httpOnly: !!cookie.httpOnly,
-          url: buildURL(cookie),
+          name: normalized.name,
+          value: normalized.value,
+          domain: normalized.domain,
+          path: normalized.path,
+          secure: normalized.secure,
+          httpOnly: normalized.httpOnly,
+          url: buildURL(normalized),
         };
-        const sameSite = normalizeSameSite(cookie.sameSite);
+        const sameSite = normalizeSameSite(normalized.sameSite);
         if (sameSite) params.sameSite = sameSite;
-        const expires = Number(cookie.expirationDate || cookie.expires || 0);
-        if (expires > 0) params.expires = expires;
+        if (normalized.expirationDate) params.expires = normalized.expirationDate;
         const result = await cdp.setCookie(params);
         if (result.result?.success) applied++;
       }
     }
-    return { action: "downloaded", applied };
+    return { action: "downloaded", applied, skipped };
   });
 }
 

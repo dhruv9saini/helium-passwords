@@ -14,7 +14,10 @@ restores Chromium's native password manager.
 - Password sync is additive/update-only. Do not propagate password deletions
   between devices unless this policy is explicitly changed.
 - Cookie sync may use the CookieCloud-compatible local bridge for environments
-  that cannot load a CookieCloud extension directly.
+  that cannot load a CookieCloud extension directly. The CDP bridge is
+  additive/update-only: uploads merge browser cookies into the existing remote
+  payload and downloads skip expired records instead of propagating cookie
+  deletions while the user is browsing.
 - Treat synced payloads as sensitive. Avoid logging decrypted cookies,
   passwords, tokens, passphrases, or full cookie/password payloads.
 - Keep `README.md`, `docs/`, and this file current when integration paths or
@@ -121,6 +124,18 @@ restores Chromium's native password manager.
   `/sdcard/Download/launcher3-home-backup-20260612-202958.tar.gz` on the phone
   and `/home/dhruv/phone-backups/launcher3-20260612-202958` on this computer;
   `/home/dhruv/phone-backups/launcher3-latest` points at it.
+  `scripts/android-local/termux-x11-session-focus-root.sh` owns the
+  Termux:X11 activity/prefs handoff. In external extended mode it hides the
+  Termux mouse helper and extra key bar, enables pointer capture, uses custom
+  resolution from the display target, and launches Termux:X11 on the external
+  display. In phone-only mode it disables pointer capture and shows the normal
+  Termux:X11 mouse helper/extra keyboard. Keep
+  `hardwareKbdScancodesWorkaround=false` by default so the Android Magic
+  Keyboard keylayout rewrite can make Command/Super distinct from Option/Alt;
+  only set `ARCH_X11_HARDWARE_SCANCODES=true` for deliberate scancode testing.
+  The focus script also kills stale raw pointer forwarders unless
+  `ARCH_X11_RAW_POINTER=1`, because double injection causes random pointer
+  speed changes.
   `scripts/android-local/arch-desktop-display-watch-root.sh` polls that
   fingerprint while Arch Desktop is running. When a monitor is plugged or
   unplugged after startup, it reapplies display mode and restarts the X11 layer
@@ -162,8 +177,11 @@ restores Chromium's native password manager.
   removing it because that socket path may be a live mount. The old Jelly web
   trackpad relay is off by default; only enable it deliberately with
   `ARCH_X11_WEB_TRACKPAD=1` for extended-display experiments. Pointer speed is
-  controlled by `ARCH_X11_POINTER_SPEED` and defaults to `70`. If Termux:X11 is
-  closed, the display watcher must hibernate instead of reopening it. XMonad
+  controlled by `ARCH_X11_POINTER_SPEED` and defaults to `55`; the controller
+  app handles its own phone-trackpad movement separately. X11 key repeat is
+  set by `x11-lorie-input-setup` and defaults to delay `180` / rate `45`.
+  If Termux:X11 is closed, the display watcher must hibernate instead of
+  reopening it. XMonad
   startup uses the cached compiled binary unless
   `/root/.config/xmonad/xmonad.hs` is newer or `ARCH_X11_RECOMPILE=1` is set;
   do not recompile on every cold start.
@@ -177,8 +195,10 @@ restores Chromium's native password manager.
   should be `ABSOLUTE` with Termux:X11 as the current capture window.
 - `android/arch-desktop-controller` is the phone-side controller app installed
   as `net.dhruv.archdesktop` / "Arch Desktop". It runs
-  `/data/local/chroots/arch/arch-desktop-resume-root.sh`, stays open as the
-  phone trackpad/control surface, and runs
+  `/data/local/chroots/arch/arch-desktop-resume-root.sh` for cold starts and
+  `/data/local/chroots/arch/arch-desktop-attach-root.sh` when the X11/chroot
+  session is already running, stays open as the phone trackpad/control surface,
+  and runs
   `/data/local/chroots/arch/arch-desktop-hibernate-root.sh` from Back or the
   Hibernate button. Do not call `startActivity()` for `com.termux.x11` from this
   app; the root resume script starts Termux:X11 with

@@ -59,71 +59,9 @@ keep_android_helium_awake() {
 
 keep_android_helium_awake
 
-start_termux_x11_activity() {
-  target_display_id=0
-  target_android_display_mode=mirror
-  if [ -f "$DISPLAY_TARGET" ]; then
-    # shellcheck disable=SC1090
-    . "$DISPLAY_TARGET" 2>/dev/null || true
-  fi
-
-  if [ "${target_android_display_mode:-mirror}" = extended ] && [ -n "${target_display_id:-}" ] && [ "${target_display_id:-0}" != 0 ]; then
-    cmd display enable-display "$target_display_id" >/dev/null 2>&1 || true
-    am start --user 0 --display "$target_display_id" --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 ||
-      am start --user 0 --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 || true
-  else
-    am start --user 0 --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 || true
-  fi
-}
-
 if [ "${ARCH_X11_OPEN_ACTIVITY:-1}" != 0 ]; then
-  start_termux_x11_activity
+  "$ROOT/termux-x11-session-focus-root.sh" >>"$LOG" 2>&1 || true
 fi
-
-set_termux_x11_preferences() {
-  pref="$TERMUX_PREFIX/bin/termux-x11-preference"
-  [ -x "$pref" ] || return 0
-  pointer_speed=${ARCH_X11_POINTER_SPEED:-70}
-
-  display_resolution_args="displayResolutionMode:native"
-  if [ -f "$DISPLAY_TARGET" ]; then
-    target_x11_resolution=
-    # shellcheck disable=SC1090
-    . "$DISPLAY_TARGET" 2>/dev/null || true
-    if [ -n "${target_x11_resolution:-}" ]; then
-      display_resolution_args="displayResolutionMode:custom displayResolutionCustom:${target_x11_resolution}"
-    fi
-  fi
-
-  /debug_ramdisk/su -mm -g "$TERMUX_UID" -G 3003 "$TERMUX_UID" -c "export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX PATH=$TERMUX_PREFIX/bin:/system/bin:/system/xbin; /system/bin/timeout -k 1 2 termux-x11-preference touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:true filterOutWinkey:false showMouseHelper:false showAdditionalKbd:false additionalKbdVisible:false useTermuxEKBarBehaviour:false fullscreen:true $display_resolution_args" >/dev/null 2>&1
-}
-
-prime_termux_x11_pointer_capture() {
-  target_display_id=0
-  target_android_display_mode=mirror
-  if [ -f "$DISPLAY_TARGET" ]; then
-    # shellcheck disable=SC1090
-    . "$DISPLAY_TARGET" 2>/dev/null || true
-  fi
-
-  [ "${target_android_display_mode:-mirror}" = extended ] || return 0
-  [ -n "${target_display_id:-}" ] || return 0
-  [ "${target_display_id:-0}" != 0 ] || return 0
-
-  (
-    sleep 1
-    input touchscreen -d "$target_display_id" tap 1 1 >/dev/null 2>&1 || true
-  ) &
-}
-
-set_termux_x11_preferences || true
-(
-  for _ in 1 2 3; do
-    set_termux_x11_preferences && exit 0
-    sleep 1
-  done
-) &
-prime_termux_x11_pointer_capture
 
 open_phone_trackpad_activity() {
   target_source=native
@@ -137,7 +75,7 @@ open_phone_trackpad_activity() {
   [ "${ARCH_X11_WEB_TRACKPAD:-0}" = 1 ] || return 0
 
   port=${X11_PHONE_TRACKPAD_PORT:-8765}
-  url="http://127.0.0.1:${port}/?sensitivity=${X11_PHONE_TRACKPAD_SENSITIVITY:-1.00}&scroll=${X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY:-0.24}"
+  url="http://127.0.0.1:${port}/?sensitivity=${X11_PHONE_TRACKPAD_SENSITIVITY:-1.00}&scroll=${X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY:-0.13}"
   (
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
       /system/bin/curl -fsS --max-time 1 "$url" >/dev/null 2>&1 && break
@@ -166,6 +104,9 @@ if [ "${ARCH_X11_RAW_POINTER:-0}" != 0 ] && [ -x "$ROOT/android-raw-pointer-forw
   /system/bin/pkill -f '[a]ndroid-raw-pointer-forwarder-root.sh' >/dev/null 2>&1 || true
   /system/bin/pkill -f '[g]etevent -l /dev/input/event' >/dev/null 2>&1 || true
   nohup "$ROOT/android-raw-pointer-forwarder-root.sh" >>"$LOG" 2>&1 &
+else
+  /system/bin/pkill -f '[a]ndroid-raw-pointer-forwarder-root.sh' >/dev/null 2>&1 || true
+  /system/bin/pkill -f '[g]etevent -l /dev/input/event' >/dev/null 2>&1 || true
 fi
 
 chroot "$ROOT" /usr/bin/env -i \
@@ -192,6 +133,6 @@ chroot "$ROOT" /usr/bin/env -i \
   LC_CTYPE=C.utf8 \
 		  TERM=xterm-256color \
 		  PATH=/root/.config/x11/bin:/root/.local/bin:/root/.local/share/mise/shims:/root/.cabal/bin:/root/.ghcup/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin \
-	  /bin/bash -lc 'mkdir -p /tmp/runtime-root /root/.config/xmonad /root/.cache/xmonad /root/.local/share/xmonad /root/.local/state/x11 /root/Downloads; chmod 700 /tmp/runtime-root; rm -rf /root/.xmonad; xrdb -merge /root/.config/Xresources || true; xsettingsd >>/root/.local/state/x11/xsettingsd.log 2>&1 & xsetroot -solid "#111111" || true; x11-apple-input-setup || true; x11-lorie-input-setup || true; x11-clip-watch >>/root/.local/state/x11/clip-watch.log 2>&1 & if [ "${ARCH_X11_PHONE_TRACKPAD_SERVER:-0}" = 1 ] || [ "${ARCH_X11_WEB_TRACKPAD:-0}" = 1 ]; then trackpad_host="${X11_PHONE_TRACKPAD_HOST:-127.0.0.1}"; if [ -n "${ARCH_X11_TRACKPAD_TOKEN:-}" ] && [ -z "${X11_PHONE_TRACKPAD_HOST:-}" ]; then trackpad_host=0.0.0.0; fi; X11_PHONE_TRACKPAD_HOST="$trackpad_host" X11_PHONE_TRACKPAD_TOKEN="${ARCH_X11_TRACKPAD_TOKEN:-}" X11_PHONE_TRACKPAD_SENSITIVITY="${X11_PHONE_TRACKPAD_SENSITIVITY:-1.00}" X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY="${X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY:-0.24}" x11-phone-trackpad >>/root/.local/state/x11/phone-trackpad.log 2>&1 & fi; find_xmonad_bin() { find /root/.cache/xmonad /root/.local/share/xmonad /root/.config/xmonad -maxdepth 1 -type f -name "xmonad-*" -perm -111 2>/dev/null | sort | tail -n 1; }; XMONAD_BIN=$(find_xmonad_bin); if [ -z "$XMONAD_BIN" ] || [ /root/.config/xmonad/xmonad.hs -nt "$XMONAD_BIN" ] || [ "${ARCH_X11_RECOMPILE:-0}" = 1 ]; then xmonad --recompile || true; XMONAD_BIN=$(find_xmonad_bin); fi; [ -n "$XMONAD_BIN" ] || exit 1; dbus-run-session -- sh -lc "exec \"$XMONAD_BIN\""' </dev/null >>"$LOG" 2>&1 &
+	  /bin/bash -lc 'mkdir -p /tmp/runtime-root /root/.config/xmonad /root/.cache/xmonad /root/.local/share/xmonad /root/.local/state/x11 /root/Downloads; chmod 700 /tmp/runtime-root; rm -rf /root/.xmonad; xrdb -merge /root/.config/Xresources || true; xsettingsd >>/root/.local/state/x11/xsettingsd.log 2>&1 & xsetroot -solid "#111111" || true; x11-apple-input-setup || true; x11-lorie-input-setup || true; x11-clip-watch >>/root/.local/state/x11/clip-watch.log 2>&1 & if [ "${ARCH_X11_PHONE_TRACKPAD_SERVER:-0}" = 1 ] || [ "${ARCH_X11_WEB_TRACKPAD:-0}" = 1 ]; then trackpad_host="${X11_PHONE_TRACKPAD_HOST:-127.0.0.1}"; if [ -n "${ARCH_X11_TRACKPAD_TOKEN:-}" ] && [ -z "${X11_PHONE_TRACKPAD_HOST:-}" ]; then trackpad_host=0.0.0.0; fi; X11_PHONE_TRACKPAD_HOST="$trackpad_host" X11_PHONE_TRACKPAD_TOKEN="${ARCH_X11_TRACKPAD_TOKEN:-}" X11_PHONE_TRACKPAD_SENSITIVITY="${X11_PHONE_TRACKPAD_SENSITIVITY:-1.00}" X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY="${X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY:-0.13}" x11-phone-trackpad >>/root/.local/state/x11/phone-trackpad.log 2>&1 & fi; find_xmonad_bin() { find /root/.cache/xmonad /root/.local/share/xmonad /root/.config/xmonad -maxdepth 1 -type f -name "xmonad-*" -perm -111 2>/dev/null | sort | tail -n 1; }; XMONAD_BIN=$(find_xmonad_bin); if [ -z "$XMONAD_BIN" ] || [ /root/.config/xmonad/xmonad.hs -nt "$XMONAD_BIN" ] || [ "${ARCH_X11_RECOMPILE:-0}" = 1 ]; then xmonad --recompile || true; XMONAD_BIN=$(find_xmonad_bin); fi; [ -n "$XMONAD_BIN" ] || exit 1; dbus-run-session -- sh -lc "exec \"$XMONAD_BIN\""' </dev/null >>"$LOG" 2>&1 &
 
 open_phone_trackpad_activity

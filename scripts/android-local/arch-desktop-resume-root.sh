@@ -40,6 +40,7 @@ else
 fi
 
 ARCH_X11_OPEN_ACTIVITY=1 "$ROOT/start-arch-xmonad-root.sh" >>"$LOG" 2>&1
+[ ! -x "$ROOT/termux-x11-session-focus-root.sh" ] || "$ROOT/termux-x11-session-focus-root.sh" >>"$LOG" 2>&1 || true
 
 nohup "$ROOT/arch-desktop-session-watch.sh" >>"$LOG" 2>&1 &
 nohup "$ROOT/arch-desktop-display-watch-root.sh" >>"$LOG" 2>&1 &

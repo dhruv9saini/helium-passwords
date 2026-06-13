@@ -29,6 +29,7 @@ import java.util.concurrent.RejectedExecutionException;
 
 public final class MainActivity extends Activity {
     private static final String RESUME_SCRIPT = "/data/local/chroots/arch/arch-desktop-resume-root.sh";
+    private static final String ATTACH_SCRIPT = "/data/local/chroots/arch/arch-desktop-attach-root.sh";
     private static final String HIBERNATE_SCRIPT = "/data/local/chroots/arch/arch-desktop-hibernate-root.sh";
     private static final String HIBERNATE_OSD_SCRIPT = "/data/local/chroots/arch/x11-hibernate-hold-osd-root.sh";
     private static final String RUNNING_CHECK_SCRIPT =
@@ -46,18 +47,19 @@ public final class MainActivity extends Activity {
                     + "XDG_RUNTIME_DIR=/tmp/runtime-root "
                     + "PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin "
                     + "/root/.local/bin/x11-key-helper";
-    private static final float MOVE_SENSITIVITY = 1.15f;
-    private static final float SCROLL_SENSITIVITY = 0.24f;
-    private static final float HARDWARE_POINTER_SENSITIVITY = 0.85f;
-    private static final float HARDWARE_SCROLL_SENSITIVITY = 3.0f;
+    private static final float MOVE_SENSITIVITY = 1.65f;
+    private static final float SCROLL_SENSITIVITY = 0.13f;
+    private static final float HARDWARE_POINTER_SENSITIVITY = 0.75f;
+    private static final float HARDWARE_SCROLL_SENSITIVITY = 2.0f;
     private static final long HIBERNATE_HOLD_MS = 3000L;
-    private static final long MODIFIER_STUCK_RELEASE_MS = 3500L;
+    private static final long MODIFIER_STUCK_RELEASE_MS = 10000L;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService rootExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService inputExecutor = Executors.newSingleThreadExecutor();
     private final Map<Integer, String> forwardedKeys = new HashMap<>();
     private boolean startRequested;
+    private boolean attachInFlight;
     private boolean desktopRunning;
     private boolean hibernateRequested;
     private boolean hibernateHoldActive;
@@ -98,10 +100,7 @@ public final class MainActivity extends Activity {
             }
         }
 
-        if (!startRequested) {
-            startRequested = true;
-            attachOrResumeDesktop();
-        }
+        attachOrResumeDesktop();
     }
 
     @Override
@@ -121,6 +120,9 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         armHardwareInputRepeatedly();
+        if (!hibernateRequested) {
+            attachOrResumeDesktop();
+        }
     }
 
     @Override
@@ -217,19 +219,29 @@ public final class MainActivity extends Activity {
     }
 
     private void attachOrResumeDesktop() {
+        if (attachInFlight || hibernateRequested) {
+            return;
+        }
+        attachInFlight = true;
+        startRequested = true;
+        if (status != null && !desktopRunning) {
+            status.setText("Starting Arch desktop...");
+        }
         rootExecutor.execute(new Runnable() {
             @Override
             public void run() {
                 int running = runRoot(RUNNING_CHECK_SCRIPT);
-                final int code = running == 0 ? 0 : runRoot(RESUME_SCRIPT);
+                final int code = running == 0 ? runRoot(ATTACH_SCRIPT) : runRoot(RESUME_SCRIPT);
                 main.post(new Runnable() {
                     @Override
                     public void run() {
+                        attachInFlight = false;
                         if (code == 0) {
                             desktopRunning = true;
                             status.setText("Arch desktop running");
                             armHardwareInputRepeatedly();
                         } else {
+                            startRequested = false;
                             status.setText("Desktop start failed. Check Magisk/root permission.");
                         }
                     }
