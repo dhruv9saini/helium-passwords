@@ -101,7 +101,7 @@ umount -l "$ROOT/tmp/.X11-unix" >/dev/null 2>&1 || true
 rm -rf "$ROOT/tmp/.X11-unix" "$ROOT/tmp/.X1-lock" >/dev/null 2>&1 || true
 /system/bin/pkill -f '[t]ermux-x11 com.termux.x11 :1' >/dev/null 2>&1 || true
 
-/debug_ramdisk/su -mm -g "$TERMUX_UID" -G 3003 "$TERMUX_UID" -c "export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX TMPDIR=$ROOT/tmp PATH=$TERMUX_PREFIX/bin:/system/bin:/system/xbin LANG=C.UTF-8 TERMUX_X11_DEBUG=1; cd $TERMUX_HOME; termux-x11 :1 -ac -dpi ${ARCH_X11_DPI:-120} -fakescreenfps ${ARCH_X11_FPS:-10} >>$LOG 2>&1" </dev/null >/dev/null 2>&1 &
+/debug_ramdisk/su -mm -g "$TERMUX_UID" -G 3003 "$TERMUX_UID" -c "export HOME=$TERMUX_HOME PREFIX=$TERMUX_PREFIX TMPDIR=$ROOT/tmp PATH=$TERMUX_PREFIX/bin:/system/bin:/system/xbin LANG=C.UTF-8 TERMUX_X11_DEBUG=1; cd $TERMUX_HOME; termux-x11 :1 -ac -dpi ${ARCH_X11_DPI:-96} -fakescreenfps ${ARCH_X11_FPS:-10} >>$LOG 2>&1" </dev/null >/dev/null 2>&1 &
 
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   [ -S "$ROOT/tmp/.X11-unix/X1" ] && break
@@ -140,7 +140,7 @@ chroot "$ROOT" /usr/bin/env -i \
 	  SHELL=/bin/zsh \
 	  DISPLAY=:1 \
 	  BROWSER=/root/.config/x11/bin/chromium-helium-local \
-	  TERMINAL=/root/.local/bin/zutty \
+	  TERMINAL=/root/.config/x11/bin/x11-zutty \
 	  GTK_THEME=Adwaita:dark \
 	  QT_QPA_PLATFORMTHEME=qt5ct \
 	  QT_STYLE_OVERRIDE=Breeze \

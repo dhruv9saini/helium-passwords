@@ -242,10 +242,17 @@ restores Chromium's native password manager.
   Dolphin and the hotkey list under `.config/x11/bin`. It also writes
   `/root/.config/xmonad/build` so `xmonad --recompile` uses the chroot's
   ghcup/cabal GHC path and `/tmp`, avoiding Android `TMPDIR` leakage. Terminals
-  launch through `.config/x11/bin/x11-zutty`, which merges Xresources and passes
-  explicit white-on-black `zutty` font/color flags so the terminal does not
-  inherit stale or phone-mode colors. Terminal color repair must not write a
-  replacement Starship prompt; copy the user's real Starship config instead.
+  launch through `.config/x11/bin/x11-zutty`, which must remain Zutty-only. Use
+  Zutty's filename-prefix font lookup, not a fontconfig family string: the
+  configured Iosevka font name is `Iosevka-Regular` from the upstream
+  `ttc-iosevka` package under `/usr/share/fonts`. The Nerd-patched Iosevka
+  TTFs load in Zutty but render blank glyphs on this Termux:X11 stack; do not
+  switch back to them without a pixel screenshot proving they render. External
+  X11 DPI should default to 96, matching normal desktop scale on the 2560x1440
+  Acer display more closely than the previous oversized 120 DPI. Terminal color
+  repair should use tmux `window-style`/`window-active-style`; tmux 3.6b rejects
+  the old `default-style` option. It must not write a replacement Starship
+  prompt; copy the user's real Starship config instead.
   If Termux:X11 is closed, the display watcher must hibernate instead of
   reopening it. XMonad
   startup uses the cached compiled binary unless

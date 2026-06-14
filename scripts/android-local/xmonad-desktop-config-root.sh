@@ -248,14 +248,16 @@ resources="$home/.config/Xresources"
 [ -r "$resources" ] || resources=/root/.config/Xresources
 xrdb -merge "$resources" >/dev/null 2>&1 || true
 
-font=${ZUTTY_FONT:-IosevkaNerdFontMono}
-fontsize=${ZUTTY_FONTSIZE:-15}
+font=${ZUTTY_FONT:-Iosevka-Regular}
+fontsize=${ZUTTY_FONTSIZE:-12}
+
 exec /usr/bin/zutty \
   -name Zutty \
   -fg '#ffffff' \
   -bg '#000000' \
   -cr '#ffffff' \
   -font "$font" \
+  -fontpath "${ZUTTY_FONTPATH:-/usr/share/fonts}" \
   -fontsize "$fontsize" \
   -border 0 \
   "$@"

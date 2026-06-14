@@ -41,8 +41,8 @@ write_user_colors() {
   mkdir -p "$home/.config/tmux" "$home/.config/shell"
   conf="$home/.config/tmux/tmux.conf"
   touch "$conf"
+  sed -i '/^set -g default-style /d' "$conf"
 
-  set_tmux_line "$conf" default-style '"fg=white,bg=black"'
   set_tmux_line "$conf" window-style '"fg=white,bg=black"'
   set_tmux_line "$conf" window-active-style '"fg=white,bg=black"'
   set_tmux_line "$conf" status-style '"bg=black,fg=white"'
@@ -54,7 +54,7 @@ write_user_colors() {
   set_tmux_line "$conf" window-status-style '"bg=black,fg=white"'
 
   cat > "$home/.config/Xresources" <<'XEOF'
-Xft.dpi: 120
+Xft.dpi: 96
 Xft.antialias: true
 Xft.hinting: true
 *.foreground: #ffffff
@@ -64,8 +64,8 @@ Zutty.background: #000000
 Zutty.fg: #ffffff
 Zutty.bg: #000000
 Zutty.cr: #ffffff
-Zutty.font: IosevkaNerdFontMono
-Zutty.fontsize: 15
+Zutty.font: Iosevka-Regular
+Zutty.fontsize: 12
 Zutty.color0: #000000
 Zutty.color1: #ff6b6b
 Zutty.color2: #8bd45f
@@ -108,7 +108,6 @@ xrdb -merge /root/.config/Xresources >/dev/null 2>&1 || true
 
 if tmux ls >/dev/null 2>&1; then
   tmux source-file /root/.config/tmux/tmux.conf >/dev/null 2>&1 || true
-  tmux set -g default-style 'fg=white,bg=black' >/dev/null 2>&1 || true
   tmux set -g window-style 'fg=white,bg=black' >/dev/null 2>&1 || true
   tmux set -g window-active-style 'fg=white,bg=black' >/dev/null 2>&1 || true
   tmux set -g status-style 'bg=black,fg=white' >/dev/null 2>&1 || true
