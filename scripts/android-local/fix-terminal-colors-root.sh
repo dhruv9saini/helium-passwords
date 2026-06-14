@@ -66,12 +66,54 @@ Zutty.bg: #000000
 Zutty.cr: #ffffff
 Zutty.font: IosevkaNerdFontMono
 Zutty.fontsize: 15
+Zutty.color0: #000000
+Zutty.color1: #ff6b6b
+Zutty.color2: #8bd45f
+Zutty.color3: #f0c75e
+Zutty.color4: #7cb7ff
+Zutty.color5: #d787ff
+Zutty.color6: #62d6d6
+Zutty.color7: #e8e8e8
+Zutty.color8: #7a7a7a
+Zutty.color9: #ff8c8c
+Zutty.color10: #a8ef84
+Zutty.color11: #ffe08a
+Zutty.color12: #9dccff
+Zutty.color13: #e4a7ff
+Zutty.color14: #8ff0f0
+Zutty.color15: #ffffff
 XEOF
 
   set_config_line "$home/.config/shell/chroot-shell.sh" 'export ZUTTY_FG=' 'export ZUTTY_FG="${ZUTTY_FG:-#ffffff}"'
   set_config_line "$home/.config/shell/chroot-shell.sh" 'export ZUTTY_BG=' 'export ZUTTY_BG="${ZUTTY_BG:-#000000}"'
   set_config_line "$home/.config/shell/chroot-shell.sh" 'export ZUTTY_CURSOR=' 'export ZUTTY_CURSOR="${ZUTTY_CURSOR:-#ffffff}"'
   set_config_line "$home/.config/shell/chroot-shell.sh" 'export COLORTERM=' 'export COLORTERM="${COLORTERM:-truecolor}"'
+  set_config_line "$home/.config/shell/chroot-shell.sh" 'export STARSHIP_CONFIG=' 'export STARSHIP_CONFIG="${STARSHIP_CONFIG:-$XDG_CONFIG_HOME/starship.toml}"'
+
+  cat > "$home/.config/starship.toml" <<'SEOF'
+add_newline = false
+format = "$username$hostname$directory$character"
+right_format = ""
+
+[username]
+show_always = true
+style_user = "bold white"
+style_root = "bold white"
+format = "[$user]($style) "
+
+[hostname]
+ssh_only = false
+style = "white"
+format = "[$hostname]($style) "
+
+[directory]
+style = "bold white"
+format = "[$path]($style) "
+
+[character]
+success_symbol = "[>](bold white)"
+error_symbol = "[>](bold red)"
+SEOF
 }
 
 write_user_colors /root
@@ -80,7 +122,7 @@ write_user_colors /home/dhruv
 uid=$(id -u dhruv 2>/dev/null || true)
 gid=$(id -g dhruv 2>/dev/null || true)
 if [ -n "$uid" ] && [ -n "$gid" ]; then
-  chown -R "$uid:$gid" /home/dhruv/.config/tmux /home/dhruv/.config/Xresources /home/dhruv/.config/shell
+  chown -R "$uid:$gid" /home/dhruv/.config/tmux /home/dhruv/.config/Xresources /home/dhruv/.config/shell /home/dhruv/.config/starship.toml
 fi
 
 xrdb -merge /root/.config/Xresources >/dev/null 2>&1 || true

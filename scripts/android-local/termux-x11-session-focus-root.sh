@@ -76,7 +76,19 @@ prime_pointer_capture_repeatedly() {
   ) &
 }
 
-stop_stale_raw_pointer_forwarder
-set_preferences
-start_activity
-prime_pointer_capture_repeatedly
+case "${1:-focus}" in
+  prefs|preferences)
+    stop_stale_raw_pointer_forwarder
+    set_preferences
+    ;;
+  focus|start)
+    stop_stale_raw_pointer_forwarder
+    set_preferences
+    start_activity
+    prime_pointer_capture_repeatedly
+    ;;
+  *)
+    printf 'usage: %s [focus|prefs]\n' "$0" >&2
+    exit 2
+    ;;
+esac

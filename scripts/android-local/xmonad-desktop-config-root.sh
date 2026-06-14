@@ -63,7 +63,7 @@ terminalCmd :: String
 terminalCmd = terminalBase ++ " -e tmux new-session -A -s x11"
 
 terminalBase :: String
-terminalBase = "zutty -name Zutty"
+terminalBase = "x11-zutty"
 
 startupApps :: X ()
 startupApps = do
@@ -169,6 +169,28 @@ borderLogHook = withWindowSet $ \windowSet -> do
     Nothing -> pure ()
 HEOF
 
+cat > /root/.config/xmonad/build <<'HEOF'
+#!/bin/sh
+set -eu
+
+out=${1:?output path required}
+config_dir=${XMONAD_CONFIG_DIR:-"$HOME/.config/xmonad"}
+export PATH=/root/.ghcup/bin:/root/.cabal/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin:$PATH
+export TMPDIR=/tmp
+mkdir -p "$TMPDIR"
+mkdir -p "$(dirname "$out")"
+cd "$config_dir"
+exec ghc \
+  --make xmonad.hs \
+  -i \
+  -ilib \
+  -fforce-recomp \
+  -main-is main \
+  -v0 \
+  -o "$out"
+HEOF
+chmod 755 /root/.config/xmonad/build
+
 cat > /root/.config/x11/hotkeys.txt <<'HEOF'
 XMonad hotkeys
 
@@ -216,6 +238,31 @@ Super+Shift+R        recompile and restart XMonad
 HEOF
 
 cp /root/.config/x11/hotkeys.txt /home/dhruv/.config/x11/hotkeys.txt 2>/dev/null || true
+
+cat > /root/.config/x11/bin/x11-zutty <<'HEOF'
+#!/bin/sh
+set -eu
+
+home=${HOME:-/root}
+resources="$home/.config/Xresources"
+[ -r "$resources" ] || resources=/root/.config/Xresources
+xrdb -merge "$resources" >/dev/null 2>&1 || true
+
+font=${ZUTTY_FONT:-IosevkaNerdFontMono}
+fontsize=${ZUTTY_FONTSIZE:-15}
+exec /usr/bin/zutty \
+  -name Zutty \
+  -fg '#ffffff' \
+  -bg '#000000' \
+  -cr '#ffffff' \
+  -font "$font" \
+  -fontsize "$fontsize" \
+  -border 0 \
+  "$@"
+HEOF
+chmod 755 /root/.config/x11/bin/x11-zutty
+cp /root/.config/x11/bin/x11-zutty /home/dhruv/.config/x11/bin/x11-zutty 2>/dev/null || true
+chmod 755 /home/dhruv/.config/x11/bin/x11-zutty 2>/dev/null || true
 
 cat > /root/.config/x11/bin/x11-hotkeys <<'HEOF'
 #!/bin/sh

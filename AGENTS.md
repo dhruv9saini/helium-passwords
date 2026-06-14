@@ -160,7 +160,11 @@ restores Chromium's native password manager.
   session watcher and display watcher with `nohup`; otherwise manual root/ADB
   launch paths can leave watchers tied to their parent shell. Keep the display
   watcher poll interval conservative; `cmd display get-displays` can take
-  several seconds on the phone, so the default interval is 30 seconds.
+  several seconds on the phone, so the default interval is 30 seconds. On
+  watcher startup and unchanged polls, it also compares the live fingerprint
+  with `/root/.local/state/x11/android-display-target.env` and reapplies
+  display mode if that env file is stale; otherwise Termux:X11 can fall back to
+  phone-mode prefs and show its mouse helper/extra keyboard on the desktop.
   `scripts/android-local/arch-desktop-session-watch-root.sh` is installed as
   `/data/local/chroots/arch/arch-desktop-session-watch.sh`; it must detect
   Termux:X11 visibility across all Android displays, not just phone-screen
@@ -220,7 +224,12 @@ restores Chromium's native password manager.
   The canonical phone XMonad config and hotkey documentation are installed by
   `scripts/android-local/xmonad-desktop-config-root.sh`; it keeps BSP as the
   only layout, adds the documented BSP controls, and writes dark wrappers for
-  Dolphin and the hotkey list under `.config/x11/bin`.
+  Dolphin and the hotkey list under `.config/x11/bin`. It also writes
+  `/root/.config/xmonad/build` so `xmonad --recompile` uses the chroot's
+  ghcup/cabal GHC path and `/tmp`, avoiding Android `TMPDIR` leakage. Terminals
+  launch through `.config/x11/bin/x11-zutty`, which merges Xresources and passes
+  explicit white-on-black `zutty` font/color flags so the terminal does not
+  inherit stale or phone-mode colors.
   If Termux:X11 is closed, the display watcher must hibernate instead of
   reopening it. XMonad
   startup uses the cached compiled binary unless
