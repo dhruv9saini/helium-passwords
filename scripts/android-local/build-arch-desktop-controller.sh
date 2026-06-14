@@ -51,6 +51,6 @@ javac --release 8 \
   --key-pass "pass:$keypass" \
   --out "$out_dir/arch-desktop.apk" \
   "$out_dir/arch-desktop-aligned.apk"
-"$apksigner" verify --verbose --print-certs "$out_dir/arch-desktop.apk"
+"$apksigner" verify --verbose --print-certs "$out_dir/arch-desktop.apk" >&2
 
 printf '%s\n' "$out_dir/arch-desktop.apk"
