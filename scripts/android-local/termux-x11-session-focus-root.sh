@@ -66,10 +66,10 @@ prime_pointer_capture() {
 }
 
 prime_pointer_capture_repeatedly() {
-  prime_pointer_capture
   (
     for delay in 1 2 4; do
       sleep "$delay"
+      [ -S "$ROOT/tmp/.X11-unix/X1" ] || continue
       set_preferences
       prime_pointer_capture
     done

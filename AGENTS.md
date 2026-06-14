@@ -133,12 +133,15 @@ restores Chromium's native password manager.
   resolution from the display target, and launches Termux:X11 on the external
   display. In phone-only mode it disables pointer capture and shows the normal
   Termux:X11 mouse helper/extra keyboard. Keep
-  `hardwareKbdScancodesWorkaround=false` by default so Termux:X11 uses the
-  Android keycode after the Magic Keyboard keylayout rewrite, rather than
-  bypassing it with raw scancodes.
+  `hardwareKbdScancodesWorkaround=false` by default so Termux:X11 uses Android
+  keycodes from the uinput Magic Keyboard remapper and the compatibility
+  keylayout fallback, rather than bypassing them with raw scancodes.
   The focus script also kills stale raw pointer forwarders unless
   `ARCH_X11_RAW_POINTER=1`, because double injection causes random pointer
-  speed changes.
+  speed changes. Do not send synthetic pointer-capture taps before the X server
+  socket exists; doing so can leave Termux:X11 in an Android input-dispatch ANR.
+  The focus helper waits for `/data/local/chroots/arch/tmp/.X11-unix/X1` before
+  priming pointer capture.
   `scripts/android-local/arch-desktop-display-watch-root.sh` polls that
   fingerprint while Arch Desktop is running. When a monitor is plugged or
   unplugged after startup, it reapplies display mode and restarts the X11 layer
@@ -215,8 +218,9 @@ restores Chromium's native password manager.
   Do not start Termux:X11 with `--activity-no-user-action`; on the OnePlus
   13/crDroid external-display path that leaves the external window
   `NOT_FOCUSABLE`, so hardware mouse/keyboard events never reach it. After
-  setting Termux:X11 preferences, startup sends one tap to the external display
-  before X clients are launched so Android grants Termux:X11 pointer capture.
+  setting Termux:X11 preferences, startup primes pointer capture only after the
+  X socket exists so Android grants Termux:X11 pointer capture without sending
+  MotionEvents to an unready activity.
   Verify with `dumpsys input`: `FocusedWindows` should list
   `com.termux.x11/.MainActivity` on the external display and `Pointer Capture`
   should be `ABSOLUTE` with Termux:X11 as the current capture window.
