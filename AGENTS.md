@@ -260,18 +260,21 @@ restores Chromium's native password manager.
   Verify with `dumpsys input`: `FocusedWindows` should list
   `com.termux.x11/.MainActivity` on the external display and `Pointer Capture`
   should be `ABSOLUTE` with Termux:X11 as the current capture window.
-  `scripts/android-local/arch-desktop-thermal-guard-root.sh` is a tiny
-  phone-level thermal guard deployed to
-  `/data/local/chroots/arch/arch-desktop-thermal-guard-root.sh`. The boot hook
-  starts it before the connected-display auto-enable helper, and Arch Desktop
-  resume starts it idempotently. It saves original CPU/devfreq max frequencies,
-  applies conservative caps immediately, and tightens them before skin thermal
-  status reaches critical so Android does not block external display hosting.
-  Do not use `cmd thermalservice override-status` as a fix; that hides the
-  framework state instead of reducing heat. By default hibernate leaves this
-  guard running because the user prefers global throttling over losing external
-  display. Set `ARCH_DESKTOP_THERMAL_GUARD_ALWAYS=0` only if hibernate should
-  restore the original max frequencies.
+  `scripts/android-local/phone-thermal-guard-root.sh` is the phone-level
+  thermal guard deployed to `/data/local/helium-phone-thermal-guard-root.sh`.
+  The old
+  `/data/local/chroots/arch/arch-desktop-thermal-guard-root.sh` path is only a
+  compatibility wrapper. The boot hook starts the phone-level guard before the
+  connected-display auto-enable helper, and Arch Desktop resume starts it
+  idempotently. It saves original CPU/devfreq max frequencies under
+  `/data/local/helium-phone-thermal-guard`, applies conservative caps
+  immediately, and tightens them before skin thermal status reaches critical so
+  Android does not block external display hosting. Do not use
+  `cmd thermalservice override-status` as a fix; that hides the framework state
+  instead of reducing heat. By default hibernate leaves this guard running
+  because the user prefers global throttling over losing external display. Set
+  `ARCH_DESKTOP_THERMAL_GUARD_ALWAYS=0` only if hibernate should restore the
+  original max frequencies.
 - `android/arch-desktop-controller` is the phone-side controller app installed
   as `net.dhruv.archdesktop` / "Arch Desktop". It runs
   `/data/local/chroots/arch/arch-desktop-resume-root.sh` for cold starts and

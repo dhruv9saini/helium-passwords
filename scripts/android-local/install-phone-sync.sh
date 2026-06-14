@@ -43,6 +43,7 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-session-watch-root.sh" /data/local/tmp/arch-desktop-session-watch-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-resume-root.sh" /data/local/tmp/arch-desktop-resume-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-hibernate-root.sh" /data/local/tmp/arch-desktop-hibernate-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/phone-thermal-guard-root.sh" /data/local/tmp/phone-thermal-guard-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-thermal-guard-root.sh" /data/local/tmp/arch-desktop-thermal-guard-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-attach-root.sh" /data/local/tmp/arch-desktop-attach-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/android-ui-preferences-root.sh" /data/local/tmp/android-ui-preferences-root.sh >/dev/null
@@ -95,6 +96,7 @@ install -Dm755 /data/local/tmp/arch-desktop-display-watch-root.sh \"\$ROOT/arch-
 install -Dm755 /data/local/tmp/arch-desktop-session-watch-root.sh \"\$ROOT/arch-desktop-session-watch.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-resume-root.sh \"\$ROOT/arch-desktop-resume-root.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-hibernate-root.sh \"\$ROOT/arch-desktop-hibernate-root.sh\"
+install -Dm755 /data/local/tmp/phone-thermal-guard-root.sh /data/local/helium-phone-thermal-guard-root.sh
 install -Dm755 /data/local/tmp/arch-desktop-thermal-guard-root.sh \"\$ROOT/arch-desktop-thermal-guard-root.sh\"
 install -Dm755 /data/local/tmp/arch-desktop-attach-root.sh \"\$ROOT/arch-desktop-attach-root.sh\"
 install -Dm755 /data/local/tmp/android-ui-preferences-root.sh \"\$ROOT/android-ui-preferences-root.sh\"
@@ -116,7 +118,7 @@ install -Dm644 /data/local/tmp/connected-display-auto-enable.jar \"\$ROOT/connec
 install -Dm755 /data/local/tmp/helium-phone-ui-service-root.sh /data/adb/service.d/99-helium-phone-ui.sh
 pm install -r /data/local/tmp/arch-desktop.apk >/dev/null
 \"\$ROOT/android-ui-preferences-root.sh\"
-\"\$ROOT/arch-desktop-thermal-guard-root.sh\" start
+/data/local/helium-phone-thermal-guard-root.sh start
 \"\$ROOT/android-connected-display-auto-enable-root.sh\" restart
 \"\$ROOT/chroot-tailnet-dns-root.sh\"
 \"\$ROOT/fix-magic-keyboard-layout-root.sh\"
