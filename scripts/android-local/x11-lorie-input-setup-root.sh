@@ -4,8 +4,8 @@ set -euo pipefail
 command -v xmodmap >/dev/null 2>&1 || exit 0
 
 if command -v xset >/dev/null 2>&1; then
-  xset r rate "${ARCH_X11_KEY_REPEAT_DELAY:-180}" "${ARCH_X11_KEY_REPEAT_RATE:-45}" >/dev/null 2>&1 || true
-  xset m "${ARCH_X11_POINTER_ACCEL:-1/1}" "${ARCH_X11_POINTER_THRESHOLD:-0}" >/dev/null 2>&1 || true
+  xset r rate "${ARCH_X11_KEY_REPEAT_DELAY:-135}" "${ARCH_X11_KEY_REPEAT_RATE:-65}" >/dev/null 2>&1 || true
+  xset m "${ARCH_X11_POINTER_ACCEL:-1}" "${ARCH_X11_POINTER_THRESHOLD:-0}" >/dev/null 2>&1 || true
 fi
 
 xmodmap -e 'clear mod1' >/dev/null 2>&1 || true

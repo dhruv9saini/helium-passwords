@@ -6,8 +6,8 @@ const host = process.env.X11_PHONE_TRACKPAD_HOST || "127.0.0.1";
 const port = Number(process.env.X11_PHONE_TRACKPAD_PORT || 8765);
 const helperPath = `${process.env.HOME}/.local/bin/x11-pointer-helper`;
 const display = process.env.DISPLAY || ":1";
-const defaultSensitivity = Number(process.env.X11_PHONE_TRACKPAD_SENSITIVITY || 1.00);
-const defaultScrollSensitivity = Number(process.env.X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY || 0.13);
+const defaultSensitivity = Number(process.env.X11_PHONE_TRACKPAD_SENSITIVITY || 2.35);
+const defaultScrollSensitivity = Number(process.env.X11_PHONE_TRACKPAD_SCROLL_SENSITIVITY || 0.08);
 const authToken = process.env.X11_PHONE_TRACKPAD_TOKEN || "";
 
 let helper = spawn(helperPath, {
@@ -227,8 +227,8 @@ function onMove(event) {
     state.moveX += dx * sensitivity;
     state.moveY += dy * sensitivity;
   } else if (points.length === 2) {
-    state.scrollX += dx * scrollSensitivity;
-    state.scrollY += dy * scrollSensitivity;
+    state.scrollX -= dx * scrollSensitivity;
+    state.scrollY -= dy * scrollSensitivity;
   }
   scheduleFlush();
 }

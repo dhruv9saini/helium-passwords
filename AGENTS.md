@@ -92,8 +92,8 @@ restores Chromium's native password manager.
   `/data/local/chroots/arch/arch-desktop-display-mode-root.sh`. It is the
   reversible external-display setup for Termux:X11: `apply` saves current
   Android display overrides, rotation, and Launcher3 prefs, uses Android
-  display-manager output for a reported external display's resolution, enables
-  desktop/freeform hosting, and launches Termux:X11 on the external display.
+  display-manager output for a reported external display's resolution, and
+  enables desktop/freeform hosting for Termux:X11 on the external display.
   The HDMI mirror approach leaves a centered sub-rectangle on the OnePlus
   13/crDroid path, so the default target is `extended`, not `mirror`. Do not set
   global `policy_control` for this flow; Termux:X11 fullscreen preference is
@@ -108,6 +108,9 @@ restores Chromium's native password manager.
   Termux:X11's `exact` resolution preference only accepts a fixed preset list
   and rejects common monitor modes like `2560x1440`; startup must use custom
   resolution mode for the detected external resolution.
+  Do not call `cmd display enable-display` from display apply, attach, or focus
+  polling; on Android 16/crDroid it can retrigger the mirror/extend prompt.
+  Use Android-reported display ids plus `am start --display <external-id>`.
   The launcher also keeps Termux:X11's mouse helper and extra key bar disabled
   (`showMouseHelper=false`, `showAdditionalKbd=false`,
   `additionalKbdVisible=false`) so the external monitor shows only the chroot
@@ -161,11 +164,13 @@ restores Chromium's native password manager.
   open it after the root script returns.
   `scripts/android-local/input-display-assoc-root.sh` uses the tiny
   `android/input-display-assoc` `app_process` helper to call Android's runtime
-  input/display association APIs. Resume applies it after display detection;
-  stop and hibernate clear it. A healthy external-display session should show
-  the external mouse/keyboard in `dumpsys input` with `AssociatedDisplayPort`
-  set to the monitor port and `AssociatedDisplayUniqueIdByDescriptor` set to
-  the monitor `local:...` unique id.
+  input/display association APIs. Resume and attach apply it asynchronously
+  after display detection so cold start is not blocked by Android service
+  calls; stop and hibernate clear it. A healthy external-display session should
+  show the external mouse/keyboard in `dumpsys input` with
+  `AssociatedDisplayPort` set to the monitor port and
+  `AssociatedDisplayUniqueIdByDescriptor` set to the monitor `local:...` unique
+  id.
 - `scripts/android-local/start-arch-xmonad-root.sh` and
   `scripts/android-local/stop-arch-x11-root.sh` are also installed by
   `install-phone-sync.sh`. Startup reads
@@ -177,9 +182,9 @@ restores Chromium's native password manager.
   removing it because that socket path may be a live mount. The old Jelly web
   trackpad relay is off by default; only enable it deliberately with
   `ARCH_X11_WEB_TRACKPAD=1` for extended-display experiments. Pointer speed is
-  controlled by `ARCH_X11_POINTER_SPEED` and defaults to `105`; the controller
+  controlled by `ARCH_X11_POINTER_SPEED` and defaults to `145`; the controller
   app handles its own phone-trackpad movement separately. X11 key repeat is
-  set by `x11-lorie-input-setup` and defaults to delay `180` / rate `45`.
+  set by `x11-lorie-input-setup` and defaults to delay `135` / rate `65`.
   Startup reapplies that X11 input setup after short delays because Termux:X11
   can reset key repeat and modifier maps while external devices finish
   enumerating.
@@ -200,8 +205,10 @@ restores Chromium's native password manager.
   as `net.dhruv.archdesktop` / "Arch Desktop". It runs
   `/data/local/chroots/arch/arch-desktop-resume-root.sh` for cold starts and
   `/data/local/chroots/arch/arch-desktop-attach-root.sh` when the X11/chroot
-  session is already running, stays open as the phone trackpad/control surface,
-  and runs
+  session is already running. In external-display mode it stays open as the
+  phone trackpad/control surface; in phone-only mode it backgrounds itself so
+  normal Termux:X11 mouse helper and extra keyboard controls remain available.
+  It runs
   `/data/local/chroots/arch/arch-desktop-hibernate-root.sh` from Back or the
   Hibernate button. Do not call `startActivity()` for `com.termux.x11` from this
   app; the root resume script starts Termux:X11 with
@@ -220,17 +227,15 @@ restores Chromium's native password manager.
   `/home/dhruv/.local/state/arch-desktop-controller/debug.keystore`.
   Termux:X11 is still the external-display renderer, but launch it with
   `--activity-exclude-from-recents` from root scripts and never launch it from
-  the controller app. Display-mode setup explicitly enables connected external
-  displays with `cmd display enable-display` and sets both
-  `force_desktop_mode_on_external_displays` and `force_allow_on_external`.
-  Those two display allow flags are persistent phone preferences in
-  `android-ui-preferences-root.sh`; hibernate only resets Arch-session
-  freeform/windowing keys.
+  the controller app. The display allow flags
+  `force_desktop_mode_on_external_displays` and `force_allow_on_external` are
+  persistent phone preferences in `android-ui-preferences-root.sh`; hibernate
+  only resets Arch-session freeform/windowing keys.
   Running-session detection must use the real Termux:X11 process/socket, not
   only `session.state`, because a stale `resuming` state can otherwise queue
-  repeated full restarts. Resume and attach scripts must not queue behind
-  `controller.lock`; duplicate requests exit immediately if another start is
-  in progress or if the session is already running.
+  repeated full restarts. Resume and attach return exit `75` while the session
+  is hibernating/stopping or the controller lock is busy, and the controller
+  retries instead of queueing another full start.
 - Arch Desktop startup also keeps Android Helium Sync
   (`computer.helium.sync`) out of inactive/idle background states and sticky
   unfreezes the running native browser process when present. CookieCloud uses

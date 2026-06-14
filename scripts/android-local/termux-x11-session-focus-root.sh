@@ -26,7 +26,7 @@ termux_pref() {
 
 set_preferences() {
   load_target
-  pointer_speed=${ARCH_X11_POINTER_SPEED:-105}
+  pointer_speed=${ARCH_X11_POINTER_SPEED:-145}
   hardware_scancodes=${ARCH_X11_HARDWARE_SCANCODES:-false}
   display_resolution_args="displayResolutionMode:native"
   if [ -n "${target_x11_resolution:-}" ]; then
@@ -34,9 +34,9 @@ set_preferences() {
   fi
 
   if [ "${target_source:-native}" = external ] && [ "${target_android_display_mode:-native}" = extended ]; then
-    termux_pref "touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:$hardware_scancodes filterOutWinkey:false showMouseHelper:false showAdditionalKbd:false additionalKbdVisible:false useTermuxEKBarBehaviour:false fullscreen:true $display_resolution_args"
+    termux_pref "touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:$hardware_scancodes dexMetaKeyCapture:true filterOutWinkey:false showMouseHelper:false showAdditionalKbd:false additionalKbdVisible:false useTermuxEKBarBehaviour:false fullscreen:true $display_resolution_args"
   else
-    termux_pref "touchMode:Trackpad scaleTouchpad:true pointerCapture:false capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:$hardware_scancodes filterOutWinkey:false showMouseHelper:true showAdditionalKbd:true additionalKbdVisible:true useTermuxEKBarBehaviour:true fullscreen:false displayResolutionMode:native"
+    termux_pref "touchMode:Trackpad scaleTouchpad:true pointerCapture:false capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:$hardware_scancodes dexMetaKeyCapture:true filterOutWinkey:false showMouseHelper:true showAdditionalKbd:true additionalKbdVisible:true useTermuxEKBarBehaviour:true fullscreen:false displayResolutionMode:native"
   fi
 }
 
@@ -49,7 +49,6 @@ stop_stale_raw_pointer_forwarder() {
 start_activity() {
   load_target
   if [ "${target_source:-native}" = external ] && [ "${target_android_display_mode:-native}" = extended ] && [ -n "${target_display_id:-}" ] && [ "${target_display_id:-0}" != 0 ]; then
-    cmd display enable-display "$target_display_id" >/dev/null 2>&1 || true
     am start --user 0 --display "$target_display_id" --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 ||
       am start --user 0 --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 || true
   else

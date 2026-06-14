@@ -141,7 +141,6 @@ native_size() {
 detect_android_external() {
   for id in $(cmd display get-displays --ids-only 2>/dev/null); do
     [ "$id" != 0 ] || continue
-    cmd display enable-display "$id" >/dev/null 2>&1 || true
 
     size=$(
       cmd display get-active-mode "$id" 2>/dev/null |
@@ -228,7 +227,6 @@ apply_mode() {
     for key in $desktop_global_keys; do
       settings put global "$key" 1 >/dev/null 2>&1 || true
     done
-    cmd display enable-display "$display_id" >/dev/null 2>&1 || true
     wm size reset || true
     wm density reset || true
     wm size "$target_size" -d "$display_id" >/dev/null 2>&1 || true

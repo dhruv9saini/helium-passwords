@@ -2,6 +2,7 @@ package net.dhruv.archdesktop;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.Intent;
 import android.content.pm.ActivityInfo;
 import android.graphics.PointF;
 import android.os.Bundle;
@@ -32,10 +33,18 @@ public final class MainActivity extends Activity {
     private static final String ATTACH_SCRIPT = "/data/local/chroots/arch/arch-desktop-attach-root.sh";
     private static final String HIBERNATE_SCRIPT = "/data/local/chroots/arch/arch-desktop-hibernate-root.sh";
     private static final String HIBERNATE_OSD_SCRIPT = "/data/local/chroots/arch/x11-hibernate-hold-osd-root.sh";
+    private static final int EXIT_TEMPORARY_BUSY = 75;
+    private static final String EXTERNAL_TARGET_CHECK_SCRIPT =
+            "sh -c '. /data/local/chroots/arch/root/.local/state/x11/android-display-target.env 2>/dev/null || exit 1; "
+                    + "[ \"${target_source:-native}\" = external ] && "
+                    + "[ \"${target_android_display_mode:-native}\" = extended ]'";
     private static final String RUNNING_CHECK_SCRIPT =
-            "sh -c '{ pgrep -f \"[t]ermux-x11 com.termux.x11 :1\" >/dev/null 2>&1 || "
-                    + "[ -S /data/local/chroots/arch/tmp/.X11-unix/X1 ]; } && "
-                    + "! pgrep -f \"[a]rch-desktop-hibernate-root.sh\" >/dev/null 2>&1'";
+            "sh -c 'state=$(cat /data/local/chroots/arch/root/.local/state/x11/session.state 2>/dev/null || true); "
+                    + "case \"$state\" in hibernating|stopping) exit 1;; esac; "
+                    + "! pgrep -f \"[a]rch-desktop-hibernate-root.sh\" >/dev/null 2>&1 && "
+                    + "! pgrep -f \"[s]top-arch-x11-root.sh\" >/dev/null 2>&1 && "
+                    + "{ pgrep -f \"[t]ermux-x11 com.termux.x11 :1\" >/dev/null 2>&1 || "
+                    + "[ -S /data/local/chroots/arch/tmp/.X11-unix/X1 ]; }'";
     private static final String POINTER_HELPER_COMMAND =
             "chroot /data/local/chroots/arch /usr/bin/env DISPLAY=:1 "
                     + "XDG_RUNTIME_DIR=/tmp/runtime-root "
@@ -46,17 +55,20 @@ public final class MainActivity extends Activity {
                     + "XDG_RUNTIME_DIR=/tmp/runtime-root "
                     + "PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin "
                     + "/root/.local/bin/x11-key-helper";
-    private static final float MOVE_SENSITIVITY = 1.65f;
-    private static final float SCROLL_SENSITIVITY = 0.13f;
-    private static final float HARDWARE_POINTER_SENSITIVITY = 0.75f;
-    private static final float HARDWARE_SCROLL_SENSITIVITY = 2.0f;
+    private static final float MOVE_SENSITIVITY = 2.35f;
+    private static final float SCROLL_SENSITIVITY = 0.08f;
+    private static final float HARDWARE_POINTER_SENSITIVITY = 1.25f;
+    private static final float HARDWARE_SCROLL_SENSITIVITY = 1.15f;
     private static final long HIBERNATE_HOLD_MS = 3000L;
     private static final long MODIFIER_STUCK_RELEASE_MS = 10000L;
+    private static final long KEY_REPEAT_DELAY_MS = 135L;
+    private static final long KEY_REPEAT_INTERVAL_MS = 15L;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final ExecutorService rootExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService inputExecutor = Executors.newSingleThreadExecutor();
     private final Map<Integer, String> forwardedKeys = new HashMap<>();
+    private final Map<Integer, Runnable> keyRepeaters = new HashMap<>();
     private boolean startRequested;
     private boolean attachInFlight;
     private boolean desktopRunning;
@@ -119,6 +131,15 @@ public final class MainActivity extends Activity {
     protected void onResume() {
         super.onResume();
         armHardwareInputRepeatedly();
+        if (!hibernateRequested) {
+            attachOrResumeDesktop();
+        }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
         if (!hibernateRequested) {
             attachOrResumeDesktop();
         }
@@ -231,6 +252,7 @@ public final class MainActivity extends Activity {
             public void run() {
                 int running = runRoot(RUNNING_CHECK_SCRIPT);
                 final int code = running == 0 ? runRoot(ATTACH_SCRIPT) : runRoot(RESUME_SCRIPT);
+                final boolean externalTarget = code == 0 && runRoot(EXTERNAL_TARGET_CHECK_SCRIPT) == 0;
                 main.post(new Runnable() {
                     @Override
                     public void run() {
@@ -238,7 +260,14 @@ public final class MainActivity extends Activity {
                         if (code == 0) {
                             desktopRunning = true;
                             status.setText("Arch desktop running");
-                            armHardwareInputRepeatedly();
+                            if (externalTarget) {
+                                armHardwareInputRepeatedly();
+                            } else {
+                                moveTaskToBack(true);
+                            }
+                        } else if (code == EXIT_TEMPORARY_BUSY) {
+                            status.setText("Arch desktop is changing state...");
+                            retryAttachOrResume();
                         } else {
                             startRequested = false;
                             status.setText("Desktop start failed. Check Magisk/root permission.");
@@ -247,6 +276,17 @@ public final class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private void retryAttachOrResume() {
+        main.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!hibernateRequested) {
+                    attachOrResumeDesktop();
+                }
+            }
+        }, 1200);
     }
 
     private void requestHibernate(final boolean finishWhenDone) {
@@ -490,6 +530,7 @@ public final class MainActivity extends Activity {
     }
 
     private void stopKeyProcess() {
+        cancelAllKeyRepeats();
         forwardedKeys.clear();
         if (keyInput != null) {
             try {
@@ -551,6 +592,7 @@ public final class MainActivity extends Activity {
     }
 
     private boolean forwardKeyEvent(KeyEvent event) {
+        armHardwareInput();
         int keyCode = event.getKeyCode();
         if (keyCode == KeyEvent.KEYCODE_BACK) {
             return false;
@@ -562,10 +604,6 @@ public final class MainActivity extends Activity {
         int keyId = forwardedKeyId(event);
         if (event.getAction() == KeyEvent.ACTION_DOWN) {
             if (event.getRepeatCount() > 0) {
-                if (isModifierKey(event)) {
-                    return true;
-                }
-                sendKeyLine("key " + key);
                 return true;
             }
             if (!forwardedKeys.containsKey(keyId)) {
@@ -573,11 +611,14 @@ public final class MainActivity extends Activity {
                 sendKeyLine("keydown " + key);
                 if (isModifierKey(event)) {
                     scheduleModifierStuckRelease(keyId, key);
+                } else {
+                    scheduleKeyRepeat(keyId, key);
                 }
             }
             return true;
         }
         if (event.getAction() == KeyEvent.ACTION_UP) {
+            cancelKeyRepeat(keyId);
             forwardedKeys.remove(keyId);
             sendKeyLine("keyup " + key);
             return true;
@@ -606,7 +647,39 @@ public final class MainActivity extends Activity {
         }, MODIFIER_STUCK_RELEASE_MS);
     }
 
+    private void scheduleKeyRepeat(final int keyId, final String key) {
+        cancelKeyRepeat(keyId);
+        Runnable repeater = new Runnable() {
+            @Override
+            public void run() {
+                if (!key.equals(forwardedKeys.get(keyId))) {
+                    keyRepeaters.remove(keyId);
+                    return;
+                }
+                sendKeyLine("key " + key);
+                main.postDelayed(this, KEY_REPEAT_INTERVAL_MS);
+            }
+        };
+        keyRepeaters.put(keyId, repeater);
+        main.postDelayed(repeater, KEY_REPEAT_DELAY_MS);
+    }
+
+    private void cancelKeyRepeat(int keyId) {
+        Runnable repeater = keyRepeaters.remove(keyId);
+        if (repeater != null) {
+            main.removeCallbacks(repeater);
+        }
+    }
+
+    private void cancelAllKeyRepeats() {
+        for (Runnable repeater : keyRepeaters.values()) {
+            main.removeCallbacks(repeater);
+        }
+        keyRepeaters.clear();
+    }
+
     private void releaseForwardedKeys() {
+        cancelAllKeyRepeats();
         if (!forwardedKeys.isEmpty()) {
             for (String key : forwardedKeys.values()) {
                 sendKeyLine("keyup " + key);
@@ -1005,8 +1078,8 @@ public final class MainActivity extends Activity {
                 pendingMoveX += dx * MOVE_SENSITIVITY;
                 pendingMoveY += dy * MOVE_SENSITIVITY;
             } else if (active.size() == 2) {
-                pendingScrollX += dx * SCROLL_SENSITIVITY;
-                pendingScrollY += dy * SCROLL_SENSITIVITY;
+                pendingScrollX -= dx * SCROLL_SENSITIVITY;
+                pendingScrollY -= dy * SCROLL_SENSITIVITY;
             }
             scheduleFlush();
         }

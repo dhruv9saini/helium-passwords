@@ -5,14 +5,11 @@ set -eu
 # in the shade; this only removes the left-side status-bar glyphs.
 cmd statusbar send-disable-flag notification-icons >/dev/null 2>&1 || true
 
-# Keep external displays enabled without repeated mirror/desktop prompts. Arch
-# Desktop decides when to place Termux:X11 on the external display.
+# Keep Android willing to place apps on external displays. Do not call
+# `cmd display enable-display` here; on Android 16/crDroid that can retrigger
+# the mirror/extend prompt on every Arch Desktop attach.
 settings put global force_desktop_mode_on_external_displays 1 >/dev/null 2>&1 || true
 settings put global force_allow_on_external 1 >/dev/null 2>&1 || true
-for display_id in $(cmd display get-displays --ids-only 2>/dev/null); do
-  [ "$display_id" = 0 ] && continue
-  cmd display enable-display "$display_id" >/dev/null 2>&1 || true
-done
 
 # Termux:X11 is controlled by the Arch Desktop launcher. Its persistent
 # notification is noisy on the phone display and can reappear after app updates.
