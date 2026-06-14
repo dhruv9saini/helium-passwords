@@ -65,12 +65,18 @@ prime_pointer_capture() {
   input touchscreen -d "$target_display_id" tap 1 1 >/dev/null 2>&1 || true
 }
 
+prime_pointer_capture_repeatedly() {
+  prime_pointer_capture
+  (
+    for delay in 1 2 4; do
+      sleep "$delay"
+      set_preferences
+      prime_pointer_capture
+    done
+  ) &
+}
+
 stop_stale_raw_pointer_forwarder
 set_preferences
 start_activity
-(
-  sleep 1
-  stop_stale_raw_pointer_forwarder
-  set_preferences
-  prime_pointer_capture
-) &
+prime_pointer_capture_repeatedly

@@ -63,6 +63,14 @@ if [ "${ARCH_X11_OPEN_ACTIVITY:-1}" != 0 ]; then
   "$ROOT/termux-x11-session-focus-root.sh" >>"$LOG" 2>&1 || true
 fi
 
+if [ "${ARCH_X11_MAGIC_KEYBOARD_REMAP:-1}" != 0 ] && [ -x "$ROOT/android-magic-keyboard-remap-root.sh" ]; then
+  "$ROOT/android-magic-keyboard-remap-root.sh" start >>"$LOG" 2>&1 || true
+fi
+
+if [ -x "$ROOT/input-display-assoc-root.sh" ]; then
+  "$ROOT/input-display-assoc-root.sh" apply >>"$LOG" 2>&1 || true
+fi
+
 open_phone_trackpad_activity() {
   target_source=native
   if [ -f "$DISPLAY_TARGET" ]; then
@@ -140,6 +148,7 @@ chroot "$ROOT" /usr/bin/env -i \
 	  XDG_SESSION_DESKTOP=xmonad \
 	  XDG_SESSION_TYPE=x11 \
 	  XDG_RUNTIME_DIR=/tmp/runtime-root \
+	  TMPDIR=/tmp \
 	  XDG_CONFIG_HOME=/root/.config \
   XDG_DATA_HOME=/root/.local/share \
   XDG_CACHE_HOME=/root/.cache \

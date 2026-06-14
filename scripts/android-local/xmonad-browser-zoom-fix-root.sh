@@ -9,7 +9,8 @@ ROOT=${ARCH_CHROOT:-/data/local/chroots/arch}
   DISPLAY=:1 \
   XDG_RUNTIME_DIR=/tmp/runtime-root \
   PATH=/root/.config/x11/bin:/root/.local/bin:/root/.local/share/mise/shims:/root/.cabal/bin:/root/.ghcup/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin \
-  sh -lc '
+sh -lc '
+export TMPDIR=/tmp
 file=/root/.config/xmonad/xmonad.hs
 [ -f "$file" ] || exit 0
 mkdir -p /tmp /root/.cache/xmonad/build-aarch64-linux

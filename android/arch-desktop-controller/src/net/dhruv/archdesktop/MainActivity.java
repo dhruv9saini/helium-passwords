@@ -35,9 +35,13 @@ public final class MainActivity extends Activity {
     private static final String HIBERNATE_OSD_SCRIPT = "/data/local/chroots/arch/x11-hibernate-hold-osd-root.sh";
     private static final int EXIT_TEMPORARY_BUSY = 75;
     private static final String EXTERNAL_TARGET_CHECK_SCRIPT =
-            "sh -c '. /data/local/chroots/arch/root/.local/state/x11/android-display-target.env 2>/dev/null || exit 1; "
+            "sh -c 'if . /data/local/chroots/arch/root/.local/state/x11/android-display-target.env 2>/dev/null && "
                     + "[ \"${target_source:-native}\" = external ] && "
-                    + "[ \"${target_android_display_mode:-native}\" = extended ]'";
+                    + "[ \"${target_android_display_mode:-native}\" = extended ]; then exit 0; fi; "
+                    + "for display_id in $(cmd display get-displays --ids-only 2>/dev/null); do "
+                    + "[ \"$display_id\" != 0 ] && exit 0; "
+                    + "done; "
+                    + "exit 1'";
     private static final String RUNNING_CHECK_SCRIPT =
             "sh -c 'state=$(cat /data/local/chroots/arch/root/.local/state/x11/session.state 2>/dev/null || true); "
                     + "case \"$state\" in hibernating|stopping) exit 1;; esac; "
@@ -170,9 +174,6 @@ public final class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         cancelHibernateHold(false);
-        if (isFinishing() && desktopRunning && !hibernateRequested) {
-            requestHibernate(false);
-        }
         stopPointerProcess();
         stopKeyProcess();
         rootExecutor.shutdown();

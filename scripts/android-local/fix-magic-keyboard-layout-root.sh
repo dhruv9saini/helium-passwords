@@ -13,8 +13,8 @@ rewrite_layout() {
 
   awk '
     $1 == "key" && $2 == "100" { $3 = "ALT_RIGHT" }
-    $1 == "key" && $2 == "125" { $3 = "META_LEFT" }
-    $1 == "key" && $2 == "126" { $3 = "META_RIGHT" }
+    $1 == "key" && $2 == "125" { $3 = "ALT_RIGHT" }
+    $1 == "key" && $2 == "126" { $3 = "ALT_RIGHT" }
     { print }
   ' "$file" >"$tmp"
 

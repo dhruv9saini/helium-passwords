@@ -133,9 +133,9 @@ restores Chromium's native password manager.
   resolution from the display target, and launches Termux:X11 on the external
   display. In phone-only mode it disables pointer capture and shows the normal
   Termux:X11 mouse helper/extra keyboard. Keep
-  `hardwareKbdScancodesWorkaround=false` by default so the Android Magic
-  Keyboard keylayout rewrite can make Command/Super distinct from Option/Alt;
-  only set `ARCH_X11_HARDWARE_SCANCODES=true` for deliberate scancode testing.
+  `hardwareKbdScancodesWorkaround=false` by default so Termux:X11 uses the
+  Android keycode after the Magic Keyboard keylayout rewrite, rather than
+  bypassing it with raw scancodes.
   The focus script also kills stale raw pointer forwarders unless
   `ARCH_X11_RAW_POINTER=1`, because double injection causes random pointer
   speed changes.
@@ -166,8 +166,11 @@ restores Chromium's native password manager.
   `android/input-display-assoc` `app_process` helper to call Android's runtime
   input/display association APIs. Resume and attach apply it asynchronously
   after display detection so cold start is not blocked by Android service
-  calls; stop and hibernate clear it. A healthy external-display session should
-  show the external mouse/keyboard in `dumpsys input` with
+  calls; `start-arch-xmonad-root.sh` reapplies it after starting the Magic
+  Keyboard remapper so the virtual keyboard descriptor is also tied to the
+  external display. Stop and hibernate clear the associations. A healthy
+  external-display session should show the external mouse/keyboard in
+  `dumpsys input` with
   `AssociatedDisplayPort` set to the monitor port and
   `AssociatedDisplayUniqueIdByDescriptor` set to the monitor `local:...` unique
   id.
@@ -185,9 +188,25 @@ restores Chromium's native password manager.
   controlled by `ARCH_X11_POINTER_SPEED` and defaults to `145`; the controller
   app handles its own phone-trackpad movement separately. X11 key repeat is
   set by `x11-lorie-input-setup` and defaults to delay `135` / rate `65`.
+  Magic Keyboard Command/Super is handled by
+  `cmd/android-magic-keyboard-remap` plus
+  `scripts/android-local/android-magic-keyboard-remap-root.sh`: the root helper
+  grabs the physical Magic Keyboard event device, republishes it through
+  `/dev/uinput`, and rewrites Linux keycodes `125`/`126` to `KEY_RIGHTALT`.
+  Termux:X11 then sees Android right-Alt, and X11 maps that keycode to
+  Super/mod4. This avoids Android 16/crDroid intercepting Meta before it reaches
+  X11. Keep `fix-magic-keyboard-layout-root.sh` as a compatibility fallback,
+  but do not rely on it as the primary fix.
+  The same setup keeps left Option as X keycode `64` / `Alt_L`, but maps X
+  keycode `108` plus `133`, `134`, and `204` through `207` to Super/mod4; this
+  preserves the observed Termux:X11/Lorie Command-key paths.
   Startup reapplies that X11 input setup after short delays because Termux:X11
   can reset key repeat and modifier maps while external devices finish
   enumerating.
+  The canonical phone XMonad config and hotkey documentation are installed by
+  `scripts/android-local/xmonad-desktop-config-root.sh`; it keeps BSP as the
+  only layout, adds the documented BSP controls, and writes dark wrappers for
+  Dolphin and the hotkey list under `.config/x11/bin`.
   If Termux:X11 is closed, the display watcher must hibernate instead of
   reopening it. XMonad
   startup uses the cached compiled binary unless
@@ -210,7 +229,10 @@ restores Chromium's native password manager.
   normal Termux:X11 mouse helper and extra keyboard controls remain available.
   It runs
   `/data/local/chroots/arch/arch-desktop-hibernate-root.sh` from Back or the
-  Hibernate button. Do not call `startActivity()` for `com.termux.x11` from this
+  Hibernate button. Do not start root hibernate work from `onDestroy`; Android
+  can destroy or cache the activity while binder transactions are restricted,
+  and doing root work there can get the controller killed for excessive binder
+  traffic. Do not call `startActivity()` for `com.termux.x11` from this
   app; the root resume script starts Termux:X11 with
   `am start --display <external-id>`, and a normal app-level launch moves
   Termux:X11 back onto the phone display, causing the external monitor to show

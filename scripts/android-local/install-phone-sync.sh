@@ -17,6 +17,7 @@ fi
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-local-syncd" "$repo_root/cmd/helium-local-syncd"
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-sync" "$repo_root/cmd/helium-sync"
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-syncd" "$repo_root/cmd/helium-syncd"
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$work_dir/android-magic-keyboard-remap" "$repo_root/cmd/android-magic-keyboard-remap"
 input_display_assoc_jar=$("$repo_root/scripts/android-local/build-input-display-assoc.sh")
 tar -C "$repo_root/browser-extensions/google-ai-overview-blocker" \
   -cf "$work_dir/google-ai-overview-blocker.tar" .
@@ -28,6 +29,7 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$work_dir/helium-local-syncd" /data/local/tmp/helium-local-syncd >/dev/null
 "$adb_bin" push "$work_dir/helium-sync" /data/local/tmp/helium-sync >/dev/null
 "$adb_bin" push "$work_dir/helium-syncd" /data/local/tmp/helium-syncd >/dev/null
+"$adb_bin" push "$work_dir/android-magic-keyboard-remap" /data/local/tmp/android-magic-keyboard-remap >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/cdp-cookiecloud.mjs" /data/local/tmp/cdp-cookiecloud.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/cdp-password-sync.mjs" /data/local/tmp/cdp-password-sync.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/start-helium-local-sync-root.sh" /data/local/tmp/start-helium-local-sync-root.sh >/dev/null
@@ -46,7 +48,9 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/x11-lorie-input-setup-root.sh" /data/local/tmp/x11-lorie-input-setup-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/x11-hibernate-hold-osd-root.sh" /data/local/tmp/x11-hibernate-hold-osd-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/xmonad-browser-zoom-fix-root.sh" /data/local/tmp/xmonad-browser-zoom-fix-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/xmonad-desktop-config-root.sh" /data/local/tmp/xmonad-desktop-config-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/android-raw-pointer-forwarder-root.sh" /data/local/tmp/android-raw-pointer-forwarder-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/android-magic-keyboard-remap-root.sh" /data/local/tmp/android-magic-keyboard-remap-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/fix-terminal-colors-root.sh" /data/local/tmp/fix-terminal-colors-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/restart-raw-pointer-root.sh" /data/local/tmp/restart-raw-pointer-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/merge-helium-laptop-extensions-root.sh" /data/local/tmp/merge-helium-laptop-extensions-root.sh >/dev/null
@@ -75,6 +79,7 @@ CHROOT_GID=\$(awk -F: -v user=\"\$CHROOT_USER\" '\''\$1 == user { print \$4 }'\'
 install -Dm755 /data/local/tmp/helium-local-syncd \"\$ROOT/usr/local/bin/helium-local-syncd\"
 install -Dm755 /data/local/tmp/helium-sync \"\$ROOT/usr/local/bin/helium-sync\"
 install -Dm755 /data/local/tmp/helium-syncd \"\$ROOT/usr/local/bin/helium-syncd\"
+install -Dm755 /data/local/tmp/android-magic-keyboard-remap \"\$ROOT/usr/local/bin/android-magic-keyboard-remap\"
 install -Dm755 /data/local/tmp/cdp-cookiecloud.mjs \"\$ROOT/usr/local/bin/cdp-cookiecloud\"
 install -Dm755 /data/local/tmp/cdp-password-sync.mjs \"\$ROOT/usr/local/bin/cdp-password-sync\"
 install -Dm755 /data/local/tmp/start-helium-local-sync-root.sh \"\$ROOT/usr/local/bin/start-helium-local-sync\"
@@ -89,7 +94,9 @@ install -Dm755 /data/local/tmp/chroot-tailnet-dns-root.sh \"\$ROOT/chroot-tailne
 install -Dm755 /data/local/tmp/fix-magic-keyboard-layout-root.sh \"\$ROOT/fix-magic-keyboard-layout-root.sh\"
 install -Dm755 /data/local/tmp/x11-hibernate-hold-osd-root.sh \"\$ROOT/x11-hibernate-hold-osd-root.sh\"
 install -Dm755 /data/local/tmp/xmonad-browser-zoom-fix-root.sh \"\$ROOT/xmonad-browser-zoom-fix-root.sh\"
+install -Dm755 /data/local/tmp/xmonad-desktop-config-root.sh \"\$ROOT/xmonad-desktop-config-root.sh\"
 install -Dm755 /data/local/tmp/android-raw-pointer-forwarder-root.sh \"\$ROOT/android-raw-pointer-forwarder-root.sh\"
+install -Dm755 /data/local/tmp/android-magic-keyboard-remap-root.sh \"\$ROOT/android-magic-keyboard-remap-root.sh\"
 install -Dm755 /data/local/tmp/fix-terminal-colors-root.sh \"\$ROOT/fix-terminal-colors-root.sh\"
 install -Dm755 /data/local/tmp/restart-raw-pointer-root.sh \"\$ROOT/restart-raw-pointer-root.sh\"
 install -Dm755 /data/local/tmp/merge-helium-laptop-extensions-root.sh \"\$ROOT/merge-helium-laptop-extensions-root.sh\"
@@ -100,6 +107,7 @@ install -Dm755 /data/local/tmp/helium-phone-ui-service-root.sh /data/adb/service
 \"\$ROOT/chroot-tailnet-dns-root.sh\"
 \"\$ROOT/fix-magic-keyboard-layout-root.sh\"
 \"\$ROOT/input-display-assoc-root.sh\" apply
+\"\$ROOT/xmonad-desktop-config-root.sh\"
 \"\$ROOT/xmonad-browser-zoom-fix-root.sh\"
 \"\$ROOT/fix-terminal-colors-root.sh\"
 install -Dm755 /data/local/tmp/wire-arch-desktop-display-mode-root.sh \"\$ROOT/wire-arch-desktop-display-mode-root.sh\"

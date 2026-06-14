@@ -48,6 +48,10 @@ external_input_rows() {
         descriptor = ""
         external = 0
         wanted = 0
+        if (name ~ /Magic Keyboard|Arch Magic Keyboard Remap/) {
+          external = 1
+          wanted = 1
+        }
         next
       }
       /^    [A-Za-z]/ {
