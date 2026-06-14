@@ -87,7 +87,11 @@ restores Chromium's native password manager.
   search, requests Helium vertical layout through `helium.browser.layout = 2`,
   restores the last session, and loads the helper extensions. The chroot AI
   Overview blocker is a normal desktop Chromium extension loaded by that
-  launcher.
+  launcher. The launcher and laptop-extension migration both block Pangram
+  (`eakpippijmmohmdlpgcjnipolcgciaga`) so an unpacked extension directory
+  cannot make it reappear after uninstalling it in the browser UI. Use
+  `scripts/android-local/purge-blocked-helium-extensions-root.sh` to remove
+  blocked extension state from live chroot browser profiles.
 - `scripts/android-local/arch-desktop-display-mode-root.sh` is installed at
   `/data/local/chroots/arch/arch-desktop-display-mode-root.sh`. It is the
   reversible external-display setup for Termux:X11: `apply` saves current
@@ -102,24 +106,29 @@ restores Chromium's native password manager.
   Arch Desktop's global desktop/freeform and immersive flags, and restores the
   saved Launcher3 prefs file if Android rewrote it. If Android only reports the
   built-in screen, it resets Android `wm size`/`wm density` to native and does
-  not set immersive policy. Do not use DRM/sysfs connector status as an
-  external-display fallback on the OnePlus 13; it can report false positives
-  such as `5120x2560` and corrupt Launcher3's layout scaling.
+  not set immersive policy. If `cmd display get-displays` hides a connected but
+  disabled external display, it may parse the disabled external logical display
+  from `dumpsys display` so the target env does not fall back to phone mode
+  while SystemUI/thermal policy is still deciding whether the display can be
+  enabled. Do not use DRM/sysfs connector status as an external-display
+  fallback on the OnePlus 13; it can report false positives such as `5120x2560`
+  and corrupt Launcher3's layout scaling.
   Termux:X11's `exact` resolution preference only accepts a fixed preset list
   and rejects common monitor modes like `2560x1440`; startup must use custom
   resolution mode for the detected external resolution.
-  Do not call `cmd display enable-display` from display apply, attach, or focus
-  polling. The OS-wide mirror-confirmation fix lives in
+  Display apply may make a bounded `cmd display enable-display`/`power-reset`
+  attempt and tap a visible SystemUI "Mirror display" sheet, but should not run
+  a tight enable loop. The OS-wide mirror-confirmation fix lives in
   `scripts/android-local/android-connected-display-auto-enable-root.sh`, which
   the boot hook starts as
   `/data/local/chroots/arch/android-connected-display-auto-enable-root.sh`. It
   runs the `connected-display-auto-enable.jar` app_process helper, listens for
-  Android's private display-connection event, and also uses a 100 ms
+  Android's private display-connection event, and also uses a 1000 ms
   DisplayManagerGlobal binder poll because this OnePlus/crDroid path can churn
   pending external display ids without delivering a listener callback. It
   enables connected external displays through the same framework path as
   SystemUI's "Mirror display" button. Keep Arch Desktop display scripts limited
-  to Android-reported enabled display ids plus `am start --display <external-id>`.
+  to Android-reported display-manager ids plus `am start --display <external-id>`.
   The launcher also keeps Termux:X11's mouse helper and extra key bar disabled
   (`showMouseHelper=false`, `showAdditionalKbd=false`,
   `additionalKbdVisible=false`) so the external monitor shows only the chroot
@@ -229,7 +238,8 @@ restores Chromium's native password manager.
   ghcup/cabal GHC path and `/tmp`, avoiding Android `TMPDIR` leakage. Terminals
   launch through `.config/x11/bin/x11-zutty`, which merges Xresources and passes
   explicit white-on-black `zutty` font/color flags so the terminal does not
-  inherit stale or phone-mode colors.
+  inherit stale or phone-mode colors. Terminal color repair must not write a
+  replacement Starship prompt; copy the user's real Starship config instead.
   If Termux:X11 is closed, the display watcher must hibernate instead of
   reopening it. XMonad
   startup uses the cached compiled binary unless

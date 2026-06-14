@@ -55,6 +55,7 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/fix-terminal-colors-root.sh" /data/local/tmp/fix-terminal-colors-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/restart-raw-pointer-root.sh" /data/local/tmp/restart-raw-pointer-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/merge-helium-laptop-extensions-root.sh" /data/local/tmp/merge-helium-laptop-extensions-root.sh >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/purge-blocked-helium-extensions-root.sh" /data/local/tmp/purge-blocked-helium-extensions-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/input-display-assoc-root.sh" /data/local/tmp/input-display-assoc-root.sh >/dev/null
 "$adb_bin" push "$input_display_assoc_jar" /data/local/tmp/input-display-assoc.jar >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/android-connected-display-auto-enable-root.sh" /data/local/tmp/android-connected-display-auto-enable-root.sh >/dev/null
@@ -103,6 +104,7 @@ install -Dm755 /data/local/tmp/android-magic-keyboard-remap-root.sh \"\$ROOT/and
 install -Dm755 /data/local/tmp/fix-terminal-colors-root.sh \"\$ROOT/fix-terminal-colors-root.sh\"
 install -Dm755 /data/local/tmp/restart-raw-pointer-root.sh \"\$ROOT/restart-raw-pointer-root.sh\"
 install -Dm755 /data/local/tmp/merge-helium-laptop-extensions-root.sh \"\$ROOT/merge-helium-laptop-extensions-root.sh\"
+install -Dm755 /data/local/tmp/purge-blocked-helium-extensions-root.sh \"\$ROOT/purge-blocked-helium-extensions-root.sh\"
 install -Dm755 /data/local/tmp/input-display-assoc-root.sh \"\$ROOT/input-display-assoc-root.sh\"
 install -Dm644 /data/local/tmp/input-display-assoc.jar \"\$ROOT/input-display-assoc.jar\"
 install -Dm755 /data/local/tmp/android-connected-display-auto-enable-root.sh \"\$ROOT/android-connected-display-auto-enable-root.sh\"

@@ -159,6 +159,83 @@ detect_android_external() {
   return 1
 }
 
+detect_dumpsys_external() {
+  dumpsys display 2>/dev/null |
+    awk -v fallback_density="$external_density" '
+      function emit() {
+        if (id != "" && external && size != "") {
+          if (density == "") {
+            density = fallback_density
+          }
+          print id " " size " " density
+          exit
+        }
+      }
+      /^  Display [0-9][0-9]*:/ {
+        emit()
+        id = $2
+        sub(":", "", id)
+        external = 0
+        size = ""
+        density = ""
+        next
+      }
+      id != "" && /mBaseDisplayInfo=DisplayInfo/ && /type EXTERNAL/ {
+        external = 1
+        original = $0
+        line = original
+        if (line ~ /real [0-9][0-9]* x [0-9][0-9]*/) {
+          sub(/^.*real /, "", line)
+          sub(/,.*$/, "", line)
+          gsub(/ /, "", line)
+          size = line
+        } else if (line ~ /app [0-9][0-9]* x [0-9][0-9]*/) {
+          sub(/^.*app /, "", line)
+          sub(/,.*$/, "", line)
+          gsub(/ /, "", line)
+          size = line
+        }
+        if (original ~ /density [0-9][0-9]*/) {
+          line = original
+          sub(/^.*density /, "", line)
+          sub(/ .*$/, "", line)
+          density = line
+        }
+        next
+      }
+      END {
+        emit()
+      }
+    '
+}
+
+accept_mirror_prompt() {
+  prompt_xml=$state_dir/mirror-prompt.xml
+  uiautomator dump "$prompt_xml" >/dev/null 2>&1 || return 0
+  grep -q 'text="Mirror display"' "$prompt_xml" 2>/dev/null || return 0
+
+  bounds=$(
+    sed -n 's/.*text="Mirror display"[^>]*bounds="\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]\[\([0-9][0-9]*\),\([0-9][0-9]*\)\]".*/\1 \2 \3 \4/p' "$prompt_xml" |
+      tail -n 1
+  )
+  set -- $bounds
+  if [ "$#" -eq 4 ]; then
+    input tap "$((($1 + $3) / 2))" "$((($2 + $4) / 2))" >/dev/null 2>&1 || true
+  else
+    input keyevent 22 >/dev/null 2>&1 || true
+    input keyevent 66 >/dev/null 2>&1 || true
+  fi
+  sleep 1
+}
+
+enable_external_display() {
+  display_id=$1
+  accept_mirror_prompt
+  cmd display enable-display "$display_id" >/dev/null 2>&1 || true
+  cmd display power-reset "$display_id" >/dev/null 2>&1 || true
+  accept_mirror_prompt
+}
+
 write_target() {
   source=$1
   display_id=$2
@@ -181,6 +258,7 @@ write_target() {
 
 target_record() {
   external_record=$(detect_android_external || true)
+  [ -n "$external_record" ] || external_record=$(detect_dumpsys_external || true)
 
   if [ -n "$external_record" ]; then
     set -- $external_record
@@ -227,6 +305,7 @@ apply_mode() {
     for key in $desktop_global_keys; do
       settings put global "$key" 1 >/dev/null 2>&1 || true
     done
+    enable_external_display "$display_id"
     wm size reset || true
     wm density reset || true
     wm size "$target_size" -d "$display_id" >/dev/null 2>&1 || true

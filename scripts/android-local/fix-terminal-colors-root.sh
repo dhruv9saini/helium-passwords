@@ -88,32 +88,11 @@ XEOF
   set_config_line "$home/.config/shell/chroot-shell.sh" 'export ZUTTY_BG=' 'export ZUTTY_BG="${ZUTTY_BG:-#000000}"'
   set_config_line "$home/.config/shell/chroot-shell.sh" 'export ZUTTY_CURSOR=' 'export ZUTTY_CURSOR="${ZUTTY_CURSOR:-#ffffff}"'
   set_config_line "$home/.config/shell/chroot-shell.sh" 'export COLORTERM=' 'export COLORTERM="${COLORTERM:-truecolor}"'
-  set_config_line "$home/.config/shell/chroot-shell.sh" 'export STARSHIP_CONFIG=' 'export STARSHIP_CONFIG="${STARSHIP_CONFIG:-$XDG_CONFIG_HOME/starship.toml}"'
-
-  cat > "$home/.config/starship.toml" <<'SEOF'
-add_newline = false
-format = "$username$hostname$directory$character"
-right_format = ""
-
-[username]
-show_always = true
-style_user = "bold white"
-style_root = "bold white"
-format = "[$user]($style) "
-
-[hostname]
-ssh_only = false
-style = "white"
-format = "[$hostname]($style) "
-
-[directory]
-style = "bold white"
-format = "[$path]($style) "
-
-[character]
-success_symbol = "[>](bold white)"
-error_symbol = "[>](bold red)"
-SEOF
+  sed -i '/^export STARSHIP_CONFIG=.*starship\.toml/d' "$home/.config/shell/chroot-shell.sh"
+  if [ -f "$home/.config/starship.toml" ] &&
+    grep -q 'format = "$username$hostname$directory$character"' "$home/.config/starship.toml"; then
+    rm -f "$home/.config/starship.toml"
+  fi
 }
 
 write_user_colors /root
@@ -122,7 +101,7 @@ write_user_colors /home/dhruv
 uid=$(id -u dhruv 2>/dev/null || true)
 gid=$(id -g dhruv 2>/dev/null || true)
 if [ -n "$uid" ] && [ -n "$gid" ]; then
-  chown -R "$uid:$gid" /home/dhruv/.config/tmux /home/dhruv/.config/Xresources /home/dhruv/.config/shell /home/dhruv/.config/starship.toml
+  chown -R "$uid:$gid" /home/dhruv/.config/tmux /home/dhruv/.config/Xresources /home/dhruv/.config/shell
 fi
 
 xrdb -merge /root/.config/Xresources >/dev/null 2>&1 || true

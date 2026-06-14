@@ -106,7 +106,7 @@ public final class ConnectedDisplayAutoEnable {
     private static void maybeEnableDisplay(Object displayManagerGlobal, int displayId) {
         long now = System.currentTimeMillis();
         Long lastAttempt = LAST_ENABLE_ATTEMPT_MS.get(Integer.valueOf(displayId));
-        if (lastAttempt != null && now - lastAttempt.longValue() < 1000) {
+        if (lastAttempt != null && now - lastAttempt.longValue() < 5000) {
             return;
         }
         LAST_ENABLE_ATTEMPT_MS.put(Integer.valueOf(displayId), Long.valueOf(now));
@@ -114,10 +114,10 @@ public final class ConnectedDisplayAutoEnable {
     }
 
     private static void enableDisplay(Object displayManagerGlobal, int displayId) {
-        if (invokeEnableConnectedDisplay(displayManagerGlobal, displayId)) {
-            return;
-        }
+        invokeEnableConnectedDisplay(displayManagerGlobal, displayId);
         runCmdEnableDisplay(displayId);
+        runCmdPowerReset(displayId);
+        logVisibleDisplayIds();
     }
 
     private static void startFastPoll(final Object displayManagerGlobal, Handler handler) {
@@ -125,10 +125,10 @@ public final class ConnectedDisplayAutoEnable {
             @Override
             public void run() {
                 enablePendingDisplays(displayManagerGlobal);
-                handler.postDelayed(this, 100);
+                handler.postDelayed(this, 1000);
             }
         });
-        System.out.println("started 100ms pending-display poll");
+        System.out.println("started 1000ms pending-display poll");
     }
 
     private static int[] getDisplayIds(Object displayManagerGlobal, boolean includeDisabled) {
@@ -194,6 +194,37 @@ public final class ConnectedDisplayAutoEnable {
             System.out.println("cmd display enable-display " + displayId + " exit " + exit);
         } catch (Throwable ex) {
             System.out.println("cmd display enable failed for " + displayId + ": "
+                    + ex.getClass().getName() + ": " + ex.getMessage());
+        }
+    }
+
+    private static void runCmdPowerReset(int displayId) {
+        try {
+            Process process = new ProcessBuilder(
+                    "/system/bin/cmd", "display", "power-reset", String.valueOf(displayId))
+                    .redirectErrorStream(true)
+                    .start();
+            int exit = process.waitFor();
+            System.out.println("cmd display power-reset " + displayId + " exit " + exit);
+        } catch (Throwable ex) {
+            System.out.println("cmd display power-reset failed for " + displayId + ": "
+                    + ex.getClass().getName() + ": " + ex.getMessage());
+        }
+    }
+
+    private static void logVisibleDisplayIds() {
+        try {
+            Process process = new ProcessBuilder(
+                    "/system/bin/cmd", "display", "get-displays", "--ids-only")
+                    .redirectErrorStream(true)
+                    .start();
+            byte[] output = new byte[4096];
+            int length = process.getInputStream().read(output);
+            int exit = process.waitFor();
+            String text = length > 0 ? new String(output, 0, length).trim() : "";
+            System.out.println("cmd display get-displays exit " + exit + ": " + text);
+        } catch (Throwable ex) {
+            System.out.println("cmd display get-displays failed: "
                     + ex.getClass().getName() + ": " + ex.getMessage());
         }
     }

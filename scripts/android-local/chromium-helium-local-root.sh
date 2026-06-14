@@ -134,9 +134,28 @@ if command -v cdp-cookiecloud >/dev/null 2>&1 && [ -f "$cookiecloud_config" ]; t
 fi
 
 extension_paths=
+blocked_extension_ids=${HELIUM_BLOCKED_EXTENSION_IDS:-eakpippijmmohmdlpgcjnipolcgciaga}
+is_blocked_extension_path() {
+  local extension_path=$1
+  local extension_id
+  for extension_id in $blocked_extension_ids; do
+    case "$extension_path" in
+      */Default/Extensions/"$extension_id"|*/Default/Extensions/"$extension_id"/*|*/Extensions/"$extension_id"|*/Extensions/"$extension_id"/*|*/"$extension_id"|*/"$extension_id"/*)
+        return 0
+        ;;
+    esac
+  done
+  if [ -f "$extension_path/manifest.json" ] &&
+    grep -qi 'Pangram' "$extension_path/manifest.json" "$extension_path"/_locales/*/messages.json 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 add_extension_path() {
   local extension_path=$1
   [ -d "$extension_path" ] || return 0
+  is_blocked_extension_path "$extension_path" && return 0
   if [ -n "$extension_paths" ]; then
     extension_paths="$extension_paths,$extension_path"
   else
