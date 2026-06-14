@@ -87,7 +87,13 @@ restores Chromium's native password manager.
   search, requests Helium vertical layout through `helium.browser.layout = 2`,
   restores the last session, and loads the helper extensions. The chroot AI
   Overview blocker is a normal desktop Chromium extension loaded by that
-  launcher. The launcher and laptop-extension migration both block Pangram
+  launcher. The launcher must not add already-installed profile extensions from
+  `Default/Extensions` to `--load-extension`; doing so makes Chromium treat
+  normal profile extensions like fresh unpacked installs and can reopen
+  extension welcome pages on every Arch Desktop resume. The startup tab cleanup
+  helper is intentionally startup-only and closes install/welcome/newtab pages
+  during the first minute after launch without touching normal session tabs
+  later. The launcher and laptop-extension migration both block Pangram
   (`eakpippijmmohmdlpgcjnipolcgciaga`) so an unpacked extension directory
   cannot make it reappear after uninstalling it in the browser UI. Use
   `scripts/android-local/purge-blocked-helium-extensions-root.sh` to remove
@@ -254,6 +260,18 @@ restores Chromium's native password manager.
   Verify with `dumpsys input`: `FocusedWindows` should list
   `com.termux.x11/.MainActivity` on the external display and `Pointer Capture`
   should be `ABSOLUTE` with Termux:X11 as the current capture window.
+  `scripts/android-local/arch-desktop-thermal-guard-root.sh` is a tiny
+  phone-level thermal guard deployed to
+  `/data/local/chroots/arch/arch-desktop-thermal-guard-root.sh`. The boot hook
+  starts it before the connected-display auto-enable helper, and Arch Desktop
+  resume starts it idempotently. It saves original CPU/devfreq max frequencies,
+  applies conservative caps immediately, and tightens them before skin thermal
+  status reaches critical so Android does not block external display hosting.
+  Do not use `cmd thermalservice override-status` as a fix; that hides the
+  framework state instead of reducing heat. By default hibernate leaves this
+  guard running because the user prefers global throttling over losing external
+  display. Set `ARCH_DESKTOP_THERMAL_GUARD_ALWAYS=0` only if hibernate should
+  restore the original max frequencies.
 - `android/arch-desktop-controller` is the phone-side controller app installed
   as `net.dhruv.archdesktop` / "Arch Desktop". It runs
   `/data/local/chroots/arch/arch-desktop-resume-root.sh` for cold starts and
@@ -261,12 +279,15 @@ restores Chromium's native password manager.
   session is already running. In external-display mode it stays open as the
   phone trackpad/control surface; in phone-only mode it backgrounds itself so
   normal Termux:X11 mouse helper and extra keyboard controls remain available.
-  It runs
-  `/data/local/chroots/arch/arch-desktop-hibernate-root.sh` from Back or the
-  Hibernate button. Do not start root hibernate work from `onDestroy`; Android
-  can destroy or cache the activity while binder transactions are restricted,
-  and doing root work there can get the controller killed for excessive binder
-  traffic. Do not call `startActivity()` for `com.termux.x11` from this
+  In external-display mode, closing or backgrounding the Arch Desktop
+  controller app must request hibernate so X11/browser/watchers disappear
+  without needing the explicit Hibernate button. Back and the Hibernate button
+  still run `/data/local/chroots/arch/arch-desktop-hibernate-root.sh`. Do not
+  start root hibernate work from raw `onDestroy`; Android can destroy or cache
+  the activity while binder transactions are restricted, and doing root work
+  there can get the controller killed for excessive binder traffic. `onStop` is
+  allowed to request hibernate only in external/trackpad mode. Do not call
+  `startActivity()` for `com.termux.x11` from this
   app; the root resume script starts Termux:X11 with
   `am start --display <external-id>`, and a normal app-level launch moves
   Termux:X11 back onto the phone display, causing the external monitor to show

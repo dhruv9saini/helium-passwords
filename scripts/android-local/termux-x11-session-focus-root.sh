@@ -18,6 +18,18 @@ load_target() {
   fi
 }
 
+enabled_external_target() {
+  load_target
+  [ "${target_source:-native}" = external ] || return 1
+  [ "${target_android_display_mode:-native}" = extended ] || return 1
+  [ -n "${target_display_id:-}" ] || return 1
+  [ "${target_display_id:-0}" != 0 ] || return 1
+  for display_id in $(cmd display get-displays --ids-only 2>/dev/null); do
+    [ "$display_id" = "$target_display_id" ] && return 0
+  done
+  return 1
+}
+
 termux_pref() {
   pref="$TERMUX_PREFIX/bin/termux-x11-preference"
   [ -x "$pref" ] || return 0
@@ -33,7 +45,7 @@ set_preferences() {
     display_resolution_args="displayResolutionMode:custom displayResolutionCustom:${target_x11_resolution}"
   fi
 
-  if [ "${target_source:-native}" = external ] && [ "${target_android_display_mode:-native}" = extended ]; then
+  if enabled_external_target; then
     termux_pref "touchMode:Trackpad scaleTouchpad:true pointerCapture:true transformCapturedPointer:at capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:$hardware_scancodes dexMetaKeyCapture:true filterOutWinkey:false showMouseHelper:false showAdditionalKbd:false additionalKbdVisible:false useTermuxEKBarBehaviour:false fullscreen:true $display_resolution_args"
   else
     termux_pref "touchMode:Trackpad scaleTouchpad:true pointerCapture:false capturedPointerSpeedFactor:$pointer_speed hardwareKbdScancodesWorkaround:$hardware_scancodes dexMetaKeyCapture:true filterOutWinkey:false showMouseHelper:true showAdditionalKbd:true additionalKbdVisible:true useTermuxEKBarBehaviour:true fullscreen:false displayResolutionMode:native"
@@ -48,7 +60,7 @@ stop_stale_raw_pointer_forwarder() {
 
 start_activity() {
   load_target
-  if [ "${target_source:-native}" = external ] && [ "${target_android_display_mode:-native}" = extended ] && [ -n "${target_display_id:-}" ] && [ "${target_display_id:-0}" != 0 ]; then
+  if enabled_external_target; then
     am start --user 0 --display "$target_display_id" --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 ||
       am start --user 0 --activity-exclude-from-recents --activity-no-animation -n com.termux.x11/.MainActivity >/dev/null 2>&1 || true
   else
@@ -57,11 +69,7 @@ start_activity() {
 }
 
 prime_pointer_capture() {
-  load_target
-  [ "${target_source:-native}" = external ] || return 0
-  [ "${target_android_display_mode:-native}" = extended ] || return 0
-  [ -n "${target_display_id:-}" ] || return 0
-  [ "${target_display_id:-0}" != 0 ] || return 0
+  enabled_external_target || return 0
   input touchscreen -d "$target_display_id" tap 1 1 >/dev/null 2>&1 || true
 }
 

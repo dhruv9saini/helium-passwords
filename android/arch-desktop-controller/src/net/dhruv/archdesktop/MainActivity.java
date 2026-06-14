@@ -31,7 +31,8 @@ import java.util.concurrent.RejectedExecutionException;
 public final class MainActivity extends Activity {
     private static final String RESUME_SCRIPT = "/data/local/chroots/arch/arch-desktop-resume-root.sh";
     private static final String ATTACH_SCRIPT = "/data/local/chroots/arch/arch-desktop-attach-root.sh";
-    private static final String HIBERNATE_SCRIPT = "/data/local/chroots/arch/arch-desktop-hibernate-root.sh";
+    private static final String HIBERNATE_SCRIPT =
+            "ARCH_DESKTOP_STOP_KEEP_CONTROLLER=1 /data/local/chroots/arch/arch-desktop-hibernate-root.sh";
     private static final String HIBERNATE_OSD_SCRIPT = "/data/local/chroots/arch/x11-hibernate-hold-osd-root.sh";
     private static final int EXIT_TEMPORARY_BUSY = 75;
     private static final String EXTERNAL_TARGET_CHECK_SCRIPT =
@@ -76,6 +77,7 @@ public final class MainActivity extends Activity {
     private boolean startRequested;
     private boolean attachInFlight;
     private boolean desktopRunning;
+    private boolean externalModeActive;
     private boolean hibernateRequested;
     private boolean hibernateHoldActive;
     private long hibernateHoldStartedAt;
@@ -109,6 +111,7 @@ public final class MainActivity extends Activity {
         if (state != null) {
             startRequested = state.getBoolean("startRequested", false);
             desktopRunning = state.getBoolean("desktopRunning", false);
+            externalModeActive = state.getBoolean("externalModeActive", false);
             hibernateRequested = state.getBoolean("hibernateRequested", false);
             if (desktopRunning) {
                 status.setText("Arch desktop running");
@@ -122,6 +125,7 @@ public final class MainActivity extends Activity {
     protected void onSaveInstanceState(Bundle outState) {
         outState.putBoolean("startRequested", startRequested);
         outState.putBoolean("desktopRunning", desktopRunning);
+        outState.putBoolean("externalModeActive", externalModeActive);
         outState.putBoolean("hibernateRequested", hibernateRequested);
         super.onSaveInstanceState(outState);
     }
@@ -153,6 +157,14 @@ public final class MainActivity extends Activity {
     protected void onPause() {
         releaseForwardedKeys();
         super.onPause();
+    }
+
+    @Override
+    protected void onStop() {
+        super.onStop();
+        if (desktopRunning && externalModeActive && !hibernateRequested && !isChangingConfigurations()) {
+            requestHibernate(false);
+        }
     }
 
     @Override
@@ -260,6 +272,7 @@ public final class MainActivity extends Activity {
                         attachInFlight = false;
                         if (code == 0) {
                             desktopRunning = true;
+                            externalModeActive = externalTarget;
                             status.setText("Arch desktop running");
                             if (externalTarget) {
                                 armHardwareInputRepeatedly();
@@ -312,6 +325,7 @@ public final class MainActivity extends Activity {
                     public void run() {
                         if (code == 0) {
                             desktopRunning = false;
+                            externalModeActive = false;
                             status.setText("Arch desktop hibernated");
                             if (finishWhenDone) {
                                 finishAndRemoveTask();

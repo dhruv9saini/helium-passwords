@@ -90,6 +90,7 @@ else
   rm -rf "$ROOT/tmp/.X11-unix" "$ROOT/tmp/.X1-lock" >/dev/null 2>&1 || true
 fi
 
+[ ! -x "$ROOT/arch-desktop-thermal-guard-root.sh" ] || "$ROOT/arch-desktop-thermal-guard-root.sh" start >>"$LOG" 2>&1 || true
 ARCH_X11_OPEN_ACTIVITY=1 "$ROOT/start-arch-xmonad-root.sh" >>"$LOG" 2>&1
 [ ! -x "$ROOT/termux-x11-session-focus-root.sh" ] || "$ROOT/termux-x11-session-focus-root.sh" >>"$LOG" 2>&1 || true
 

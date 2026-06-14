@@ -48,7 +48,7 @@ fi
 
 profile_prepare=${HELIUM_PROFILE_PREPARE:-$home_dir/.config/x11/bin/helium-prepare-profile}
 if [ -x "$profile_prepare" ] &&
-  { [ "${HELIUM_PROFILE_PREPARE_ON_LAUNCH:-0}" = 1 ] ||
+  { [ "${HELIUM_PROFILE_PREPARE_ON_LAUNCH:-1}" = 1 ] ||
     [ ! -f "$profile/Default/Preferences" ] ||
     [ ! -f "$profile/Local State" ]; }; then
   "$profile_prepare" "$profile" >>"$state_dir/profile-prepare.log" 2>&1 || true
@@ -167,9 +167,6 @@ add_extension_path "$home_dir/.local/share/cookiecloud-extension/chrome-mv3"
 add_extension_path "$home_dir/.local/share/google-ai-overview-blocker"
 add_extension_path "$home_dir/.local/share/blank-new-tab-extension"
 add_extension_path "$home_dir/.local/share/tab-pin-helper-extension"
-for extension_path in "$profile"/Default/Extensions/*/*; do
-  add_extension_path "$extension_path"
-done
 for extension_path in "$home_dir"/.local/share/browserpass/extension-* "$home_dir"/.local/share/helium-extensions/*; do
   add_extension_path "$extension_path"
 done
@@ -190,6 +187,9 @@ fi
 
 "$browser" \
   --user-data-dir="$profile" \
+  --no-first-run \
+  --no-default-browser-check \
+  --disable-search-engine-choice-screen \
   --no-sandbox \
   --disable-gpu-sandbox \
   --in-process-gpu \

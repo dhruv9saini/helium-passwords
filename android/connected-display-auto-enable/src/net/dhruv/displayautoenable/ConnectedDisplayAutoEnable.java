@@ -114,6 +114,12 @@ public final class ConnectedDisplayAutoEnable {
     }
 
     private static void enableDisplay(Object displayManagerGlobal, int displayId) {
+        int skinStatus = skinThermalStatus();
+        if (skinStatus >= 4) {
+            System.out.println("skipping display enable for " + displayId
+                    + " while skin thermal status is " + skinStatus);
+            return;
+        }
         invokeEnableConnectedDisplay(displayManagerGlobal, displayId);
         runCmdEnableDisplay(displayId);
         runCmdPowerReset(displayId);
@@ -209,6 +215,36 @@ public final class ConnectedDisplayAutoEnable {
         } catch (Throwable ex) {
             System.out.println("cmd display power-reset failed for " + displayId + ": "
                     + ex.getClass().getName() + ": " + ex.getMessage());
+        }
+    }
+
+    private static int skinThermalStatus() {
+        try {
+            Process process = new ProcessBuilder("/system/bin/dumpsys", "thermalservice")
+                    .redirectErrorStream(true)
+                    .start();
+            byte[] buffer = new byte[8192];
+            int length = process.getInputStream().read(buffer);
+            process.destroy();
+            if (length <= 0) {
+                return -1;
+            }
+            String text = new String(buffer, 0, length);
+            int index = text.lastIndexOf("mName=skin, mStatus=");
+            if (index < 0) {
+                return -1;
+            }
+            index += "mName=skin, mStatus=".length();
+            int end = index;
+            while (end < text.length() && Character.isDigit(text.charAt(end))) {
+                end++;
+            }
+            if (end == index) {
+                return -1;
+            }
+            return Integer.parseInt(text.substring(index, end));
+        } catch (Throwable ex) {
+            return -1;
         }
     }
 
