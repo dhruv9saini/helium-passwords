@@ -5,9 +5,9 @@ set -eu
 # in the shade; this only removes the left-side status-bar glyphs.
 cmd statusbar send-disable-flag notification-icons >/dev/null 2>&1 || true
 
-# Keep Android willing to place apps on external displays. Do not call
-# `cmd display enable-display` here; on Android 16/crDroid that can retrigger
-# the mirror/extend prompt on every Arch Desktop attach.
+# Keep Android willing to place apps on external displays. The separate
+# connected-display auto-enable service handles the SystemUI confirmation path;
+# do not put display hotplug handling in Arch Desktop attach/focus scripts.
 settings put global force_desktop_mode_on_external_displays 1 >/dev/null 2>&1 || true
 settings put global force_allow_on_external 1 >/dev/null 2>&1 || true
 

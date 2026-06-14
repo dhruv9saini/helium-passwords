@@ -109,8 +109,17 @@ restores Chromium's native password manager.
   and rejects common monitor modes like `2560x1440`; startup must use custom
   resolution mode for the detected external resolution.
   Do not call `cmd display enable-display` from display apply, attach, or focus
-  polling; on Android 16/crDroid it can retrigger the mirror/extend prompt.
-  Use Android-reported display ids plus `am start --display <external-id>`.
+  polling. The OS-wide mirror-confirmation fix lives in
+  `scripts/android-local/android-connected-display-auto-enable-root.sh`, which
+  the boot hook starts as
+  `/data/local/chroots/arch/android-connected-display-auto-enable-root.sh`. It
+  runs the `connected-display-auto-enable.jar` app_process helper, listens for
+  Android's private display-connection event, and also uses a 100 ms
+  DisplayManagerGlobal binder poll because this OnePlus/crDroid path can churn
+  pending external display ids without delivering a listener callback. It
+  enables connected external displays through the same framework path as
+  SystemUI's "Mirror display" button. Keep Arch Desktop display scripts limited
+  to Android-reported enabled display ids plus `am start --display <external-id>`.
   The launcher also keeps Termux:X11's mouse helper and extra key bar disabled
   (`showMouseHelper=false`, `showAdditionalKbd=false`,
   `additionalKbdVisible=false`) so the external monitor shows only the chroot
@@ -119,8 +128,10 @@ restores Chromium's native password manager.
   it to `/data/local/chroots/arch/android-ui-preferences-root.sh` and wires a
   `/data/adb/service.d/99-helium-phone-ui.sh` boot hook. It hides left-side app
   notification icons from the status bar while leaving notifications in the
-  shade, and keeps Termux:X11's own notification permission denied so its icon
-  does not reappear.
+  shade, keeps Termux:X11's own notification permission denied so its icon does
+  not reappear, and starts the connected-display auto-enable service so the
+  SystemUI "Mirror to external display?" prompt is handled OS-wide instead of
+  inside Arch Desktop.
   `fingerprint` prints the target source/display/size/density without changing
   Android state, and `target` prints the corresponding target env. The current
   known-good Launcher3 backup is

@@ -19,6 +19,7 @@ GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-sync" "$repo_root/cmd/heli
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-syncd" "$repo_root/cmd/helium-syncd"
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$work_dir/android-magic-keyboard-remap" "$repo_root/cmd/android-magic-keyboard-remap"
 input_display_assoc_jar=$("$repo_root/scripts/android-local/build-input-display-assoc.sh")
+connected_display_auto_enable_jar=$("$repo_root/scripts/android-local/build-connected-display-auto-enable.sh")
 tar -C "$repo_root/browser-extensions/google-ai-overview-blocker" \
   -cf "$work_dir/google-ai-overview-blocker.tar" .
 tar -C "$repo_root/browser-extensions/blank-new-tab-extension" \
@@ -56,6 +57,8 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/merge-helium-laptop-extensions-root.sh" /data/local/tmp/merge-helium-laptop-extensions-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/input-display-assoc-root.sh" /data/local/tmp/input-display-assoc-root.sh >/dev/null
 "$adb_bin" push "$input_display_assoc_jar" /data/local/tmp/input-display-assoc.jar >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/android-connected-display-auto-enable-root.sh" /data/local/tmp/android-connected-display-auto-enable-root.sh >/dev/null
+"$adb_bin" push "$connected_display_auto_enable_jar" /data/local/tmp/connected-display-auto-enable.jar >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/helium-phone-ui-service-root.sh" /data/local/tmp/helium-phone-ui-service-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/x11-phone-trackpad-server.mjs" /data/local/tmp/x11-phone-trackpad-server.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/x11-key-helper-root.sh" /data/local/tmp/x11-key-helper-root.sh >/dev/null
@@ -102,8 +105,11 @@ install -Dm755 /data/local/tmp/restart-raw-pointer-root.sh \"\$ROOT/restart-raw-
 install -Dm755 /data/local/tmp/merge-helium-laptop-extensions-root.sh \"\$ROOT/merge-helium-laptop-extensions-root.sh\"
 install -Dm755 /data/local/tmp/input-display-assoc-root.sh \"\$ROOT/input-display-assoc-root.sh\"
 install -Dm644 /data/local/tmp/input-display-assoc.jar \"\$ROOT/input-display-assoc.jar\"
+install -Dm755 /data/local/tmp/android-connected-display-auto-enable-root.sh \"\$ROOT/android-connected-display-auto-enable-root.sh\"
+install -Dm644 /data/local/tmp/connected-display-auto-enable.jar \"\$ROOT/connected-display-auto-enable.jar\"
 install -Dm755 /data/local/tmp/helium-phone-ui-service-root.sh /data/adb/service.d/99-helium-phone-ui.sh
 \"\$ROOT/android-ui-preferences-root.sh\"
+\"\$ROOT/android-connected-display-auto-enable-root.sh\" restart
 \"\$ROOT/chroot-tailnet-dns-root.sh\"
 \"\$ROOT/fix-magic-keyboard-layout-root.sh\"
 \"\$ROOT/input-display-assoc-root.sh\" apply

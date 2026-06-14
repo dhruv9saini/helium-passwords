@@ -10,6 +10,7 @@
 - [x] Install/load the current laptop Helium extension set and settings in chroot Helium.
 - [x] Stop CookieCloud/CDP cookie sync from deleting or expiring cookies while browsing.
 - [x] Stop repeated mirror/extend prompts by removing display-enable calls from attach/focus polling.
+- [x] Stop the OS-wide SystemUI "Mirror to external display?" prompt with a display-manager hotplug auto-enable service.
 - [x] Prevent duplicate Arch Desktop resume requests from queueing and restarting the chroot.
 - [x] Deploy the latest keyboard/display-association and dark-mode scripts to the phone after ADB reconnects, then verify live state.
 
@@ -29,3 +30,9 @@ Verification snapshot:
 - Chroot Helium started with the migrated laptop extension directories plus the local CookieCloud, uBO, AI Overview blocker, blank new tab, pinned-tab, and tab-sync helpers.
 - XMonad config is managed by `xmonad-desktop-config-root.sh`: single BSP layout, BSP control bindings, dark hotkey list wrapper, Dolphin dark wrapper, and KDE/Qt dark config for root plus `dhruv`.
 - Screenshot-verified Dolphin and the hotkey list in dark mode on the external display.
+- The SystemUI mirror prompt was traced to AOSP `ConnectingDisplayViewModel` /
+  `MirroringConfirmationDialogDelegate`; the button calls
+  `DisplayManager.enableConnectedDisplay(id)`. The phone-side service now
+  listens for connected external displays, backs that with a 100 ms
+  DisplayManagerGlobal binder poll, and runs that same enable path before the
+  prompt needs user input.
