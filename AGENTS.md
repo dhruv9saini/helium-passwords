@@ -103,6 +103,14 @@ restores Chromium's native password manager.
   cannot make it reappear after uninstalling it in the browser UI. Use
   `scripts/android-local/purge-blocked-helium-extensions-root.sh` to remove
   blocked extension state from live chroot browser profiles.
+- `scripts/android-local/start-arch-xmonad-root.sh` also keeps Android
+  Tailscale usable for chroot `ssh`/`mosh`: if `com.tailscale.ipn` is installed
+  and `ARCH_X11_TAILSCALE_CONNECT` is not `0`, startup whitelists the app from
+  idle/background limits, broadcasts `com.tailscale.ipn.CONNECT_VPN`, and waits
+  briefly for `100.100.100.100` to route over `tun*`. The chroot
+  `/etc/resolv.conf` points at MagicDNS (`100.100.100.100`), so if Tailscale is
+  stopped the symptom is failed tailnet name resolution or `ssh`/`mosh` trying
+  normal Wi-Fi routes instead of the tailnet.
 - `scripts/android-local/arch-desktop-display-mode-root.sh` is installed at
   `/data/local/chroots/arch/arch-desktop-display-mode-root.sh`. It is the
   reversible external-display setup for Termux:X11: `apply` saves current

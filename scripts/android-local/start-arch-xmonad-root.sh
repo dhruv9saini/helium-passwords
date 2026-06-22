@@ -59,6 +59,37 @@ keep_android_helium_awake() {
 
 keep_android_helium_awake
 
+tailscale_vpn_active() {
+  ip route get 100.100.100.100 2>/dev/null | grep -q ' dev tun'
+}
+
+ensure_tailscale_vpn() {
+  [ "${ARCH_X11_TAILSCALE_CONNECT:-1}" != 0 ] || return 0
+
+  package=${TAILSCALE_ANDROID_PACKAGE:-com.tailscale.ipn}
+  pm path "$package" >/dev/null 2>&1 || return 0
+
+  cmd activity set-inactive "$package" false >/dev/null 2>&1 || true
+  cmd activity set-standby-bucket "$package" active >/dev/null 2>&1 || true
+  cmd activity set-bg-restriction-level "$package" unrestricted >/dev/null 2>&1 || true
+  cmd deviceidle whitelist +"$package" >/dev/null 2>&1 || true
+  cmd appops set "$package" RUN_IN_BACKGROUND allow >/dev/null 2>&1 || true
+  cmd appops set "$package" RUN_ANY_IN_BACKGROUND allow >/dev/null 2>&1 || true
+  cmd appops set "$package" WAKE_LOCK allow >/dev/null 2>&1 || true
+  cmd appops set "$package" ACTIVATE_VPN allow >/dev/null 2>&1 || true
+  cmd appops set "$package" ESTABLISH_VPN_SERVICE allow >/dev/null 2>&1 || true
+
+  tailscale_vpn_active && return 0
+
+  am broadcast --user 0 -a "${package}.CONNECT_VPN" -p "$package" >/dev/null 2>&1 || true
+  for _ in 1 2 3 4 5 6 7 8; do
+    tailscale_vpn_active && return 0
+    sleep 1
+  done
+}
+
+ensure_tailscale_vpn >>"$LOG" 2>&1 || true
+
 if [ "${ARCH_X11_OPEN_ACTIVITY:-1}" != 0 ]; then
   "$ROOT/termux-x11-session-focus-root.sh" >>"$LOG" 2>&1 || true
 fi
