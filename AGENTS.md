@@ -349,7 +349,10 @@ restores Chromium's native password manager.
   shows there is no swap-out pressure at a higher limit. For existing Siso out
   dirs, `CHROMIUM_ANDROID_SISO_FLAGS="--batch=false"` can be tested during
   local non-interactive resumes so Siso keeps its fast local path enabled, but
-  revert it immediately if `vmstat` shows sustained swap-out.
+  revert it immediately if `vmstat` shows sustained swap-out. Android builds
+  default to `ffmpeg_branding = "Chrome"` and `proprietary_codecs = true` so
+  regular non-DRM H.264/AAC/MP4 playback works in the Android APK. Keep this
+  unless intentionally testing the codec-stripped Chromium path.
 
 ## Patch Flow
 

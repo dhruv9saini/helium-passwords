@@ -16,6 +16,8 @@ ccache_max_size=${CCACHE_MAXSIZE:-5G}
 phase=${CHROMIUM_ANDROID_PHASE:-all}
 touch_restored_out=${HELIUM_SYNC_TOUCH_RESTORED_OUT:-false}
 skip_system_deps=${CHROMIUM_ANDROID_SKIP_SYSTEM_DEPS:-false}
+android_ffmpeg_branding=${CHROMIUM_ANDROID_FFMPEG_BRANDING:-Chrome}
+android_proprietary_codecs=${CHROMIUM_ANDROID_PROPRIETARY_CODECS:-true}
 enable_desktop_extensions=${CHROMIUM_ANDROID_DESKTOP_EXTENSIONS:-false}
 official_build=${CHROMIUM_ANDROID_OFFICIAL_BUILD:-false}
 use_siso=${CHROMIUM_ANDROID_USE_SISO:-auto}
@@ -159,8 +161,8 @@ chrome_pgo_phase = 0
 android_static_analysis = "off"
 symbol_level = 0
 blink_symbol_level = 0
-ffmpeg_branding = "Chromium"
-proprietary_codecs = false
+ffmpeg_branding = "$android_ffmpeg_branding"
+proprietary_codecs = $android_proprietary_codecs
 root_extra_deps = ["//components/helium_sync", "//chrome/browser/helium_sync"]
 EOF
   if [[ "$use_ccache" == true ]]; then

@@ -85,6 +85,9 @@ The Android workflow uses a reduced Chromium Android checkout and builds
 `chromium/overlay/` for local development parity, sets Chromium's checkout to
 `small`, skips test-only Android CIPD payloads, changes the package to
 `computer.helium.sync`, and adds `cc_wrapper = "ccache"` to generated GN args.
+Android builds default to `ffmpeg_branding = "Chrome"` and
+`proprietary_codecs = true` so ordinary non-DRM H.264/AAC/MP4 playback works in
+the APK; this does not add DRM support.
 
 Full Chromium builds are expensive. Larger/self-hosted runners are preferred.
 Standard `ubuntu-24.04` runners can smoke-test wiring, but previous full builds

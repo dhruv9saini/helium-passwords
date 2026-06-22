@@ -118,6 +118,12 @@ output dirs may also set `CHROMIUM_ANDROID_SISO_FLAGS="--batch=false"` to keep
 Siso's fast local path enabled in non-interactive resumes, but only keep that
 setting if `vmstat` shows no sustained swap-out.
 
+Android Chromium builds default to `ffmpeg_branding = "Chrome"` and
+`proprietary_codecs = true` so normal non-DRM H.264/AAC/MP4 playback works in
+the Android APK. Override with `CHROMIUM_ANDROID_FFMPEG_BRANDING` or
+`CHROMIUM_ANDROID_PROPRIETARY_CODECS` only when intentionally testing the
+codec-stripped Chromium path. This does not add DRM support.
+
 Google AI Overview blocking for the Android main browser is built into the
 Android fork by `chromium/patches/0006-helium-sync-android-ai-overview-blocker.patch`.
 It injects a small Java-owned isolated-world script on normal Google Search
