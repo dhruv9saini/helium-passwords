@@ -126,7 +126,7 @@ reapply_x11_input_setup() {
         DISPLAY=:1 \
         XDG_RUNTIME_DIR=/tmp/runtime-root \
         PATH=/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin \
-        sh -lc 'x11-lorie-input-setup >/dev/null 2>&1 || true'
+        sh -lc 'x11-apple-input-setup >/dev/null 2>&1 || true; x11-lorie-input-setup >/dev/null 2>&1 || true'
     done
   ) >>"$LOG" 2>&1 &
 }
@@ -140,7 +140,7 @@ chroot "$ROOT" /usr/bin/env -i \
 	  SHELL=/bin/zsh \
 	  DISPLAY=:1 \
 	  BROWSER=/root/.config/x11/bin/chromium-helium-local \
-	  TERMINAL=/root/.config/x11/bin/x11-zutty \
+	  TERMINAL=alacritty \
 	  GTK_THEME=Adwaita:dark \
 	  QT_QPA_PLATFORMTHEME=qt5ct \
 	  QT_STYLE_OVERRIDE=Breeze \

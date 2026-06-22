@@ -63,10 +63,11 @@ terminalCmd :: String
 terminalCmd = terminalBase ++ " -e tmux new-session -A -s x11"
 
 terminalBase :: String
-terminalBase = "x11-zutty"
+terminalBase = "x11-alacritty"
 
 startupApps :: X ()
 startupApps = do
+  spawn "sh -lc 'for delay in 0 2 5 10; do [ \"$delay\" = 0 ] || sleep \"$delay\"; x11-apple-input-setup >/dev/null 2>&1 || true; x11-lorie-input-setup >/dev/null 2>&1 || true; done'"
   spawnOn "1" "chromium-helium-local"
   spawnOn "2" terminalCmd
   windows $ W.greedyView "1"
@@ -74,8 +75,7 @@ startupApps = do
 zoomTerminal :: String -> X ()
 zoomTerminal direction = withFocused $ \window -> do
   windowClass <- runQuery className window
-  when (windowClass `elem` ["Zutty", "zutty"]) $ do
-    spawn ("zutty-font-size " ++ direction)
+  when (windowClass `elem` ["Alacritty", "alacritty"]) $ do
     spawn terminalCmd
     killWindow window
 
@@ -195,11 +195,11 @@ cat > /root/.config/x11/hotkeys.txt <<'HEOF'
 XMonad hotkeys
 
 Super+Q              close focused window
-Super+Enter          open zutty attached to tmux session x11
+Super+Enter          open Alacritty attached to tmux session x11
 Super+F              open Dolphin
 Super+B              open Helium Passwords browser
-Super+T              open btop in zutty
-Super+W              open wiremix in zutty
+Super+T              open btop in Alacritty
+Super+W              open wiremix in Alacritty
 Super+L              toggle known LG/Acer DDC monitor power/input
 Super+V              searchable clipboard history
 Super+H              show this hotkey list
@@ -239,32 +239,16 @@ HEOF
 
 cp /root/.config/x11/hotkeys.txt /home/dhruv/.config/x11/hotkeys.txt 2>/dev/null || true
 
-cat > /root/.config/x11/bin/x11-zutty <<'HEOF'
+cat > /root/.config/x11/bin/x11-alacritty <<'HEOF'
 #!/bin/sh
 set -eu
 
-home=${HOME:-/root}
-resources="$home/.config/Xresources"
-[ -r "$resources" ] || resources=/root/.config/Xresources
-xrdb -merge "$resources" >/dev/null 2>&1 || true
-
-font=${ZUTTY_FONT:-Iosevka-Regular}
-fontsize=${ZUTTY_FONTSIZE:-12}
-
-exec /usr/bin/zutty \
-  -name Zutty \
-  -fg '#ffffff' \
-  -bg '#000000' \
-  -cr '#ffffff' \
-  -font "$font" \
-  -fontpath "${ZUTTY_FONTPATH:-/usr/share/fonts}" \
-  -fontsize "$fontsize" \
-  -border 0 \
-  "$@"
+exec /usr/bin/alacritty "$@"
 HEOF
-chmod 755 /root/.config/x11/bin/x11-zutty
-cp /root/.config/x11/bin/x11-zutty /home/dhruv/.config/x11/bin/x11-zutty 2>/dev/null || true
-chmod 755 /home/dhruv/.config/x11/bin/x11-zutty 2>/dev/null || true
+chmod 755 /root/.config/x11/bin/x11-alacritty
+cp /root/.config/x11/bin/x11-alacritty /home/dhruv/.config/x11/bin/x11-alacritty 2>/dev/null || true
+chmod 755 /home/dhruv/.config/x11/bin/x11-alacritty 2>/dev/null || true
+rm -f /root/.config/x11/bin/x11-zutty /home/dhruv/.config/x11/bin/x11-zutty
 
 cat > /root/.config/x11/bin/x11-hotkeys <<'HEOF'
 #!/bin/sh

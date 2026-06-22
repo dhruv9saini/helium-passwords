@@ -230,24 +230,23 @@ restores Chromium's native password manager.
   Super/mod4. This avoids Android 16/crDroid intercepting Meta before it reaches
   X11. Keep `fix-magic-keyboard-layout-root.sh` as a compatibility fallback,
   but do not rely on it as the primary fix.
-  The same setup keeps left Option as X keycode `64` / `Alt_L`, but maps X
-  keycode `108` plus `133`, `134`, and `204` through `207` to Super/mod4; this
-  preserves the observed Termux:X11/Lorie Command-key paths.
-  Startup reapplies that X11 input setup after short delays because Termux:X11
-  can reset key repeat and modifier maps while external devices finish
-  enumerating.
+  The same setup keeps left Option as X keycode `64` / `Alt_L`, maps keycodes
+  `108`, `133`, and `134` to Super/mod4, and deliberately leaves `204` through
+  `207` unmapped so stale Termux:X11/Lorie Command-key paths do not make Super
+  appear permanently held.
+  Both the root launcher and the XMonad startup hook reapply
+  `x11-apple-input-setup` and then `x11-lorie-input-setup` after short delays
+  because Termux:X11 can reset key repeat and modifier maps while external
+  devices finish enumerating or after `xmonad --restart`.
   The canonical phone XMonad config and hotkey documentation are installed by
   `scripts/android-local/xmonad-desktop-config-root.sh`; it keeps BSP as the
   only layout, adds the documented BSP controls, and writes dark wrappers for
   Dolphin and the hotkey list under `.config/x11/bin`. It also writes
   `/root/.config/xmonad/build` so `xmonad --recompile` uses the chroot's
   ghcup/cabal GHC path and `/tmp`, avoiding Android `TMPDIR` leakage. Terminals
-  launch through `.config/x11/bin/x11-zutty`, which must remain Zutty-only. Use
-  Zutty's filename-prefix font lookup, not a fontconfig family string: the
-  configured Iosevka font name is `Iosevka-Regular` from the upstream
-  `ttc-iosevka` package under `/usr/share/fonts`. The Nerd-patched Iosevka
-  TTFs load in Zutty but render blank glyphs on this Termux:X11 stack; do not
-  switch back to them without a pixel screenshot proving they render. External
+  launch through `.config/x11/bin/x11-alacritty`; do not reintroduce Zutty
+  wrappers or hotkeys unless there is a specific regression that Alacritty
+  cannot handle. External
   X11 DPI should default to 96, matching normal desktop scale on the 2560x1440
   Acer display more closely than the previous oversized 120 DPI. Terminal color
   repair should use tmux `window-style`/`window-active-style`; tmux 3.6b rejects
