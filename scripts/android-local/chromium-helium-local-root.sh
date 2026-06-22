@@ -170,6 +170,33 @@ profile_extension_path() {
   find "$extension_base" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1
 }
 
+patch_dark_reader_startup_tab() {
+  local extension_base extension_path background_file patched
+
+  extension_base=$profile/Default/Extensions/eimadpbcbfnmbkopoojfekhnkhdbieeh
+  [ -d "$extension_base" ] || return 0
+  patched=0
+
+  while IFS= read -r extension_path; do
+    background_file=$extension_path/background/index.js
+    [ -f "$background_file" ] || continue
+
+    if grep -Fq 'chrome.tabs.create({url: getHelpURL()});' "$background_file"; then
+      cp -n "$background_file" "$background_file.helium-pre-startup-tab-patch" 2>/dev/null || true
+      sed -i 's#chrome\.tabs\.create({url: getHelpURL()});#return; // Helium chroot: suppress Dark Reader install help tab.#' "$background_file"
+    fi
+    if grep -Fq 'Helium chroot: suppress Dark Reader install help tab' "$background_file"; then
+      patched=1
+    fi
+  done < <(find "$extension_base" -mindepth 1 -maxdepth 1 -type d | sort -V)
+
+  if [ "$patched" = 1 ]; then
+    rm -rf "$profile/Default/Service Worker/ScriptCache" "$profile/Default/Code Cache/js"
+  fi
+}
+
+patch_dark_reader_startup_tab
+
 add_extension_path "$home_dir/.local/share/cookiecloud-extension/chrome-mv3"
 add_extension_path "$home_dir/.local/share/google-ai-overview-blocker"
 add_extension_path "$home_dir/.local/share/blank-new-tab-extension"
@@ -210,6 +237,7 @@ fi
   --disable-dev-shm-usage \
   --no-zygote \
   --password-store=basic \
+  --extension-mime-request-handling=always-prompt-for-install \
   --remote-debugging-port=9223 \
   "${browser_args[@]}" \
   "$@"

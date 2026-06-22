@@ -95,6 +95,18 @@ restores Chromium's native password manager.
   broadly add every already-installed profile extension to `--load-extension`;
   doing so makes Chromium treat normal profile extensions like fresh unpacked
   installs and can reopen extension welcome pages on every Arch Desktop resume.
+  Dark Reader's bundled `runtime.onInstalled` help-tab opener is patched out
+  before launch, and the launcher clears Chromium's service-worker script cache
+  when that patch is present; otherwise a stale MV3 worker can still run the
+  old help-tab code even after `background/index.js` on disk has been edited.
+  The launcher must keep
+  `--extension-mime-request-handling=always-prompt-for-install`; Helium's
+  ungoogled CRX MIME handling otherwise downloads Web Store CRX files as
+  blocked regular downloads with a red X instead of handing them to the
+  extension installer.
+  `scripts/android-local/restart-chroot-helium-browser-root.sh` is the helper
+  for restarting only the chroot Helium browser with the normal `DISPLAY=:1`
+  root desktop environment after changing launcher/browser-profile behavior.
   The startup tab cleanup helper is intentionally startup-only and closes
   install/welcome/newtab pages during the first minute after launch without
   touching normal session tabs later. The launcher and laptop-extension
