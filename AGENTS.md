@@ -87,13 +87,18 @@ restores Chromium's native password manager.
   search, requests Helium vertical layout through `helium.browser.layout = 2`,
   restores the last session, and loads the helper extensions. The chroot AI
   Overview blocker is a normal desktop Chromium extension loaded by that
-  launcher. The launcher must not add already-installed profile extensions from
-  `Default/Extensions` to `--load-extension`; doing so makes Chromium treat
-  normal profile extensions like fresh unpacked installs and can reopen
-  extension welcome pages on every Arch Desktop resume. The startup tab cleanup
-  helper is intentionally startup-only and closes install/welcome/newtab pages
-  during the first minute after launch without touching normal session tabs
-  later. The launcher and laptop-extension migration both block Pangram
+  launcher. Keep the launcher's `Default/Extensions` force-load list narrow:
+  Dark Reader (`eimadpbcbfnmbkopoojfekhnkhdbieeh`), Open New Tab After Current
+  Tab (`mmcgnaachjapbbchcpjihhgjhpfcnoan`), and Tab Position Options Fork
+  (`bimiahgcjenkoacmdfggckkaflnnebki`) are intentionally loaded from the
+  migrated profile because Helium otherwise leaves them inactive. Do not
+  broadly add every already-installed profile extension to `--load-extension`;
+  doing so makes Chromium treat normal profile extensions like fresh unpacked
+  installs and can reopen extension welcome pages on every Arch Desktop resume.
+  The startup tab cleanup helper is intentionally startup-only and closes
+  install/welcome/newtab pages during the first minute after launch without
+  touching normal session tabs later. The launcher and laptop-extension
+  migration both block Pangram
   (`eakpippijmmohmdlpgcjnipolcgciaga`) so an unpacked extension directory
   cannot make it reappear after uninstalling it in the browser UI. Use
   `scripts/android-local/purge-blocked-helium-extensions-root.sh` to remove

@@ -163,10 +163,24 @@ add_extension_path() {
   fi
 }
 
+profile_extension_path() {
+  local extension_id=$1
+  local extension_base=$profile/Default/Extensions/$extension_id
+  [ -d "$extension_base" ] || return 0
+  find "$extension_base" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1
+}
+
 add_extension_path "$home_dir/.local/share/cookiecloud-extension/chrome-mv3"
 add_extension_path "$home_dir/.local/share/google-ai-overview-blocker"
 add_extension_path "$home_dir/.local/share/blank-new-tab-extension"
 add_extension_path "$home_dir/.local/share/tab-pin-helper-extension"
+for extension_id in \
+  eimadpbcbfnmbkopoojfekhnkhdbieeh \
+  mmcgnaachjapbbchcpjihhgjhpfcnoan \
+  bimiahgcjenkoacmdfggckkaflnnebki; do
+  extension_path=$(profile_extension_path "$extension_id" || true)
+  [ -z "$extension_path" ] || add_extension_path "$extension_path"
+done
 for extension_path in "$home_dir"/.local/share/browserpass/extension-* "$home_dir"/.local/share/helium-extensions/*; do
   add_extension_path "$extension_path"
 done
