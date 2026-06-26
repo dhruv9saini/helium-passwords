@@ -64,6 +64,22 @@ go test ./...
 go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-local-syncd
 ```
 
+## Laptop Install
+
+Install the local daemons, CDP bridges, and a laptop launcher with an optional
+Linux x86_64 Helium Sync tarball:
+
+```bash
+scripts/laptop/install-laptop-sync.sh /path/to/helium-linux-x64.tar.xz
+```
+
+The launcher is `helium-sync-browser`. Set
+`HELIUM_LAPTOP_REPLACE_DEFAULT=1` when installing to make the existing
+`helium-browser` wrapper start the sync-enabled launcher. The launcher uses the
+current Helium profile, writes the native sync token into the profile, starts
+the local sync daemons, and exposes laptop CDP on `127.0.0.1:9224` for cookie
+sync.
+
 ## Patch Flow
 
 `patches/series` is the canonical password-manager restoration list. During
@@ -105,8 +121,10 @@ hours-long local cost of Chromium's official optimized Android build path. Set
 The helper also pins local phone builds to `chrome_pgo_phase = 0`, so they do
 not require Chromium/V8 PGO profiles that are absent from a small local
 checkout, and sets `android_static_analysis = "off"` so local phone APK builds
-do not run Android Error Prone validation during the main app build. It also
-defaults `CHROMIUM_ANDROID_USE_SISO=auto`: existing Siso out
+do not run Android Error Prone validation during the main app build. It builds
+Android with `ffmpeg_branding = "Chrome"` and `proprietary_codecs = true` so
+normal MP4/H.264/AAC web video works; this does not add DRM/Widevine support.
+It also defaults `CHROMIUM_ANDROID_USE_SISO=auto`: existing Siso out
 dirs continue using Siso, because Chromium requires `gn clean` before switching
 that same out dir to Ninja, while fresh local out dirs use Ninja unless
 overridden. Use the chroot Helium browser for uBO and other extension workflows.

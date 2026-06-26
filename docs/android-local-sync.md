@@ -94,6 +94,12 @@ cdp-cookiecloud sync --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127
 cdp-cookiecloud daemon --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
 ```
 
+For laptop or multi-browser runs, pass one or more CDP endpoints explicitly:
+
+```sh
+cdp-cookiecloud daemon --cdp-list http://127.0.0.1:9222,http://127.0.0.1:9223,http://127.0.0.1:9224 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
+```
+
 `upload` and `download` still exist for directed checks and accept
 `--config-file` so the CookieCloud password does not need to appear on the
 command line. Use `--include domain,domain` on upload when verifying one domain

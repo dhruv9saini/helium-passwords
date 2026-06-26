@@ -59,6 +59,10 @@ restores Chromium's native password manager.
   commands.
 - `cmd/helium-local-syncd` runs the phone-local CookieCloud-compatible API.
 - `internal/syncstore` stores append-only encrypted records.
+- `scripts/laptop` installs laptop-local sync binaries and a
+  `helium-sync-browser` launcher. The launcher uses the current laptop Helium
+  profile, starts the local daemons, writes native sync config into the profile,
+  and exposes CDP on `127.0.0.1:9224` for CookieCloud cookie sync.
 - `scripts/android-local` installs and configures the phone/chroot local sync
   pieces. The installer places `start-helium-local-sync` in `/usr/local/bin`
   and the X11 helper path. `configure-android-chromium-sync.sh` also marks
@@ -358,6 +362,8 @@ restores Chromium's native password manager.
 - Android APKs intended for local phone use should be release-style,
   non-debuggable builds: keep `is_debug = false` and
   `dcheck_always_on = false`; do not set `is_desktop_android = true`.
+  Keep `ffmpeg_branding = "Chrome"` with `proprietary_codecs = true` so regular
+  MP4/H.264/AAC video works. This is separate from DRM/Widevine.
   Default `is_official_build = false` for local laptop builds because Chromium's
   official Android path enables expensive optimized/LTO-style work and is too
   slow for iteration here. Use `CHROMIUM_ANDROID_OFFICIAL_BUILD=true` only for

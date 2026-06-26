@@ -7,6 +7,8 @@ const usage = `usage:
   cdp-cookiecloud.mjs download --cdp URL --server URL [--uuid ID --password SECRET | --config-file PATH]
   cdp-cookiecloud.mjs sync --android-cdp URL --chroot-cdp URL --server URL [--uuid ID --password SECRET | --config-file PATH]
   cdp-cookiecloud.mjs daemon --android-cdp URL --chroot-cdp URL --server URL [--uuid ID --password SECRET | --config-file PATH] [--interval SECONDS]
+  cdp-cookiecloud.mjs sync --cdp-list URL[,URL...] --server URL [--uuid ID --password SECRET | --config-file PATH]
+  cdp-cookiecloud.mjs daemon --cdp-list URL[,URL...] --server URL [--uuid ID --password SECRET | --config-file PATH] [--interval SECONDS]
 `;
 
 const args = parseArgs(process.argv.slice(2));
@@ -20,7 +22,7 @@ if (
   !options.uuid ||
   !options.password ||
   (needsSingleCDP && !options.cdp) ||
-  (needsPairCDP && (!options.androidCdp || !options.chrootCdp))
+  (needsPairCDP && options.cdpList.length < 1)
 ) {
   process.stderr.write(usage);
   process.exit(64);
@@ -245,10 +247,15 @@ function parseArgs(argv) {
 
 function resolveOptions(rawArgs) {
   const config = readConfig(rawArgs["config-file"] || process.env.COOKIECLOUD_CONFIG || defaultConfigPath());
+  const androidCdp = rawArgs["android-cdp"] || config.androidCdp || config.android_cdp;
+  const chrootCdp = rawArgs["chroot-cdp"] || config.chrootCdp || config.chroot_cdp;
+  const explicitCdpList = toList(rawArgs["cdp-list"] || rawArgs.cdps || config.cdpList || config.cdp_list);
+  const pairCdpList = [androidCdp, chrootCdp].filter(Boolean);
   return {
-    cdp: rawArgs.cdp,
-    androidCdp: rawArgs["android-cdp"],
-    chrootCdp: rawArgs["chroot-cdp"],
+    cdp: rawArgs.cdp || config.cdp,
+    androidCdp,
+    chrootCdp,
+    cdpList: explicitCdpList.length > 0 ? explicitCdpList : pairCdpList,
     server: rawArgs.server || config.endpoint,
     uuid: rawArgs.uuid || config.uuid,
     password: rawArgs.password || config.password,
@@ -366,17 +373,36 @@ async function download(cdpURL) {
 }
 
 async function syncOnce() {
-  const androidUpload = await upload(options.androidCdp);
-  const chrootDownload = await download(options.chrootCdp);
-  const chrootUpload = await upload(options.chrootCdp);
-  const androidDownload = await download(options.androidCdp);
-  return {
+  const uploads = [];
+  for (const cdpURL of options.cdpList) {
+    const result = await upload(cdpURL);
+    uploads.push({ cdp: cdpURL, domains: result.domains });
+  }
+
+  const downloads = [];
+  for (const cdpURL of options.cdpList) {
+    const result = await download(cdpURL);
+    downloads.push({ cdp: cdpURL, applied: result.applied, skipped: result.skipped });
+  }
+
+  const summary = {
     action: "synced",
-    androidUploadedDomains: androidUpload.domains,
-    chrootApplied: chrootDownload.applied,
-    chrootUploadedDomains: chrootUpload.domains,
-    androidApplied: androidDownload.applied,
+    uploads,
+    downloads,
   };
+  if (
+    options.androidCdp &&
+    options.chrootCdp &&
+    options.cdpList.length === 2 &&
+    options.cdpList[0] === options.androidCdp &&
+    options.cdpList[1] === options.chrootCdp
+  ) {
+    summary.androidUploadedDomains = uploads[0].domains;
+    summary.chrootApplied = downloads[1].applied;
+    summary.chrootUploadedDomains = uploads[1].domains;
+    summary.androidApplied = downloads[0].applied;
+  }
+  return summary;
 }
 
 async function main() {
