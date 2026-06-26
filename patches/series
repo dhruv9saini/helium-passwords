@@ -12,3 +12,4 @@ helium/linux/add-error-for-missing-desktop-file.patch
 helium/linux/disable-tab-strokes.patch
 helium/linux/restore-password-ui.patch
 helium/linux/lighten-selected-tabs.patch
+helium-sync/0001-helium-sync-component-scaffold.patch

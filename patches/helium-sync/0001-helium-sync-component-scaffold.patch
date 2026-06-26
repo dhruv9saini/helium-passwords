@@ -1,0 +1,265 @@
+diff --git a/components/helium_sync/BUILD.gn b/components/helium_sync/BUILD.gn
+new file mode 100644
+index 0000000000000..0f4c86b7c03f0
+--- /dev/null
++++ b/components/helium_sync/BUILD.gn
+@@ -0,0 +1,18 @@
++# Copyright 2026 The Helium Authors
++
++import("//build/config/features.gni")
++
++source_set("helium_sync") {
++  sources = [
++    "helium_sync_client.cc",
++    "helium_sync_client.h",
++  ]
++
++  deps = [
++    "//base",
++    "//net",
++    "//services/network/public/cpp",
++    "//services/network/public/mojom",
++    "//url",
++  ]
++}
+diff --git a/components/helium_sync/helium_sync_client.h b/components/helium_sync/helium_sync_client.h
+new file mode 100644
+index 0000000000000..42c8761bc0d75
+--- /dev/null
++++ b/components/helium_sync/helium_sync_client.h
+@@ -0,0 +1,69 @@
++// Copyright 2026 The Helium Authors
++
++#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
++#define COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
++
++#include <string>
++#include <vector>
++
++#include "base/functional/callback.h"
++#include "base/memory/weak_ptr.h"
++#include "base/time/time.h"
++#include "url/gurl.h"
++
++namespace network {
++class SharedURLLoaderFactory;
++class SimpleURLLoader;
++}  // namespace network
++
++namespace helium_sync {
++
++struct Record {
++  std::string kind;
++  std::string key;
++  int64_t version = 0;
++  base::Time updated_at;
++  bool deleted = false;
++  std::string origin_device;
++  std::string payload_json;
++};
++
++class HeliumSyncClient {
++ public:
++  using PushCallback = base::OnceCallback<void(bool ok, std::string error)>;
++  using PullCallback =
++      base::OnceCallback<void(bool ok, std::string response_json, std::string error)>;
++
++  HeliumSyncClient(
++      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
++      GURL base_url,
++      std::string bearer_token,
++      std::string device_name);
++  HeliumSyncClient(const HeliumSyncClient&) = delete;
++  HeliumSyncClient& operator=(const HeliumSyncClient&) = delete;
++  ~HeliumSyncClient();
++
++  void Push(std::vector<Record> records, PushCallback callback);
++  void Pull(int64_t since,
++            std::vector<std::string> kinds,
++            PullCallback callback);
++
++ private:
++  void OnPushComplete(PushCallback callback, std::unique_ptr<std::string> body);
++  void OnPullComplete(PullCallback callback, std::unique_ptr<std::string> body);
++  std::unique_ptr<network::SimpleURLLoader> MakeJSONRequest(
++      GURL url,
++      std::string method,
++      std::string body);
++
++  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
++  GURL base_url_;
++  std::string bearer_token_;
++  std::string device_name_;
++  std::vector<std::unique_ptr<network::SimpleURLLoader>> loaders_;
++  base::WeakPtrFactory<HeliumSyncClient> weak_factory_{this};
++};
++
++}  // namespace helium_sync
++
++#endif  // COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
+diff --git a/components/helium_sync/helium_sync_client.cc b/components/helium_sync/helium_sync_client.cc
+new file mode 100644
+index 0000000000000..22798be8788d4
+--- /dev/null
++++ b/components/helium_sync/helium_sync_client.cc
+@@ -0,0 +1,160 @@
++// Copyright 2026 The Helium Authors
++
++#include "components/helium_sync/helium_sync_client.h"
++
++#include <memory>
++#include <string>
++#include <utility>
++
++#include "base/json/json_writer.h"
++#include "base/strings/escape.h"
++#include "base/values.h"
++#include "net/base/load_flags.h"
++#include "net/base/net_errors.h"
++#include "net/traffic_annotation/network_traffic_annotation.h"
++#include "services/network/public/cpp/resource_request.h"
++#include "services/network/public/cpp/simple_url_loader.h"
++
++namespace helium_sync {
++namespace {
++
++constexpr char kContentType[] = "application/json";
++
++constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
++    net::DefineNetworkTrafficAnnotation("helium_sync_local_daemon", R"(
++      semantics {
++        sender: "Helium sync local daemon client"
++        description:
++          "Sends user-enabled Helium browser sync records to a local daemon."
++        trigger:
++          "The user has enabled helium-sync integration in their Helium fork."
++        data:
++          "Open tab metadata, password-manager records, and cookies serialized "
++          "by browser APIs. Payload encryption is performed by the local daemon."
++        destination: LOCAL
++        internal {
++          contacts {
++            email: "security@imput.net"
++          }
++        }
++        user_data {
++          type: ACCESS_TOKEN
++          type: SENSITIVE_URL
++          type: WEB_CONTENT
++        }
++        last_reviewed: "2026-06-03"
++      }
++      policy {
++        cookies_allowed: NO
++        setting:
++          "This client is only active when the user enables helium-sync in the "
++          "Helium fork and configures the local daemon token."
++        policy_exception_justification:
++          "Not implemented as an enterprise policy yet."
++      })");
++
++base::Value::Dict RecordToValue(const Record& record) {
++  base::Value::Dict value;
++  value.Set("kind", record.kind);
++  value.Set("key", record.key);
++  value.Set("version", base::NumberToString(record.version));
++  value.Set("updated_at", record.updated_at.ToDeltaSinceWindowsEpoch().InMicroseconds());
++  value.Set("deleted", record.deleted);
++  value.Set("origin_device", record.origin_device);
++  value.Set("payload", record.payload_json);
++  return value;
++}
++
++}  // namespace
++
++HeliumSyncClient::HeliumSyncClient(
++    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
++    GURL base_url,
++    std::string bearer_token,
++    std::string device_name)
++    : url_loader_factory_(std::move(url_loader_factory)),
++      base_url_(std::move(base_url)),
++      bearer_token_(std::move(bearer_token)),
++      device_name_(std::move(device_name)) {}
++
++HeliumSyncClient::~HeliumSyncClient() = default;
++
++void HeliumSyncClient::Push(std::vector<Record> records, PushCallback callback) {
++  base::Value::Dict body;
++  body.Set("device", device_name_);
++  base::Value::List values;
++  for (const auto& record : records) {
++    values.Append(RecordToValue(record));
++  }
++  body.Set("records", std::move(values));
++
++  std::string body_json;
++  if (!base::JSONWriter::Write(body, &body_json)) {
++    std::move(callback).Run(false, "failed to encode push JSON");
++    return;
++  }
++
++  auto loader = MakeJSONRequest(base_url_.Resolve("/v1/records/push"),
++                                "POST", std::move(body_json));
++  auto* loader_ptr = loader.get();
++  loaders_.push_back(std::move(loader));
++  loader_ptr->DownloadToString(
++      url_loader_factory_.get(),
++      base::BindOnce(&HeliumSyncClient::OnPushComplete,
++                     weak_factory_.GetWeakPtr(), std::move(callback)),
++      1024 * 1024);
++}
++
++void HeliumSyncClient::Pull(int64_t since,
++                            std::vector<std::string> kinds,
++                            PullCallback callback) {
++  std::string path = "/v1/records/pull?since=" + base::NumberToString(since);
++  for (const auto& kind : kinds) {
++    path += "&kind=" + base::EscapeQueryParamValue(kind, true);
++  }
++  auto loader = MakeJSONRequest(base_url_.Resolve(path), "GET", std::string());
++  auto* loader_ptr = loader.get();
++  loaders_.push_back(std::move(loader));
++  loader_ptr->DownloadToString(
++      url_loader_factory_.get(),
++      base::BindOnce(&HeliumSyncClient::OnPullComplete,
++                     weak_factory_.GetWeakPtr(), std::move(callback)),
++      16 * 1024 * 1024);
++}
++
++void HeliumSyncClient::OnPushComplete(PushCallback callback,
++                                      std::unique_ptr<std::string> body) {
++  if (!body) {
++    std::move(callback).Run(false, "push failed");
++    return;
++  }
++  std::move(callback).Run(true, std::string());
++}
++
++void HeliumSyncClient::OnPullComplete(PullCallback callback,
++                                      std::unique_ptr<std::string> body) {
++  if (!body) {
++    std::move(callback).Run(false, std::string(), "pull failed");
++    return;
++  }
++  std::move(callback).Run(true, *body, std::string());
++}
++
++std::unique_ptr<network::SimpleURLLoader> HeliumSyncClient::MakeJSONRequest(
++    GURL url,
++    std::string method,
++    std::string body) {
++  auto request = std::make_unique<network::ResourceRequest>();
++  request->url = std::move(url);
++  request->method = std::move(method);
++  request->load_flags = net::LOAD_BYPASS_CACHE | net::LOAD_DISABLE_CACHE;
++  request->headers.SetHeader("Authorization", "Bearer " + bearer_token_);
++  auto loader = network::SimpleURLLoader::Create(std::move(request),
++                                                 kTrafficAnnotation);
++  if (!body.empty()) {
++    loader->AttachStringForUpload(std::move(body), kContentType);
++  }
++  return loader;
++}
++
++}  // namespace helium_sync
