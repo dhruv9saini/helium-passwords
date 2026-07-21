@@ -13,7 +13,7 @@ details.
 | HP-005 | P1 | Open | The last full matrix did not complete Windows or macOS x86_64. | All six desktop artifact jobs finish or unsupported targets are explicitly removed from the matrix. |
 | HP-006 | P1 | Open | Builds use moving platform `main` refs and do not emit a complete provenance manifest. | Platform commits, Helium core, Chromium version, GN args, patch hashes, and artifact hash are immutable build inputs/outputs. |
 | HP-007 | P2 | Ready locally | Repositories and developer commands were fragmented. | Both repos live under `/home/d/coding/helium`, share `scripts/dev.sh`, and Sync contains Passwords `main` through Git ancestry. |
-| HP-008 | P2 | Open | There are no public fixture pages or browser-driving acceptance tests. | A small local test site and driver cover save/update/autofill without real credentials or profiles. |
+| HP-008 | P2 | Fixture complete; browser driver open | The dependency-free loopback fixture provides same-origin login and password-change forms with correct autocomplete semantics, never parses/logs/reflects submitted values, and has synthetic HTTP tests. | A disposable-browser driver uses the fixture to prove native save/update/autofill without real credentials or profiles. |
 | HP-009 | P0 | Blocked | Chromiumer SSH and isolation are ready, but its whole 116 GiB root filesystem cannot satisfy empty-job admission: a 100 GiB job-tree allowance plus an independent 20 GiB operational reserve. The build toolchain is also absent. | Chromiumer has a local build filesystem with at least 120 GiB available, retains 20 GiB free on `/`, has a pinned Nix/Docker toolchain, and production `scripts/chromiumer-job.sh preflight` passes. |
 
 Do not close an issue based only on patch metadata lint or overlay injection.

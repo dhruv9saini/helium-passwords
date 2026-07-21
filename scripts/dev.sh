@@ -31,6 +31,9 @@ check_javascript() {
     while IFS= read -r -d '' script; do
         node --check "${script}"
     done < <(find "${root_dir}/scripts" -type f -name '*.mjs' -print0 | sort -z)
+    while IFS= read -r -d '' test_script; do
+        node --test "${test_script}"
+    done < <(find "${root_dir}/scripts/tests" -type f -name '*.test.mjs' -print0 | sort -z)
 }
 
 check_python() {
