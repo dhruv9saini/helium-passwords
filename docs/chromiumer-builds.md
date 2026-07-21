@@ -269,9 +269,10 @@ The remaining setup gate is:
    for the public Linux wrapper that actually calls it.
 2. Re-run `preflight 80` after the tool closure is present; if the remaining
    headroom is insufficient, add a local build disk rather than using the NAS.
-3. Adding RAM and local swap remains useful before expecting a full link to
-   finish; the isolation limits protect the machine but may make the build
-   fail cleanly.
+3. Measure the bounded compile under the existing 5 GiB hard memory cap. Host
+   swap cannot help the build because its cgroup has `MemorySwapMax=0`, and
+   extra RAM does not raise `MemoryMax=5G`. If the proof hits that cap, record
+   the failure before making a separate hardware and cgroup-policy decision.
 4. Re-run `connection`, budgeted `preflight`, and the short wrapper test before
    staging.
 
