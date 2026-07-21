@@ -1,5 +1,9 @@
 # Chromium / Helium Integration Notes
 
+This file describes integration intent. The audited target architecture is in
+[`architecture.md`](architecture.md), known gaps are in [`../TODO.md`](../TODO.md),
+and release evidence must satisfy [`acceptance.md`](acceptance.md).
+
 ## Do Not Sync Raw Files
 
 Avoid syncing these directly:
@@ -86,8 +90,8 @@ The Android workflow uses a reduced Chromium Android checkout and builds
 `small`, skips test-only Android CIPD payloads, changes the package to
 `computer.helium.sync`, and adds `cc_wrapper = "ccache"` to generated GN args.
 Android builds default to `ffmpeg_branding = "Chrome"` and
-`proprietary_codecs = true` so ordinary non-DRM H.264/AAC/MP4 playback works in
-the APK; this does not add DRM support.
+`proprietary_codecs = true`, but the resulting codec set and playback path have
+not yet been validated in a post-change APK. These flags do not add DRM support.
 
 Full Chromium builds are expensive. Larger/self-hosted runners are preferred.
 Standard `ubuntu-24.04` runners can smoke-test wiring, but previous full builds

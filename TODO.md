@@ -1,38 +1,24 @@
-# Arch Desktop Fixes
+# Helium Sync Issues
 
-- [x] Fix Super/Command in both paths: Termux:X11 direct hardware input and Arch Desktop controller forwarding.
-- [x] Make Ctrl/shortcut chaining reliable without needing to click the display first.
-- [x] Make key repeat faster in X11 and in the Arch Desktop controller.
-- [x] Stabilize mouse speed by avoiding repeated pointer transforms and pinning X11 acceleration.
-- [x] Make the phone-screen trackpad faster for pointing, slower for natural scrolling.
-- [x] Reopening Arch Desktop from home attaches to a running session and waits during hibernate/stop instead of starting a second session.
-- [x] With no external monitor, Arch Desktop opens normal phone Termux:X11 with Termux's mouse helper and extra keyboard visible.
-- [x] Install/load the current laptop Helium extension set and settings in chroot Helium.
-- [x] Stop CookieCloud/CDP cookie sync from deleting or expiring cookies while browsing.
-- [x] Stop repeated mirror/extend prompts by removing display-enable calls from attach/focus polling.
-- [x] Stop the OS-wide SystemUI "Mirror to external display?" prompt with a display-manager hotplug auto-enable service.
-- [x] Prevent duplicate Arch Desktop resume requests from queueing and restarting the chroot.
-- [x] Deploy the latest keyboard/display-association and dark-mode scripts to the phone after ADB reconnects, then verify live state.
+This is the canonical private product ledger. Public backbone issues use the
+stable `HP-*` IDs in [ISSUES.md](ISSUES.md). Do not close an issue from patch
+lint, overlay injection, or a successful compile alone.
 
-Verification snapshot:
-
-- External display target detected as display 38 at 2560x1440, with Termux:X11 fullscreen on that display and the controller on display 0.
-- Termux:X11 external prefs hide the mouse helper/extra keyboard, enable pointer capture, set custom resolution 2560x1440, and use pointer speed 145.
-- The focus helper now waits for the X socket before sending pointer-capture taps; this prevents the Termux:X11 MotionEvent ANR seen when the activity was tapped before the server was ready.
-- Magic Keyboard Command/Super now uses the root uinput remapper: it grabs the physical Magic Keyboard event device, republishes it as `Arch Magic Keyboard Remap`, and rewrites Linux keycodes 125/126 to `KEY_RIGHTALT` so Termux:X11 can map Android right-Alt to X11 Super/mod4.
-- X11 maps left Option as `Alt_L`; keycode 108 plus 133/134/204/205/206/207 are all Super/mod4 for the Termux:X11 Command-key paths.
-- Verified on the live phone that the remapper process was running, Android registered the virtual `Arch Magic Keyboard Remap` input device, and synthetic input through the physical Magic Keyboard event device emitted `KEY_RIGHTALT` on the virtual device.
-- Verified at X level that physical-event Command produces X keycode 108 and Enter arrives with mod4 active.
-- Verified XMonad hotkeys through the physical Magic Keyboard event path: Command+Enter opened a new Zutty terminal, and Command+H opened the hotkey list.
-- Arch Desktop controller stays visible on display 0 after attach and no longer runs root hibernate work from `onDestroy`.
-- Cold external start after hibernate reached `session.state=running` in 7791 ms.
-- Reopening Arch Desktop while the session was already running completed the attach path without starting a second session.
-- Chroot Helium started with the migrated laptop extension directories plus the local CookieCloud, uBO, AI Overview blocker, blank new tab, pinned-tab, and tab-sync helpers.
-- XMonad config is managed by `xmonad-desktop-config-root.sh`: single BSP layout, BSP control bindings, dark hotkey list wrapper, Dolphin dark wrapper, and KDE/Qt dark config for root plus `dhruv`.
-- Screenshot-verified Dolphin and the hotkey list in dark mode on the external display.
-- The SystemUI mirror prompt was traced to AOSP `ConnectingDisplayViewModel` /
-  `MirroringConfirmationDialogDelegate`; the button calls
-  `DisplayManager.enableConnectedDisplay(id)`. The phone-side service now
-  listens for connected external displays, backs that with a 100 ms
-  DisplayManagerGlobal binder poll, and runs that same enable path before the
-  prompt needs user input.
+| ID | Priority | Status | Issue | Exit criterion |
+| --- | --- | --- | --- | --- |
+| HS-001 | P0 | Open | Native password sync exports every local credential before it pulls remote state. A stale device can therefore publish an old password as the newest record. | Two-device offline/change/reconnect tests preserve the newest intended credential, initial merge has explicit metadata, and restart does not republish unchanged credentials. |
+| HS-002 | P0 | Open | CookieCloud keys omit Chromium's partition key and the payload drops it, so CHIPS cookies collide or become unpartitioned. | Partitioned and unpartitioned cookies with the same domain/path/name round-trip independently with `topLevelSite` and `hasCrossSiteAncestor`. |
+| HS-003 | P0 | Open | Auth-cookie sync has no source authority or rotation model. A stale device can republish a superseded token, and device-bound sessions cannot move to another device. | Each domain has an explicit source/replica policy; replicas never upload; rotations replace older generations; device-bound sessions produce a clear reauthentication result. |
+| HS-004 | P0 | Open | Tabs exist only as a generic record kind and documentation. There is no Chromium tab producer/consumer, snapshotter, validation, retention, or restore drill. | All four durability layers in `docs/architecture.md` pass the tests in `docs/acceptance.md`, including malformed remote state and disposable-profile restore. |
+| HS-005 | P0 | Open | The Android build starts from raw moving Chromium and applies six private patches. It does not consume the Helium Passwords/Helium common patch train. | Android build inputs name one pinned public backbone and Chromium commit, the composed patch set is source-checked, and artifact provenance proves what was built. |
+| HS-006 | P0 | Needs build/device | Android video failure is not reproduced by a deterministic codec matrix. `ffmpeg_branding="Chrome"` and `proprietary_codecs=true` are configured but unvalidated. | Upstream-control and Helium Sync APKs from the same Chromium SHA pass/fail a recorded MP4/H.264/AAC, WebM/VP9/Opus, AV1, MSE, and DRM-expected-failure matrix. |
+| HS-007 | P0 | Needs build/device | ChatGPT-style response streaming has no deterministic reproduction and none of the six Android patches intentionally changes Blink or page networking. | Timed HTTP/1.1 chunked, HTTP/2, HTTP/3, SSE, and Fetch `ReadableStream` fixtures record first-byte/chunk timing; patched/unpatched APK A/B identifies the failing layer. |
+| HS-008 | P1 | Open | Password payload `helium-password-v1` discards many Chromium fields and bypasses Chromium's mature password sync merge semantics. | The schema is versioned from `PasswordSpecificsData` or equivalently complete, validated, migration-tested, and conflict behavior matches native password semantics. |
+| HS-009 | P1 | Open | The sync bearer token is loaded once, has no key ID, overlap window, revocation list, or rotation command. | Rotation supports current+next tokens for a bounded window, atomically updates clients, revokes the old token, and has a recovery drill. |
+| HS-010 | P1 | Blocked external | Every private Actions job is rejected before its first step because of the GitHub account billing/spend limit. | A new private Go and lint run executes steps and passes; expensive Chromium workflows remain manual. |
+| HS-011 | P1 | Open | CookieCloud uses legacy MD5-derived AES-CBC without authentication and a single overwritten JSON file. | Sensitive cookie records use an authenticated format, atomic writes, independent backup generations, and corruption tests. |
+| HS-012 | P1 | Open | The append-only encrypted store has one `records.jsonl`; one malformed line prevents startup, and there is no independent backup/restore verification. | Atomic snapshot generations, hashes, retention, corruption isolation, and restore tests exist without logging plaintext. |
+| HS-013 | P1 | Open | Artifact builds do not emit a complete machine-readable provenance manifest or run product acceptance tests. | Every artifact records commits, Chromium/Helium versions, GN args, patch hashes, toolchain, target, and artifact hash before testing. |
+| HS-014 | P2 | Ready locally | Development layout, repo identity, shared command, and Git backbone were fragmented. | Both clean repositories are under `/home/d/coding/helium`, canonical URLs are used, and `scripts/dev.sh check` proves Passwords ancestry and patch identity. |
+| HS-015 | P2 | Open | Android/Arch device setup concerns dominate `AGENTS.md` and obscure browser product invariants. | Device instructions remain accurate but product architecture, issue IDs, commands, and acceptance gates are the first references contributors encounter. |
+| HS-016 | P0 | Blocked capacity | Dedicated lm-to-chromiumer SSH and the isolated build wrapper pass a harmless test, but chromiumer has only about 106 GiB free against the enforced 120 GiB threshold and lacks Git/Python/Docker build tooling in its login environment. | A local chromiumer build filesystem and pinned toolchain make production `scripts/chromiumer-job.sh preflight` pass; no limit is weakened and no live build uses lm or the NAS. |

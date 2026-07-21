@@ -1,59 +1,228 @@
-# Architecture
+# Helium Sync Architecture
 
-## Goal
+This document is the target architecture. The audit in
+`audit-2026-07-21.md` distinguishes implemented behavior from design work.
 
-Sync Helium browser state across Linux and Android Helium builds:
+## Product and Repository Boundaries
 
-- open tabs
-- Helium built-in password-manager entries
-- cookies
+Helium Passwords is the public browser backbone. It owns native Chromium
+password-manager restoration, desktop platform preparation, and the shared
+developer command. Helium Sync is a private downstream Git history for the
+personal browsers on `oneplus`, `d`, and `da`.
 
-The standalone sync layer must not scrape or copy raw Chromium profile SQLite files. Raw database copying is brittle across Chromium versions and bypasses validation, encryption, metadata, and deletion semantics. Helium integration should use Chromium APIs and serialize API-level records into `helium-syncd`.
+The source flow is one-way:
 
-## Components
+```text
+imputnet/helium + platform release train
+                  |
+                  v
+dhruv9saini/helium-passwords (public native password backbone)
+                  |
+                  v  Git merge through the `passwords` remote
+dhruv9saini/helium-sync (private sync + Android + device integration)
+```
 
-### `helium-syncd`
+No script copies shared patches from one working tree to the other. The private
+history contains the public commit, and `scripts/dev.sh check` verifies both
+ancestry and byte identity of the password patches.
 
-`helium-syncd` is a localhost HTTP daemon. It owns the encrypted append-only store and exposes a minimal JSON API to Helium or test clients.
+Desktop and Android artifacts must resolve one immutable source manifest:
 
-### `helium-sync`
+- public and private repository commits;
+- Helium core and platform commits;
+- Chromium commit/version;
+- ordered patch hashes;
+- complete GN args and target;
+- toolchain/container identity; and
+- artifact hash.
 
-`helium-sync` is a CLI for initialization and testing. It creates the passphrase and token files, pushes JSON records, pulls records, and inspects a browser profile without printing secrets.
+Moving `main` is not a build input.
 
-### Store
+`lm` is the development control plane, not a Chromium executor. Large Linux
+and Android jobs run on chromiumer through the shared fail-closed wrapper in
+`docs/chromiumer-builds.md`. Its cgroup, workspace, reserve, watchdog, and wall
+time policy is part of artifact provenance; a build outside that envelope is
+not an accepted artifact. The NAS receives completed, hashed artifacts but is
+not a compiler workspace.
 
-The store is append-only:
+## Data Ownership
 
-- `config.json`: salt and KDF parameters
-- `records.jsonl`: encrypted records
+| Data | Authoritative local interface | Cross-device role | Deletion policy |
+| --- | --- | --- | --- |
+| Passwords | Chromium `PasswordStoreInterface` and native password UI | Encrypted API-level records using complete Chromium credential semantics | Add/update only until deletion is explicitly designed and tested |
+| Cookies | Chromium `CookieManager` or CDP `Storage` with the complete cookie key | Best-effort, per-domain source-to-replica handoff | Expiry is local; replica loss never deletes source state |
+| Open tabs | Chromium session/tab APIs | Per-device foreign-session catalog, not a global merged window | Remote deletion cannot remove local tabs or snapshots |
+| Session snapshots | Immutable versioned snapshot store | Recovery only | Retention removes only validated old generations in the same store |
 
-Each record contains unencrypted routing metadata and an AES-GCM encrypted payload. The metadata is authenticated as AEAD additional data so tampering with sequence, kind, key, version, deletion, updated time, or origin device causes decryption failure.
+Raw `Login Data` and cookie databases are never sync inputs. Tests use fresh
+profiles and fixture credentials. Session files may be snapshotted only by the
+dedicated tab recovery layer and are never treated as a cross-version API.
 
-## Conflict Behavior
+## Password Convergence
 
-`pull` returns all records after a sequence number. `latest` collapses records by `(kind, key)` and picks:
+The current append-only daemon is a transport/store, not a conflict algorithm.
+The completed design must persist per-credential sync metadata and avoid an
+export-before-pull startup race.
 
-1. highest `version`
-2. highest append `seq`
+Each record needs:
 
-Deleted records are tombstones. `latest` hides tombstones by default, but clients can request them with `include_deleted=true`.
+- stable storage key derived with Chromium's password sync rules;
+- schema version and complete `PasswordSpecificsData`-equivalent payload;
+- content hash;
+- source device and device-local mutation counter;
+- server sequence and last-applied sequence per client; and
+- explicit operation (`upsert` only initially).
 
-## Browser Integration Path
+Startup is reconcile-first:
 
-Helium should add a browser-side sync service that:
+1. Load durable last-applied metadata.
+2. Pull records after the durable server sequence.
+3. Validate and merge remote records through native password APIs.
+4. Query the local store and publish only locally changed records.
+5. Persist applied/published metadata atomically.
 
-1. Watches local browser changes.
-2. Serializes changes into `PlainRecord` payloads.
-3. Pushes them to `helium-syncd`.
-4. Polls or subscribes for remote changes.
-5. Applies remote records through Chromium APIs.
+An unchanged device restart must emit zero credential updates. A local edit and
+a remote edit of the same credential must be resolved using Chromium's native
+password timestamps/merge semantics or surfaced as a conflict; wall-clock
+arrival alone is insufficient.
 
-Recommended hooks:
+The daemon token is separate from password encryption. Rotation uses token IDs,
+current+next overlap for a bounded interval, atomic client config replacement,
+explicit revocation, and a recovery token stored outside browser profiles.
 
-- Passwords: `PasswordStoreInterface` and existing `PasswordForm` serialization, similar to Chromium's own password sync bridge path.
-- Cookies: `network::mojom::CookieManager::GetAllCookies`, `SetCanonicalCookie`, and `AddGlobalChangeListener`.
-- Tabs: `TabStripModelObserver`, `TabStripModel`, and session/navigation entries.
+## Cookies and Login Sessions
 
-## Android
+Cookie identity is at least:
 
-The same daemon can run in the Termux or chroot environment. Android Helium should talk to `127.0.0.1:<port>` over the same JSON API. If Android app sandboxing blocks direct localhost access from the browser process, the Android integration should use a small app-local bridge service and keep this daemon API unchanged.
+```text
+partitionKey(topLevelSite, hasCrossSiteAncestor) /
+domain / path / name / sourceScheme / sourcePort
+```
+
+The current three-field key is invalid for partitioned cookies. Host-only versus
+domain cookies, `Secure`, `HttpOnly`, `SameSite`, priority, expiry, source
+scheme/port, and the complete partition key must survive validation and
+round-trip.
+
+Authentication cookies are not symmetric multi-writer data. Configuration
+assigns one source device per domain and zero or more replicas:
+
+- only the source uploads for that domain;
+- replicas apply newer generations but never upload them;
+- a source-observed rotation supersedes the old generation;
+- expired records are ignored, not re-created;
+- a rejected replica token marks the replica as requiring reauthentication;
+- a replica failure or local deletion never propagates to the source.
+
+Device Bound Session Credentials cannot be made portable by copying their
+short-lived cookie. They rely on a private key held by the original device and
+Chrome may refresh the cookie by proving possession. Such sites must retain
+per-device login or use a site-supported transfer/login flow. DBSC currently
+does not support partitioned cookies, which is another reason to model the two
+features independently.
+
+Android may suspend the browser and its DevTools socket while the desktop
+browser remains continuously reachable. The stable Android endpoint should be
+a native CookieManager bridge; CDP remains a diagnostic path with bounded
+retries and an explicit unavailable state.
+
+## Durable Tabs: Four Independent Layers
+
+Tabs are durable user data. No layer may have permission to erase all other
+layers.
+
+### 1. Chromium local session restore
+
+Keep Chromium's own session service and restore-last-session preference. Do not
+mark a previously unclean profile clean before Chromium decides whether crash
+recovery is needed. Local session restore is the fastest recovery path, but its
+small rolling set of `Session_*`/`Tabs_*` files is not a backup.
+
+### 2. Cross-device foreign-session catalog
+
+Use Chromium's session/tab models where practical. Each device owns a namespace
+and publishes immutable generations of windows, tabs, navigation entries,
+pinned/group state, and activity timestamps. Other devices show these as
+foreign sessions and copy selected tabs into local state; they do not replace
+the local window automatically.
+
+Remote tab records are schema-checked, size/count bounded, URL-scheme filtered,
+and parent-generation checked before publication. A malformed update is
+quarantined while the previous good generation remains available.
+
+### 3. Independent versioned snapshots
+
+Each device writes snapshots to a store that is not the live profile and is not
+the sync database. A snapshot is created only from a quiescent browser or with
+a stable-copy protocol, then committed by temp-write, file sync, manifest/hash
+verification, directory sync, and atomic rename.
+
+The manifest contains device/profile ID, browser/Chromium version, capture
+time, reason, parent generation, file hashes, sizes, and validation status.
+Snapshots never share a deletion namespace across devices.
+
+Initial retention policy:
+
+- 24 hourly generations;
+- 14 daily generations;
+- 12 weekly generations; and
+- two protected known-good restore-drill generations.
+
+Retention runs only after the newest snapshot validates and never deletes the
+last valid generation.
+
+### 4. Restore validation and drills
+
+Restore always targets a new disposable profile first. The drill verifies
+manifest hashes, parses/loads the snapshot with a compatible browser, counts
+windows/tabs, checks representative URLs/pinned/group state, restarts again,
+and records the result. Promotion to the real profile is a separate atomic,
+backed-up operation performed only while the browser is stopped.
+
+Quarterly drills and every browser-major update must validate at least one
+recent and one protected snapshot on every device class.
+
+## Android Media and Streaming
+
+Media and response streaming are separate test dimensions.
+
+`ffmpeg_branding = "Chrome"` plus `proprietary_codecs = true` enables relevant
+compiled codec support, but does not prove decoder availability, MSE behavior,
+DRM/Widevine, or that the installed APK contains those args. Every APK manifest
+must capture GN args and use deterministic media fixtures. `chrome://media-internals`
+and Android logcat identify demuxer, decoder, and pipeline failures.
+
+ChatGPT is a useful manual scenario but not a reproducible streaming test. The
+automated fixture emits numbered chunks at one-second intervals over HTTP/1.1
+chunked transfer, HTTP/2, HTTP/3, SSE, and a Fetch `ReadableStream`. The driver
+records headers, first byte, each visible chunk, completion, protocol, content
+encoding, and renderer/network errors. Test a clean upstream Chromium APK and a
+patched Helium Sync APK built from the same Chromium commit; if only the latter
+fails, bisect the ordered private patches.
+
+## Store Durability
+
+`records.jsonl` remains an append-only journal, but it is not the only copy.
+The daemon must periodically create authenticated snapshot generations with
+the last sequence, journal hash, record counts, and key/schema inventory.
+Startup validates from newest to oldest, quarantines a damaged tail instead of
+discarding earlier valid records, and never logs decrypted payloads. Backup and
+restore tests use synthetic records only.
+
+## References
+
+- Chromium password manager architecture:
+  <https://chromium.googlesource.com/chromium/src/+/HEAD/components/password_manager/README.md>
+- Chromium password specifics schema:
+  <https://chromium.googlesource.com/chromium/src/+/main/components/sync/protocol/password_specifics.proto>
+- Chromium synced sessions component:
+  <https://chromium.googlesource.com/chromium/src/+/HEAD/components/sync_sessions/>
+- Chromium session restore source:
+  <https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/browser/sessions/session_restore.h>
+- DevTools cookie types and partition keys:
+  <https://chromedevtools.github.io/devtools-protocol/tot/Network/#type-CookiePartitionKey>
+- Device Bound Session Credentials:
+  <https://developer.chrome.com/docs/web-platform/device-bound-session-credentials>
+- OAuth token rotation guidance: <https://www.rfc-editor.org/rfc/rfc9700.html>
+- Chromium media architecture:
+  <https://chromium.googlesource.com/chromium/src/+/HEAD/media/README.md>

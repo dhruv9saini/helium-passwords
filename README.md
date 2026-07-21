@@ -15,6 +15,12 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for the shared Passwords/Sync backbone and
 upstream process. [ISSUES.md](ISSUES.md) is the public-backbone ledger; the
 private product ledger is [TODO.md](TODO.md).
 
+The current audit, target architecture, and release gates are in
+[docs/audit-2026-07-21.md](docs/audit-2026-07-21.md),
+[docs/architecture.md](docs/architecture.md), and
+[docs/acceptance.md](docs/acceptance.md). Treat existing sync bridges as
+experimental until the P0 items in `TODO.md` pass those gates.
+
 ## What This Repo Adds
 
 - Native password-manager restoration patches from `helium-passwords`.
@@ -125,9 +131,11 @@ hours-long local cost of Chromium's official optimized Android build path. Set
 The helper also pins local phone builds to `chrome_pgo_phase = 0`, so they do
 not require Chromium/V8 PGO profiles that are absent from a small local
 checkout, and sets `android_static_analysis = "off"` so local phone APK builds
-do not run Android Error Prone validation during the main app build. It builds
-Android with `ffmpeg_branding = "Chrome"` and `proprietary_codecs = true` so
-normal MP4/H.264/AAC web video works; this does not add DRM/Widevine support.
+do not run Android Error Prone validation during the main app build. It
+configures Android with `ffmpeg_branding = "Chrome"` and
+`proprietary_codecs = true`. Those flags are necessary for the intended
+MP4/H.264/AAC path but have not yet been validated in a post-change APK; they
+also do not add DRM/Widevine support.
 It also defaults `CHROMIUM_ANDROID_USE_SISO=auto`: existing Siso out
 dirs continue using Siso, because Chromium requires `gn clean` before switching
 that same out dir to Ninja, while fresh local out dirs use Ninja unless
@@ -140,11 +148,10 @@ output dirs may also set `CHROMIUM_ANDROID_SISO_FLAGS="--batch=false"` to keep
 Siso's fast local path enabled in non-interactive resumes, but only keep that
 setting if `vmstat` shows no sustained swap-out.
 
-Android Chromium builds default to `ffmpeg_branding = "Chrome"` and
-`proprietary_codecs = true` so normal non-DRM H.264/AAC/MP4 playback works in
-the Android APK. Override with `CHROMIUM_ANDROID_FFMPEG_BRANDING` or
+Override the codec defaults with `CHROMIUM_ANDROID_FFMPEG_BRANDING` or
 `CHROMIUM_ANDROID_PROPRIETARY_CODECS` only when intentionally testing the
-codec-stripped Chromium path. This does not add DRM support.
+codec-stripped Chromium path. Successful compilation, codec enumeration, and
+playback are separate acceptance checks; see `docs/acceptance.md`.
 
 Google AI Overview blocking for the Android main browser is built into the
 Android fork by `chromium/patches/0006-helium-sync-android-ai-overview-blocker.patch`.

@@ -3,6 +3,14 @@
 This path handles phone-local cookie sync plus native password-manager sync
 between Android Helium Sync and the Arch chroot browser.
 
+Status: experimental. The current cookie bridge does not preserve Chromium
+partition keys or distinguish an authoritative token source from replicas, and
+the native password bridge exports before its first pull. Do not treat it as a
+durable or conflict-safe sync system until HS-001 through HS-004 in
+[`TODO.md`](../TODO.md) pass the gates in
+[`docs/acceptance.md`](acceptance.md). Device-bound session credentials are not
+portable cookie data and must be re-established on each device.
+
 It runs all sync services on the phone:
 
 - `helium-local-syncd` listens on `127.0.0.1:8088` inside the Arch chroot.

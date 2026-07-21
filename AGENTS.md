@@ -1,11 +1,23 @@
 # helium-sync
 
-This repo is the private `oof-baroomf/helium-sync` fork. It is based on
-`oof-baroomf/helium-passwords`, which is itself a Helium Browser fork that
+This repo is the private `dhruv9saini/helium-sync` fork. It is based on
+`dhruv9saini/helium-passwords`, which is itself a Helium Browser fork that
 restores Chromium's native password manager.
 
 ## Operating Rules
 
+- Keep a `passwords` Git remote for the public fork and merge its `main`
+  branch into this history. Do not copy shared patches between repositories by
+  hand. `scripts/dev.sh check` verifies ancestry and byte identity.
+- `TODO.md` is the canonical private issue ledger. Do not use completed device
+  setup notes as a substitute for product acceptance evidence.
+- Full Chromium builds do not run on `lm`. Every artifact must record the
+  public/private commits, Helium and Chromium revisions, GN args, patch hashes,
+  target, and artifact hash.
+- Orchestrate large Linux and Android builds from lm with
+  `scripts/chromiumer-job.sh` and follow `docs/chromiumer-builds.md`. Never
+  bypass its production preflight, cgroup limits, watchdog, artifact receipt,
+  or cleanup gate. The NAS is an artifact destination, not a live build volume.
 - Keep this repo based on `helium-passwords`; do not turn it back into a plain
   Chromium-only repo.
 - Password sync must use Chromium's native password-manager APIs and the local
