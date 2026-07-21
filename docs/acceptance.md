@@ -26,7 +26,8 @@ the browser gates below.
 - Ordered patch hashes and complete GN args match the artifact manifest.
 - Every patch passes source-backed application checks before compilation.
 - `scripts/dev.sh check` passes in both repositories.
-- `scripts/chromiumer-job.sh preflight` passes, the source manifest matches the
+- `scripts/chromiumer-job.sh preflight <disk-budget-gib>` passes, the staged
+  job records that same explicit budget, the source manifest matches the
   staged commit/tree/archive, and the detached job reports the production
   cgroup limits and a healthy watchdog.
 - The returned artifact hash matches chromiumer's hash and an artifact receipt

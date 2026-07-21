@@ -100,7 +100,8 @@ non-APK target fails packaging instead of pretending to be an APK artifact.
 
 ```sh
 job=hs-android-148-media-flags-01
-scripts/chromiumer-job.sh stage "$job"
+scripts/chromiumer-job.sh preflight 80
+scripts/chromiumer-job.sh stage "$job" 80
 scripts/chromiumer-job.sh start "$job" -- env \
   HELIUM_SYNC_REPO=. \
   GITHUB_WORKSPACE=.build \

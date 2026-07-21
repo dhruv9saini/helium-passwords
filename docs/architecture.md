@@ -42,10 +42,11 @@ Moving `main` is not a build input.
 and Android jobs run on chromiumer through the shared fail-closed wrapper in
 `docs/chromiumer-builds.md`. The lm-side wrapper is only the source-transfer and
 control client; its installed chromiumer worker enforces cgroup limits, a
-100 GiB total job-tree allowance, an independent 20 GiB free-space reserve,
-root-filesystem protection, a watchdog, and an eight-hour deadline. That policy
-is part of artifact provenance; a build outside the envelope is not accepted.
-The NAS receives completed, hashed artifacts but is not a compiler workspace.
+declared per-job disk budget, a 2 GiB unprivileged root-filesystem floor, a
+watchdog, and an eight-hour deadline. A separate build mount consumes only its
+job budget while `/` retains its independent floor. That policy is part of
+artifact provenance; a build outside the envelope is not accepted. The NAS
+receives completed, hashed artifacts but is not a compiler workspace.
 
 ## Data Ownership
 
