@@ -3,6 +3,7 @@ set -euo pipefail
 
 state_root=${HELIUM_CHROMIUMER_STATE_ROOT:-"${HOME}/.local/state/helium-builds"}
 work_root=${HELIUM_CHROMIUMER_WORK_ROOT:-"${HOME}/helium-builds/work"}
+root_floor_bytes=$((2 * 1024 * 1024 * 1024))
 
 usage() {
     cat >&2 <<'EOF'
@@ -33,9 +34,6 @@ profile() {
             memory_high=4G
             memory_max=5G
             tasks_max=256
-            workspace_limit_bytes=$(gib 100)
-            filesystem_reserve_bytes=$(gib 20)
-            root_reserve_bytes=$(gib 20)
             min_mem_total_bytes=$(gib 7)
             min_mem_available_bytes=$(gib 2)
             watchdog_mem_floor_bytes=$(gib 1)
@@ -49,9 +47,6 @@ profile() {
             memory_high=128M
             memory_max=256M
             tasks_max=32
-            workspace_limit_bytes=$(gib 1)
-            filesystem_reserve_bytes=$(gib 1)
-            root_reserve_bytes=$(gib 1)
             min_mem_total_bytes=$(gib 1)
             min_mem_available_bytes=$((256 * 1024 * 1024))
             watchdog_mem_floor_bytes=$((64 * 1024 * 1024))
@@ -74,12 +69,16 @@ disk_usage_bytes() {
     du -sx -B1 "$1" | awk '{ print $1 }'
 }
 
-required_available_bytes() {
-    local limit=$1
+required_build_available_bytes() {
+    local budget=$1
     local used=$2
-    local reserve=$3
-    [ "${used}" -le "${limit}" ] || return 1
-    printf '%s\n' "$((limit - used + reserve))"
+    local shares_root=$3
+    [ "${used}" -le "${budget}" ] || return 1
+    local required=$((budget - used))
+    if [ "${shares_root}" = yes ]; then
+        required=$((required + root_floor_bytes))
+    fi
+    printf '%s\n' "${required}"
 }
 
 require_worker_host() {
@@ -103,12 +102,19 @@ require_contained_path() {
 
 preflight() {
     local profile_name=$1
-    local probe_path=${2:-"${work_root}"}
-    local accounted_path=${3:-}
+    local disk_budget_gib=$2
+    local probe_path=${3:-"${work_root}"}
+    local accounted_path=${4:-}
+    [[ "${disk_budget_gib}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "preflight failed: disk budget must be a positive whole number of GiB" >&2
+        return 1
+    }
+    local disk_budget_bytes
+    disk_budget_bytes=$(gib "${disk_budget_gib}")
     profile "${profile_name}"
     require_worker_host
 
-    local required=(awk df du find flock install ionice nice realpath sha256sum stat systemctl systemd-run tar timeout)
+    local required=(awk df du find flock install ionice journalctl nice realpath sha256sum stat systemctl systemd-run tar timeout)
     local tool
     for tool in "${required[@]}"; do
         command -v "${tool}" >/dev/null 2>&1 || {
@@ -134,7 +140,7 @@ preflight() {
     probe_path=$(realpath -e "${probe_path}")
     require_contained_path "${probe_path}" "$(realpath -e "${HOME}")"
 
-    local available workspace_bytes remaining_bytes required_space
+    local available workspace_bytes remaining_bytes required_space shares_root
     local root_available probe_device root_device memory_total memory_available
     available=$(df -PB1 "${probe_path}" | awk 'NR == 2 { print $4 }')
     workspace_bytes=0
@@ -143,27 +149,30 @@ preflight() {
         require_contained_path "${accounted_path}" "$(realpath -e "${work_root}")"
         workspace_bytes=$(disk_usage_bytes "${accounted_path}")
     fi
-    [ "${workspace_bytes}" -le "${workspace_limit_bytes}" ] || {
-        echo "preflight failed: workspace_bytes=${workspace_bytes}, workspace_limit_bytes=${workspace_limit_bytes}" >&2
+    [ "${workspace_bytes}" -le "${disk_budget_bytes}" ] || {
+        echo "preflight failed: workspace_bytes=${workspace_bytes}, disk_budget_bytes=${disk_budget_bytes}" >&2
         return 1
     }
-    remaining_bytes=$((workspace_limit_bytes - workspace_bytes))
-    required_space=$(required_available_bytes \
-        "${workspace_limit_bytes}" "${workspace_bytes}" \
-        "${filesystem_reserve_bytes}")
+    remaining_bytes=$((disk_budget_bytes - workspace_bytes))
     root_available=$(df -PB1 / | awk 'NR == 2 { print $4 }')
     probe_device=$(stat -c %d "${probe_path}")
     root_device=$(stat -c %d /)
+    shares_root=no
+    if [ "${probe_device}" = "${root_device}" ]; then
+        shares_root=yes
+    fi
+    required_space=$(required_build_available_bytes \
+        "${disk_budget_bytes}" "${workspace_bytes}" "${shares_root}")
     memory_total=$(meminfo_bytes MemTotal)
     memory_available=$(meminfo_bytes MemAvailable)
 
     [ "${available}" -ge "${required_space}" ] || {
-        echo "preflight failed: available_bytes=${available}, required_bytes=${required_space} (remaining workspace allowance plus filesystem reserve)" >&2
+        echo "preflight failed: build_available_bytes=${available}, required_bytes=${required_space}, disk_budget_remaining_bytes=${remaining_bytes}, build_shares_root=${shares_root}" >&2
         return 1
     }
-    if [ "${probe_device}" != "${root_device}" ]; then
-        [ "${root_available}" -ge "${root_reserve_bytes}" ] || {
-            echo "preflight failed: root_available_bytes=${root_available}, root_reserve_bytes=${root_reserve_bytes}" >&2
+    if [ "${shares_root}" = no ]; then
+        [ "${root_available}" -ge "${root_floor_bytes}" ] || {
+            echo "preflight failed: root_available_bytes=${root_available}, root_floor_bytes=${root_floor_bytes}" >&2
             return 1
         }
     fi
@@ -176,32 +185,24 @@ preflight() {
         return 1
     }
 
-    if [ "${profile_name}" = production ]; then
-        for tool in git python3; do
-            command -v "${tool}" >/dev/null 2>&1 || {
-                echo "preflight failed: missing production tool: ${tool}" >&2
-                return 1
-            }
-        done
-    fi
-
     if systemctl --user --quiet is-active 'helium-job-*.service'; then
         echo "preflight failed: another Helium build is active" >&2
         return 1
     fi
 
-    printf 'preflight=ok\nprofile=%s\navailable_bytes=%s\nworkspace_bytes=%s\nworkspace_limit_bytes=%s\nremaining_workspace_bytes=%s\nfilesystem_reserve_bytes=%s\nrequired_available_bytes=%s\nroot_available_bytes=%s\nroot_reserve_bytes=%s\nmemory_total_bytes=%s\nmemory_available_bytes=%s\n' \
-        "${profile_name}" "${available}" "${workspace_bytes}" \
-        "${workspace_limit_bytes}" "${remaining_bytes}" \
-        "${filesystem_reserve_bytes}" "${required_space}" \
-        "${root_available}" "${root_reserve_bytes}" \
+    printf 'preflight=ok\nprofile=%s\ndisk_budget_gib=%s\nbuild_available_bytes=%s\nworkspace_bytes=%s\ndisk_budget_bytes=%s\ndisk_budget_remaining_bytes=%s\nbuild_shares_root=%s\nrequired_build_available_bytes=%s\nroot_available_bytes=%s\nroot_floor_bytes=%s\nmemory_total_bytes=%s\nmemory_available_bytes=%s\n' \
+        "${profile_name}" "${disk_budget_gib}" "${available}" \
+        "${workspace_bytes}" "${disk_budget_bytes}" "${remaining_bytes}" \
+        "${shares_root}" "${required_space}" \
+        "${root_available}" "${root_floor_bytes}" \
         "${memory_total}" "${memory_available}"
 }
 
 stage_init() {
     local job=$1
+    local disk_budget_gib=$2
     validate_job "${job}"
-    preflight production "${work_root}"
+    preflight production "${disk_budget_gib}" "${work_root}"
 
     local state_dir="${state_root}/${job}"
     local job_root="${work_root}/${job}"
@@ -210,7 +211,9 @@ stage_init() {
         exit 1
     }
     mkdir -p "${state_dir}" "${job_root}"
-    printf 'profile=production\nstaged_at=%s\n' "$(date --iso-8601=seconds)" >"${state_dir}/stage.env"
+    printf 'profile=production\ndisk_budget_gib=%s\ndisk_budget_bytes=%s\nstaged_at=%s\n' \
+        "${disk_budget_gib}" "$(gib "${disk_budget_gib}")" \
+        "$(date --iso-8601=seconds)" >"${state_dir}/stage.env"
 }
 
 stage_finish() {
@@ -264,7 +267,8 @@ stage_abort() {
 test_prepare() {
     local job=$1
     validate_job "${job}"
-    preflight test "${work_root}"
+    local disk_budget_gib=1
+    preflight test "${disk_budget_gib}" "${work_root}"
     local state_dir="${state_root}/${job}"
     local test_dir="${work_root}/${job}/test"
     [ ! -e "${state_dir}" ] && [ ! -e "${work_root}/${job}" ] || {
@@ -272,7 +276,9 @@ test_prepare() {
         exit 1
     }
     mkdir -p "${state_dir}" "${test_dir}"
-    printf 'profile=test\nstaged_at=%s\n' "$(date --iso-8601=seconds)" >"${state_dir}/stage.env"
+    printf 'profile=test\ndisk_budget_gib=%s\ndisk_budget_bytes=%s\nstaged_at=%s\n' \
+        "${disk_budget_gib}" "$(gib "${disk_budget_gib}")" \
+        "$(date --iso-8601=seconds)" >"${state_dir}/stage.env"
     printf '%s\n' "${test_dir}"
 }
 
@@ -280,7 +286,8 @@ write_policy() {
     local state_dir=$1
     local profile_name=$2
     local work_dir=$3
-    shift 3
+    local disk_budget_bytes=$4
+    shift 4
     local command_text
     printf -v command_text '%q ' "$@"
     local temp="${state_dir}/policy.env.tmp"
@@ -298,9 +305,8 @@ write_policy() {
         printf 'io_scheduling_class=idle\n'
         printf 'nice=15\n'
         printf 'tasks_max=%s\n' "${tasks_max}"
-        printf 'workspace_limit_bytes=%s\n' "${workspace_limit_bytes}"
-        printf 'filesystem_reserve_bytes=%s\n' "${filesystem_reserve_bytes}"
-        printf 'root_reserve_bytes=%s\n' "${root_reserve_bytes}"
+        printf 'disk_budget_bytes=%s\n' "${disk_budget_bytes}"
+        printf 'root_floor_bytes=%s\n' "${root_floor_bytes}"
         printf 'watchdog_mem_floor_bytes=%s\n' "${watchdog_mem_floor_bytes}"
         printf 'wall_seconds=%s\n' "${wall_seconds}"
         printf 'command=%s\n' "${command_text}"
@@ -331,13 +337,23 @@ start_job() {
     local job_root="${work_root}/${job}"
     job_root=$(realpath -e "${job_root}")
     require_contained_path "${job_root}" "$(realpath -e "${work_root}")"
-    preflight "${profile_name}" "${job_root}" "${job_root}"
 
     local state_dir="${state_root}/${job}"
     [ -f "${state_dir}/stage.env" ] || {
         echo "job is not staged: ${job}" >&2
         exit 1
     }
+    local disk_budget_gib disk_budget_bytes
+    disk_budget_gib=$(awk -F= '$1 == "disk_budget_gib" { print $2 }' \
+        "${state_dir}/stage.env")
+    disk_budget_bytes=$(awk -F= '$1 == "disk_budget_bytes" { print $2 }' \
+        "${state_dir}/stage.env")
+    [[ "${disk_budget_gib}" =~ ^[1-9][0-9]*$ ]] && \
+        [ "${disk_budget_bytes}" = "$(gib "${disk_budget_gib}")" ] || {
+        echo "invalid staged disk budget for ${job}" >&2
+        exit 1
+    }
+    preflight "${profile_name}" "${disk_budget_gib}" "${job_root}" "${job_root}"
     [ ! -e "${state_dir}/policy.env" ] && [ ! -e "${state_dir}/result.env" ] || {
         echo "job has already been started: ${job}" >&2
         exit 1
@@ -355,12 +371,12 @@ start_job() {
     fi
 
     local worker="${state_dir}/worker.sh"
-    local log="${state_dir}/job.log"
     local unit="helium-job-${job}.service"
     local watch_unit="helium-watch-${job}.service"
     mkdir -p "${job_root}/cache" "${job_root}/tmp"
     install -m 700 "$0" "${worker}"
-    write_policy "${state_dir}" "${profile_name}" "${work_dir}" "$@"
+    write_policy "${state_dir}" "${profile_name}" "${work_dir}" \
+        "${disk_budget_bytes}" "$@"
 
     if ! systemd-run --user --unit="${unit%.service}" --collect \
         --property="Description=Isolated Helium build ${job}" \
@@ -377,6 +393,8 @@ start_job() {
         --property="RuntimeMaxSec=${wall_seconds}" \
         --property=KillMode=control-group \
         --property=OOMPolicy=stop \
+        --property=StandardOutput=journal \
+        --property=StandardError=journal \
         --setenv="HELIUM_BUILD_JOBS=${build_jobs}" \
         --setenv="AUTONINJA_JOBS=${build_jobs}" \
         --setenv="NINJA_JOBS=${build_jobs}" \
@@ -397,16 +415,15 @@ start_job() {
         --property=TasksMax=16 \
         --property="RuntimeMaxSec=$((wall_seconds + 300))" \
         "${worker}" watch "${state_dir}" "${job_root}" "${unit}" \
-        "${workspace_limit_bytes}" "${filesystem_reserve_bytes}" \
-        "${root_reserve_bytes}" \
+        "${disk_budget_bytes}" "${root_floor_bytes}" \
         "${watchdog_mem_floor_bytes}" "${watchdog_interval}"; then
         systemctl --user stop "${unit}" >/dev/null 2>&1 || true
         echo "failed to create health watchdog; build stopped" >&2
         exit 1
     fi
 
-    printf 'job=%s\nunit=%s\nwatch_unit=%s\nlog=%s\nstate=%s\n' \
-        "${job}" "${unit}" "${watch_unit}" "${log}" "${state_dir}"
+    printf 'job=%s\nunit=%s\nwatch_unit=%s\nlogs=journalctl --user --unit=%s\nstate=%s\n' \
+        "${job}" "${unit}" "${watch_unit}" "${unit}" "${state_dir}"
 }
 
 run_job() {
@@ -414,8 +431,6 @@ run_job() {
     shift
     [ "${1:-}" = -- ] || exit 2
     shift
-    local log="${state_dir}/job.log"
-    exec >>"${log}" 2>&1
     printf 'job_started_at=%s\n' "$(date --iso-8601=seconds)"
     printf 'job_pid=%s\n' "$$"
     set +e
@@ -437,10 +452,9 @@ watch_job() {
     local work_dir=$2
     local unit=$3
     local max_bytes=$4
-    local reserve=$5
-    local root_reserve=$6
-    local mem_floor=$7
-    local interval=$8
+    local root_floor=$5
+    local mem_floor=$6
+    local interval=$7
     local low_memory_count=0
 
     while systemctl --user --quiet is-active "${unit}"; do
@@ -452,13 +466,10 @@ watch_job() {
         load=$(cut -d' ' -f1-3 /proc/loadavg)
         failure=
 
-        if [ "${available}" -lt "${reserve}" ]; then
-            failure="disk reserve breached"
-        elif [ "$(stat -c %d "${work_dir}")" != "$(stat -c %d /)" ] && \
-            [ "${root_available}" -lt "${root_reserve}" ]; then
-            failure="root disk reserve breached"
-        elif [ "${used}" -gt "${max_bytes}" ]; then
-            failure="workspace size limit breached"
+        if [ "${used}" -gt "${max_bytes}" ]; then
+            failure="job disk budget breached"
+        elif [ "${root_available}" -lt "${root_floor}" ]; then
+            failure="root free-space floor breached"
         elif [ "${memory_available}" -lt "${mem_floor}" ]; then
             low_memory_count=$((low_memory_count + 1))
             if [ "${low_memory_count}" -ge 2 ]; then
@@ -472,9 +483,11 @@ watch_job() {
         {
             printf 'checked_at=%s\n' "$(date --iso-8601=seconds)"
             printf 'unit=%s\n' "${unit}"
-            printf 'available_bytes=%s\n' "${available}"
+            printf 'build_available_bytes=%s\n' "${available}"
             printf 'root_available_bytes=%s\n' "${root_available}"
             printf 'workspace_bytes=%s\n' "${used}"
+            printf 'disk_budget_bytes=%s\n' "${max_bytes}"
+            printf 'root_floor_bytes=%s\n' "${root_floor}"
             printf 'memory_available_bytes=%s\n' "${memory_available}"
             printf 'load_average=%s\n' "${load}"
             printf 'status=%s\n' "${failure:-ok}"
@@ -501,9 +514,9 @@ status_job() {
         echo "unknown job: ${job}" >&2
         exit 1
     }
-    printf 'job=%s\nunit_state=%s\nstate_dir=%s\nlog=%s\n' \
+    printf 'job=%s\nunit_state=%s\nstate_dir=%s\nlogs=journalctl --user --unit=%s\n' \
         "${job}" "$(systemctl --user is-active "${unit}" 2>/dev/null || true)" \
-        "${state_dir}" "${state_dir}/job.log"
+        "${state_dir}" "${unit}"
     for file in policy.env health.env result.env watchdog-stop.env cancel.env; do
         if [ -f "${state_dir}/${file}" ]; then
             printf -- '--- %s ---\n' "${file}"
@@ -526,7 +539,8 @@ logs_job() {
     local lines=${2:-80}
     validate_job "${job}"
     [[ "${lines}" =~ ^[1-9][0-9]{0,3}$ ]] || exit 2
-    tail -n "${lines}" "${state_root}/${job}/job.log"
+    journalctl --user --unit="helium-job-${job}.service" \
+        --no-pager --output=cat --lines="${lines}"
 }
 
 cancel_job() {

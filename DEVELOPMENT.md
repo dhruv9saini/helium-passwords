@@ -164,14 +164,15 @@ a real profile or print stored values in logs.
 Dedicated, non-interactive SSH from lm to chromiumer is working. The enforced
 wrapper, health watchdog, immutable source transfer, artifact return, and
 cleanup contract are documented in
-[`docs/chromiumer-builds.md`](docs/chromiumer-builds.md). Chromiumer still
-cannot pass production preflight: an empty job requires 120 GiB available (a
-100 GiB job-tree allowance plus a separate 20 GiB operational reserve), but
-the entire root filesystem is only 116 GiB and exposes about 106 GiB free. It
-also lacks the pinned build toolchain. GitHub Actions in
-the private repo is independently blocked before job startup by the account
-billing/spend limit. Full browser validation remains blocked until chromiumer
-capacity/tooling is provisioned; it must not fall back to lm.
+[`docs/chromiumer-builds.md`](docs/chromiumer-builds.md). Every job declares a
+disk budget: use 80 GiB for the bounded compile proof and 100 GiB for a full
+build. The existing SSD passes the bounded-proof disk gate while keeping a
+2 GiB unprivileged root floor in addition to ext4's 5.91 GiB root-only reserve.
+Chromiumer still needs a pinned Nix tool environment, and its 7.6 GiB RAM with
+no swap may make compilation fail inside the deliberately strict 5 GiB cgroup
+limit. GitHub Actions in the private repo is independently blocked before job
+startup by the account billing/spend limit. Browser validation must use
+chromiumer and must not fall back to lm.
 
 ## References
 

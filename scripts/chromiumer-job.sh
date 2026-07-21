@@ -15,8 +15,8 @@ usage: scripts/chromiumer-job.sh <command> [arguments]
 
 Commands:
   connection
-  preflight
-  stage <job-id> [repository]
+  preflight <disk-budget-gib>
+  stage <job-id> <disk-budget-gib> [repository]
   start <job-id> -- <command> [arguments...]
   status <job-id>
   limits <job-id>
@@ -31,6 +31,13 @@ EOF
 validate_job() {
     [[ "$1" =~ ^[a-z0-9][a-z0-9-]{0,47}$ ]] || {
         echo "invalid job id: $1" >&2
+        exit 2
+    }
+}
+
+validate_disk_budget() {
+    [[ "$1" =~ ^[1-9][0-9]*$ ]] || {
+        echo "disk budget must be a positive whole number of GiB: $1" >&2
         exit 2
     }
 }
@@ -52,14 +59,19 @@ connection() {
 }
 
 preflight() {
+    local disk_budget_gib=$1
+    validate_disk_budget "${disk_budget_gib}"
     install_worker
-    remote_exec "${remote_worker}" preflight production "${remote_work}"
+    remote_exec "${remote_worker}" preflight production \
+        "${disk_budget_gib}" "${remote_work}"
 }
 
 stage() {
     local job=$1
-    local repository=${2:-"${root_dir}"}
+    local disk_budget_gib=$2
+    local repository=${3:-"${root_dir}"}
     validate_job "${job}"
+    validate_disk_budget "${disk_budget_gib}"
     repository=$(realpath -e "${repository}")
     [ -d "${repository}/.git" ] || {
         echo "not a Git repository: ${repository}" >&2
@@ -86,7 +98,7 @@ stage() {
     trap cleanup_stage EXIT
 
     install_worker
-    remote_exec "${remote_worker}" stage-init "${job}"
+    remote_exec "${remote_worker}" stage-init "${job}" "${disk_budget_gib}"
     stage_initialized=true
 
     local archive manifest archive_sha
@@ -238,8 +250,8 @@ command=${1:-}
 shift || true
 case "${command}" in
     connection) [ "$#" -eq 0 ] || exit 2; connection ;;
-    preflight) [ "$#" -eq 0 ] || exit 2; preflight ;;
-    stage) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || exit 2; stage "$@" ;;
+    preflight) [ "$#" -eq 1 ] || exit 2; preflight "$@" ;;
+    stage) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; stage "$@" ;;
     start) [ "$#" -ge 3 ] || exit 2; start "$@" ;;
     status) [ "$#" -eq 1 ] || exit 2; status "$@" ;;
     limits) [ "$#" -eq 1 ] || exit 2; limits "$@" ;;
