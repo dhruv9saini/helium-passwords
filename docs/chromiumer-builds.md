@@ -29,7 +29,7 @@ Verify it from `lm` before every source transfer:
 ```sh
 cd /home/d/coding/helium/helium-passwords
 scripts/chromiumer-job.sh connection
-scripts/chromiumer-job.sh preflight
+scripts/chromiumer-job.sh preflight 80
 ```
 
 `connection` must report `connection=ok`, `host=chromiumer`, and `user=d`.
@@ -55,47 +55,67 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | Memory | `4G` high, `5G` hard max, `0` swap inside the unit |
 | I/O | weight `10`, Linux idle I/O scheduling class |
 | Processes/threads | `TasksMax=256` |
-| Job tree | `100 GiB` allocated-block allowance for source, output, temp, and redirected caches; polled every 30 seconds |
-| Free space | `20 GiB` operational reserve on the job filesystem; also on `/` when the job filesystem is separate |
+| Job tree | explicit per-job allocated-block budget; `80 GiB` is the bounded-proof recommendation and `100 GiB` is the full-build recommendation |
+| Root free space | `2 GiB` unprivileged floor, independent of the job budget and checked on `/` |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
 | Wall time | hard `8h` systemd deadline |
 | Concurrency | one active `helium-job-*` service on chromiumer |
 
-For a new empty job, staging requires exactly `100 GiB + 20 GiB = 120 GiB`
-available on the job filesystem. This is an admission envelope, not a claim
-that Chromium always consumes 100 GiB, and the reserve is not build capacity.
-Chromium's current Linux instructions require at least 100 GB free and say to
-allocate roughly 50–80 GB for a build. Helium therefore permits a conservative
-100 GiB total job tree and keeps another 20 GiB unused so ext4, SSH, systemd,
-the health watcher, Nix/system logs, and unrelated work do not encounter a full
-filesystem. On chromiumer's present root filesystem, 20 GiB is more than four
-times the observed 4.2 GB steady-state use. It also provides headroom for disk
-growth between watchdog samples. The 20 GiB value is Helium's operational
-safety policy, not an upstream Chromium requirement.
+There is no global 100 GiB class and no build-filesystem reserve. Every
+production job declares a positive whole-GiB budget at `preflight` and `stage`.
+The budget covers its source, output, temporary files, and redirected caches.
+Use `80` for the first bounded source/compile proof and `100` for a full build;
+these are command choices, not hidden defaults. The harmless wrapper test uses
+`1 GiB`.
 
-At start, after source staging, the corrected gate is:
+The old worker coupled a fixed 100 GiB job ceiling to a fixed 20 GiB free-space
+reserve and consequently required 120 GiB for every production job. The
+20 GiB value was local Helium policy, not a Chromium requirement, and there
+was no measured host consumer that justified it. It also made a bounded proof
+indistinguishable from a full build.
+
+The current admission arithmetic is:
 
 ```text
-required available = (100 GiB - current job-tree use) + 20 GiB reserve
+remaining job budget = declared job budget - current job-tree use
+
+build tree on /: required build-filesystem availability
+                 = remaining job budget + 2 GiB root floor
+
+build tree on another filesystem: required build-filesystem availability
+                                  = remaining job budget
+                                  and / must independently have 2 GiB free
 ```
 
-For example, a 10 GiB staged job requires 110 GiB still available, not another
-120 GiB. The old worker incorrectly demanded the full 120 GiB a second time and
-therefore double-counted staged bytes. If the job tree already exceeds 100 GiB,
-startup fails. The worker measures allocated filesystem blocks rather than
-apparent file sizes. The 100 GiB check is a watchdog ceiling, not an ext4
-project quota, so the runbook does not describe it as an instantaneous hard
-quota.
+For example, an empty 80 GiB job on the current root filesystem requires
+82 GiB available. After it has allocated 10 GiB, startup requires 72 GiB. On a
+separate build filesystem those numbers are 80 GiB and 70 GiB; the separate
+filesystem does not inherit a global reserve. If the job tree already exceeds
+its declared budget, startup fails.
 
-Admission also requires cgroup v2 CPU, memory, I/O, and PID controllers; a
-running user systemd manager; Git; Python 3; and the basic supervision tools.
-If the job tree moves to a dedicated filesystem, the worker independently
-requires 20 GiB free on chromiumer's root filesystem. Any failed check refuses
-startup.
+The 2 GiB root floor is local host policy, not Chromium policy. It preserves
+unprivileged SSH, user-systemd, watcher, and state operations. It is intentionally
+small because the current ext4 root already reserves 1,549,785 blocks of 4096
+bytes for root: 6,347,919,360 bytes (5.91 GiB) that the unprivileged build user
+cannot consume. At the audit, the journal used 16 MiB, Helium state used
+106 KiB, and all of `/home/d` used about 355 MiB. The 2 GiB floor is additional
+to ext4's root-only reserve.
+
+The worker measures allocated filesystem blocks rather than apparent file
+sizes. Its watchdog ceiling is polled, not an ext4 project quota, so a job can
+briefly cross the budget between samples before its cgroup is stopped.
+
+Admission requires cgroup v2 CPU, memory, I/O, and PID controllers, a running
+user systemd manager, the standard supervision tools, the job's remaining disk
+budget, the root floor, and the memory floors. The wrapper intentionally does
+not prescribe Git, Python, depot_tools, or Docker: the build command must enter
+the pinned tool environment that provides them. Provision that environment
+before a long job so Nix store downloads do not consume the root floor during
+the build. Any failed infrastructure check refuses startup.
 
 The watchdog writes `health.env` every 30 seconds with job-filesystem free
-space, root-filesystem free space, allocated job-tree size, available memory,
-and load. A disk, workspace, or memory violation stops
+space, root-filesystem free space, allocated job-tree size and budget,
+available memory, and load. A job-budget, root-floor, or memory violation stops
 the entire build cgroup. `MemoryMax`, `CPUQuota`, `TasksMax`, idle I/O priority,
 and the systemd runtime deadline remain enforced even if the watchdog itself
 fails.
@@ -113,7 +133,8 @@ scripts/dev.sh check
 git status --short --branch
 
 job=hp-linux-150-passwords-01
-scripts/chromiumer-job.sh stage "$job"
+scripts/chromiumer-job.sh preflight 100
+scripts/chromiumer-job.sh stage "$job" 100
 ```
 
 For the private repository, invoke the same inherited wrapper from Sync:
@@ -123,7 +144,8 @@ cd /home/d/coding/helium/helium-sync
 scripts/dev.sh check
 
 job=hs-android-150-sync-01
-scripts/chromiumer-job.sh stage "$job"
+scripts/chromiumer-job.sh preflight 80
+scripts/chromiumer-job.sh stage "$job" 80
 ```
 
 The retained source manifest records repository name, origin, commit, tree,
@@ -186,8 +208,11 @@ at:
 /home/d/.local/state/helium-builds/<job>/policy.env
 /home/d/.local/state/helium-builds/<job>/health.env
 /home/d/.local/state/helium-builds/<job>/result.env
-/home/d/.local/state/helium-builds/<job>/job.log
 ```
+
+Build stdout and stderr go to the systemd journal. `logs` invokes
+`journalctl --user --unit=helium-job-<job>.service`; no second log file or log
+rotation mechanism is maintained by the wrapper.
 
 Package build outputs as one file on chromiumer, then return that exact file.
 The default destination is the NAS mounted on `lm`; pass a third argument only
@@ -218,38 +243,51 @@ could contain the only artifact copy.
 ## Current Capacity and Test Proof
 
 On 2026-07-21, chromiumer had 8 CPUs, 7.6 GiB RAM, no swap, and one 119 GiB
-disk whose 116 GiB root filesystem had about 106 GiB available. The empty-job
-120 GiB gate can never pass on that filesystem, even if it is otherwise empty.
-It had no separate build disk or NAS mount,
-and `git`, Python 3, Docker, and Chromium tools were absent from the normal
-login `PATH`. Production preflight therefore refuses the host. Chromium's
-current Linux instructions require at least 100 GB free, recommend more than
-16 GB RAM, and recommend substantial swap for an 8 GB machine:
+SSD whose 116 GiB ext4 root filesystem exposed 113,542,557,696 bytes
+(105.74 GiB) to the build user. `/home/d/helium-builds/work` is on that root;
+there is no separate build mount. The filesystem has 6,347,919,360 additional
+bytes reserved for root.
+
+An empty 80 GiB bounded proof requires 82 GiB on the current shared root and
+passes disk admission with 23.74 GiB of headroom. An empty 100 GiB job requires
+102 GiB and passes current disk admission with only 3.74 GiB of headroom. The
+existing SSD therefore supports the bounded proof without repartitioning or an
+OS replacement. A full build remains tight after provisioning the toolchain.
+
+Git, Python 3, Docker, and Chromium tools were absent from the normal login
+`PATH`; `nix` is installed. Chromium's current Linux instructions require at
+least 100 GB free, recommend more than 16 GB RAM and substantial swap on an
+8 GB machine, and explicitly direct NixOS users to run depot_tools inside the
+provided Nix shell:
 
 <https://chromium.googlesource.com/chromium/src/+/main/docs/linux/build_instructions.md>
 
-The setup gate is:
+The remaining setup gate is:
 
-1. Add or mount a local chromiumer build filesystem with at least 120 GiB
-   available after tools/caches, while retaining at least 20 GiB free on `/`;
-   do not use `lm`'s NAS as the live build directory.
-2. Provision a pinned Nix/Docker toolchain containing Git, Python 3, depot
-   tools/build dependencies, and Docker for the Helium Linux wrapper.
-3. Prefer adding RAM and swap before expecting a full link to finish; the
-   isolation limits protect the machine but may make the build fail cleanly.
-4. Re-run `connection`, `preflight`, and the short wrapper test before staging.
+1. Provision and record a pinned Nix tool environment containing Git,
+   Python 3, depot_tools, and the Chromium build dependencies. Add Docker only
+   for the public Linux wrapper that actually calls it.
+2. Re-run `preflight 80` after the tool closure is present; if the remaining
+   headroom is insufficient, add a local build disk rather than using the NAS.
+3. Adding RAM and local swap remains useful before expecting a full link to
+   finish; the isolation limits protect the machine but may make the build
+   fail cleanly.
+4. Re-run `connection`, budgeted `preflight`, and the short wrapper test before
+   staging.
 
-The corrected harmless wrapper test was executed as
-`wrapper-test-20260721-143505`. It completed with exit code 0 while live systemd
+The simplified harmless wrapper test was executed as
+`wrapper-test-20260721-153235`. It completed with exit code 0 while live systemd
 properties reported a 50% CPU quota, 128/256 MiB memory high/max, zero swap,
 I/O weight 10 with idle scheduling, 32 tasks, and a two-minute test deadline.
 The watchdog reported `status=ok`, recorded both root and job-filesystem free
 space, and measured the complete test job tree. The generated test workspace
-was removed; its small proof log and policy/state files remain on chromiumer.
-The pure arithmetic check also proves `0 GiB used -> 120 GiB required`, `10 GiB
-used -> 110 GiB required`, and `100 GiB used -> 20 GiB required`. Production
-preflight then refused the real host with 113,542,557,696 bytes available versus
-128,849,018,880 bytes required for an empty job.
+was removed; its 49,152-byte policy/state evidence and systemd journal records
+remain on chromiumer.
+The arithmetic test proves both mount cases for an 80 GiB job: on root,
+`0 GiB used -> 82 GiB required`, `10 GiB used -> 72 GiB`, and
+`80 GiB used -> 2 GiB`; on a separate build mount the same cases require
+80 GiB, 70 GiB, and zero build-filesystem bytes while `/` retains its
+independent 2 GiB floor.
 
 Re-run the same proof without starting Chromium:
 

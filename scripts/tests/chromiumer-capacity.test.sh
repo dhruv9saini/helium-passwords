@@ -5,24 +5,29 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)"
 # shellcheck source=../chromiumer-worker.sh
 source "${root_dir}/scripts/chromiumer-worker.sh"
 
-profile production
 gib_bytes=$((1024 * 1024 * 1024))
+budget_bytes=$((80 * gib_bytes))
 
-[ "${workspace_limit_bytes}" -eq "$((100 * gib_bytes))" ]
-[ "${filesystem_reserve_bytes}" -eq "$((20 * gib_bytes))" ]
-[ "$(required_available_bytes \
-    "${workspace_limit_bytes}" 0 "${filesystem_reserve_bytes}")" \
-    -eq "$((120 * gib_bytes))" ]
-[ "$(required_available_bytes \
-    "${workspace_limit_bytes}" "$((10 * gib_bytes))" \
-    "${filesystem_reserve_bytes}")" -eq "$((110 * gib_bytes))" ]
-[ "$(required_available_bytes \
-    "${workspace_limit_bytes}" "${workspace_limit_bytes}" \
-    "${filesystem_reserve_bytes}")" -eq "$((20 * gib_bytes))" ]
+[ "${root_floor_bytes}" -eq "$((2 * gib_bytes))" ]
+[ "$(required_build_available_bytes \
+    "${budget_bytes}" 0 yes)" -eq "$((82 * gib_bytes))" ]
+[ "$(required_build_available_bytes \
+    "${budget_bytes}" "$((10 * gib_bytes))" yes)" \
+    -eq "$((72 * gib_bytes))" ]
+[ "$(required_build_available_bytes \
+    "${budget_bytes}" "${budget_bytes}" yes)" \
+    -eq "$((2 * gib_bytes))" ]
 
-if required_available_bytes \
-    "${workspace_limit_bytes}" "$((workspace_limit_bytes + 1))" \
-    "${filesystem_reserve_bytes}" >/dev/null; then
+[ "$(required_build_available_bytes \
+    "${budget_bytes}" 0 no)" -eq "$((80 * gib_bytes))" ]
+[ "$(required_build_available_bytes \
+    "${budget_bytes}" "$((10 * gib_bytes))" no)" \
+    -eq "$((70 * gib_bytes))" ]
+[ "$(required_build_available_bytes \
+    "${budget_bytes}" "${budget_bytes}" no)" -eq 0 ]
+
+if required_build_available_bytes \
+    "${budget_bytes}" "$((budget_bytes + 1))" yes >/dev/null; then
     echo "over-limit workspace unexpectedly passed capacity arithmetic" >&2
     exit 1
 fi
