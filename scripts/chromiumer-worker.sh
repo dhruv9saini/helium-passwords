@@ -1,0 +1,550 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_root=${HELIUM_CHROMIUMER_STATE_ROOT:-"${HOME}/.local/state/helium-builds"}
+work_root=${HELIUM_CHROMIUMER_WORK_ROOT:-"${HOME}/helium-builds/work"}
+
+usage() {
+    cat >&2 <<'EOF'
+usage: chromiumer-worker.sh <command> [arguments]
+
+Remote-only commands are invoked by scripts/chromiumer-job.sh on lm.
+EOF
+}
+
+validate_job() {
+    local job=$1
+    [[ "${job}" =~ ^[a-z0-9][a-z0-9-]{0,47}$ ]] || {
+        echo "invalid job id: ${job}" >&2
+        exit 2
+    }
+}
+
+gib() {
+    printf '%s\n' "$(( $1 * 1024 * 1024 * 1024 ))"
+}
+
+profile() {
+    case "$1" in
+        production)
+            build_jobs=2
+            cpu_quota=200%
+            cpu_weight=10
+            memory_high=4G
+            memory_max=5G
+            tasks_max=256
+            max_disk_bytes=$(gib 100)
+            reserve_bytes=$(gib 20)
+            min_mem_total_bytes=$(gib 7)
+            min_mem_available_bytes=$(gib 2)
+            watchdog_mem_floor_bytes=$(gib 1)
+            wall_seconds=28800
+            watchdog_interval=30
+            ;;
+        test)
+            build_jobs=1
+            cpu_quota=50%
+            cpu_weight=10
+            memory_high=128M
+            memory_max=256M
+            tasks_max=32
+            max_disk_bytes=$(gib 1)
+            reserve_bytes=$(gib 1)
+            min_mem_total_bytes=$(gib 1)
+            min_mem_available_bytes=$((256 * 1024 * 1024))
+            watchdog_mem_floor_bytes=$((64 * 1024 * 1024))
+            wall_seconds=120
+            watchdog_interval=1
+            ;;
+        *)
+            echo "unknown isolation profile: $1" >&2
+            exit 2
+            ;;
+    esac
+}
+
+meminfo_bytes() {
+    local field=$1
+    awk -v field="${field}:" '$1 == field { print $2 * 1024; exit }' /proc/meminfo
+}
+
+require_worker_host() {
+    [ "$(hostname -s)" = chromiumer ] || {
+        echo "refusing to run outside chromiumer" >&2
+        exit 1
+    }
+}
+
+require_contained_path() {
+    local path=$1
+    local root=$2
+    case "${path}" in
+        "${root}"/*) ;;
+        *)
+            echo "path is outside ${root}: ${path}" >&2
+            exit 1
+            ;;
+    esac
+}
+
+preflight() {
+    local profile_name=$1
+    local probe_path=${2:-"${work_root}"}
+    profile "${profile_name}"
+    require_worker_host
+
+    local required=(awk df du find flock ionice nice realpath sha256sum systemctl systemd-run timeout)
+    if [ "${profile_name}" = production ]; then
+        required+=(git python3)
+    fi
+    local tool
+    for tool in "${required[@]}"; do
+        command -v "${tool}" >/dev/null 2>&1 || {
+            echo "preflight failed: missing tool: ${tool}" >&2
+            return 1
+        }
+    done
+
+    [ "$(systemctl --user is-system-running)" = running ] || {
+        echo "preflight failed: user systemd manager is not running" >&2
+        return 1
+    }
+
+    local controller
+    for controller in cpu io memory pids; do
+        grep -qw "${controller}" /sys/fs/cgroup/cgroup.controllers || {
+            echo "preflight failed: cgroup v2 controller unavailable: ${controller}" >&2
+            return 1
+        }
+    done
+
+    mkdir -p "${probe_path}"
+    probe_path=$(realpath -e "${probe_path}")
+    require_contained_path "${probe_path}" "$(realpath -e "${HOME}")"
+
+    local available required_space memory_total memory_available
+    available=$(df -PB1 "${probe_path}" | awk 'NR == 2 { print $4 }')
+    required_space=$((max_disk_bytes + reserve_bytes))
+    memory_total=$(meminfo_bytes MemTotal)
+    memory_available=$(meminfo_bytes MemAvailable)
+
+    [ "${available}" -ge "${required_space}" ] || {
+        echo "preflight failed: available_bytes=${available}, required_bytes=${required_space} (workspace cap plus reserve)" >&2
+        return 1
+    }
+    [ "${memory_total}" -ge "${min_mem_total_bytes}" ] || {
+        echo "preflight failed: memory_total_bytes=${memory_total}, required_bytes=${min_mem_total_bytes}" >&2
+        return 1
+    }
+    [ "${memory_available}" -ge "${min_mem_available_bytes}" ] || {
+        echo "preflight failed: memory_available_bytes=${memory_available}, required_bytes=${min_mem_available_bytes}" >&2
+        return 1
+    }
+
+    if systemctl --user --quiet is-active 'helium-job-*.service'; then
+        echo "preflight failed: another Helium build is active" >&2
+        return 1
+    fi
+
+    printf 'preflight=ok\nprofile=%s\navailable_bytes=%s\nrequired_bytes=%s\nmemory_total_bytes=%s\nmemory_available_bytes=%s\n' \
+        "${profile_name}" "${available}" "${required_space}" \
+        "${memory_total}" "${memory_available}"
+}
+
+stage_init() {
+    local job=$1
+    validate_job "${job}"
+    preflight production "${work_root}"
+
+    local state_dir="${state_root}/${job}"
+    local job_root="${work_root}/${job}"
+    [ ! -e "${state_dir}" ] && [ ! -e "${job_root}" ] || {
+        echo "job already exists: ${job}" >&2
+        exit 1
+    }
+    mkdir -p "${state_dir}" "${job_root}"
+    printf 'profile=production\nstaged_at=%s\n' "$(date --iso-8601=seconds)" >"${state_dir}/stage.env"
+}
+
+stage_finish() {
+    local job=$1
+    local expected_sha=$2
+    validate_job "${job}"
+
+    local state_dir="${state_root}/${job}"
+    local job_root="${work_root}/${job}"
+    local archive="${state_dir}/source.tar"
+    local source_dir="${job_root}/source"
+    [ -f "${archive}" ] && [ -f "${state_dir}/source.manifest.incoming" ] || {
+        echo "incomplete source transfer for ${job}" >&2
+        exit 1
+    }
+    [ ! -e "${source_dir}" ] || {
+        echo "source already materialized for ${job}" >&2
+        exit 1
+    }
+    printf '%s  %s\n' "${expected_sha}" "${archive}" | sha256sum --check --status || {
+        echo "source archive checksum mismatch" >&2
+        exit 1
+    }
+
+    mkdir "${source_dir}"
+    tar -xf "${archive}" -C "${source_dir}"
+    mv "${state_dir}/source.manifest.incoming" "${state_dir}/source.manifest"
+    find "${archive}" -delete
+    printf 'source_dir=%s\nsource_archive_sha256=%s\n' "${source_dir}" "${expected_sha}"
+}
+
+stage_abort() {
+    local job=$1
+    validate_job "${job}"
+    local state_dir="${state_root}/${job}"
+    local job_root="${work_root}/${job}"
+    [ ! -e "${state_dir}/policy.env" ] && [ ! -e "${state_dir}/source.manifest" ] || {
+        echo "refusing to remove a completed or started stage" >&2
+        exit 1
+    }
+    if [ -d "${job_root}" ]; then
+        require_contained_path "$(realpath -e "${job_root}")" "$(realpath -e "${work_root}")"
+        find "${job_root}" -depth -delete
+    fi
+    if [ -d "${state_dir}" ]; then
+        require_contained_path "$(realpath -e "${state_dir}")" "$(realpath -e "${state_root}")"
+        find "${state_dir}" -depth -delete
+    fi
+}
+
+test_prepare() {
+    local job=$1
+    validate_job "${job}"
+    preflight test "${work_root}"
+    local state_dir="${state_root}/${job}"
+    local test_dir="${work_root}/${job}/test"
+    [ ! -e "${state_dir}" ] && [ ! -e "${work_root}/${job}" ] || {
+        echo "job already exists: ${job}" >&2
+        exit 1
+    }
+    mkdir -p "${state_dir}" "${test_dir}"
+    printf 'profile=test\nstaged_at=%s\n' "$(date --iso-8601=seconds)" >"${state_dir}/stage.env"
+    printf '%s\n' "${test_dir}"
+}
+
+write_policy() {
+    local state_dir=$1
+    local profile_name=$2
+    local work_dir=$3
+    shift 3
+    local command_text
+    printf -v command_text '%q ' "$@"
+    local temp="${state_dir}/policy.env.tmp"
+    {
+        printf 'profile=%s\n' "${profile_name}"
+        printf 'host=%s\n' "$(hostname -s)"
+        printf 'work_dir=%s\n' "${work_dir}"
+        printf 'build_jobs=%s\n' "${build_jobs}"
+        printf 'cpu_quota=%s\n' "${cpu_quota}"
+        printf 'cpu_weight=%s\n' "${cpu_weight}"
+        printf 'memory_high=%s\n' "${memory_high}"
+        printf 'memory_max=%s\n' "${memory_max}"
+        printf 'memory_swap_max=0\n'
+        printf 'io_weight=10\n'
+        printf 'io_scheduling_class=idle\n'
+        printf 'nice=15\n'
+        printf 'tasks_max=%s\n' "${tasks_max}"
+        printf 'max_disk_bytes=%s\n' "${max_disk_bytes}"
+        printf 'reserve_bytes=%s\n' "${reserve_bytes}"
+        printf 'watchdog_mem_floor_bytes=%s\n' "${watchdog_mem_floor_bytes}"
+        printf 'wall_seconds=%s\n' "${wall_seconds}"
+        printf 'command=%s\n' "${command_text}"
+        printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
+    } >"${temp}"
+    mv "${temp}" "${state_dir}/policy.env"
+}
+
+start_job() {
+    local profile_name=$1
+    local job=$2
+    local work_dir=$3
+    shift 3
+    [ "${1:-}" = -- ] || {
+        usage
+        exit 2
+    }
+    shift
+    [ "$#" -gt 0 ] || {
+        echo "missing job command" >&2
+        exit 2
+    }
+    validate_job "${job}"
+    profile "${profile_name}"
+
+    work_dir=$(realpath -e "${work_dir}")
+    require_contained_path "${work_dir}" "$(realpath -e "${work_root}")"
+    preflight "${profile_name}" "${work_dir}"
+
+    local state_dir="${state_root}/${job}"
+    [ -f "${state_dir}/stage.env" ] || {
+        echo "job is not staged: ${job}" >&2
+        exit 1
+    }
+    [ ! -e "${state_dir}/policy.env" ] && [ ! -e "${state_dir}/result.env" ] || {
+        echo "job has already been started: ${job}" >&2
+        exit 1
+    }
+
+    mkdir -p "${state_root}"
+    exec 9>"${state_root}/start.lock"
+    flock -n 9 || {
+        echo "another start operation is in progress" >&2
+        exit 1
+    }
+    if systemctl --user --quiet is-active 'helium-job-*.service'; then
+        echo "another Helium build is active" >&2
+        exit 1
+    fi
+
+    local worker="${state_dir}/worker.sh"
+    local log="${state_dir}/job.log"
+    local unit="helium-job-${job}.service"
+    local watch_unit="helium-watch-${job}.service"
+    install -m 700 "$0" "${worker}"
+    write_policy "${state_dir}" "${profile_name}" "${work_dir}" "$@"
+
+    if ! systemd-run --user --unit="${unit%.service}" --collect \
+        --property="Description=Isolated Helium build ${job}" \
+        --property="WorkingDirectory=${work_dir}" \
+        --property="CPUQuota=${cpu_quota}" \
+        --property="CPUWeight=${cpu_weight}" \
+        --property="MemoryHigh=${memory_high}" \
+        --property="MemoryMax=${memory_max}" \
+        --property=MemorySwapMax=0 \
+        --property=IOWeight=10 \
+        --property=IOSchedulingClass=idle \
+        --property=Nice=15 \
+        --property="TasksMax=${tasks_max}" \
+        --property="RuntimeMaxSec=${wall_seconds}" \
+        --property=KillMode=control-group \
+        --property=OOMPolicy=stop \
+        --setenv="HELIUM_BUILD_JOBS=${build_jobs}" \
+        --setenv="AUTONINJA_JOBS=${build_jobs}" \
+        --setenv="NINJA_JOBS=${build_jobs}" \
+        --setenv="GCLIENT_JOBS=${build_jobs}" \
+        "${worker}" run "${state_dir}" -- "$@"; then
+        echo "failed to create isolated build unit" >&2
+        exit 1
+    fi
+
+    if ! systemd-run --user --unit="${watch_unit%.service}" --collect \
+        --property="Description=Helium build health watchdog ${job}" \
+        --property=CPUQuota=10% \
+        --property=MemoryMax=64M \
+        --property=TasksMax=16 \
+        --property="RuntimeMaxSec=$((wall_seconds + 300))" \
+        "${worker}" watch "${state_dir}" "${work_dir}" "${unit}" \
+        "${max_disk_bytes}" "${reserve_bytes}" \
+        "${watchdog_mem_floor_bytes}" "${watchdog_interval}"; then
+        systemctl --user stop "${unit}" >/dev/null 2>&1 || true
+        echo "failed to create health watchdog; build stopped" >&2
+        exit 1
+    fi
+
+    printf 'job=%s\nunit=%s\nwatch_unit=%s\nlog=%s\nstate=%s\n' \
+        "${job}" "${unit}" "${watch_unit}" "${log}" "${state_dir}"
+}
+
+run_job() {
+    local state_dir=$1
+    shift
+    [ "${1:-}" = -- ] || exit 2
+    shift
+    local log="${state_dir}/job.log"
+    exec >>"${log}" 2>&1
+    printf 'job_started_at=%s\n' "$(date --iso-8601=seconds)"
+    printf 'job_pid=%s\n' "$$"
+    set +e
+    ionice -c 3 nice -n 15 "$@"
+    local result=$?
+    set -e
+    local temp="${state_dir}/result.env.tmp"
+    {
+        printf 'exit_code=%s\n' "${result}"
+        printf 'finished_at=%s\n' "$(date --iso-8601=seconds)"
+    } >"${temp}"
+    mv "${temp}" "${state_dir}/result.env"
+    printf 'job_finished_at=%s\nexit_code=%s\n' "$(date --iso-8601=seconds)" "${result}"
+    exit "${result}"
+}
+
+watch_job() {
+    local state_dir=$1
+    local work_dir=$2
+    local unit=$3
+    local max_bytes=$4
+    local reserve=$5
+    local mem_floor=$6
+    local interval=$7
+    local low_memory_count=0
+
+    while systemctl --user --quiet is-active "${unit}"; do
+        local available used memory_available load failure
+        available=$(df -PB1 "${work_dir}" | awk 'NR == 2 { print $4 }')
+        used=$(du -sb "${work_dir}" | awk '{ print $1 }')
+        memory_available=$(meminfo_bytes MemAvailable)
+        load=$(cut -d' ' -f1-3 /proc/loadavg)
+        failure=
+
+        if [ "${available}" -lt "${reserve}" ]; then
+            failure="disk reserve breached"
+        elif [ "${used}" -gt "${max_bytes}" ]; then
+            failure="workspace size limit breached"
+        elif [ "${memory_available}" -lt "${mem_floor}" ]; then
+            low_memory_count=$((low_memory_count + 1))
+            if [ "${low_memory_count}" -ge 2 ]; then
+                failure="host available-memory floor breached"
+            fi
+        else
+            low_memory_count=0
+        fi
+
+        local temp="${state_dir}/health.env.tmp"
+        {
+            printf 'checked_at=%s\n' "$(date --iso-8601=seconds)"
+            printf 'unit=%s\n' "${unit}"
+            printf 'available_bytes=%s\n' "${available}"
+            printf 'workspace_bytes=%s\n' "${used}"
+            printf 'memory_available_bytes=%s\n' "${memory_available}"
+            printf 'load_average=%s\n' "${load}"
+            printf 'status=%s\n' "${failure:-ok}"
+        } >"${temp}"
+        mv "${temp}" "${state_dir}/health.env"
+
+        if [ -n "${failure}" ]; then
+            printf 'watchdog_stopped_at=%s\nreason=%s\n' \
+                "$(date --iso-8601=seconds)" "${failure}" \
+                >"${state_dir}/watchdog-stop.env"
+            systemctl --user stop "${unit}"
+            exit 1
+        fi
+        sleep "${interval}"
+    done
+}
+
+status_job() {
+    local job=$1
+    validate_job "${job}"
+    local state_dir="${state_root}/${job}"
+    local unit="helium-job-${job}.service"
+    [ -d "${state_dir}" ] || {
+        echo "unknown job: ${job}" >&2
+        exit 1
+    }
+    printf 'job=%s\nunit_state=%s\nstate_dir=%s\nlog=%s\n' \
+        "${job}" "$(systemctl --user is-active "${unit}" 2>/dev/null || true)" \
+        "${state_dir}" "${state_dir}/job.log"
+    for file in policy.env health.env result.env watchdog-stop.env cancel.env; do
+        if [ -f "${state_dir}/${file}" ]; then
+            printf -- '--- %s ---\n' "${file}"
+            cat "${state_dir}/${file}"
+        fi
+    done
+}
+
+limits_job() {
+    local job=$1
+    validate_job "${job}"
+    systemctl --user show "helium-job-${job}.service" \
+        -p ActiveState -p CPUQuotaPerSecUSec -p CPUWeight \
+        -p MemoryHigh -p MemoryMax -p MemorySwapMax -p IOWeight \
+        -p IOSchedulingClass -p Nice -p TasksMax -p RuntimeMaxUSec
+}
+
+logs_job() {
+    local job=$1
+    local lines=${2:-80}
+    validate_job "${job}"
+    [[ "${lines}" =~ ^[1-9][0-9]{0,3}$ ]] || exit 2
+    tail -n "${lines}" "${state_root}/${job}/job.log"
+}
+
+cancel_job() {
+    local job=$1
+    validate_job "${job}"
+    systemctl --user stop "helium-watch-${job}.service" >/dev/null 2>&1 || true
+    systemctl --user stop "helium-job-${job}.service" >/dev/null 2>&1 || true
+    mkdir -p "${state_root}/${job}"
+    printf 'cancelled_at=%s\n' "$(date --iso-8601=seconds)" >"${state_root}/${job}/cancel.env"
+    printf 'cancelled=%s\n' "${job}"
+}
+
+artifact_info() {
+    local job=$1
+    local relative=$2
+    validate_job "${job}"
+    [[ "${relative}" != /* && "${relative}" != *..* ]] || {
+        echo "artifact path must be a contained relative path" >&2
+        exit 2
+    }
+    local source_root="${work_root}/${job}/source"
+    local artifact
+    artifact=$(realpath -e "${source_root}/${relative}")
+    require_contained_path "${artifact}" "$(realpath -e "${source_root}")"
+    [ -f "${artifact}" ] || {
+        echo "artifact must be one regular file; package directories first" >&2
+        exit 1
+    }
+    printf 'path=%s\nsha256=%s\nsize_bytes=%s\n' \
+        "${artifact}" "$(sha256sum "${artifact}" | awk '{ print $1 }')" \
+        "$(stat -c %s "${artifact}")"
+}
+
+mark_returned() {
+    local job=$1
+    local sha=$2
+    validate_job "${job}"
+    printf 'returned_at=%s\nsha256=%s\n' "$(date --iso-8601=seconds)" "${sha}" \
+        >"${state_root}/${job}/artifact-returned.env"
+}
+
+cleanup_job() {
+    local job=$1
+    validate_job "${job}"
+    local state_dir="${state_root}/${job}"
+    local job_root="${work_root}/${job}"
+    ! systemctl --user --quiet is-active "helium-job-${job}.service" || {
+        echo "refusing cleanup while job is active" >&2
+        exit 1
+    }
+    if ! grep -qx 'profile=test' "${state_dir}/stage.env" 2>/dev/null && \
+        [ ! -f "${state_dir}/artifact-returned.env" ]; then
+        echo "refusing cleanup until an artifact return receipt exists" >&2
+        exit 1
+    fi
+    if [ -d "${job_root}" ]; then
+        require_contained_path "$(realpath -e "${job_root}")" "$(realpath -e "${work_root}")"
+        find "${job_root}" -depth -delete
+    fi
+    printf 'workspace_cleaned_at=%s\n' "$(date --iso-8601=seconds)" \
+        >"${state_dir}/cleanup.env"
+    printf 'workspace_cleaned=%s\nstate_retained=%s\n' "${job_root}" "${state_dir}"
+}
+
+command=${1:-}
+shift || true
+case "${command}" in
+    preflight) preflight "$@" ;;
+    stage-init) stage_init "$@" ;;
+    stage-finish) stage_finish "$@" ;;
+    stage-abort) stage_abort "$@" ;;
+    test-prepare) test_prepare "$@" ;;
+    start) start_job "$@" ;;
+    run) run_job "$@" ;;
+    watch) watch_job "$@" ;;
+    status) status_job "$@" ;;
+    limits) limits_job "$@" ;;
+    logs) logs_job "$@" ;;
+    cancel) cancel_job "$@" ;;
+    artifact-info) artifact_info "$@" ;;
+    mark-returned) mark_returned "$@" ;;
+    cleanup) cleanup_job "$@" ;;
+    *) usage; exit 2 ;;
+esac

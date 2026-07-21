@@ -102,8 +102,9 @@ train. Never build an unrecorded mixture of moving `main` branches.
    green.
 
 Do not run a Chromium build on `lm`; the 2026-07-21 audit found only 19 GB free.
-Chromium's current Android instructions require at least 100 GB free and prefer
-more than 16 GB RAM.
+All large Linux and Android work is orchestrated from lm and executed through
+the fail-closed chromiumer wrapper in
+[`docs/chromiumer-builds.md`](docs/chromiumer-builds.md).
 
 ## Password Acceptance Gate
 
@@ -131,12 +132,15 @@ a real profile or print stored values in logs.
 
 ## Build Capacity
 
-Large builds belong on a Linux builder with a persistent Chromium checkout and
-cache. On 2026-07-21, `chromiumer` was online in Tailscale but rejected lm's SSH
-keys; the Mac mini was unreachable from lm. GitHub Actions in the private repo
-was also blocked before job startup by the account billing/spend limit. Until
-one of those is restored, patch application and full browser validation are
-blocked rather than silently delegated to lm.
+Dedicated, non-interactive SSH from lm to chromiumer is working. The enforced
+wrapper, health watchdog, immutable source transfer, artifact return, and
+cleanup contract are documented in
+[`docs/chromiumer-builds.md`](docs/chromiumer-builds.md). Chromiumer still
+cannot pass production preflight: it exposes only about 106 GiB free against a
+120 GiB start threshold and lacks the pinned build toolchain. GitHub Actions in
+the private repo is independently blocked before job startup by the account
+billing/spend limit. Full browser validation remains blocked until chromiumer
+capacity/tooling is provisioned; it must not fall back to lm.
 
 ## References
 

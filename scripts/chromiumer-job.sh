@@ -1,0 +1,253 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+worker="${root_dir}/scripts/chromiumer-worker.sh"
+host=${HELIUM_CHROMIUMER_HOST:-chromiumer}
+remote_worker=.local/libexec/helium-chromiumer-worker
+remote_state=.local/state/helium-builds
+remote_work=helium-builds/work
+default_artifact_root=${HELIUM_ARTIFACT_ROOT:-/srv/nas/helium-builds}
+
+usage() {
+    cat >&2 <<'EOF'
+usage: scripts/chromiumer-job.sh <command> [arguments]
+
+Commands:
+  connection
+  preflight
+  stage <job-id> [repository]
+  start <job-id> -- <command> [arguments...]
+  status <job-id>
+  limits <job-id>
+  logs <job-id> [line-count]
+  cancel <job-id>
+  fetch <job-id> <relative-artifact> [lm-or-NAS-directory]
+  cleanup <job-id>
+  test
+EOF
+}
+
+validate_job() {
+    [[ "$1" =~ ^[a-z0-9][a-z0-9-]{0,47}$ ]] || {
+        echo "invalid job id: $1" >&2
+        exit 2
+    }
+}
+
+remote_exec() {
+    local command_text
+    printf -v command_text '%q ' "$@"
+    ssh "${host}" "${command_text}"
+}
+
+install_worker() {
+    remote_exec mkdir -p .local/libexec
+    rsync --archive --checksum --chmod=F700 "${worker}" "${host}:${remote_worker}"
+}
+
+connection() {
+    ssh -o BatchMode=yes "${host}" \
+        'printf "connection=ok\nhost=%s\nuser=%s\n" "$(hostname -s)" "$(id -un)"'
+}
+
+preflight() {
+    install_worker
+    remote_exec "${remote_worker}" preflight production "${remote_work}"
+}
+
+stage() {
+    local job=$1
+    local repository=${2:-"${root_dir}"}
+    validate_job "${job}"
+    repository=$(realpath -e "${repository}")
+    [ -d "${repository}/.git" ] || {
+        echo "not a Git repository: ${repository}" >&2
+        exit 1
+    }
+    [ -z "$(git -C "${repository}" status --porcelain --untracked-files=normal --ignore-submodules=none)" ] || {
+        echo "refusing to stage a dirty repository" >&2
+        exit 1
+    }
+
+    local stage_initialized=false
+    local stage_finished=false
+    local temp_dir=
+    cleanup_stage() {
+        local result=$?
+        if [ -n "${temp_dir}" ] && [ -d "${temp_dir}" ]; then
+            find "${temp_dir}" -depth -delete
+        fi
+        if [ "${stage_initialized}" = true ] && [ "${stage_finished}" = false ]; then
+            remote_exec "${remote_worker}" stage-abort "${job}" >/dev/null 2>&1 || true
+        fi
+        return "${result}"
+    }
+    trap cleanup_stage EXIT
+
+    install_worker
+    remote_exec "${remote_worker}" stage-init "${job}"
+    stage_initialized=true
+
+    local archive manifest archive_sha
+    temp_dir=$(mktemp -d /tmp/helium-source.XXXXXX)
+    archive="${temp_dir}/source.tar"
+    manifest="${temp_dir}/source.manifest.incoming"
+
+    git -C "${repository}" archive --format=tar --output="${archive}" HEAD
+    archive_sha=$(sha256sum "${archive}" | awk '{ print $1 }')
+    {
+        printf 'repository=%s\n' "$(basename "${repository}")"
+        printf 'origin=%s\n' "$(git -C "${repository}" remote get-url origin)"
+        printf 'commit=%s\n' "$(git -C "${repository}" rev-parse HEAD)"
+        printf 'tree=%s\n' "$(git -C "${repository}" rev-parse HEAD^{tree})"
+        printf 'helium_submodule=%s\n' "$(git -C "${repository}" rev-parse HEAD:helium-chromium)"
+        printf 'archive_sha256=%s\n' "${archive_sha}"
+        printf 'transferred_at=%s\n' "$(date --iso-8601=seconds)"
+        printf 'transferred_from=%s\n' "$(hostname -s)"
+    } >"${manifest}"
+
+    rsync --archive --checksum "${archive}" "${manifest}" \
+        "${host}:${remote_state}/${job}/"
+    remote_exec "${remote_worker}" stage-finish "${job}" "${archive_sha}"
+    stage_finished=true
+    find "${temp_dir}" -depth -delete
+    temp_dir=
+    trap - EXIT
+}
+
+start() {
+    local job=$1
+    shift
+    validate_job "${job}"
+    [ "${1:-}" = -- ] || {
+        usage
+        exit 2
+    }
+    shift
+    [ "$#" -gt 0 ] || {
+        echo "missing build command" >&2
+        exit 2
+    }
+    install_worker
+    remote_exec "${remote_worker}" start production "${job}" \
+        "${remote_work}/${job}/source" -- "$@"
+}
+
+status() {
+    install_worker
+    remote_exec "${remote_worker}" status "$1"
+}
+
+limits() {
+    install_worker
+    remote_exec "${remote_worker}" limits "$1"
+}
+
+logs() {
+    install_worker
+    remote_exec "${remote_worker}" logs "$@"
+}
+
+cancel() {
+    install_worker
+    remote_exec "${remote_worker}" cancel "$1"
+}
+
+fetch_artifact() {
+    local job=$1
+    local relative=$2
+    local destination=${3:-"${default_artifact_root}/${job}"}
+    validate_job "${job}"
+    [[ "${relative}" != /* && "${relative}" != *..* ]] || {
+        echo "artifact path must be a contained relative path" >&2
+        exit 2
+    }
+    install_worker
+
+    local info remote_path remote_sha local_path local_sha
+    info=$(remote_exec "${remote_worker}" artifact-info "${job}" "${relative}")
+    remote_path=$(awk -F= '$1 == "path" { print substr($0, 6) }' <<<"${info}")
+    remote_sha=$(awk -F= '$1 == "sha256" { print $2 }' <<<"${info}")
+    [ -n "${remote_path}" ] && [ -n "${remote_sha}" ] || {
+        echo "invalid artifact metadata from chromiumer" >&2
+        exit 1
+    }
+
+    mkdir -p "${destination}"
+    destination=$(realpath -e "${destination}")
+    if [[ "${destination}" == /srv/nas/* ]]; then
+        findmnt -M /srv/nas >/dev/null || {
+            echo "/srv/nas is not mounted" >&2
+            exit 1
+        }
+    fi
+    rsync --archive --partial "${host}:${remote_path}" "${destination}/"
+    local_path="${destination}/$(basename "${remote_path}")"
+    local_sha=$(sha256sum "${local_path}" | awk '{ print $1 }')
+    [ "${local_sha}" = "${remote_sha}" ] || {
+        echo "returned artifact checksum mismatch" >&2
+        exit 1
+    }
+    {
+        printf 'job=%s\n' "${job}"
+        printf 'artifact=%s\n' "${local_path}"
+        printf 'sha256=%s\n' "${local_sha}"
+        printf 'received_at=%s\n' "$(date --iso-8601=seconds)"
+        printf 'received_on=%s\n' "$(hostname -s)"
+    } >"${destination}/artifact-receipt.env"
+    remote_exec "${remote_worker}" mark-returned "${job}" "${local_sha}"
+    printf 'artifact=%s\nsha256=%s\n' "${local_path}" "${local_sha}"
+}
+
+cleanup() {
+    install_worker
+    remote_exec "${remote_worker}" cleanup "$1"
+}
+
+test_wrapper() {
+    install_worker
+    local job="wrapper-test-$(date +%Y%m%d-%H%M%S)"
+    local test_dir
+    test_dir=$(remote_exec "${remote_worker}" test-prepare "${job}" | tail -n 1)
+    remote_exec "${remote_worker}" start test "${job}" "${test_dir}" -- \
+        sh -c 'printf "wrapper_test=start\n"; sleep 5; printf "wrapper_test=complete\n"'
+    sleep 1
+    remote_exec "${remote_worker}" limits "${job}"
+
+    local attempt state
+    for attempt in $(seq 1 20); do
+        state=$(remote_exec "${remote_worker}" status "${job}")
+        if grep -q '^exit_code=' <<<"${state}"; then
+            break
+        fi
+        sleep 1
+    done
+    grep -q '^exit_code=0$' <<<"${state}" || {
+        printf '%s\n' "${state}" >&2
+        echo "wrapper test did not complete successfully" >&2
+        exit 1
+    }
+    remote_exec "${remote_worker}" logs "${job}" 40 | \
+        grep -E 'wrapper_test=(start|complete)'
+    remote_exec "${remote_worker}" cleanup "${job}"
+    printf 'wrapper_test=passed\njob=%s\n' "${job}"
+}
+
+command=${1:-}
+shift || true
+case "${command}" in
+    connection) [ "$#" -eq 0 ] || exit 2; connection ;;
+    preflight) [ "$#" -eq 0 ] || exit 2; preflight ;;
+    stage) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || exit 2; stage "$@" ;;
+    start) [ "$#" -ge 3 ] || exit 2; start "$@" ;;
+    status) [ "$#" -eq 1 ] || exit 2; status "$@" ;;
+    limits) [ "$#" -eq 1 ] || exit 2; limits "$@" ;;
+    logs) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || exit 2; logs "$@" ;;
+    cancel) [ "$#" -eq 1 ] || exit 2; cancel "$@" ;;
+    fetch) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; fetch_artifact "$@" ;;
+    cleanup) [ "$#" -eq 1 ] || exit 2; cleanup "$@" ;;
+    test) [ "$#" -eq 0 ] || exit 2; test_wrapper ;;
+    -h|--help) usage ;;
+    *) usage; exit 2 ;;
+esac

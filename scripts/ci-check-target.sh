@@ -116,6 +116,9 @@ if [ "${platform}" = "linux" ]; then
         "${checkout}/patches/ungoogled-chromium/portablelinux/fix-compiling-on-arm64.patch"
     grep -q 'test_wrap_static_fns' \
         "${checkout}/patches/ungoogled-chromium/portablelinux/fix-compiling-on-arm64.patch"
+    grep -q 'HELIUM_BUILD_JOBS' "${checkout}/scripts/docker-build.sh"
+    grep -Fq 'ninja -j "${HELIUM_BUILD_JOBS:-$(nproc)}"' \
+        "${checkout}/scripts/shared.sh"
 fi
 
 if [ "${platform}" = "macos" ]; then

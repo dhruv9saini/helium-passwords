@@ -14,5 +14,6 @@ details.
 | HP-006 | P1 | Open | Builds use moving platform `main` refs and do not emit a complete provenance manifest. | Platform commits, Helium core, Chromium version, GN args, patch hashes, and artifact hash are immutable build inputs/outputs. |
 | HP-007 | P2 | Ready locally | Repositories and developer commands were fragmented. | Both repos live under `/home/d/coding/helium`, share `scripts/dev.sh`, and Sync contains Passwords `main` through Git ancestry. |
 | HP-008 | P2 | Open | There are no public fixture pages or browser-driving acceptance tests. | A small local test site and driver cover save/update/autofill without real credentials or profiles. |
+| HP-009 | P0 | Blocked | Chromiumer SSH and isolation are ready, but its 106 GiB available disk cannot satisfy the 100 GiB workspace plus 20 GiB reserve and the build toolchain is absent. | Chromiumer has a local build filesystem with at least 120 GiB available, a pinned Nix/Docker toolchain, and production `scripts/chromiumer-job.sh preflight` passes. |
 
 Do not close an issue based only on patch metadata lint or overlay injection.
