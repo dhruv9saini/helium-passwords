@@ -26,3 +26,51 @@ test("native remote sequence is applied before local mutation publication", () =
   assert.match(source.slice(publish, source.indexOf("void HeliumPasswordSyncBridge::PushRecords")),
     /state->second\.fingerprint == fingerprint/);
 });
+
+test("native records emit Chromium's complete password specifics schema", () => {
+  const serialize = source.slice(
+    source.indexOf("std::optional<std::string> PasswordPayloadJSON"),
+    source.indexOf("std::optional<Credential> PayloadToCredential"),
+  );
+  assert.match(serialize, /SpecificsDataFromPassword/);
+  assert.match(serialize, /SerializeToString/);
+  assert.match(source, /chromium-password-specifics-data-v1/);
+  assert.match(serialize, /password_specifics_data_b64/);
+  assert.doesNotMatch(serialize, /payload\.Set\("password"/);
+  assert.doesNotMatch(serialize, /payload\.Set\("note"/);
+});
+
+test("legacy simple records migrate read-only to the complete schema", () => {
+  const parse = source.slice(
+    source.indexOf("std::optional<Credential> PayloadToCredential"),
+    source.indexOf("std::optional<Record> UpsertRecordForCredential"),
+  );
+  assert.match(parse, /kLegacySimplePayloadFormat/);
+  assert.match(parse, /PasswordSpecificsData specifics/);
+  assert.match(parse, /CredentialFromSpecifics/);
+  assert.match(source, /PasswordFromSpecifics/);
+  assert.match(source,
+    /needs_payload_migration \? remote\.payload_json : \*canonical_payload/);
+
+  const emittedFormatUses = source.match(
+    /payload\.Set\("format", kLegacySimplePayloadFormat\)/g,
+  ) ?? [];
+  assert.equal(emittedFormatUses.length, 0);
+});
+
+test("pinned Chromium PasswordForm APIs are used without version fallbacks", () => {
+  assert.match(source, /using Credential = password_manager::PasswordForm/);
+  assert.match(source, /return change\.form\(\)/);
+  assert.doesNotMatch(source, /__has_include|StoredCredential|ToPasswordForm/);
+});
+
+test("remote writes validate identity and choose one add-or-update operation", () => {
+  const reconcile = source.slice(
+    source.indexOf("void HeliumPasswordSyncBridge::ReconcileRemotePasswords"),
+    source.indexOf("void HeliumPasswordSyncBridge::PublishLocalMutations"),
+  );
+  assert.match(reconcile, /PasswordRecordKey\(\*credential\) != remote\.key/);
+  assert.match(reconcile, /profile_store_->AddLogin/);
+  assert.match(reconcile, /profile_store_->UpdateLogin/);
+  assert.doesNotMatch(source, /AddRemoteLoginAfterUpdate/);
+});

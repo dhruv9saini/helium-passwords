@@ -14,6 +14,8 @@
 #include "base/strings/string_util.h"
 #include "base/system/sys_info.h"
 #include "build/build_config.h"
+#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
+#include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_paths.h"
 #include "components/helium_sync/helium_password_sync_bridge.h"
@@ -42,6 +44,9 @@ constexpr char kTokenFile[] = "token";
 constexpr char kBaseUrlFile[] = "base_url";
 constexpr char kDeviceNameFile[] = "device_name";
 constexpr char kPasswordStateFile[] = "password-state.json";
+constexpr char kCookiePoliciesFile[] = "cookie-policies.json";
+constexpr char kCookieStateFile[] = "cookie-state.json";
+constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
 constexpr char kDefaultBaseUrl[] = "http://127.0.0.1:44719";
 
 #if BUILDFLAG(IS_ANDROID)
@@ -95,6 +100,16 @@ std::optional<std::string> ReadFirstConfigValue(Profile* profile,
   return std::nullopt;
 }
 
+std::optional<base::FilePath> FindFirstConfigPath(Profile* profile,
+                                                  const char* leaf) {
+  for (const base::FilePath& path : CandidateConfigPaths(profile, leaf)) {
+    if (base::PathExists(path)) {
+      return path;
+    }
+  }
+  return std::nullopt;
+}
+
 GURL ReadBaseUrl(Profile* profile) {
   std::string base_url =
       ReadFirstConfigValue(profile, kBaseUrlFile).value_or(kDefaultBaseUrl);
@@ -115,6 +130,14 @@ std::string ReadDeviceName(Profile* profile) {
 }  // namespace
 
 HeliumSyncService::HeliumSyncService(Profile* profile) {
+  if (std::optional<std::string> export_path =
+          ReadFirstConfigValue(profile, kTabSnapshotExportPathFile)) {
+    tab_snapshot_bridge_ =
+        std::make_unique<helium_sync::HeliumTabSnapshotBridge>(
+            profile, base::FilePath::FromUTF8Unsafe(*export_path));
+    tab_snapshot_bridge_->Start();
+  }
+
   std::optional<std::string> token = ReadFirstConfigValue(profile, kTokenFile);
   if (!token) {
     LOG(WARNING) << "Helium sync inactive: no token config for profile "
@@ -122,6 +145,24 @@ HeliumSyncService::HeliumSyncService(Profile* profile) {
     AndroidStatusLog("inactive: no token config for profile " +
                      profile->GetPath().AsUTF8Unsafe());
     return;
+  }
+
+  std::string device_name = ReadDeviceName(profile);
+  LOG(WARNING) << "Helium sync starting for device " << device_name
+               << " profile " << profile->GetPath();
+  AndroidStatusLog("starting for device " + device_name);
+  if (std::optional<base::FilePath> policies_path =
+          FindFirstConfigPath(profile, kCookiePoliciesFile)) {
+    auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
+        profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
+        device_name);
+    cookie_bridge_ = std::make_unique<helium_sync::HeliumCookieSyncBridge>(
+        profile, std::move(cookie_client), device_name,
+        std::move(*policies_path),
+        profile->GetPath()
+            .AppendASCII(kConfigDir)
+            .AppendASCII(kCookieStateFile));
+    cookie_bridge_->Start();
   }
 
   scoped_refptr<password_manager::PasswordStoreInterface> password_store =
@@ -135,15 +176,11 @@ HeliumSyncService::HeliumSyncService(Profile* profile) {
     return;
   }
 
-  std::string device_name = ReadDeviceName(profile);
-  LOG(WARNING) << "Helium sync starting for device " << device_name
-               << " profile " << profile->GetPath();
-  AndroidStatusLog("starting for device " + device_name);
   auto client = std::make_unique<helium_sync::HeliumSyncClient>(
       profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
       device_name);
   password_bridge_ = std::make_unique<helium_sync::HeliumPasswordSyncBridge>(
-      password_store, std::move(client), std::move(device_name),
+      password_store, std::move(client), device_name,
       profile->GetPath()
           .AppendASCII(kConfigDir)
           .AppendASCII(kPasswordStateFile));
@@ -153,8 +190,16 @@ HeliumSyncService::HeliumSyncService(Profile* profile) {
 HeliumSyncService::~HeliumSyncService() = default;
 
 void HeliumSyncService::Shutdown() {
+  if (cookie_bridge_) {
+    cookie_bridge_->Stop();
+    cookie_bridge_.reset();
+  }
   if (password_bridge_) {
     password_bridge_->Stop();
     password_bridge_.reset();
+  }
+  if (tab_snapshot_bridge_) {
+    tab_snapshot_bridge_->Stop();
+    tab_snapshot_bridge_.reset();
   }
 }

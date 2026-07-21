@@ -1,17 +1,21 @@
 diff --git a/chrome/browser/helium_sync/BUILD.gn b/chrome/browser/helium_sync/BUILD.gn
 new file mode 100644
-index 0000000..530be6f
+index 0000000..8240d4e
 --- /dev/null
 +++ b/chrome/browser/helium_sync/BUILD.gn
-@@ -0,0 +1,25 @@
+@@ -0,0 +1,36 @@
 +# Copyright 2026 The Helium Authors
 +
 +source_set("helium_sync") {
 +  sources = [
++    "helium_cookie_sync_bridge.cc",
++    "helium_cookie_sync_bridge.h",
 +    "helium_sync_service.cc",
 +    "helium_sync_service.h",
 +    "helium_sync_service_factory.cc",
 +    "helium_sync_service_factory.h",
++    "helium_tab_snapshot_bridge.cc",
++    "helium_tab_snapshot_bridge.h",
 +  ]
 +
 +  deps = [
@@ -21,20 +25,932 @@ index 0000000..530be6f
 +    "//chrome/browser/password_manager",
 +    "//chrome/browser/password_manager/factories",
 +    "//chrome/browser/profiles:profile",
++    "//chrome/browser/tab_list",
++    "//chrome/browser/ui/browser_window",
 +    "//chrome/common",
 +    "//components/helium_sync",
 +    "//components/keyed_service/core",
 +    "//components/password_manager/core/browser/password_store:password_store_interface",
++    "//components/sessions:session_id",
++    "//components/tabs:public",
++    "//content/public/browser",
++    "//crypto",
++    "//net",
 +    "//services/network/public/cpp",
 +    "//url",
 +  ]
 +}
+diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
+new file mode 100644
+index 0000000..1d298b1
+--- /dev/null
++++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
+@@ -0,0 +1,853 @@
++// Copyright 2026 The Helium Authors
++
++#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
++
++#include <algorithm>
++#include <deque>
++#include <limits>
++#include <map>
++#include <optional>
++#include <set>
++#include <string>
++#include <string_view>
++#include <utility>
++#include <vector>
++
++#include "base/files/file_util.h"
++#include "base/files/important_file_writer.h"
++#include "base/functional/bind.h"
++#include "base/json/json_reader.h"
++#include "base/json/json_writer.h"
++#include "base/location.h"
++#include "base/logging.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/string_util.h"
++#include "base/time/time.h"
++#include "base/timer/timer.h"
++#include "base/values.h"
++#include "chrome/browser/profiles/profile.h"
++#include "components/helium_sync/helium_sync_client.h"
++#include "content/public/browser/storage_partition.h"
++#include "crypto/sha2.h"
++#include "net/cookies/canonical_cookie.h"
++#include "net/cookies/cookie_constants.h"
++#include "net/cookies/cookie_options.h"
++#include "net/cookies/cookie_partition_key.h"
++#include "services/network/public/mojom/cookie_manager.mojom.h"
++#include "url/gurl.h"
++
++namespace helium_sync {
++namespace {
++
++constexpr char kCookieKind[] = "cookies";
++constexpr char kCookieFormat[] = "helium-cookie-domain-v1";
++constexpr int kStateSchema = 1;
++constexpr int kMaxCookiesPerDomain = 5000;
++constexpr int kMaxCookiePayloadBytes = 2 * 1024 * 1024;
++constexpr base::TimeDelta kReconcileInterval = base::Minutes(1);
++
++struct Policy {
++  std::string domain;
++  std::string source;
++  std::set<std::string> replicas;
++  bool device_bound = false;
++};
++
++struct DomainState {
++  std::string source_fingerprint;
++  int source_generation = 0;
++  int replica_generation = 0;
++  bool needs_reauthentication = false;
++};
++
++struct RemoteDomain {
++  int generation = 0;
++  std::string fingerprint;
++  std::vector<net::CanonicalCookie> cookies;
++};
++
++struct PendingSourceState {
++  std::string fingerprint;
++  int generation = 0;
++};
++
++struct CookieOperation {
++  bool set = false;
++  net::CanonicalCookie cookie;
++  GURL source_url;
++};
++
++struct PendingReplica {
++  std::string domain;
++  int generation = 0;
++  std::deque<CookieOperation> operations;
++};
++
++std::string CanonicalDomain(std::string value) {
++  value = std::string(base::TrimWhitespaceASCII(value, base::TRIM_ALL));
++  value = base::ToLowerASCII(value);
++  if (base::StartsWith(value, ".")) {
++    value.erase(0, 1);
++  }
++  return value;
++}
++
++bool DomainMatches(std::string_view cookie_domain,
++                   std::string_view policy_domain) {
++  std::string domain = CanonicalDomain(std::string(cookie_domain));
++  return domain == policy_domain ||
++         (domain.size() > policy_domain.size() &&
++          base::EndsWith(domain,
++                         std::string(".") + std::string(policy_domain)));
++}
++
++bool DomainsOverlap(std::string_view left, std::string_view right) {
++  return DomainMatches(left, right) || DomainMatches(right, left);
++}
++
++std::string DomainRecordKey(std::string_view domain) {
++  return "domain/" + std::string(domain);
++}
++
++std::string TimeToJSON(base::Time value) {
++  if (value.is_null()) {
++    return "0";
++  }
++  return base::NumberToString(
++      value.ToDeltaSinceWindowsEpoch().InMicroseconds());
++}
++
++std::optional<base::Time> TimeFromJSON(const base::DictValue& value,
++                                       std::string_view key) {
++  const std::string* encoded = value.FindString(key);
++  int64_t micros = 0;
++  if (!encoded || !base::StringToInt64(*encoded, &micros)) {
++    return std::nullopt;
++  }
++  if (micros == 0) {
++    return base::Time();
++  }
++  return base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(micros));
++}
++
++std::optional<base::DictValue> CookieToValue(
++    const net::CanonicalCookie& cookie) {
++  base::DictValue value;
++  value.Set("name", cookie.Name());
++  value.Set("value", cookie.Value());
++  value.Set("domain", cookie.Domain());
++  value.Set("path", cookie.Path());
++  value.Set("creation", TimeToJSON(cookie.CreationDate()));
++  value.Set("expiry", TimeToJSON(cookie.ExpiryDate()));
++  value.Set("last_access", TimeToJSON(cookie.LastAccessDate()));
++  value.Set("last_update", TimeToJSON(cookie.LastUpdateDate()));
++  value.Set("secure", cookie.SecureAttribute());
++  value.Set("http_only", cookie.IsHttpOnly());
++  value.Set("same_site", static_cast<int>(cookie.SameSite()));
++  value.Set("priority", static_cast<int>(cookie.Priority()));
++  value.Set("source_scheme", static_cast<int>(cookie.SourceScheme()));
++  value.Set("source_port", cookie.SourcePort());
++  if (cookie.PartitionKey()) {
++    auto serialized = net::CookiePartitionKey::Serialize(cookie.PartitionKey());
++    if (!serialized.has_value()) {
++      return std::nullopt;
++    }
++    base::DictValue partition;
++    partition.Set("top_level_site", serialized->TopLevelSite());
++    partition.Set("has_cross_site_ancestor",
++                  serialized->has_cross_site_ancestor());
++    value.Set("partition_key", std::move(partition));
++  }
++  return value;
++}
++
++GURL SourceUrlForCookie(const net::CanonicalCookie& cookie) {
++  std::string url =
++      (cookie.SourceScheme() == net::CookieSourceScheme::kSecure ||
++       cookie.SecureAttribute())
++          ? "https://"
++          : "http://";
++  url += cookie.DomainWithoutDot();
++  const int port = cookie.SourcePort();
++  if (port > 0 && port <= 65535 &&
++      !((url.starts_with("https://") && port == 443) ||
++        (url.starts_with("http://") && port == 80))) {
++    url += ":" + base::NumberToString(port);
++  }
++  url += "/";
++  return GURL(url);
++}
++
++std::optional<net::CanonicalCookie> CookieFromValue(
++    const base::DictValue& value) {
++  const std::string* name = value.FindString("name");
++  const std::string* cookie_value = value.FindString("value");
++  const std::string* domain = value.FindString("domain");
++  const std::string* path = value.FindString("path");
++  std::optional<base::Time> creation = TimeFromJSON(value, "creation");
++  std::optional<base::Time> expiry = TimeFromJSON(value, "expiry");
++  std::optional<base::Time> last_access = TimeFromJSON(value, "last_access");
++  std::optional<base::Time> last_update = TimeFromJSON(value, "last_update");
++  std::optional<bool> secure = value.FindBool("secure");
++  std::optional<bool> http_only = value.FindBool("http_only");
++  std::optional<int> same_site = value.FindInt("same_site");
++  std::optional<int> priority = value.FindInt("priority");
++  std::optional<int> source_scheme = value.FindInt("source_scheme");
++  std::optional<int> source_port = value.FindInt("source_port");
++  if (!name || !cookie_value || !domain || !path || !creation || !expiry ||
++      !last_access || !last_update || !secure || !http_only || !same_site ||
++      !priority || !source_scheme || !source_port || path->empty() ||
++      (*path)[0] != '/' || *same_site < -1 || *same_site > 2 || *priority < 0 ||
++      *priority > 2 || *source_scheme < 0 || *source_scheme > 2 ||
++      *source_port < -1 || *source_port == 0 || *source_port > 65535 ||
++      (!expiry->is_null() && *expiry <= *creation)) {
++    return std::nullopt;
++  }
++
++  std::optional<net::CookiePartitionKey> partition_key;
++  if (const base::DictValue* partition = value.FindDict("partition_key")) {
++    const std::string* top_level_site = partition->FindString("top_level_site");
++    std::optional<bool> has_cross_site_ancestor =
++        partition->FindBool("has_cross_site_ancestor");
++    if (!top_level_site || !has_cross_site_ancestor) {
++      return std::nullopt;
++    }
++    auto parsed = net::CookiePartitionKey::FromUntrustedInput(
++        *top_level_site, *has_cross_site_ancestor);
++    if (!parsed.has_value()) {
++      return std::nullopt;
++    }
++    partition_key = std::move(*parsed);
++  }
++
++  const net::CookieSourceScheme scheme =
++      static_cast<net::CookieSourceScheme>(*source_scheme);
++  std::string source = (scheme == net::CookieSourceScheme::kSecure || *secure)
++                           ? "https://"
++                           : "http://";
++  source += CanonicalDomain(*domain) + "/";
++  GURL source_url(source);
++  if (!source_url.is_valid()) {
++    return std::nullopt;
++  }
++  std::unique_ptr<net::CanonicalCookie> cookie =
++      net::CanonicalCookie::CreateSanitizedCookie(
++          source_url, *name, *cookie_value, *domain, *path, *creation, *expiry,
++          *last_access, *secure, *http_only,
++          static_cast<net::CookieSameSite>(*same_site),
++          static_cast<net::CookiePriority>(*priority), partition_key,
++          /*status=*/nullptr);
++  if (!cookie) {
++    return std::nullopt;
++  }
++  cookie->SetSourceScheme(scheme);
++  cookie->SetSourcePort(*source_port);
++  if (!SourceUrlForCookie(*cookie).is_valid()) {
++    return std::nullopt;
++  }
++  return std::move(*cookie);
++}
++
++std::optional<std::string> CookieIdentity(const net::CanonicalCookie& cookie) {
++  std::string partition = "unpartitioned";
++  if (cookie.PartitionKey()) {
++    auto serialized = net::CookiePartitionKey::Serialize(cookie.PartitionKey());
++    if (!serialized.has_value()) {
++      return std::nullopt;
++    }
++    partition = serialized->TopLevelSite() + "\0" +
++                (serialized->has_cross_site_ancestor() ? "1" : "0");
++  }
++  return partition + "\0" + cookie.Domain() + "\0" + cookie.Path() + "\0" +
++         cookie.Name() + "\0" +
++         base::NumberToString(static_cast<int>(cookie.SourceScheme())) + "\0" +
++         base::NumberToString(cookie.SourcePort());
++}
++
++std::optional<base::ListValue> CookiesToValue(
++    std::vector<net::CanonicalCookie> cookies) {
++  std::map<std::string, net::CanonicalCookie> by_identity;
++  for (net::CanonicalCookie& cookie : cookies) {
++    if (cookie.IsExpired(base::Time::Now())) {
++      continue;
++    }
++    std::optional<std::string> identity = CookieIdentity(cookie);
++    if (!identity) {
++      return std::nullopt;
++    }
++    by_identity.insert_or_assign(std::move(*identity), std::move(cookie));
++  }
++  if (by_identity.size() > kMaxCookiesPerDomain) {
++    return std::nullopt;
++  }
++  base::ListValue out;
++  for (const auto& [identity, cookie] : by_identity) {
++    std::optional<base::DictValue> value = CookieToValue(cookie);
++    if (!value) {
++      return std::nullopt;
++    }
++    out.Append(std::move(*value));
++  }
++  return out;
++}
++
++std::optional<std::string> FingerprintCookies(const base::ListValue& cookies) {
++  base::ListValue mutation_fields;
++  for (const base::Value& item : cookies) {
++    if (!item.is_dict()) {
++      return std::nullopt;
++    }
++    base::DictValue cookie = item.GetDict().Clone();
++    // Reads update access metadata and replicas cannot recreate update time.
++    // They are retained in the payload for recovery but are not rotations.
++    cookie.Remove("creation");
++    cookie.Remove("last_access");
++    cookie.Remove("last_update");
++    mutation_fields.Append(std::move(cookie));
++  }
++  std::string raw;
++  if (!base::JSONWriter::Write(mutation_fields, &raw)) {
++    return std::nullopt;
++  }
++  return base::HexEncodeLower(crypto::SHA256HashString(raw));
++}
++
++std::optional<std::string> MakeDomainPayload(const Policy& policy,
++                                             int generation,
++                                             base::ListValue cookies) {
++  base::DictValue payload;
++  payload.Set("format", kCookieFormat);
++  payload.Set("domain", policy.domain);
++  payload.Set("source_device", policy.source);
++  payload.Set("mode", policy.device_bound ? "device-bound" : "portable");
++  payload.Set("generation", generation);
++  payload.Set("cookies", std::move(cookies));
++  std::string raw;
++  if (!base::JSONWriter::Write(payload, &raw) ||
++      raw.size() > kMaxCookiePayloadBytes) {
++    return std::nullopt;
++  }
++  return raw;
++}
++
++std::optional<RemoteDomain> ParseRemoteDomain(const Policy& policy,
++                                              const base::DictValue& payload) {
++  const std::string* format = payload.FindString("format");
++  const std::string* domain = payload.FindString("domain");
++  const std::string* source = payload.FindString("source_device");
++  const std::string* mode = payload.FindString("mode");
++  std::optional<int> generation = payload.FindInt("generation");
++  const base::ListValue* cookies = payload.FindList("cookies");
++  if (!format || *format != kCookieFormat || !domain ||
++      CanonicalDomain(*domain) != policy.domain || !source ||
++      *source != policy.source || !mode ||
++      *mode != (policy.device_bound ? "device-bound" : "portable") ||
++      !generation || *generation <= 0 || !cookies ||
++      cookies->size() > kMaxCookiesPerDomain ||
++      (policy.device_bound && !cookies->empty())) {
++    return std::nullopt;
++  }
++  RemoteDomain out;
++  out.generation = *generation;
++  for (const base::Value& item : *cookies) {
++    if (!item.is_dict()) {
++      return std::nullopt;
++    }
++    std::optional<net::CanonicalCookie> cookie =
++        CookieFromValue(item.GetDict());
++    if (!cookie || !DomainMatches(cookie->Domain(), policy.domain) ||
++        cookie->IsExpired(base::Time::Now())) {
++      return std::nullopt;
++    }
++    out.cookies.push_back(std::move(*cookie));
++  }
++  std::optional<base::ListValue> normalized = CookiesToValue(out.cookies);
++  if (!normalized) {
++    return std::nullopt;
++  }
++  std::optional<std::string> fingerprint = FingerprintCookies(*normalized);
++  if (!fingerprint) {
++    return std::nullopt;
++  }
++  out.fingerprint = std::move(*fingerprint);
++  return out;
++}
++
++}  // namespace
++
++class HeliumCookieSyncBridge::Impl {
++ public:
++  Impl(Profile* profile,
++       std::unique_ptr<HeliumSyncClient> client,
++       std::string device_name,
++       base::FilePath policies_path,
++       base::FilePath state_path)
++      : profile_(profile),
++        client_(std::move(client)),
++        device_name_(std::move(device_name)),
++        policies_path_(std::move(policies_path)),
++        state_path_(std::move(state_path)) {}
++
++  ~Impl() { Stop(); }
++
++  void Start() {
++    if (!profile_ || !client_ || policies_path_.empty() || !LoadPolicies()) {
++      LOG(WARNING) << "Helium cookie sync inactive: cookie policy is missing "
++                      "or invalid";
++      return;
++    }
++    LoadState();
++    reconcile_timer_.Start(
++        FROM_HERE, kReconcileInterval,
++        base::BindRepeating(&Impl::Reconcile, weak_factory_.GetWeakPtr()));
++    Reconcile();
++  }
++
++  void Stop() {
++    reconcile_timer_.Stop();
++    weak_factory_.InvalidateWeakPtrs();
++    reconcile_in_flight_ = false;
++    source_push_in_flight_ = false;
++    replica_apply_in_flight_ = false;
++    pending_replicas_.clear();
++  }
++
++ private:
++  bool LoadPolicies() {
++    std::string raw;
++    if (!base::ReadFileToString(policies_path_, &raw)) {
++      return false;
++    }
++    std::optional<base::Value> parsed =
++        base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
++    if (!parsed || !parsed->is_dict()) {
++      return false;
++    }
++    const base::ListValue* list = parsed->GetDict().FindList("cookie_policies");
++    if (!list || list->empty()) {
++      return false;
++    }
++    std::vector<Policy> loaded;
++    for (const base::Value& item : *list) {
++      if (!item.is_dict()) {
++        return false;
++      }
++      const base::DictValue& value = item.GetDict();
++      const std::string* domain_value = value.FindString("domain");
++      const std::string* source = value.FindString("source");
++      const std::string* mode = value.FindString("mode");
++      const base::ListValue* replicas = value.FindList("replicas");
++      if (!domain_value || !source || source->empty() || !mode || !replicas ||
++          (*mode != "portable" && *mode != "device-bound")) {
++        return false;
++      }
++      Policy policy;
++      policy.domain = CanonicalDomain(*domain_value);
++      policy.source = *source;
++      policy.device_bound = *mode == "device-bound";
++      GURL domain_url("https://" + policy.domain + "/");
++      if (policy.domain.empty() || !domain_url.is_valid() ||
++          domain_url.host() != policy.domain) {
++        return false;
++      }
++      for (const base::Value& replica : *replicas) {
++        if (!replica.is_string() || replica.GetString().empty() ||
++            replica.GetString() == policy.source ||
++            !policy.replicas.insert(replica.GetString()).second) {
++          return false;
++        }
++      }
++      for (const Policy& existing : loaded) {
++        if (DomainsOverlap(existing.domain, policy.domain)) {
++          return false;
++        }
++      }
++      loaded.push_back(std::move(policy));
++    }
++    policies_ = std::move(loaded);
++    return true;
++  }
++
++  void LoadState() {
++    state_.clear();
++    if (!base::PathExists(state_path_)) {
++      return;
++    }
++    std::string raw;
++    std::optional<base::Value> parsed;
++    if (!base::ReadFileToString(state_path_, &raw) ||
++        !(parsed = base::JSONReader::Read(raw, base::JSON_PARSE_RFC)) ||
++        !parsed->is_dict() ||
++        parsed->GetDict().FindInt("schema_version").value_or(0) !=
++            kStateSchema) {
++      LOG(WARNING) << "Helium cookie sync ignored invalid state";
++      return;
++    }
++    const base::DictValue* domains = parsed->GetDict().FindDict("domains");
++    if (!domains) {
++      return;
++    }
++    for (const auto [domain, value] : *domains) {
++      if (!value.is_dict()) {
++        state_.clear();
++        return;
++      }
++      DomainState item;
++      if (const std::string* fingerprint =
++              value.GetDict().FindString("source_fingerprint")) {
++        item.source_fingerprint = *fingerprint;
++      }
++      item.source_generation =
++          value.GetDict().FindInt("source_generation").value_or(0);
++      item.replica_generation =
++          value.GetDict().FindInt("replica_generation").value_or(0);
++      item.needs_reauthentication =
++          value.GetDict().FindBool("needs_reauthentication").value_or(false);
++      if (item.source_generation < 0 || item.replica_generation < 0) {
++        state_.clear();
++        return;
++      }
++      state_[domain] = std::move(item);
++    }
++  }
++
++  bool SaveState() const {
++    if (!base::CreateDirectory(state_path_.DirName())) {
++      return false;
++    }
++    base::DictValue domains;
++    for (const auto& [domain, item] : state_) {
++      base::DictValue value;
++      value.Set("source_fingerprint", item.source_fingerprint);
++      value.Set("source_generation", item.source_generation);
++      value.Set("replica_generation", item.replica_generation);
++      value.Set("needs_reauthentication", item.needs_reauthentication);
++      domains.Set(domain, std::move(value));
++    }
++    base::DictValue root;
++    root.Set("schema_version", kStateSchema);
++    root.Set("domains", std::move(domains));
++    std::string raw;
++    return base::JSONWriter::Write(root, &raw) &&
++           base::ImportantFileWriter::WriteFileAtomically(state_path_, raw,
++                                                          "HeliumSync");
++  }
++
++  void Reconcile() {
++    if (reconcile_in_flight_) {
++      return;
++    }
++    reconcile_in_flight_ = true;
++    client_->Latest(
++        {kCookieKind}, /*include_deleted=*/false,
++        base::BindOnce(&Impl::OnLatest, weak_factory_.GetWeakPtr()));
++  }
++
++  void OnLatest(bool ok, std::string response, std::string error) {
++    if (!ok) {
++      LOG(WARNING) << "Helium cookie pull failed: " << error;
++      reconcile_in_flight_ = false;
++      return;
++    }
++    std::optional<std::map<std::string, RemoteDomain>> remote =
++        ParseRemote(std::move(response));
++    if (!remote) {
++      LOG(WARNING) << "Helium cookie pull rejected malformed authority data";
++      reconcile_in_flight_ = false;
++      return;
++    }
++    profile_->GetDefaultStoragePartition()
++        ->GetCookieManagerForBrowserProcess()
++        ->GetAllCookies(base::BindOnce(
++            &Impl::OnCookies, weak_factory_.GetWeakPtr(), std::move(*remote)));
++  }
++
++  std::optional<std::map<std::string, RemoteDomain>> ParseRemote(
++      std::string response) {
++    std::optional<base::Value> root =
++        base::JSONReader::Read(response, base::JSON_PARSE_RFC);
++    if (!root || !root->is_dict()) {
++      return std::nullopt;
++    }
++    const base::ListValue* records = root->GetDict().FindList("records");
++    if (!records) {
++      return std::nullopt;
++    }
++    std::map<std::string, RemoteDomain> out;
++    std::map<std::string, const Policy*> by_key;
++    for (const Policy& policy : policies_) {
++      by_key[DomainRecordKey(policy.domain)] = &policy;
++    }
++    for (const base::Value& item : *records) {
++      if (!item.is_dict()) {
++        return std::nullopt;
++      }
++      const base::DictValue& record = item.GetDict();
++      const std::string* kind = record.FindString("kind");
++      const std::string* key = record.FindString("key");
++      if (!kind || *kind != kCookieKind || !key || !by_key.contains(*key)) {
++        continue;
++      }
++      const Policy& policy = *by_key[*key];
++      const std::string* origin = record.FindString("origin_device");
++      const base::DictValue* payload = record.FindDict("payload");
++      if (!origin || *origin != policy.source || !payload ||
++          record.FindBool("deleted").value_or(false)) {
++        return std::nullopt;
++      }
++      std::optional<RemoteDomain> domain = ParseRemoteDomain(policy, *payload);
++      if (!domain || !out.emplace(policy.domain, std::move(*domain)).second) {
++        return std::nullopt;
++      }
++    }
++    return out;
++  }
++
++  void OnCookies(std::map<std::string, RemoteDomain> remote,
++                 const std::vector<net::CanonicalCookie>& all_cookies) {
++    std::vector<Record> source_records;
++    std::map<std::string, PendingSourceState> source_state;
++    pending_replicas_.clear();
++    for (const Policy& policy : policies_) {
++      auto remote_item = remote.find(policy.domain);
++      if (policy.source == device_name_) {
++        std::vector<net::CanonicalCookie> local;
++        if (!policy.device_bound) {
++          for (const net::CanonicalCookie& cookie : all_cookies) {
++            if (DomainMatches(cookie.Domain(), policy.domain)) {
++              local.push_back(cookie);
++            }
++          }
++        }
++        std::optional<base::ListValue> cookies = CookiesToValue(local);
++        std::optional<std::string> fingerprint =
++            cookies ? FingerprintCookies(*cookies) : std::nullopt;
++        if (!cookies || !fingerprint) {
++          LOG(WARNING) << "Helium cookie source retained prior generation for "
++                       << policy.domain;
++          continue;
++        }
++        if (remote_item != remote.end() &&
++            remote_item->second.fingerprint == *fingerprint) {
++          DomainState& item = state_[policy.domain];
++          item.source_fingerprint = *fingerprint;
++          item.source_generation = remote_item->second.generation;
++          continue;
++        }
++        const int previous = remote_item == remote.end()
++                                 ? state_[policy.domain].source_generation
++                                 : remote_item->second.generation;
++        if (previous == std::numeric_limits<int>::max()) {
++          LOG(WARNING) << "Helium cookie generation overflow for "
++                       << policy.domain;
++          continue;
++        }
++        const int generation = previous + 1;
++        std::optional<std::string> payload =
++            MakeDomainPayload(policy, generation, std::move(*cookies));
++        if (!payload) {
++          continue;
++        }
++        Record record;
++        record.kind = kCookieKind;
++        record.key = DomainRecordKey(policy.domain);
++        record.origin_device = device_name_;
++        record.payload_json = std::move(*payload);
++        source_records.push_back(std::move(record));
++        source_state[policy.domain] = {*fingerprint, generation};
++        continue;
++      }
++
++      if (!policy.replicas.contains(device_name_) ||
++          remote_item == remote.end() ||
++          state_[policy.domain].replica_generation >=
++              remote_item->second.generation) {
++        continue;
++      }
++      if (policy.device_bound) {
++        DomainState& item = state_[policy.domain];
++        item.replica_generation = remote_item->second.generation;
++        item.needs_reauthentication = true;
++        continue;
++      }
++      PendingReplica pending;
++      pending.domain = policy.domain;
++      pending.generation = remote_item->second.generation;
++      bool pending_valid = true;
++      std::set<std::string> remote_identities;
++      for (const net::CanonicalCookie& cookie : remote_item->second.cookies) {
++        std::optional<std::string> identity = CookieIdentity(cookie);
++        if (!identity) {
++          pending_valid = false;
++          break;
++        }
++        remote_identities.insert(*identity);
++      }
++      for (const net::CanonicalCookie& cookie : all_cookies) {
++        if (!DomainMatches(cookie.Domain(), policy.domain)) {
++          continue;
++        }
++        std::optional<std::string> identity = CookieIdentity(cookie);
++        if (!identity) {
++          pending_valid = false;
++          break;
++        }
++        if (!remote_identities.contains(*identity)) {
++          pending.operations.push_back({false, cookie, GURL()});
++        }
++      }
++      for (const net::CanonicalCookie& cookie : remote_item->second.cookies) {
++        GURL source_url = SourceUrlForCookie(cookie);
++        if (!source_url.is_valid()) {
++          pending_valid = false;
++          break;
++        }
++        pending.operations.push_back({true, cookie, std::move(source_url)});
++      }
++      if (pending_valid) {
++        pending_replicas_.push_back(std::move(pending));
++      } else {
++        LOG(WARNING) << "Helium cookie replica retained prior generation for "
++                     << policy.domain;
++      }
++    }
++    SaveState();
++
++    source_push_in_flight_ = !source_records.empty();
++    if (source_push_in_flight_) {
++      client_->Push(
++          std::move(source_records),
++          base::BindOnce(&Impl::OnSourcePush, weak_factory_.GetWeakPtr(),
++                         std::move(source_state)));
++    }
++    replica_apply_in_flight_ = !pending_replicas_.empty();
++    if (replica_apply_in_flight_) {
++      StartNextReplica();
++    }
++    MaybeFinish();
++  }
++
++  void OnSourcePush(std::map<std::string, PendingSourceState> pending,
++                    bool ok,
++                    std::string error) {
++    source_push_in_flight_ = false;
++    if (!ok) {
++      LOG(WARNING) << "Helium cookie source push failed: " << error;
++      MaybeFinish();
++      return;
++    }
++    for (const auto& [domain, update] : pending) {
++      DomainState& item = state_[domain];
++      item.source_fingerprint = update.fingerprint;
++      item.source_generation = update.generation;
++    }
++    SaveState();
++    MaybeFinish();
++  }
++
++  void StartNextReplica() {
++    if (pending_replicas_.empty()) {
++      replica_apply_in_flight_ = false;
++      MaybeFinish();
++      return;
++    }
++    if (pending_replicas_.front().operations.empty()) {
++      CompleteReplica();
++      return;
++    }
++    CookieOperation operation =
++        std::move(pending_replicas_.front().operations.front());
++    pending_replicas_.front().operations.pop_front();
++    network::mojom::CookieManager* manager =
++        profile_->GetDefaultStoragePartition()
++            ->GetCookieManagerForBrowserProcess();
++    if (operation.set) {
++      manager->SetCanonicalCookie(
++          operation.cookie, operation.source_url,
++          net::CookieOptions::MakeAllInclusive(),
++          base::BindOnce(&Impl::OnCookieSet, weak_factory_.GetWeakPtr()));
++    } else {
++      manager->DeleteCanonicalCookie(
++          operation.cookie,
++          base::BindOnce(&Impl::OnCookieDeleted, weak_factory_.GetWeakPtr()));
++    }
++  }
++
++  void OnCookieSet(net::CookieAccessResult result) {
++    if (!result.status.IsInclude()) {
++      FailReplica("set rejected");
++      return;
++    }
++    StartNextReplica();
++  }
++
++  void OnCookieDeleted(bool) {
++    // A concurrent expiry makes deletion return false but already satisfies
++    // the replica generation.
++    StartNextReplica();
++  }
++
++  void CompleteReplica() {
++    PendingReplica completed = std::move(pending_replicas_.front());
++    pending_replicas_.pop_front();
++    DomainState& item = state_[completed.domain];
++    item.replica_generation = completed.generation;
++    item.needs_reauthentication = false;
++    SaveState();
++    StartNextReplica();
++  }
++
++  void FailReplica(std::string_view reason) {
++    LOG(WARNING) << "Helium cookie replica apply failed for "
++                 << pending_replicas_.front().domain << ": " << reason;
++    pending_replicas_.clear();
++    replica_apply_in_flight_ = false;
++    MaybeFinish();
++  }
++
++  void MaybeFinish() {
++    if (!source_push_in_flight_ && !replica_apply_in_flight_) {
++      reconcile_in_flight_ = false;
++    }
++  }
++
++  raw_ptr<Profile> profile_;
++  std::unique_ptr<HeliumSyncClient> client_;
++  const std::string device_name_;
++  const base::FilePath policies_path_;
++  const base::FilePath state_path_;
++  std::vector<Policy> policies_;
++  std::map<std::string, DomainState> state_;
++  std::deque<PendingReplica> pending_replicas_;
++  bool reconcile_in_flight_ = false;
++  bool source_push_in_flight_ = false;
++  bool replica_apply_in_flight_ = false;
++  base::RepeatingTimer reconcile_timer_;
++  base::WeakPtrFactory<Impl> weak_factory_{this};
++};
++
++HeliumCookieSyncBridge::HeliumCookieSyncBridge(
++    Profile* profile,
++    std::unique_ptr<HeliumSyncClient> client,
++    std::string device_name,
++    base::FilePath policies_path,
++    base::FilePath state_path)
++    : impl_(std::make_unique<Impl>(profile,
++                                   std::move(client),
++                                   std::move(device_name),
++                                   std::move(policies_path),
++                                   std::move(state_path))) {}
++
++HeliumCookieSyncBridge::~HeliumCookieSyncBridge() = default;
++
++void HeliumCookieSyncBridge::Start() {
++  impl_->Start();
++}
++
++void HeliumCookieSyncBridge::Stop() {
++  impl_->Stop();
++}
++
++}  // namespace helium_sync
+diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.h b/chrome/browser/helium_sync/helium_cookie_sync_bridge.h
+new file mode 100644
+index 0000000..bc7012d
+--- /dev/null
++++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.h
+@@ -0,0 +1,40 @@
++// Copyright 2026 The Helium Authors
++
++#ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
++#define CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
++
++#include <memory>
++#include <string>
++
++#include "base/files/file_path.h"
++
++class Profile;
++
++namespace helium_sync {
++
++class HeliumSyncClient;
++
++// Reconciles configured cookie domains through Chromium's privileged
++// CookieManager. A policy has exactly one source; replicas never publish.
++class HeliumCookieSyncBridge {
++ public:
++  HeliumCookieSyncBridge(Profile* profile,
++                         std::unique_ptr<HeliumSyncClient> client,
++                         std::string device_name,
++                         base::FilePath policies_path,
++                         base::FilePath state_path);
++  HeliumCookieSyncBridge(const HeliumCookieSyncBridge&) = delete;
++  HeliumCookieSyncBridge& operator=(const HeliumCookieSyncBridge&) = delete;
++  ~HeliumCookieSyncBridge();
++
++  void Start();
++  void Stop();
++
++ private:
++  class Impl;
++  std::unique_ptr<Impl> impl_;
++};
++
++}  // namespace helium_sync
++
++#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 diff --git a/chrome/browser/helium_sync/helium_sync_service.cc b/chrome/browser/helium_sync/helium_sync_service.cc
 new file mode 100644
-index 0000000..6816584
+index 0000000..a60ae30
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_sync_service.cc
-@@ -0,0 +1,160 @@
+@@ -0,0 +1,205 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_sync_service.h"
@@ -51,6 +967,8 @@ index 0000000..6816584
 +#include "base/strings/string_util.h"
 +#include "base/system/sys_info.h"
 +#include "build/build_config.h"
++#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
++#include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/common/chrome_paths.h"
 +#include "components/helium_sync/helium_password_sync_bridge.h"
@@ -79,6 +997,9 @@ index 0000000..6816584
 +constexpr char kBaseUrlFile[] = "base_url";
 +constexpr char kDeviceNameFile[] = "device_name";
 +constexpr char kPasswordStateFile[] = "password-state.json";
++constexpr char kCookiePoliciesFile[] = "cookie-policies.json";
++constexpr char kCookieStateFile[] = "cookie-state.json";
++constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
 +constexpr char kDefaultBaseUrl[] = "http://127.0.0.1:44719";
 +
 +#if BUILDFLAG(IS_ANDROID)
@@ -132,6 +1053,16 @@ index 0000000..6816584
 +  return std::nullopt;
 +}
 +
++std::optional<base::FilePath> FindFirstConfigPath(Profile* profile,
++                                                  const char* leaf) {
++  for (const base::FilePath& path : CandidateConfigPaths(profile, leaf)) {
++    if (base::PathExists(path)) {
++      return path;
++    }
++  }
++  return std::nullopt;
++}
++
 +GURL ReadBaseUrl(Profile* profile) {
 +  std::string base_url =
 +      ReadFirstConfigValue(profile, kBaseUrlFile).value_or(kDefaultBaseUrl);
@@ -152,6 +1083,14 @@ index 0000000..6816584
 +}  // namespace
 +
 +HeliumSyncService::HeliumSyncService(Profile* profile) {
++  if (std::optional<std::string> export_path =
++          ReadFirstConfigValue(profile, kTabSnapshotExportPathFile)) {
++    tab_snapshot_bridge_ =
++        std::make_unique<helium_sync::HeliumTabSnapshotBridge>(
++            profile, base::FilePath::FromUTF8Unsafe(*export_path));
++    tab_snapshot_bridge_->Start();
++  }
++
 +  std::optional<std::string> token = ReadFirstConfigValue(profile, kTokenFile);
 +  if (!token) {
 +    LOG(WARNING) << "Helium sync inactive: no token config for profile "
@@ -159,6 +1098,24 @@ index 0000000..6816584
 +    AndroidStatusLog("inactive: no token config for profile " +
 +                     profile->GetPath().AsUTF8Unsafe());
 +    return;
++  }
++
++  std::string device_name = ReadDeviceName(profile);
++  LOG(WARNING) << "Helium sync starting for device " << device_name
++               << " profile " << profile->GetPath();
++  AndroidStatusLog("starting for device " + device_name);
++  if (std::optional<base::FilePath> policies_path =
++          FindFirstConfigPath(profile, kCookiePoliciesFile)) {
++    auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
++        profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
++        device_name);
++    cookie_bridge_ = std::make_unique<helium_sync::HeliumCookieSyncBridge>(
++        profile, std::move(cookie_client), device_name,
++        std::move(*policies_path),
++        profile->GetPath()
++            .AppendASCII(kConfigDir)
++            .AppendASCII(kCookieStateFile));
++    cookie_bridge_->Start();
 +  }
 +
 +  scoped_refptr<password_manager::PasswordStoreInterface> password_store =
@@ -172,15 +1129,11 @@ index 0000000..6816584
 +    return;
 +  }
 +
-+  std::string device_name = ReadDeviceName(profile);
-+  LOG(WARNING) << "Helium sync starting for device " << device_name
-+               << " profile " << profile->GetPath();
-+  AndroidStatusLog("starting for device " + device_name);
 +  auto client = std::make_unique<helium_sync::HeliumSyncClient>(
 +      profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
 +      device_name);
 +  password_bridge_ = std::make_unique<helium_sync::HeliumPasswordSyncBridge>(
-+      password_store, std::move(client), std::move(device_name),
++      password_store, std::move(client), device_name,
 +      profile->GetPath()
 +          .AppendASCII(kConfigDir)
 +          .AppendASCII(kPasswordStateFile));
@@ -190,17 +1143,25 @@ index 0000000..6816584
 +HeliumSyncService::~HeliumSyncService() = default;
 +
 +void HeliumSyncService::Shutdown() {
++  if (cookie_bridge_) {
++    cookie_bridge_->Stop();
++    cookie_bridge_.reset();
++  }
 +  if (password_bridge_) {
 +    password_bridge_->Stop();
 +    password_bridge_.reset();
 +  }
++  if (tab_snapshot_bridge_) {
++    tab_snapshot_bridge_->Stop();
++    tab_snapshot_bridge_.reset();
++  }
 +}
 diff --git a/chrome/browser/helium_sync/helium_sync_service.h b/chrome/browser/helium_sync/helium_sync_service.h
 new file mode 100644
-index 0000000..2cdc7d6
+index 0000000..38202e6
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_sync_service.h
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,34 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
@@ -213,7 +1174,9 @@ index 0000000..2cdc7d6
 +class Profile;
 +
 +namespace helium_sync {
++class HeliumCookieSyncBridge;
 +class HeliumPasswordSyncBridge;
++class HeliumTabSnapshotBridge;
 +}  // namespace helium_sync
 +
 +class HeliumSyncService : public KeyedService {
@@ -227,7 +1190,9 @@ index 0000000..2cdc7d6
 +  void Shutdown() override;
 +
 + private:
++  std::unique_ptr<helium_sync::HeliumCookieSyncBridge> cookie_bridge_;
 +  std::unique_ptr<helium_sync::HeliumPasswordSyncBridge> password_bridge_;
++  std::unique_ptr<helium_sync::HeliumTabSnapshotBridge> tab_snapshot_bridge_;
 +};
 +
 +#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
@@ -329,6 +1294,266 @@ index 0000000..8e56fda
 +};
 +
 +#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_FACTORY_H_
+diff --git a/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc b/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc
+new file mode 100644
+index 0000000..0ccbd6e
+--- /dev/null
++++ b/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc
+@@ -0,0 +1,203 @@
++// Copyright 2026 The Helium Authors
++
++#include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
++
++#include <algorithm>
++#include <optional>
++#include <string>
++#include <utility>
++
++#include "base/files/file_util.h"
++#include "base/files/important_file_writer.h"
++#include "base/functional/bind.h"
++#include "base/json/json_writer.h"
++#include "base/location.h"
++#include "base/logging.h"
++#include "base/strings/string_number_conversions.h"
++#include "base/strings/utf_string_conversions.h"
++#include "base/task/sequenced_task_runner.h"
++#include "base/time/time.h"
++#include "base/values.h"
++#include "chrome/browser/profiles/profile.h"
++#include "chrome/browser/tab_list/tab_list_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
++#include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
++#include "components/sessions/core/session_id.h"
++#include "components/tabs/public/tab_interface.h"
++#include "content/public/browser/navigation_controller.h"
++#include "content/public/browser/navigation_entry.h"
++#include "content/public/browser/web_contents.h"
++#include "crypto/sha2.h"
++
++namespace helium_sync {
++namespace {
++
++constexpr int kSchemaVersion = 1;
++constexpr int kMaxWindows = 100;
++constexpr int kMaxTabs = 5000;
++constexpr int kMaxNavigations = 100;
++constexpr base::TimeDelta kStartupCaptureDelay = base::Seconds(30);
++constexpr base::TimeDelta kCaptureInterval = base::Minutes(5);
++
++bool AllowedSnapshotUrl(const GURL& url) {
++  return url.SchemeIsHTTPOrHTTPS() || url.SchemeIs("chrome") ||
++         url.SchemeIs("about");
++}
++
++std::optional<base::DictValue> BuildSnapshot(Profile* profile) {
++  base::ListValue windows;
++  int tab_count = 0;
++  bool valid = true;
++
++  ForEachCurrentBrowserWindowInterfaceOrderedByActivation(
++      [&](BrowserWindowInterface* browser) {
++        if (browser->GetProfile() != profile ||
++            browser->GetType() != BrowserWindowInterface::TYPE_NORMAL) {
++          return true;
++        }
++        if (windows.size() >= kMaxWindows) {
++          valid = false;
++          return false;
++        }
++        TabListInterface* tab_list = TabListInterface::From(browser);
++        if (!tab_list || tab_list->GetTabCount() <= 0 ||
++            tab_list->GetActiveIndex() < 0 ||
++            tab_list->GetActiveIndex() >= tab_list->GetTabCount()) {
++          valid = false;
++          return false;
++        }
++
++        base::DictValue window;
++        window.Set("id", base::NumberToString(browser->GetSessionID().id()));
++        window.Set("active_index", tab_list->GetActiveIndex());
++        base::ListValue tabs;
++        for (tabs::TabInterface* tab : tab_list->GetAllTabs()) {
++          if (!tab || ++tab_count > kMaxTabs) {
++            valid = false;
++            return false;
++          }
++          content::WebContents* contents = tab->GetContents();
++          if (!contents) {
++            // Android may leave background tabs unloaded. Publishing a partial
++            // generation is worse than retaining the previous complete one.
++            valid = false;
++            return false;
++          }
++          content::NavigationController& controller = contents->GetController();
++          const int entry_count = controller.GetEntryCount();
++          const int current_index = controller.GetCurrentEntryIndex();
++          if (entry_count <= 0 || current_index < 0 ||
++              current_index >= entry_count) {
++            valid = false;
++            return false;
++          }
++
++          int first_entry = std::max(0, current_index - kMaxNavigations / 2);
++          int last_entry = std::min(entry_count, first_entry + kMaxNavigations);
++          first_entry = std::max(0, last_entry - kMaxNavigations);
++          base::ListValue navigations;
++          for (int i = first_entry; i < last_entry; ++i) {
++            content::NavigationEntry* entry = controller.GetEntryAtIndex(i);
++            if (!entry || !entry->GetVirtualURL().is_valid() ||
++                !AllowedSnapshotUrl(entry->GetVirtualURL())) {
++              valid = false;
++              return false;
++            }
++            base::DictValue navigation;
++            navigation.Set("url", entry->GetVirtualURL().spec());
++            if (!entry->GetTitle().empty()) {
++              navigation.Set("title", base::UTF16ToUTF8(entry->GetTitle()));
++            }
++            navigations.Append(std::move(navigation));
++          }
++
++          base::DictValue item;
++          item.Set("id", base::NumberToString(tab->GetHandle().raw_value()));
++          if (tab->IsPinned()) {
++            item.Set("pinned", true);
++          }
++          if (std::optional<tab_groups::TabGroupId> group = tab->GetGroup()) {
++            item.Set("group", group->ToString());
++          }
++          item.Set("current_index", current_index - first_entry);
++          item.Set("navigations", std::move(navigations));
++          tabs.Append(std::move(item));
++        }
++        window.Set("tabs", std::move(tabs));
++        windows.Append(std::move(window));
++        return true;
++      });
++
++  if (!valid || windows.empty()) {
++    return std::nullopt;
++  }
++  base::DictValue root;
++  root.Set("schema_version", kSchemaVersion);
++  root.Set("windows", std::move(windows));
++  return root;
++}
++
++}  // namespace
++
++HeliumTabSnapshotBridge::HeliumTabSnapshotBridge(Profile* profile,
++                                                 base::FilePath export_path)
++    : profile_(profile), export_path_(std::move(export_path)) {}
++
++HeliumTabSnapshotBridge::~HeliumTabSnapshotBridge() {
++  Stop();
++}
++
++void HeliumTabSnapshotBridge::Start() {
++  if (!profile_ || export_path_.empty() || !export_path_.IsAbsolute() ||
++      export_path_ == profile_->GetPath() ||
++      profile_->GetPath().IsParent(export_path_)) {
++    LOG(WARNING) << "Helium tab export inactive: export path must be absolute "
++                    "and outside the browser profile";
++    return;
++  }
++  base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++      FROM_HERE,
++      base::BindOnce(&HeliumTabSnapshotBridge::Capture,
++                     weak_factory_.GetWeakPtr()),
++      kStartupCaptureDelay);
++  capture_timer_.Start(FROM_HERE, kCaptureInterval,
++                       base::BindRepeating(&HeliumTabSnapshotBridge::Capture,
++                                           weak_factory_.GetWeakPtr()));
++}
++
++void HeliumTabSnapshotBridge::Stop() {
++  capture_timer_.Stop();
++  weak_factory_.InvalidateWeakPtrs();
++}
++
++bool HeliumTabSnapshotBridge::CaptureNowForTesting() {
++  std::optional<base::DictValue> snapshot = BuildSnapshot(profile_);
++  if (!snapshot) {
++    return false;
++  }
++  std::string raw;
++  if (!base::JSONWriter::WriteWithOptions(
++          *snapshot, base::JSONWriter::OPTIONS_PRETTY_PRINT, &raw)) {
++    return false;
++  }
++  raw.push_back('\n');
++  std::string fingerprint = base::HexEncodeLower(crypto::SHA256HashString(raw));
++  if (fingerprint == last_fingerprint_) {
++    return true;
++  }
++  if (!base::CreateDirectory(export_path_.DirName()) ||
++      !base::ImportantFileWriter::WriteFileAtomically(export_path_, raw,
++                                                      "HeliumSync")) {
++    return false;
++  }
++  last_fingerprint_ = std::move(fingerprint);
++  return true;
++}
++
++void HeliumTabSnapshotBridge::Capture() {
++  if (!CaptureNowForTesting()) {
++    LOG(WARNING) << "Helium tab export retained the previous complete capture";
++  }
++}
++
++}  // namespace helium_sync
+diff --git a/chrome/browser/helium_sync/helium_tab_snapshot_bridge.h b/chrome/browser/helium_sync/helium_tab_snapshot_bridge.h
+new file mode 100644
+index 0000000..6a6ac14
+--- /dev/null
++++ b/chrome/browser/helium_sync/helium_tab_snapshot_bridge.h
+@@ -0,0 +1,45 @@
++// Copyright 2026 The Helium Authors
++
++#ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_TAB_SNAPSHOT_BRIDGE_H_
++#define CHROME_BROWSER_HELIUM_SYNC_HELIUM_TAB_SNAPSHOT_BRIDGE_H_
++
++#include <string>
++
++#include "base/files/file_path.h"
++#include "base/memory/raw_ptr.h"
++#include "base/memory/weak_ptr.h"
++#include "base/timer/timer.h"
++
++class Profile;
++
++namespace helium_sync {
++
++// Exports Chromium's live tab model to the validated JSON boundary consumed by
++// helium-tabs. The independent generation store remains owned by helium-tabs;
++// this class never reads or copies Chromium's Session_* or Tabs_* files.
++class HeliumTabSnapshotBridge {
++ public:
++  HeliumTabSnapshotBridge(Profile* profile, base::FilePath export_path);
++  HeliumTabSnapshotBridge(const HeliumTabSnapshotBridge&) = delete;
++  HeliumTabSnapshotBridge& operator=(const HeliumTabSnapshotBridge&) = delete;
++  ~HeliumTabSnapshotBridge();
++
++  void Start();
++  void Stop();
++
++  // Public for a disposable-profile browser test. Production uses the timer.
++  bool CaptureNowForTesting();
++
++ private:
++  void Capture();
++
++  raw_ptr<Profile> profile_;
++  const base::FilePath export_path_;
++  std::string last_fingerprint_;
++  base::RepeatingTimer capture_timer_;
++  base::WeakPtrFactory<HeliumTabSnapshotBridge> weak_factory_{this};
++};
++
++}  // namespace helium_sync
++
++#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_TAB_SNAPSHOT_BRIDGE_H_
 diff --git a/chrome/browser/password_manager/factories/password_store_backend_factory.cc b/chrome/browser/password_manager/factories/password_store_backend_factory.cc
 new file mode 100644
 index 0000000..a7b946b
@@ -438,10 +1663,10 @@ index 0000000..9747ead
 +}
 diff --git a/components/helium_sync/helium_password_sync_bridge.cc b/components/helium_sync/helium_password_sync_bridge.cc
 new file mode 100644
-index 0000000..1697574
+index 0000000..6342c7b
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.cc
-@@ -0,0 +1,719 @@
+@@ -0,0 +1,693 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_password_sync_bridge.h"
@@ -468,7 +1693,6 @@ index 0000000..1697574
 +#include "base/values.h"
 +#include "build/build_config.h"
 +#include "components/password_manager/core/browser/password_form.h"
-+#include "components/password_manager/core/browser/password_store/password_form_converters.h"
 +#include "components/password_manager/core/browser/password_store/password_store_change.h"
 +#include "components/password_manager/core/browser/sync/password_proto_utils.h"
 +#include "components/sync/protocol/password_specifics.pb.h"
@@ -478,19 +1702,11 @@ index 0000000..1697574
 +#include <android/log.h>
 +#endif
 +
-+#if __has_include( \
-+    "components/password_manager/core/browser/password_store/stored_credential.h")
-+#include "components/password_manager/core/browser/password_store/stored_credential.h"
-+#define HELIUM_SYNC_HAS_STORED_CREDENTIAL 1
-+#else
-+#define HELIUM_SYNC_HAS_STORED_CREDENTIAL 0
-+#endif
-+
 +namespace helium_sync {
 +namespace {
 +
 +constexpr char kPasswordKind[] = "passwords";
-+constexpr char kSimplePayloadFormat[] = "helium-password-v1";
++constexpr char kLegacySimplePayloadFormat[] = "helium-password-v1";
 +constexpr char kChromiumSpecificsPayloadFormat[] =
 +    "chromium-password-specifics-data-v1";
 +constexpr int kPasswordStateSchema = 2;
@@ -503,25 +1719,16 @@ index 0000000..1697574
 +void AndroidStatusLog(const std::string&) {}
 +#endif
 +
-+using Credential = password_manager::LoginsResult::value_type;
++using Credential = password_manager::PasswordForm;
 +
 +const Credential& ChangeCredential(
 +    const password_manager::PasswordStoreChange& change) {
-+#if HELIUM_SYNC_HAS_STORED_CREDENTIAL
-+  return change.credential();
-+#else
 +  return change.form();
-+#endif
 +}
 +
 +Credential CredentialFromSpecifics(
 +    const sync_pb::PasswordSpecificsData& specifics) {
-+#if HELIUM_SYNC_HAS_STORED_CREDENTIAL
-+  Credential credential =
-+      password_manager::StoredCredentialFromSpecifics(specifics);
-+#else
 +  Credential credential = password_manager::PasswordFromSpecifics(specifics);
-+#endif
 +  credential.in_store = password_manager::PasswordForm::Store::kProfileStore;
 +  return credential;
 +}
@@ -571,23 +1778,18 @@ index 0000000..1697574
 +                                    credential.username_value);
 +}
 +
-+std::u16string NoteForCredential(const Credential& credential) {
-+  for (const auto& note : credential.notes) {
-+    if (!note.value.empty()) {
-+      return note.value;
-+    }
-+  }
-+  return std::u16string();
-+}
-+
 +std::optional<std::string> PasswordPayloadJSON(const Credential& credential) {
++  sync_pb::PasswordSpecificsData specifics =
++      password_manager::SpecificsDataFromPassword(
++          credential, /*base_password_data=*/{});
++  std::string serialized;
++  if (!specifics.SerializeToString(&serialized)) {
++    return std::nullopt;
++  }
++
 +  base::DictValue payload;
-+  payload.Set("format", kSimplePayloadFormat);
-+  payload.Set("url", UrlForCredential(credential));
-+  payload.Set("signon_realm", SignonRealmForCredential(credential));
-+  payload.Set("username", base::UTF16ToUTF8(credential.username_value));
-+  payload.Set("password", base::UTF16ToUTF8(credential.password_value));
-+  payload.Set("note", base::UTF16ToUTF8(NoteForCredential(credential)));
++  payload.Set("format", kChromiumSpecificsPayloadFormat);
++  payload.Set("password_specifics_data_b64", base::Base64Encode(serialized));
 +
 +  std::string payload_json;
 +  if (!base::JSONWriter::Write(payload, &payload_json)) {
@@ -601,7 +1803,7 @@ index 0000000..1697574
 +  if (!format) {
 +    return std::nullopt;
 +  }
-+  if (*format == kSimplePayloadFormat) {
++  if (*format == kLegacySimplePayloadFormat) {
 +    const std::string* url_string = payload.FindString("url");
 +    const std::string* username = payload.FindString("username");
 +    const std::string* password = payload.FindString("password");
@@ -652,7 +1854,13 @@ index 0000000..1697574
 +  if (!specifics.ParseFromString(serialized)) {
 +    return std::nullopt;
 +  }
-+  return CredentialFromSpecifics(specifics);
++  Credential credential = CredentialFromSpecifics(specifics);
++  if (credential.signon_realm.empty() ||
++      (specifics.has_origin() && !specifics.origin().empty() &&
++       !credential.url.is_valid())) {
++    return std::nullopt;
++  }
++  return credential;
 +}
 +
 +std::optional<Record> UpsertRecordForCredential(const Credential& credential) {
@@ -860,7 +2068,7 @@ index 0000000..1697574
 +    }
 +    std::optional<Credential> credential =
 +        PayloadToCredential(parsed->GetDict());
-+    if (!credential) {
++    if (!credential || PasswordRecordKey(*credential) != remote.key) {
 +      blocked_remote_keys_.insert(remote.key);
 +      continue;
 +    }
@@ -870,12 +2078,19 @@ index 0000000..1697574
 +      blocked_remote_keys_.insert(remote.key);
 +      continue;
 +    }
-+    std::string fingerprint = ContentFingerprint(*canonical_payload);
++    const std::string* payload_format =
++        parsed->GetDict().FindString("format");
++    const bool needs_payload_migration =
++        payload_format && *payload_format == kLegacySimplePayloadFormat;
++    std::string fingerprint = ContentFingerprint(
++        needs_payload_migration ? remote.payload_json : *canonical_payload);
 +
 +    if (existing != local_by_key.end()) {
 +      std::optional<std::string> local_payload =
 +          PasswordPayloadJSON(*existing->second);
-+      if (local_payload && ContentFingerprint(*local_payload) == fingerprint) {
++      if (local_payload &&
++          ContentFingerprint(*local_payload) ==
++              ContentFingerprint(*canonical_payload)) {
 +        credential_state_[remote.key] = {fingerprint, remote.seq};
 +        continue;
 +      }
@@ -883,14 +2098,14 @@ index 0000000..1697574
 +
 +    pending_remote_writes_++;
 +    if (existing == local_by_key.end()) {
-+      profile_store_->UpdateLogin(
-+          password_manager::ToPasswordForm(*credential),
-+          base::BindOnce(&HeliumPasswordSyncBridge::AddRemoteLoginAfterUpdate,
-+                         weak_factory_.GetWeakPtr(), std::move(*credential),
-+                         remote.key, std::move(fingerprint), remote.seq));
++      profile_store_->AddLogin(
++          *credential,
++          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
++                         weak_factory_.GetWeakPtr(), remote.key,
++                         std::move(fingerprint), remote.seq));
 +    } else {
 +      profile_store_->UpdateLogin(
-+          password_manager::ToPasswordForm(std::move(*credential)),
++          *credential,
 +          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
 +                         weak_factory_.GetWeakPtr(), remote.key,
 +                         std::move(fingerprint), remote.seq));
@@ -1036,22 +2251,6 @@ index 0000000..1697574
 +  RequestReconcileRead();
 +}
 +
-+void HeliumPasswordSyncBridge::AddRemoteLoginAfterUpdate(
-+    Credential credential,
-+    std::string key,
-+    std::string fingerprint,
-+    int64_t remote_seq) {
-+  if (!profile_store_) {
-+    OnRemoteRecordComplete(std::move(key), std::move(fingerprint), remote_seq);
-+    return;
-+  }
-+  profile_store_->AddLogin(
-+      password_manager::ToPasswordForm(std::move(credential)),
-+      base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
-+                     weak_factory_.GetWeakPtr(), std::move(key),
-+                     std::move(fingerprint), remote_seq));
-+}
-+
 +void HeliumPasswordSyncBridge::OnRemoteRecordComplete(std::string key,
 +                                                      std::string fingerprint,
 +                                                      int64_t remote_seq) {
@@ -1163,10 +2362,10 @@ index 0000000..1697574
 +}  // namespace helium_sync
 diff --git a/components/helium_sync/helium_password_sync_bridge.h b/components/helium_sync/helium_password_sync_bridge.h
 new file mode 100644
-index 0000000..2b7159c
+index 0000000..6fe9fbc
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.h
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,114 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
@@ -1248,11 +2447,6 @@ index 0000000..2b7159c
 +                      bool ok,
 +                      std::string error);
 +  void OnPullComplete(bool ok, std::string response_json, std::string error);
-+  void AddRemoteLoginAfterUpdate(
-+      password_manager::LoginsResult::value_type credential,
-+      std::string key,
-+      std::string fingerprint,
-+      int64_t remote_seq);
 +  void OnRemoteRecordComplete(std::string key,
 +                              std::string fingerprint,
 +                              int64_t remote_seq);

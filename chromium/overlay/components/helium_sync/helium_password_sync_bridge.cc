@@ -24,7 +24,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "components/password_manager/core/browser/password_form.h"
-#include "components/password_manager/core/browser/password_store/password_form_converters.h"
 #include "components/password_manager/core/browser/password_store/password_store_change.h"
 #include "components/password_manager/core/browser/sync/password_proto_utils.h"
 #include "components/sync/protocol/password_specifics.pb.h"
@@ -34,19 +33,11 @@
 #include <android/log.h>
 #endif
 
-#if __has_include( \
-    "components/password_manager/core/browser/password_store/stored_credential.h")
-#include "components/password_manager/core/browser/password_store/stored_credential.h"
-#define HELIUM_SYNC_HAS_STORED_CREDENTIAL 1
-#else
-#define HELIUM_SYNC_HAS_STORED_CREDENTIAL 0
-#endif
-
 namespace helium_sync {
 namespace {
 
 constexpr char kPasswordKind[] = "passwords";
-constexpr char kSimplePayloadFormat[] = "helium-password-v1";
+constexpr char kLegacySimplePayloadFormat[] = "helium-password-v1";
 constexpr char kChromiumSpecificsPayloadFormat[] =
     "chromium-password-specifics-data-v1";
 constexpr int kPasswordStateSchema = 2;
@@ -59,25 +50,16 @@ void AndroidStatusLog(const std::string& message) {
 void AndroidStatusLog(const std::string&) {}
 #endif
 
-using Credential = password_manager::LoginsResult::value_type;
+using Credential = password_manager::PasswordForm;
 
 const Credential& ChangeCredential(
     const password_manager::PasswordStoreChange& change) {
-#if HELIUM_SYNC_HAS_STORED_CREDENTIAL
-  return change.credential();
-#else
   return change.form();
-#endif
 }
 
 Credential CredentialFromSpecifics(
     const sync_pb::PasswordSpecificsData& specifics) {
-#if HELIUM_SYNC_HAS_STORED_CREDENTIAL
-  Credential credential =
-      password_manager::StoredCredentialFromSpecifics(specifics);
-#else
   Credential credential = password_manager::PasswordFromSpecifics(specifics);
-#endif
   credential.in_store = password_manager::PasswordForm::Store::kProfileStore;
   return credential;
 }
@@ -127,23 +109,18 @@ std::string PasswordRecordKeyForForm(
                                     credential.username_value);
 }
 
-std::u16string NoteForCredential(const Credential& credential) {
-  for (const auto& note : credential.notes) {
-    if (!note.value.empty()) {
-      return note.value;
-    }
-  }
-  return std::u16string();
-}
-
 std::optional<std::string> PasswordPayloadJSON(const Credential& credential) {
+  sync_pb::PasswordSpecificsData specifics =
+      password_manager::SpecificsDataFromPassword(
+          credential, /*base_password_data=*/{});
+  std::string serialized;
+  if (!specifics.SerializeToString(&serialized)) {
+    return std::nullopt;
+  }
+
   base::DictValue payload;
-  payload.Set("format", kSimplePayloadFormat);
-  payload.Set("url", UrlForCredential(credential));
-  payload.Set("signon_realm", SignonRealmForCredential(credential));
-  payload.Set("username", base::UTF16ToUTF8(credential.username_value));
-  payload.Set("password", base::UTF16ToUTF8(credential.password_value));
-  payload.Set("note", base::UTF16ToUTF8(NoteForCredential(credential)));
+  payload.Set("format", kChromiumSpecificsPayloadFormat);
+  payload.Set("password_specifics_data_b64", base::Base64Encode(serialized));
 
   std::string payload_json;
   if (!base::JSONWriter::Write(payload, &payload_json)) {
@@ -157,7 +134,7 @@ std::optional<Credential> PayloadToCredential(const base::DictValue& payload) {
   if (!format) {
     return std::nullopt;
   }
-  if (*format == kSimplePayloadFormat) {
+  if (*format == kLegacySimplePayloadFormat) {
     const std::string* url_string = payload.FindString("url");
     const std::string* username = payload.FindString("username");
     const std::string* password = payload.FindString("password");
@@ -208,7 +185,13 @@ std::optional<Credential> PayloadToCredential(const base::DictValue& payload) {
   if (!specifics.ParseFromString(serialized)) {
     return std::nullopt;
   }
-  return CredentialFromSpecifics(specifics);
+  Credential credential = CredentialFromSpecifics(specifics);
+  if (credential.signon_realm.empty() ||
+      (specifics.has_origin() && !specifics.origin().empty() &&
+       !credential.url.is_valid())) {
+    return std::nullopt;
+  }
+  return credential;
 }
 
 std::optional<Record> UpsertRecordForCredential(const Credential& credential) {
@@ -416,7 +399,7 @@ void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
     }
     std::optional<Credential> credential =
         PayloadToCredential(parsed->GetDict());
-    if (!credential) {
+    if (!credential || PasswordRecordKey(*credential) != remote.key) {
       blocked_remote_keys_.insert(remote.key);
       continue;
     }
@@ -426,12 +409,19 @@ void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
       blocked_remote_keys_.insert(remote.key);
       continue;
     }
-    std::string fingerprint = ContentFingerprint(*canonical_payload);
+    const std::string* payload_format =
+        parsed->GetDict().FindString("format");
+    const bool needs_payload_migration =
+        payload_format && *payload_format == kLegacySimplePayloadFormat;
+    std::string fingerprint = ContentFingerprint(
+        needs_payload_migration ? remote.payload_json : *canonical_payload);
 
     if (existing != local_by_key.end()) {
       std::optional<std::string> local_payload =
           PasswordPayloadJSON(*existing->second);
-      if (local_payload && ContentFingerprint(*local_payload) == fingerprint) {
+      if (local_payload &&
+          ContentFingerprint(*local_payload) ==
+              ContentFingerprint(*canonical_payload)) {
         credential_state_[remote.key] = {fingerprint, remote.seq};
         continue;
       }
@@ -439,14 +429,14 @@ void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
 
     pending_remote_writes_++;
     if (existing == local_by_key.end()) {
-      profile_store_->UpdateLogin(
-          password_manager::ToPasswordForm(*credential),
-          base::BindOnce(&HeliumPasswordSyncBridge::AddRemoteLoginAfterUpdate,
-                         weak_factory_.GetWeakPtr(), std::move(*credential),
-                         remote.key, std::move(fingerprint), remote.seq));
+      profile_store_->AddLogin(
+          *credential,
+          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
+                         weak_factory_.GetWeakPtr(), remote.key,
+                         std::move(fingerprint), remote.seq));
     } else {
       profile_store_->UpdateLogin(
-          password_manager::ToPasswordForm(std::move(*credential)),
+          *credential,
           base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
                          weak_factory_.GetWeakPtr(), remote.key,
                          std::move(fingerprint), remote.seq));
@@ -590,22 +580,6 @@ void HeliumPasswordSyncBridge::OnPullComplete(bool ok,
   AndroidStatusLog("password pulled count=" +
                    base::NumberToString(pending_remote_records_.size()));
   RequestReconcileRead();
-}
-
-void HeliumPasswordSyncBridge::AddRemoteLoginAfterUpdate(
-    Credential credential,
-    std::string key,
-    std::string fingerprint,
-    int64_t remote_seq) {
-  if (!profile_store_) {
-    OnRemoteRecordComplete(std::move(key), std::move(fingerprint), remote_seq);
-    return;
-  }
-  profile_store_->AddLogin(
-      password_manager::ToPasswordForm(std::move(credential)),
-      base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
-                     weak_factory_.GetWeakPtr(), std::move(key),
-                     std::move(fingerprint), remote_seq));
 }
 
 void HeliumPasswordSyncBridge::OnRemoteRecordComplete(std::string key,

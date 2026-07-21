@@ -79,11 +79,6 @@ class HeliumPasswordSyncBridge
                       bool ok,
                       std::string error);
   void OnPullComplete(bool ok, std::string response_json, std::string error);
-  void AddRemoteLoginAfterUpdate(
-      password_manager::LoginsResult::value_type credential,
-      std::string key,
-      std::string fingerprint,
-      int64_t remote_seq);
   void OnRemoteRecordComplete(std::string key,
                               std::string fingerprint,
                               int64_t remote_seq);

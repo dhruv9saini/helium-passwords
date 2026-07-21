@@ -2,10 +2,14 @@
 
 source_set("helium_sync") {
   sources = [
+    "helium_cookie_sync_bridge.cc",
+    "helium_cookie_sync_bridge.h",
     "helium_sync_service.cc",
     "helium_sync_service.h",
     "helium_sync_service_factory.cc",
     "helium_sync_service_factory.h",
+    "helium_tab_snapshot_bridge.cc",
+    "helium_tab_snapshot_bridge.h",
   ]
 
   deps = [
@@ -15,10 +19,17 @@ source_set("helium_sync") {
     "//chrome/browser/password_manager",
     "//chrome/browser/password_manager/factories",
     "//chrome/browser/profiles:profile",
+    "//chrome/browser/tab_list",
+    "//chrome/browser/ui/browser_window",
     "//chrome/common",
     "//components/helium_sync",
     "//components/keyed_service/core",
     "//components/password_manager/core/browser/password_store:password_store_interface",
+    "//components/sessions:session_id",
+    "//components/tabs:public",
+    "//content/public/browser",
+    "//crypto",
+    "//net",
     "//services/network/public/cpp",
     "//url",
   ]

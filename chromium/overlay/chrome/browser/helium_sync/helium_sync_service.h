@@ -10,7 +10,9 @@
 class Profile;
 
 namespace helium_sync {
+class HeliumCookieSyncBridge;
 class HeliumPasswordSyncBridge;
+class HeliumTabSnapshotBridge;
 }  // namespace helium_sync
 
 class HeliumSyncService : public KeyedService {
@@ -24,7 +26,9 @@ class HeliumSyncService : public KeyedService {
   void Shutdown() override;
 
  private:
+  std::unique_ptr<helium_sync::HeliumCookieSyncBridge> cookie_bridge_;
   std::unique_ptr<helium_sync::HeliumPasswordSyncBridge> password_bridge_;
+  std::unique_ptr<helium_sync::HeliumTabSnapshotBridge> tab_snapshot_bridge_;
 };
 
 #endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
