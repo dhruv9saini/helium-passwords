@@ -41,6 +41,7 @@ constexpr char kConfigDir[] = "helium-sync";
 constexpr char kTokenFile[] = "token";
 constexpr char kBaseUrlFile[] = "base_url";
 constexpr char kDeviceNameFile[] = "device_name";
+constexpr char kPasswordStateFile[] = "password-state.json";
 constexpr char kDefaultBaseUrl[] = "http://127.0.0.1:44719";
 
 #if BUILDFLAG(IS_ANDROID)
@@ -142,7 +143,10 @@ HeliumSyncService::HeliumSyncService(Profile* profile) {
       profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
       device_name);
   password_bridge_ = std::make_unique<helium_sync::HeliumPasswordSyncBridge>(
-      password_store, std::move(client), std::move(device_name));
+      password_store, std::move(client), std::move(device_name),
+      profile->GetPath()
+          .AppendASCII(kConfigDir)
+          .AppendASCII(kPasswordStateFile));
   password_bridge_->Start();
 }
 

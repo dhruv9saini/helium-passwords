@@ -28,6 +28,9 @@ check_javascript() {
     while IFS= read -r -d '' script; do
         node --check "${script}"
     done < <(find "${root_dir}/scripts" -type f -name '*.mjs' -print0 | sort -z)
+    if find "${root_dir}/scripts/tests" -type f -name '*.test.mjs' -print -quit 2>/dev/null | grep -q .; then
+        node --test "${root_dir}"/scripts/tests/*.test.mjs
+    fi
 }
 
 check_python() {
@@ -78,6 +81,7 @@ check_backbone() {
 check_all() {
     check_shell
     "${root_dir}/helium-chromium/devutils/lint.py" -t "${root_dir}"
+    "${root_dir}/scripts/chromium/generate-overlay-patch.sh" --check
 
     if find "${root_dir}/scripts" -type f -name '*.mjs' -print -quit | grep -q .; then
         check_javascript

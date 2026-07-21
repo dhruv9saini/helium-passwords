@@ -3,6 +3,12 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
+import {
+  normalizePasswordState,
+  passwordFingerprint,
+  reconcilePasswords,
+} from "./password-reconcile.mjs";
+
 const usage = `usage:
   cdp-password-sync.mjs once --cdp URL --server URL --token-file PATH --device NAME [--state-file PATH]
   cdp-password-sync.mjs push --cdp URL --server URL --token-file PATH --device NAME [--state-file PATH]
@@ -219,15 +225,19 @@ class CDP {
 }
 
 async function syncOnce(mode) {
-  const state = await loadState(stateFile);
+  const loaded = await loadState(stateFile);
+  const state = loaded.state;
   const page = await CDP.openPasswordManager(args.cdp);
   try {
     let pushed = 0;
     let pulled = 0;
-    if (mode === "once" || mode === "push") {
+    if (mode === "once") {
+      const result = await reconcileOnce(page, state, loaded.trusted);
+      pushed = result.published;
+      pulled = result.applied;
+    } else if (mode === "push") {
       pushed = await pushLocalChanges(page, state);
-    }
-    if (mode === "once" || mode === "pull") {
+    } else if (mode === "pull") {
       pulled = await pullRemoteChanges(page, state);
     }
     await saveState(stateFile, state);
@@ -237,26 +247,60 @@ async function syncOnce(mode) {
   }
 }
 
+async function reconcileOnce(page, state, stateTrusted) {
+  const latest = await fetchLatest();
+  return reconcilePasswords({
+    state,
+    stateTrusted,
+    remoteRecords: (latest.records || []).filter(record => record.kind === "passwords"),
+    snapshot: async () => (await page.snapshot()).map(credential => {
+      const payload = payloadFromCredential(credential);
+      return payload ? {
+        key: keyFromPayload(payload),
+        payload,
+        credential,
+      } : null;
+    }).filter(Boolean),
+    normalizeRemote: normalizedPayload,
+    applyRemote: async (key, payload, existing) => {
+      const indexes = existing ? null : buildCredentialIndexes(await page.snapshot());
+      const credential = existing || findByOriginUser(indexes, payload);
+      const result = credential
+        ? await page.changePassword(credential, payload)
+        : await page.addPassword(payload);
+      if (!result.ok) {
+        logPasswordSyncWarning(credential ? "change-failed" : "add-failed", {
+          key,
+          error: errorText(result),
+        });
+      }
+      return result.ok;
+    },
+    publish: pushRecords,
+  });
+}
+
 async function pushLocalChanges(page, state) {
   const credentials = await page.snapshot();
-  const seen = new Set();
   const records = [];
+  const pendingFingerprints = new Map();
   for (const credential of credentials) {
     const payload = payloadFromCredential(credential);
     if (!payload) continue;
     const key = keyFromPayload(payload);
-    const fingerprint = fingerprintPayload(payload);
-    seen.add(key);
-    if (state.fingerprints[key] === fingerprint) continue;
+    const fingerprint = passwordFingerprint(payload);
+    if (state.credentials[key]?.fingerprint === fingerprint) continue;
     records.push({ kind: "passwords", key, payload });
-    state.fingerprints[key] = fingerprint;
-  }
-  for (const key of Object.keys(state.fingerprints)) {
-    if (seen.has(key)) continue;
-    delete state.fingerprints[key];
+    pendingFingerprints.set(key, fingerprint);
   }
   if (records.length) {
     await pushRecords(records);
+    for (const [key, fingerprint] of pendingFingerprints) {
+      state.credentials[key] = {
+        fingerprint,
+        remote_seq: state.credentials[key]?.remote_seq || 0,
+      };
+    }
   }
   return records.length;
 }
@@ -264,29 +308,32 @@ async function pushLocalChanges(page, state) {
 async function pullRemoteChanges(page, state) {
   const latest = await fetchLatest();
   const records = (latest.records || []).filter(record =>
-    record.kind === "passwords" && record.origin_device !== args.device);
+    record.kind === "passwords");
   if (!records.length) return 0;
 
   let indexes = buildCredentialIndexes(await page.snapshot());
   let applied = 0;
   for (const record of records) {
     if (record.deleted) {
-      delete state.fingerprints[record.key];
       continue;
     }
+    const remoteSeq = Number(record.seq);
+    if (!Number.isSafeInteger(remoteSeq) || remoteSeq <= 0 ||
+        remoteSeq <= (state.credentials[record.key]?.remote_seq || 0)) continue;
     const payload = normalizedPayload(record.payload);
     if (!payload) {
       logPasswordSyncWarning("invalid-payload", { key: record.key });
       continue;
     }
     const existing = indexes.byKey.get(record.key) || findByOriginUser(indexes, payload);
-    const fingerprint = fingerprintPayload(payload);
-    if (state.fingerprints[record.key] === fingerprint) {
+    const fingerprint = passwordFingerprint(payload);
+    if (state.credentials[record.key]?.fingerprint === fingerprint) {
+      state.credentials[record.key].remote_seq = remoteSeq;
       continue;
     }
     if (existing) {
-      if (fingerprintPayload(payloadFromCredential(existing)) === fingerprint) {
-        state.fingerprints[record.key] = fingerprint;
+      if (passwordFingerprint(payloadFromCredential(existing)) === fingerprint) {
+        state.credentials[record.key] = { fingerprint, remote_seq: remoteSeq };
         continue;
       }
       const result = await page.changePassword(existing, payload);
@@ -301,7 +348,7 @@ async function pullRemoteChanges(page, state) {
         continue;
       }
     }
-    state.fingerprints[record.key] = fingerprint;
+    state.credentials[record.key] = { fingerprint, remote_seq: remoteSeq };
     applied++;
     indexes = buildCredentialIndexes(await page.snapshot());
   }
@@ -422,16 +469,6 @@ function addOriginUserKey(keys, value, username) {
   keys.add(`${value}\0${username}`);
 }
 
-function fingerprintPayload(payload) {
-  return crypto.createHash("sha256").update(JSON.stringify([
-    payload.url,
-    payload.signon_realm,
-    payload.username,
-    payload.password,
-    payload.note || "",
-  ])).digest("hex");
-}
-
 async function pushRecords(records) {
   const response = await fetch(`${trimSlash(args.server)}/v1/records/push`, {
     method: "POST",
@@ -455,16 +492,35 @@ async function fetchLatest() {
 async function loadState(file) {
   try {
     const parsed = JSON.parse(await fs.readFile(file, "utf8"));
-    return { fingerprints: parsed.fingerprints && typeof parsed.fingerprints === "object" ? parsed.fingerprints : {} };
-  } catch {
-    return { fingerprints: {} };
+    const recognized = parsed?.schema_version === 2 ||
+      (parsed?.fingerprints && typeof parsed.fingerprints === "object");
+    return { state: normalizePasswordState(parsed), trusted: Boolean(recognized) };
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return { state: normalizePasswordState(null), trusted: true };
+    }
+    logPasswordSyncWarning("state-invalid", { error: errorText(error) });
+    return { state: normalizePasswordState(null), trusted: false };
   }
 }
 
 async function saveState(file, state) {
   await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(`${file}.tmp`, JSON.stringify(state, null, 2), { mode: 0o600 });
-  await fs.rename(`${file}.tmp`, file);
+  const temporary = `${file}.tmp`;
+  const handle = await fs.open(temporary, "w", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fs.rename(temporary, file);
+  const directory = await fs.open(path.dirname(file), "r");
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
+  }
 }
 
 async function readSecret(file) {
