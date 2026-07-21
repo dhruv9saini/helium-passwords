@@ -70,9 +70,10 @@ the private repository the inherited command additionally checks JavaScript,
 Python, Go tests/vet/builds, public-backbone ancestry, and byte identity of the
 password patches.
 
-`smoke` clones a small platform repository and verifies overlay injection. It
-still does not prove that a patch applies to Chromium or that browser behavior
-works.
+`smoke` clones a small platform repository into a disposable temporary
+directory, verifies overlay injection, and removes only that generated
+checkout. It still does not prove that a patch applies to Chromium or that
+browser behavior works.
 
 ## Upstream Update Train
 

@@ -37,8 +37,17 @@ case "${arch}" in
 esac
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+checkout_root="$(mktemp -d /tmp/helium-platform-check.XXXXXX)"
+case "${checkout_root}" in
+    /tmp/helium-platform-check.*) ;;
+    *) echo "unexpected temporary checkout path: ${checkout_root}" >&2; exit 1 ;;
+esac
+cleanup() {
+    find "${checkout_root}" -depth -delete
+}
+trap cleanup EXIT
 checkout="$("${root_dir}/scripts/prepare-platform.sh" \
-    --skip-submodules "${platform}" "${root_dir}/build/platforms/${platform}")"
+    --skip-submodules "${platform}" "${checkout_root}/${platform}")"
 
 grep -qx 'helium/passwords/restore-password-autofill.patch' \
     "${checkout}/patches/series"
