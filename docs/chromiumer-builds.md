@@ -37,9 +37,16 @@ scripts/chromiumer-job.sh preflight
 
 ## Enforced Production Policy
 
-`scripts/chromiumer-job.sh` installs the matching small worker under
-`~/.local/libexec/` on chromiumer. The worker starts a detached transient user
-systemd service in its own cgroup and a separate health-watchdog service.
+The **local wrapper** is `scripts/chromiumer-job.sh` in the Helium checkout on
+`lm`. “Local” means it is the control client: it validates job IDs and a clean
+Git tree, archives exactly `HEAD`, transfers that archive, and provides the one
+interface for start/status/logs/cancel/fetch/cleanup. It does not compile and it
+does not enforce cgroups on `lm`.
+
+The local wrapper installs the matching `scripts/chromiumer-worker.sh` as
+`~/.local/libexec/helium-chromiumer-worker` on chromiumer. That **remote
+worker** performs capacity admission and starts a detached transient user
+systemd service in its own cgroup plus a separate health-watchdog service.
 
 | Resource | Production bound |
 | --- | --- |
@@ -48,19 +55,47 @@ systemd service in its own cgroup and a separate health-watchdog service.
 | Memory | `4G` high, `5G` hard max, `0` swap inside the unit |
 | I/O | weight `10`, Linux idle I/O scheduling class |
 | Processes/threads | `TasksMax=256` |
-| Workspace | `100 GiB` maximum, checked continuously |
-| Free space | `20 GiB` reserve, checked before and during the job |
+| Job tree | `100 GiB` allocated-block allowance for source, output, temp, and redirected caches; polled every 30 seconds |
+| Free space | `20 GiB` operational reserve on the job filesystem; also on `/` when the job filesystem is separate |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
 | Wall time | hard `8h` systemd deadline |
 | Concurrency | one active `helium-job-*` service on chromiumer |
 
-Startup requires at least 120 GiB available on the workspace filesystem: the
-100 GiB workspace budget plus the 20 GiB reserve. It also requires cgroup v2
-CPU, memory, I/O, and PID controllers; a running user systemd manager; Git;
-Python 3; and the basic supervision tools. Any failed check refuses startup.
+For a new empty job, staging requires exactly `100 GiB + 20 GiB = 120 GiB`
+available on the job filesystem. This is an admission envelope, not a claim
+that Chromium always consumes 100 GiB, and the reserve is not build capacity.
+Chromium's current Linux instructions require at least 100 GB free and say to
+allocate roughly 50–80 GB for a build. Helium therefore permits a conservative
+100 GiB total job tree and keeps another 20 GiB unused so ext4, SSH, systemd,
+the health watcher, Nix/system logs, and unrelated work do not encounter a full
+filesystem. On chromiumer's present root filesystem, 20 GiB is more than four
+times the observed 4.2 GB steady-state use. It also provides headroom for disk
+growth between watchdog samples. The 20 GiB value is Helium's operational
+safety policy, not an upstream Chromium requirement.
 
-The watchdog writes `health.env` every 30 seconds with free space, workspace
-size, available memory, and load. A disk, workspace, or memory violation stops
+At start, after source staging, the corrected gate is:
+
+```text
+required available = (100 GiB - current job-tree use) + 20 GiB reserve
+```
+
+For example, a 10 GiB staged job requires 110 GiB still available, not another
+120 GiB. The old worker incorrectly demanded the full 120 GiB a second time and
+therefore double-counted staged bytes. If the job tree already exceeds 100 GiB,
+startup fails. The worker measures allocated filesystem blocks rather than
+apparent file sizes. The 100 GiB check is a watchdog ceiling, not an ext4
+project quota, so the runbook does not describe it as an instantaneous hard
+quota.
+
+Admission also requires cgroup v2 CPU, memory, I/O, and PID controllers; a
+running user systemd manager; Git; Python 3; and the basic supervision tools.
+If the job tree moves to a dedicated filesystem, the worker independently
+requires 20 GiB free on chromiumer's root filesystem. Any failed check refuses
+startup.
+
+The watchdog writes `health.env` every 30 seconds with job-filesystem free
+space, root-filesystem free space, allocated job-tree size, available memory,
+and load. A disk, workspace, or memory violation stops
 the entire build cgroup. `MemoryMax`, `CPUQuota`, `TasksMax`, idle I/O priority,
 and the systemd runtime deadline remain enforced even if the watchdog itself
 fails.
@@ -183,7 +218,9 @@ could contain the only artifact copy.
 ## Current Capacity and Test Proof
 
 On 2026-07-21, chromiumer had 8 CPUs, 7.6 GiB RAM, no swap, and one 119 GiB
-disk with about 106 GiB available. It had no separate build disk or NAS mount,
+disk whose 116 GiB root filesystem had about 106 GiB available. The empty-job
+120 GiB gate can never pass on that filesystem, even if it is otherwise empty.
+It had no separate build disk or NAS mount,
 and `git`, Python 3, Docker, and Chromium tools were absent from the normal
 login `PATH`. Production preflight therefore refuses the host. Chromium's
 current Linux instructions require at least 100 GB free, recommend more than
@@ -194,20 +231,25 @@ current Linux instructions require at least 100 GB free, recommend more than
 The setup gate is:
 
 1. Add or mount a local chromiumer build filesystem with at least 120 GiB
-   available after tools/caches, without using `lm`'s NAS as the live build
-   directory.
+   available after tools/caches, while retaining at least 20 GiB free on `/`;
+   do not use `lm`'s NAS as the live build directory.
 2. Provision a pinned Nix/Docker toolchain containing Git, Python 3, depot
    tools/build dependencies, and Docker for the Helium Linux wrapper.
 3. Prefer adding RAM and swap before expecting a full link to finish; the
    isolation limits protect the machine but may make the build fail cleanly.
 4. Re-run `connection`, `preflight`, and the short wrapper test before staging.
 
-The final harmless wrapper test was executed as
-`wrapper-test-20260721-130310`. It completed with exit code 0 while live systemd
+The corrected harmless wrapper test was executed as
+`wrapper-test-20260721-143505`. It completed with exit code 0 while live systemd
 properties reported a 50% CPU quota, 128/256 MiB memory high/max, zero swap,
 I/O weight 10 with idle scheduling, 32 tasks, and a two-minute test deadline.
-The watchdog reported `status=ok`. The generated test workspace was removed;
-its small proof log and policy/state files remain on chromiumer.
+The watchdog reported `status=ok`, recorded both root and job-filesystem free
+space, and measured the complete test job tree. The generated test workspace
+was removed; its small proof log and policy/state files remain on chromiumer.
+The pure arithmetic check also proves `0 GiB used -> 120 GiB required`, `10 GiB
+used -> 110 GiB required`, and `100 GiB used -> 20 GiB required`. Production
+preflight then refused the real host with 113,542,557,696 bytes available versus
+128,849,018,880 bytes required for an empty job.
 
 Re-run the same proof without starting Chromium:
 
