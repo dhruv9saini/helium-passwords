@@ -58,13 +58,25 @@ Raw `Login Data` and cookie databases are never sync inputs. Tests use fresh
 profiles and fixture credentials. Session files may be snapshotted only by the
 dedicated tab recovery layer and are never treated as a cross-version API.
 
+## Implementation Boundary (2026-07-21)
+
+| Area | Completed code | Still requires browser/device integration |
+| --- | --- | --- |
+| Password convergence (HS-001) | Native C++ and CDP bridges use atomic per-credential hash/server-sequence state, reconcile remote before local publication, and fail closed on corrupt state. Pure synthetic tests cover unchanged restart, stale-device conflict, offline edits, and migration. | Compile against the pinned Chromium tree on chromiumer and run native disposable-profile tests on Android and desktop. The payload remains incomplete under HS-008. |
+| Cookie identity/authority (HS-002/HS-003) | CDP schema v2 preserves complete partition identity and explicit source-to-replica generations. Replicas cannot publish; device-bound policy yields reauthentication. Legacy records migrate only with an explicit source declaration. The local server atomically compare-and-swaps revisions so concurrent sources retry instead of losing an update. | Migrate device config, execute the fixture matrix against actual CDP versions, implement the Android native CookieManager path, and replace legacy CookieCloud encryption/backup storage under HS-011. |
+| Independent tab snapshots (part of HS-004) | The Go snapshot store and `helium-tabs` command commit hashed generations by fsync+rename, validate bounded session models, plan hourly/daily/weekly retention, protect known-good/invalid copies, and restore only into a new disposable-state directory. | Export this model from Chromium session/tab APIs, schedule quiescent captures, load disposable profiles for a real browser drill, and implement local-session/foreign-session layers. No code promotes a snapshot into a real profile yet. |
+
+These statuses describe source and synthetic tests only. They are not artifact
+acceptance: no Chromium build or real profile was used for this work.
+
 ## Password Convergence
 
-The current append-only daemon is a transport/store, not a conflict algorithm.
-The completed design must persist per-credential sync metadata and avoid an
-export-before-pull startup race.
+The append-only daemon remains a transport/store. HS-001 now persists
+per-credential hashes and last-applied server sequences in the clients and
+removes the export-before-pull startup race. Complete native credential merge
+semantics remain HS-008.
 
-Each record needs:
+The complete record design still needs:
 
 - stable storage key derived with Chromium's password sync rules;
 - schema version and complete `PasswordSpecificsData`-equivalent payload;
@@ -73,10 +85,11 @@ Each record needs:
 - server sequence and last-applied sequence per client; and
 - explicit operation (`upsert` only initially).
 
-Startup is reconcile-first:
+Implemented startup ordering is reconcile-first:
 
 1. Load durable last-applied metadata.
-2. Pull records after the durable server sequence.
+2. Pull the latest records and compare each record's server sequence with the
+   durable per-credential sequence.
 3. Validate and merge remote records through native password APIs.
 4. Query the local store and publish only locally changed records.
 5. Persist applied/published metadata atomically.
@@ -99,13 +112,15 @@ partitionKey(topLevelSite, hasCrossSiteAncestor) /
 domain / path / name / sourceScheme / sourcePort
 ```
 
-The current three-field key is invalid for partitioned cookies. Host-only versus
+The former three-field key was invalid for partitioned cookies. Schema v2 keeps
+the partition key, domain, path, name, source scheme, and source port in the
+identity. Host-only versus
 domain cookies, `Secure`, `HttpOnly`, `SameSite`, priority, expiry, source
 scheme/port, and the complete partition key must survive validation and
 round-trip.
 
-Authentication cookies are not symmetric multi-writer data. Configuration
-assigns one source device per domain and zero or more replicas:
+Authentication cookies are not symmetric multi-writer data. The CDP bridge
+configuration now assigns one source device per domain and zero or more replicas:
 
 - only the source uploads for that domain;
 - replicas apply newer generations but never upload them;
@@ -113,6 +128,13 @@ assigns one source device per domain and zero or more replicas:
 - expired records are ignored, not re-created;
 - a rejected replica token marks the replica as requiring reauthentication;
 - a replica failure or local deletion never propagates to the source.
+
+The current bridge encrypts one schema-v2 payload for CookieCloud transport.
+Every write includes the revision returned by the preceding read; the local
+server atomically rejects a stale or unconditional update with HTTP 409/428.
+The daemon retries on its next bounded interval, so concurrent domain sources
+cannot silently overwrite one another. Authenticated encryption and independent
+cookie backup generations remain HS-011.
 
 Device Bound Session Credentials cannot be made portable by copying their
 short-lived cookie. They rely on a private key held by the original device and
@@ -152,10 +174,11 @@ quarantined while the previous good generation remains available.
 
 ### 3. Independent versioned snapshots
 
-Each device writes snapshots to a store that is not the live profile and is not
-the sync database. A snapshot is created only from a quiescent browser or with
-a stable-copy protocol, then committed by temp-write, file sync, manifest/hash
-verification, directory sync, and atomic rename.
+`internal/tabsnapshot` now writes snapshots to a store that is not the live
+profile and is not the sync database. It accepts only a validated browser-API
+JSON model and commits by temp-write, file sync, manifest/hash verification,
+directory sync, and atomic rename. Capturing that model from a quiescent browser
+is still an integration requirement.
 
 The manifest contains device/profile ID, browser/Chromium version, capture
 time, reason, parent generation, file hashes, sizes, and validation status.

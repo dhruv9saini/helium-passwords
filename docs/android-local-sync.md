@@ -3,10 +3,10 @@
 This path handles phone-local cookie sync plus native password-manager sync
 between Android Helium Sync and the Arch chroot browser.
 
-Status: experimental. The current cookie bridge does not preserve Chromium
-partition keys or distinguish an authoritative token source from replicas, and
-the native password bridge exports before its first pull. Do not treat it as a
-durable or conflict-safe sync system until HS-001 through HS-004 in
+Status: integration pending. HS-001 through HS-003 now have reconcile-first,
+partition-aware, source-to-replica code and synthetic tests. The independent
+tab snapshot portion of HS-004 is also implemented. Do not treat this as a
+validated browser sync system until the remaining browser/device work in
 [`TODO.md`](../TODO.md) pass the gates in
 [`docs/acceptance.md`](acceptance.md). Device-bound session credentials are not
 portable cookie data and must be re-established on each device.
@@ -22,9 +22,10 @@ It runs all sync services on the phone:
   cycle using the local CookieCloud client config; it does not handle passwords.
 - `cdp-password-sync` bridges chroot Chromium's native password manager over
   DevTools. It is not a password extension.
-- Chroot Helium Sync is launched with the official CookieCloud extension when a
-  `helium` binary is installed. The wrapper falls back to `chromium` only for
-  temporary testing.
+- The old CookieCloud extension is not loaded: it uses the superseded symmetric
+  payload and could overwrite schema v2. The CDP bridge is the only cookie
+  producer/consumer. The wrapper falls back to `chromium` only for temporary
+  testing.
 
 ## Install
 
@@ -78,7 +79,6 @@ CDP password bridge by default for the chroot browser, starts
 launches Helium Sync with:
 
 - profile: `$HOME/.config/helium-passwords`
-- CookieCloud extension: `$HOME/.local/share/cookiecloud-extension/chrome-mv3`
 - Google AI Overview blocker extension:
   `$HOME/.local/share/google-ai-overview-blocker`
 
@@ -87,31 +87,67 @@ The Android main browser uses the compiled
 `0006-helium-sync-android-ai-overview-blocker.patch` Java hook instead, because
 Android command-line extension content scripts are not reliable in this fork.
 
-Configure CookieCloud in the extension UI or client config:
+Cookie behavior has one configuration source. A synthetic shape is shown below;
+keep the real UUID/password outside the repository and list only domains that
+have an explicit owner. `legacy_source_device` is required only while converting
+an old `cookie_data` payload; it must name the device that actually owned those
+old values.
 
-- endpoint: `http://127.0.0.1:8088`
-- mode: `up` on the source browser, `down` on the destination browser
-- uuid/password: same values on both sides
+```json
+{
+  "endpoint": "http://127.0.0.1:8088",
+  "uuid": "private-config-value",
+  "password": "private-config-value",
+  "legacy_source_device": "helium-android",
+  "targets": {
+    "helium-android": "http://127.0.0.1:9222",
+    "helium-chroot": "http://127.0.0.1:9223"
+  },
+  "cookie_policies": [
+    {
+      "domain": "portable-fixture.invalid",
+      "source": "helium-android",
+      "replicas": ["helium-chroot"],
+      "mode": "portable"
+    },
+    {
+      "domain": "device-bound-fixture.invalid",
+      "source": "helium-android",
+      "replicas": ["helium-chroot"],
+      "mode": "device-bound"
+    }
+  ]
+}
+```
+
+`portable` copies versioned cookie generations from the source to replicas.
+`device-bound` copies no cookie value and records `reauthentication_required`
+for each replica. A replica is never an upload input. Do not configure the old
+CookieCloud extension against the same UUID. The local server rejects its
+unconditional legacy writes: schema-v2 clients read a revision, then atomically
+compare-and-swap that revision so concurrent sources fail and retry instead of
+losing another domain generation.
 
 The installer also provides a no-dependency CDP bridge. It uses browser-level
 CDP `Storage.getCookies` and `Storage.setCookies` when available so cookie sync
 does not depend on a responsive page renderer target:
 
 ```sh
-cdp-cookiecloud sync --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
-cdp-cookiecloud daemon --android-cdp http://127.0.0.1:9222 --chroot-cdp http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
+cdp-cookiecloud sync --targets helium-android=http://127.0.0.1:9222,helium-chroot=http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
+cdp-cookiecloud daemon --targets helium-android=http://127.0.0.1:9222,helium-chroot=http://127.0.0.1:9223 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
 ```
 
 For laptop or multi-browser runs, pass one or more CDP endpoints explicitly:
 
 ```sh
-cdp-cookiecloud daemon --cdp-list http://127.0.0.1:9222,http://127.0.0.1:9223,http://127.0.0.1:9224 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
+cdp-cookiecloud daemon --targets helium-android=http://127.0.0.1:9222,helium-chroot=http://127.0.0.1:9223,helium-laptop=http://127.0.0.1:9224 --server http://127.0.0.1:8088 --config-file "$HOME/.local/share/helium-local-sync/cookiecloud-client.json"
 ```
 
-`upload` and `download` still exist for directed checks and accept
-`--config-file` so the CookieCloud password does not need to appear on the
-command line. Use `--include domain,domain` on upload when verifying one domain
-so unrelated profile cookies are not written into the local CookieCloud record.
+`upload` and `download` exist for directed checks and require `--device` plus
+`--cdp`. Domain selection comes only from `cookie_policies`; there is no broad
+include fallback. Schema v2 preserves host/domain spelling, path, name,
+partition top-level site and cross-site-ancestor bit, Secure, HttpOnly,
+SameSite, priority, expiry/session state, source scheme, and source port.
 
 Use port `9222` for Android Helium Sync through the local `socat` bridge; use port `9223` for the chroot Helium Sync wrapper.
 
@@ -132,6 +168,12 @@ uses the native C++ bridge.
 
 Password sync is additive/update-only. Local deletion removes the local entry
 from that profile but does not publish a tombstone or delete it elsewhere.
+
+Startup is reconcile-first. Each bridge stores only per-credential content
+hashes and last-applied server sequences in an atomically replaced state file.
+It pulls and applies newer remote values before comparing a second local
+snapshot, then publishes only actual local hash changes. A malformed state file
+is fail-closed: current local credentials are baselined without publication.
 
 The chroot CDP bridge must follow `chrome.passwordsPrivate` semantics. When
 multiple remote records map to what Chromium considers the same origin and

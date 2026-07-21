@@ -4,6 +4,17 @@ All automated browser tests use a disposable profile, fixture credentials, and
 local test servers. Logs may contain fixture values but never real credentials,
 cookies, tokens, URLs from real sessions, or profile contents.
 
+The source-level synthetic gate is:
+
+```sh
+node --test scripts/tests/*.test.mjs
+go test ./...
+```
+
+It currently proves the HS-001 reconcile state machine, cookie partition and
+source/replica semantics, and independent tab generation/retention/restore
+invariants. It does not replace the browser gates below.
+
 ## Gate 0: Provenance and Source Preparation
 
 - Working trees are clean and Helium Sync contains the selected Helium
