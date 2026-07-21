@@ -5,7 +5,10 @@ Password manager and autofill restoration overlay for
 
 See [DEVELOPMENT.md](DEVELOPMENT.md) for the shared Passwords/Sync architecture,
 developer commands, upstream update train, and acceptance gates. The current
-public work inventory is in [ISSUES.md](ISSUES.md).
+public work inventory is in [ISSUES.md](ISSUES.md). Large Linux and Android
+builds use the enforced lm-to-chromiumer workflow in
+[docs/chromiumer-builds.md](docs/chromiumer-builds.md); never build Chromium on
+lm.
 
 This is no longer a Linux packaging fork. The repo only keeps the password
 patches plus a small wrapper that clones the official Helium platform repo,

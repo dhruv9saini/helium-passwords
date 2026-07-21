@@ -128,6 +128,24 @@ EOF
         ' "${linux_docker_build}" > "${tmp_docker_build}"
         mv "${tmp_docker_build}" "${linux_docker_build}"
     fi
+    if [ -f "${linux_docker_build}" ] && \
+        ! grep -q 'HELIUM_BUILD_JOBS' "${linux_docker_build}"; then
+        tmp_docker_build="$(mktemp)"
+        awk '
+            { print }
+            $0 == "[ -n \"${ARCH:-}\" ] && _extra_env+=(-e ARCH)" {
+                print "[ -n \"${HELIUM_BUILD_JOBS:-}\" ] && _extra_env+=(-e HELIUM_BUILD_JOBS)"
+            }
+        ' "${linux_docker_build}" > "${tmp_docker_build}"
+        mv "${tmp_docker_build}" "${linux_docker_build}"
+    fi
+
+    linux_shared_build="${destination}/scripts/shared.sh"
+    if [ -f "${linux_shared_build}" ] && \
+        ! grep -q 'HELIUM_BUILD_JOBS' "${linux_shared_build}"; then
+        sed -i 's/ninja -C out\/Default chrome chromedriver/ninja -j "${HELIUM_BUILD_JOBS:-$(nproc)}" -C out\/Default chrome chromedriver/' \
+            "${linux_shared_build}"
+    fi
 fi
 
 if [ "${platform}" = "windows" ]; then
