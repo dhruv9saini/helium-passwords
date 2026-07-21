@@ -101,6 +101,7 @@ cat /tmp/helium-headless-version.json
 
 if [ -f "$cookiecloud_config" ]; then
   cdp-cookiecloud download \
+    --device "${HELIUM_CHROOT_SYNC_DEVICE:-helium-chroot}" \
     --cdp "$cdp" \
     --server "$cookiecloud_server" \
     --config-file "$cookiecloud_config"

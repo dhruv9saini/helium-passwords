@@ -1,56 +1,45 @@
 #!/usr/bin/env node
 import crypto from "node:crypto";
 import fs from "node:fs";
+import fsp from "node:fs/promises";
+import path from "node:path";
+
+import {
+  cookieIdentity,
+  cookieToCDPParams,
+  migrateCookiePayload,
+  replicaGeneration,
+  updateDomainFromSource,
+  validateCookiePolicies,
+} from "./cookie-replication.mjs";
 
 const usage = `usage:
-  cdp-cookiecloud.mjs upload --cdp URL --server URL [--uuid ID --password SECRET | --config-file PATH] [--include domain,domain] [--blacklist domain,domain]
-  cdp-cookiecloud.mjs download --cdp URL --server URL [--uuid ID --password SECRET | --config-file PATH]
-  cdp-cookiecloud.mjs sync --android-cdp URL --chroot-cdp URL --server URL [--uuid ID --password SECRET | --config-file PATH]
-  cdp-cookiecloud.mjs daemon --android-cdp URL --chroot-cdp URL --server URL [--uuid ID --password SECRET | --config-file PATH] [--interval SECONDS]
-  cdp-cookiecloud.mjs sync --cdp-list URL[,URL...] --server URL [--uuid ID --password SECRET | --config-file PATH]
-  cdp-cookiecloud.mjs daemon --cdp-list URL[,URL...] --server URL [--uuid ID --password SECRET | --config-file PATH] [--interval SECONDS]
+  cdp-cookiecloud.mjs upload --device NAME --cdp URL --server URL --config-file PATH
+  cdp-cookiecloud.mjs download --device NAME --cdp URL --server URL --config-file PATH
+  cdp-cookiecloud.mjs sync --targets NAME=URL[,NAME=URL...] --server URL --config-file PATH
+  cdp-cookiecloud.mjs daemon --targets NAME=URL[,NAME=URL...] --server URL --config-file PATH [--interval SECONDS]
+
+The config must contain uuid, password, cookie_policies, and optionally targets,
+legacy_source_device, state_file, endpoint, and interval.
 `;
 
 const args = parseArgs(process.argv.slice(2));
 const command = args._[0];
+if (!["upload", "download", "sync", "daemon"].includes(command)) failUsage();
 const options = resolveOptions(args);
-const needsSingleCDP = ["upload", "download"].includes(command);
-const needsPairCDP = ["sync", "daemon"].includes(command);
-if (
-  ![ "upload", "download", "sync", "daemon" ].includes(command) ||
-  !options.server ||
-  !options.uuid ||
-  !options.password ||
-  (needsSingleCDP && !options.cdp) ||
-  (needsPairCDP && options.cdpList.length < 1)
-) {
-  process.stderr.write(usage);
-  process.exit(64);
-}
 
 class CDP {
   static async connect(baseURL) {
     const normalized = trimSlash(baseURL);
-    const version = await fetch(normalized + "/json/version").then((response) => response.json()).catch(() => ({}));
-    if (version.webSocketDebuggerUrl) {
-      const client = new CDP(version.webSocketDebuggerUrl, true);
-      await client.open();
-      return client;
-    }
-
-    const targets = await fetch(normalized + "/json/list").then((response) => response.json());
-    const page = targets.find((target) => target.type === "page" && !String(target.url).startsWith("chrome")) ||
-      targets.find((target) => target.type === "page");
-    if (!page) throw new Error(`no CDP page target at ${baseURL}`);
-    const client = new CDP(page.webSocketDebuggerUrl, false);
+    const version = await fetch(`${normalized}/json/version`).then(response => response.json());
+    if (!version.webSocketDebuggerUrl) throw new Error(`no browser CDP target at ${baseURL}`);
+    const client = new CDP(version.webSocketDebuggerUrl);
     await client.open();
-    await client.call("Network.enable");
     return client;
   }
 
-  constructor(webSocketURL, browserTarget) {
+  constructor(webSocketURL) {
     this.webSocketURL = webSocketURL;
-    this.browserTarget = browserTarget;
     this.nextID = 0;
     this.pending = new Map();
   }
@@ -59,12 +48,12 @@ class CDP {
     this.ws = new WebSocket(this.webSocketURL);
     this.ws.onmessage = (event) => {
       const message = JSON.parse(event.data);
-      if (message.id && this.pending.has(message.id)) {
-        const { resolve, timer } = this.pending.get(message.id);
-        clearTimeout(timer);
-        this.pending.delete(message.id);
-        resolve(message);
-      }
+      if (!message.id || !this.pending.has(message.id)) return;
+      const { resolve, reject, timer } = this.pending.get(message.id);
+      clearTimeout(timer);
+      this.pending.delete(message.id);
+      if (message.error) reject(new Error(JSON.stringify(message.error)));
+      else resolve(message.result || {});
     };
     return new Promise((resolve, reject) => {
       this.ws.onopen = resolve;
@@ -79,29 +68,179 @@ class CDP {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`CDP timeout for ${method}`));
-      }, 5000);
+      }, 10000);
       this.pending.set(id, { resolve, reject, timer });
-    }).then((message) => {
-      if (message.error) throw new Error(`${method}: ${JSON.stringify(message.error)}`);
-      return message;
     });
   }
 
   getAllCookies() {
-    return this.call(this.browserTarget ? "Storage.getCookies" : "Network.getAllCookies");
+    return this.call("Storage.getCookies");
   }
 
-  async setCookie(params) {
-    if (!this.browserTarget) {
-      return this.call("Network.setCookie", params);
-    }
-    await this.call("Storage.setCookies", { cookies: [params] });
-    return { result: { success: true } };
+  setCookie(cookie) {
+    return this.call("Storage.setCookies", { cookies: [cookie] });
+  }
+
+  expireCookie(cookie) {
+    const params = cookieToCDPParams({ ...cookie, value: "", session: false, expires: 1 });
+    if (!params) throw new Error("cannot encode cookie deletion");
+    return this.setCookie(params);
   }
 
   close() {
-    this.ws.close();
+    this.ws?.close();
   }
+}
+
+async function runOnce(mode) {
+  const remote = await readRemotePayload();
+  const state = await loadState(options.stateFile);
+  const summaries = [];
+  let remoteChanged = false;
+
+  if (mode === "upload" || mode === "sync") {
+    const sourceSnapshots = new Map();
+    const targets = new Map(options.targets.map(target => [target.device, target]));
+    for (const policy of options.policies) {
+      const target = targets.get(policy.source);
+      if (!target) continue;
+      if (!sourceSnapshots.has(policy.source)) {
+        sourceSnapshots.set(policy.source, await snapshotCookies(target));
+      }
+      const changed = updateDomainFromSource(
+        remote.payload,
+        policy,
+        policy.source,
+        sourceSnapshots.get(policy.source),
+      );
+      remoteChanged ||= changed;
+      summaries.push({ device: policy.source, domain: policy.domain, action: changed ? "published" : "unchanged" });
+    }
+    if (remoteChanged || (remote.migrated && sourceSnapshots.size > 0)) {
+      await writeRemotePayload(remote.payload, remote.revision);
+    }
+  }
+
+  if (mode === "download" || mode === "sync") {
+    for (const target of options.targets) {
+      summaries.push(...await applyReplicaGenerations(target, remote.payload, state));
+    }
+    await saveState(options.stateFile, state);
+  }
+  return { action: mode, remote_changed: remoteChanged, results: summaries };
+}
+
+async function snapshotCookies(target) {
+  return withCDP(target.cdp, async cdp => {
+    const result = await cdp.getAllCookies();
+    return result.cookies || [];
+  });
+}
+
+async function applyReplicaGenerations(target, payload, state) {
+  const actions = [];
+  const relevant = options.policies.filter(policy => policy.replicas.includes(target.device));
+  if (!relevant.length) return actions;
+
+  await withCDP(target.cdp, async cdp => {
+    const deviceState = state.devices[target.device] ||= {};
+    for (const policy of relevant) {
+      const generation = replicaGeneration(payload, policy, target.device);
+      const previous = deviceState[policy.domain];
+      if (!generation.generation || generation.generation <= (previous?.generation || 0)) continue;
+
+      const nextIDs = new Set(generation.cookies.map(cookieIdentity));
+      for (const oldCookie of previous?.cookies || []) {
+        if (!nextIDs.has(cookieIdentity(oldCookie))) await cdp.expireCookie(oldCookie);
+      }
+      if (generation.action === "apply") {
+        for (const cookie of generation.cookies) {
+          const params = cookieToCDPParams(cookie);
+          if (!params) throw new Error(`invalid cookie in ${policy.domain} generation`);
+          await cdp.setCookie(params);
+        }
+      }
+      deviceState[policy.domain] = {
+        generation: generation.generation,
+        status: generation.action === "reauthenticate" ? "reauthentication_required" : "applied",
+        cookies: generation.cookies.map(cookie => cookieDescriptor(cookie)),
+      };
+      actions.push({
+        device: target.device,
+        domain: policy.domain,
+        action: generation.action,
+        generation: generation.generation,
+        cookies: generation.cookies.length,
+      });
+    }
+  });
+  return actions;
+}
+
+function cookieDescriptor(cookie) {
+  return {
+    name: cookie.name,
+    value: "",
+    domain: cookie.domain,
+    path: cookie.path,
+    expires: cookie.expires,
+    httpOnly: cookie.httpOnly,
+    secure: cookie.secure,
+    session: cookie.session,
+    sameSite: cookie.sameSite,
+    priority: cookie.priority,
+    sourceScheme: cookie.sourceScheme,
+    sourcePort: cookie.sourcePort,
+    ...(cookie.partitionKey ? { partitionKey: cookie.partitionKey } : {}),
+  };
+}
+
+async function withCDP(cdpURL, callback) {
+  const cdp = await CDP.connect(cdpURL);
+  try {
+    return await callback(cdp);
+  } finally {
+    cdp.close();
+  }
+}
+
+async function readRemotePayload() {
+  const response = await fetch(`${trimSlash(options.server)}/get/${encodeURIComponent(options.uuid)}`);
+  if (response.status === 404) {
+    return {
+      payload: migrateCookiePayload(null, options.policies, options.legacySourceDevice),
+      migrated: false,
+      revision: 0,
+    };
+  }
+  if (!response.ok) throw new Error(`cookie download failed: ${response.status} ${await response.text()}`);
+  const record = await response.json();
+  if (!record.encrypted) throw new Error("cookie record has no ciphertext");
+  const revision = Number(record.revision || 0);
+  if (!Number.isSafeInteger(revision) || revision < 0) {
+    throw new Error("cookie record has invalid revision");
+  }
+  const raw = JSON.parse(cookieCloudDecrypt(options.uuid, record.encrypted, options.password));
+  return {
+    payload: migrateCookiePayload(raw, options.policies, options.legacySourceDevice),
+    migrated: raw.schema_version !== 2,
+    revision,
+  };
+}
+
+async function writeRemotePayload(payload, expectedRevision) {
+  const encrypted = cookieCloudEncrypt(options.uuid, JSON.stringify(payload), options.password);
+  const response = await fetch(`${trimSlash(options.server)}/update`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      uuid: options.uuid,
+      encrypted,
+      crypto_type: "legacy",
+      expected_revision: expectedRevision,
+    }),
+  });
+  if (!response.ok) throw new Error(`cookie upload failed: ${response.status} ${await response.text()}`);
 }
 
 function cookieCloudEncrypt(uuid, plaintext, password) {
@@ -109,8 +248,12 @@ function cookieCloudEncrypt(uuid, plaintext, password) {
   const salt = crypto.randomBytes(8);
   const { key, iv } = evpBytesToKey(Buffer.from(passphrase), salt);
   const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
-  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
-  return Buffer.concat([Buffer.from("Salted__"), salt, encrypted]).toString("base64");
+  return Buffer.concat([
+    Buffer.from("Salted__"),
+    salt,
+    cipher.update(plaintext, "utf8"),
+    cipher.final(),
+  ]).toString("base64");
 }
 
 function cookieCloudDecrypt(uuid, encrypted, password) {
@@ -119,11 +262,9 @@ function cookieCloudDecrypt(uuid, encrypted, password) {
   if (raw.subarray(0, 8).toString() !== "Salted__") {
     throw new Error("unsupported CookieCloud ciphertext format");
   }
-  const salt = raw.subarray(8, 16);
-  const ciphertext = raw.subarray(16);
-  const { key, iv } = evpBytesToKey(Buffer.from(passphrase), salt);
+  const { key, iv } = evpBytesToKey(Buffer.from(passphrase), raw.subarray(8, 16));
   const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
-  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  return Buffer.concat([decipher.update(raw.subarray(16)), decipher.final()]).toString("utf8");
 }
 
 function evpBytesToKey(passphrase, salt) {
@@ -136,157 +277,100 @@ function evpBytesToKey(passphrase, salt) {
   return { key: out.subarray(0, 32), iv: out.subarray(32, 48) };
 }
 
-function normalizeSameSite(value) {
-  const lower = String(value || "").toLowerCase();
-  if (lower === "lax") return "Lax";
-  if (lower === "strict") return "Strict";
-  if (lower === "none" || lower === "no_restriction") return "None";
-  return undefined;
-}
-
-function buildURL(cookie) {
-  const domain = String(cookie.domain || "").replace(/^\./, "");
-  return `${cookie.secure ? "https" : "http"}://${domain}${cookie.path || "/"}`;
-}
-
-function cookieKey(cookie) {
-  return [
-    String(cookie.domain || ""),
-    String(cookie.path || "/"),
-    String(cookie.name || ""),
-  ].join("\u0000");
-}
-
-function cookieIsExpired(cookie, now = Date.now() / 1000) {
-  const expires = Number(cookie.expirationDate || cookie.expires || 0);
-  return Number.isFinite(expires) && expires > 0 && expires <= now;
-}
-
-function normalizeCookieForPayload(cookie) {
-  if (!cookie || !cookie.name || !cookie.domain) return null;
-  if (cookieIsExpired(cookie)) return null;
-  const out = {
-    name: String(cookie.name),
-    value: String(cookie.value || ""),
-    domain: String(cookie.domain),
-    path: cookie.path || "/",
-    secure: !!cookie.secure,
-    httpOnly: !!cookie.httpOnly,
-    sameSite: cookie.sameSite || "unspecified",
+function resolveOptions(rawArgs) {
+  const configPath = rawArgs["config-file"] || process.env.COOKIECLOUD_CONFIG || defaultConfigPath();
+  const config = readConfig(configPath);
+  const policies = validateCookiePolicies(config.cookie_policies);
+  const targets = rawArgs.cdp
+    ? [{ device: String(rawArgs.device || ""), cdp: String(rawArgs.cdp) }]
+    : parseTargets(rawArgs.targets || config.targets);
+  if (!targets.length || targets.some(target => !target.device || !target.cdp)) failUsage();
+  const duplicateDevices = targets.map(target => target.device)
+    .filter((device, index, devices) => devices.indexOf(device) !== index);
+  if (duplicateDevices.length) throw new Error(`duplicate cookie target: ${duplicateDevices[0]}`);
+  const server = rawArgs.server || config.endpoint;
+  const uuid = rawArgs.uuid || config.uuid;
+  const password = rawArgs.password || config.password;
+  if (!server || !uuid || !password) failUsage();
+  return {
+    server,
+    uuid,
+    password,
+    policies,
+    targets,
+    legacySourceDevice: String(config.legacy_source_device || ""),
+    stateFile: rawArgs["state-file"] || config.state_file || defaultStatePath(),
+    interval: positiveNumber(rawArgs.interval || config.interval, 60),
   };
-  const expires = Number(cookie.expirationDate || cookie.expires || 0);
-  if (Number.isFinite(expires) && expires > 0) {
-    out.expirationDate = expires;
-  }
-  return out;
 }
 
-function mergeCookiePayload(basePayload, localPayload) {
-  const merged = {
-    cookie_data: {},
-    local_storage_data: {
-      ...(basePayload.local_storage_data || {}),
-      ...(localPayload.local_storage_data || {}),
-    },
-    update_time: new Date().toISOString(),
-  };
-  const byKey = new Map();
-
-  const addCookie = (cookie) => {
-    const normalized = normalizeCookieForPayload(cookie);
-    if (!normalized) return;
-    byKey.set(cookieKey(normalized), normalized);
-  };
-
-  for (const cookies of Object.values(basePayload.cookie_data || {})) {
-    if (!Array.isArray(cookies)) continue;
-    for (const cookie of cookies) addCookie(cookie);
+function parseTargets(raw) {
+  if (Array.isArray(raw)) {
+    return raw.map(target => ({ device: String(target.device || ""), cdp: String(target.cdp || "") }));
   }
-  for (const cookies of Object.values(localPayload.cookie_data || {})) {
-    if (!Array.isArray(cookies)) continue;
-    for (const cookie of cookies) addCookie(cookie);
+  if (raw && typeof raw === "object") {
+    return Object.entries(raw).map(([device, cdp]) => ({ device, cdp: String(cdp) }));
   }
-
-  for (const cookie of byKey.values()) {
-    merged.cookie_data[cookie.domain] ||= [];
-    merged.cookie_data[cookie.domain].push(cookie);
-  }
-  for (const cookies of Object.values(merged.cookie_data)) {
-    cookies.sort((a, b) => cookieKey(a).localeCompare(cookieKey(b)));
-  }
-  return merged;
+  return String(raw || "").split(",").filter(Boolean).map(item => {
+    const separator = item.indexOf("=");
+    if (separator <= 0) return { device: "", cdp: "" };
+    return { device: item.slice(0, separator).trim(), cdp: item.slice(separator + 1).trim() };
+  });
 }
 
-async function readRemotePayload() {
-  const response = await fetch(trimSlash(options.server) + "/get/" + encodeURIComponent(options.uuid));
-  if (!response.ok) {
-    if (response.status === 404) return { cookie_data: {}, local_storage_data: {} };
-    throw new Error(`CookieCloud download failed: ${response.status} ${await response.text()}`);
+function readConfig(file) {
+  try {
+    return JSON.parse(fs.readFileSync(file, "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") throw new Error(`cookie config not found: ${file}`);
+    throw error;
   }
-  const record = await response.json();
-  if (!record.encrypted) return { cookie_data: {}, local_storage_data: {} };
-  return JSON.parse(cookieCloudDecrypt(options.uuid, record.encrypted, options.password));
 }
 
-function trimSlash(value) {
-  return String(value).replace(/\/+$/, "");
+async function loadState(file) {
+  try {
+    const parsed = JSON.parse(await fsp.readFile(file, "utf8"));
+    if (parsed?.schema_version !== 1 || !parsed.devices || typeof parsed.devices !== "object") {
+      throw new Error("unsupported cookie replication state");
+    }
+    return parsed;
+  } catch (error) {
+    if (error.code === "ENOENT") return { schema_version: 1, devices: {} };
+    throw error;
+  }
+}
+
+async function saveState(file, state) {
+  await fsp.mkdir(path.dirname(file), { recursive: true });
+  const temporary = `${file}.tmp`;
+  const handle = await fsp.open(temporary, "w", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await fsp.rename(temporary, file);
+  const directory = await fsp.open(path.dirname(file), "r");
+  try {
+    await directory.sync();
+  } finally {
+    await directory.close();
+  }
 }
 
 function parseArgs(argv) {
   const out = { _: [] };
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index];
-    if (!arg.startsWith("--")) {
-      out._.push(arg);
-      continue;
-    }
-    out[arg.slice(2)] = argv[++index];
+    if (!arg.startsWith("--")) out._.push(arg);
+    else out[arg.slice(2)] = argv[++index];
   }
   return out;
 }
 
-function resolveOptions(rawArgs) {
-  const config = readConfig(rawArgs["config-file"] || process.env.COOKIECLOUD_CONFIG || defaultConfigPath());
-  const androidCdp = rawArgs["android-cdp"] || config.androidCdp || config.android_cdp;
-  const chrootCdp = rawArgs["chroot-cdp"] || config.chrootCdp || config.chroot_cdp;
-  const explicitCdpList = toList(rawArgs["cdp-list"] || rawArgs.cdps || config.cdpList || config.cdp_list);
-  const pairCdpList = [androidCdp, chrootCdp].filter(Boolean);
-  return {
-    cdp: rawArgs.cdp || config.cdp,
-    androidCdp,
-    chrootCdp,
-    cdpList: explicitCdpList.length > 0 ? explicitCdpList : pairCdpList,
-    server: rawArgs.server || config.endpoint,
-    uuid: rawArgs.uuid || config.uuid,
-    password: rawArgs.password || config.password,
-    include: rawArgs.include || toList(config.domains).join(","),
-    blacklist: rawArgs.blacklist || toList(config.blacklist).join(","),
-    interval: positiveNumber(rawArgs.interval || config.interval, 60),
-  };
-}
-
-function readConfig(path) {
-  if (!path) return {};
-  try {
-    return JSON.parse(readTextFile(path));
-  } catch (error) {
-    if (error.code === "ENOENT" && !process.argv.includes("--config-file")) return {};
-    throw error;
-  }
-}
-
-function readTextFile(path) {
-  return fs.readFileSync(path, "utf8");
-}
-
-function defaultConfigPath() {
-  return `${process.env.HOME || "/root"}/.local/share/helium-local-sync/cookiecloud-client.json`;
-}
-
-function toList(value) {
-  if (Array.isArray(value)) return value.map(String).filter(Boolean);
-  if (typeof value === "string") return value.split(",").map((item) => item.trim()).filter(Boolean);
-  return [];
+function trimSlash(value) {
+  return String(value).replace(/\/+$/, "");
 }
 
 function positiveNumber(value, fallback) {
@@ -294,134 +378,32 @@ function positiveNumber(value, fallback) {
   return Number.isFinite(number) && number > 0 ? number : fallback;
 }
 
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function defaultConfigPath() {
+  return `${process.env.HOME || "/root"}/.local/share/helium-local-sync/cookiecloud-client.json`;
 }
 
-async function withCDP(cdpURL, callback) {
-  const cdp = await CDP.connect(cdpURL);
-  try {
-    return await callback(cdp);
-  } finally {
-    cdp.close();
-  }
+function defaultStatePath() {
+  return path.join(
+    process.env.XDG_STATE_HOME || path.join(process.env.HOME || "/tmp", ".local", "state"),
+    "helium-sync",
+    "cookie-replication-state.json",
+  );
 }
 
-async function upload(cdpURL) {
-  return await withCDP(cdpURL, async (cdp) => {
-    const cookies = await cdp.getAllCookies();
-    const include = new Set((options.include || "").split(",").map((item) => item.trim()).filter(Boolean));
-    const blacklist = new Set((options.blacklist || "").split(",").map((item) => item.trim()).filter(Boolean));
-    const cookie_data = {};
-    for (const cookie of cookies.result.cookies || []) {
-      if (!cookie.domain) continue;
-      if (include.size > 0 && ![...include].some((item) => cookie.domain.includes(item))) continue;
-      if ([...blacklist].some((item) => cookie.domain.includes(item))) continue;
-      const normalized = normalizeCookieForPayload(cookie);
-      if (!normalized) continue;
-      cookie_data[normalized.domain] ||= [];
-      cookie_data[normalized.domain].push(normalized);
+function failUsage() {
+  process.stderr.write(usage);
+  process.exit(64);
+}
+
+if (command === "daemon") {
+  for (;;) {
+    try {
+      console.log(JSON.stringify(await runOnce("sync")));
+    } catch (error) {
+      console.error(JSON.stringify({ action: "cookie-sync-error", error: String(error.message || error) }));
     }
-    const localPayload = {
-      cookie_data,
-      local_storage_data: {},
-      update_time: new Date().toISOString(),
-    };
-    const payload = mergeCookiePayload(await readRemotePayload(), localPayload);
-    const encrypted = cookieCloudEncrypt(options.uuid, JSON.stringify(payload), options.password);
-    const response = await fetch(trimSlash(options.server) + "/update", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ uuid: options.uuid, encrypted, crypto_type: "legacy" }),
-    });
-    if (!response.ok) throw new Error(`CookieCloud upload failed: ${response.status} ${await response.text()}`);
-    return { action: "uploaded", domains: Object.keys(cookie_data).length };
-  });
-}
-
-async function download(cdpURL) {
-  return await withCDP(cdpURL, async (cdp) => {
-    const payload = await readRemotePayload();
-    let applied = 0;
-    let skipped = 0;
-    for (const cookies of Object.values(payload.cookie_data || {})) {
-      if (!Array.isArray(cookies)) continue;
-      for (const cookie of cookies) {
-        const normalized = normalizeCookieForPayload(cookie);
-        if (!normalized) {
-          skipped++;
-          continue;
-        }
-        const params = {
-          name: normalized.name,
-          value: normalized.value,
-          domain: normalized.domain,
-          path: normalized.path,
-          secure: normalized.secure,
-          httpOnly: normalized.httpOnly,
-          url: buildURL(normalized),
-        };
-        const sameSite = normalizeSameSite(normalized.sameSite);
-        if (sameSite) params.sameSite = sameSite;
-        if (normalized.expirationDate) params.expires = normalized.expirationDate;
-        const result = await cdp.setCookie(params);
-        if (result.result?.success) applied++;
-      }
-    }
-    return { action: "downloaded", applied, skipped };
-  });
-}
-
-async function syncOnce() {
-  const uploads = [];
-  for (const cdpURL of options.cdpList) {
-    const result = await upload(cdpURL);
-    uploads.push({ cdp: cdpURL, domains: result.domains });
+    await new Promise(resolve => setTimeout(resolve, Math.max(5, options.interval) * 1000));
   }
-
-  const downloads = [];
-  for (const cdpURL of options.cdpList) {
-    const result = await download(cdpURL);
-    downloads.push({ cdp: cdpURL, applied: result.applied, skipped: result.skipped });
-  }
-
-  const summary = {
-    action: "synced",
-    uploads,
-    downloads,
-  };
-  if (
-    options.androidCdp &&
-    options.chrootCdp &&
-    options.cdpList.length === 2 &&
-    options.cdpList[0] === options.androidCdp &&
-    options.cdpList[1] === options.chrootCdp
-  ) {
-    summary.androidUploadedDomains = uploads[0].domains;
-    summary.chrootApplied = downloads[1].applied;
-    summary.chrootUploadedDomains = uploads[1].domains;
-    summary.androidApplied = downloads[0].applied;
-  }
-  return summary;
+} else {
+  console.log(JSON.stringify(await runOnce(command)));
 }
-
-async function main() {
-  if (command === "upload") {
-    console.log(JSON.stringify(await upload(options.cdp)));
-  } else if (command === "download") {
-    console.log(JSON.stringify(await download(options.cdp)));
-  } else if (command === "sync") {
-    console.log(JSON.stringify(await syncOnce()));
-  } else {
-    while (true) {
-      try {
-        console.log(JSON.stringify(await syncOnce()));
-      } catch (error) {
-        console.error(`cookiecloud-sync: ${error.message}`);
-      }
-      await sleep(Math.max(5, options.interval) * 1000);
-    }
-  }
-}
-
-await main();

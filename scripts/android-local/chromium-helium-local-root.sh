@@ -125,8 +125,7 @@ fi
 cookiecloud_config=${HELIUM_COOKIECLOUD_CONFIG:-$home_dir/.local/share/helium-local-sync/cookiecloud-client.json}
 if command -v cdp-cookiecloud >/dev/null 2>&1 && [ -f "$cookiecloud_config" ]; then
   cdp-cookiecloud daemon \
-    --android-cdp "${HELIUM_ANDROID_CDP_URL:-http://127.0.0.1:9222}" \
-    --chroot-cdp "${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}" \
+    --targets "${HELIUM_ANDROID_SYNC_DEVICE:-helium-android}=${HELIUM_ANDROID_CDP_URL:-http://127.0.0.1:9222},${HELIUM_CHROOT_SYNC_DEVICE:-helium-chroot}=${HELIUM_CHROOT_CDP_URL:-http://127.0.0.1:9223}" \
     --server "${HELIUM_COOKIECLOUD_SERVER:-http://127.0.0.1:8088}" \
     --config-file "$cookiecloud_config" \
     >>"$state_dir/cdp-cookiecloud.log" 2>&1 &
@@ -197,7 +196,6 @@ patch_dark_reader_startup_tab() {
 
 patch_dark_reader_startup_tab
 
-add_extension_path "$home_dir/.local/share/cookiecloud-extension/chrome-mv3"
 add_extension_path "$home_dir/.local/share/google-ai-overview-blocker"
 add_extension_path "$home_dir/.local/share/blank-new-tab-extension"
 add_extension_path "$home_dir/.local/share/tab-pin-helper-extension"

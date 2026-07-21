@@ -86,9 +86,9 @@ start_daemon_if_needed "$password_base_url/v1/health" "$state_dir/helium-syncd.l
     -token-file "$password_data_dir/token"
 
 if [[ -f "$cookiecloud_config" ]] && command -v cdp-cookiecloud >/dev/null 2>&1; then
-  if ! pgrep -f "[c]dp-cookiecloud.*--cdp-list.*$cdp_port" >/dev/null 2>&1; then
+  if ! pgrep -f "[c]dp-cookiecloud.*--targets.*$cdp_port" >/dev/null 2>&1; then
     nohup cdp-cookiecloud daemon \
-      --cdp-list "$cdp_url" \
+      --targets "$device_name=$cdp_url" \
       --server "$cookiecloud_server" \
       --config-file "$cookiecloud_config" \
       >>"$state_dir/cdp-cookiecloud-laptop.log" 2>&1 &
@@ -112,8 +112,6 @@ if [[ "${HELIUM_NO_EXTENSIONS:-}" != "1" ]]; then
     exts+=("$home_dir/.local/share/helium-extensions/pitch-black-theme")
   [[ -d "$home_dir/.local/share/helium-extensions/tab-sync" ]] &&
     exts+=("$home_dir/.local/share/helium-extensions/tab-sync")
-  [[ -d "$home_dir/.local/share/cookiecloud-extension/chrome-mv3" ]] &&
-    exts+=("$home_dir/.local/share/cookiecloud-extension/chrome-mv3")
 fi
 
 browser_args=(

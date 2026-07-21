@@ -12,18 +12,22 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 )
 
 const maxBodyBytes = 50 * 1024 * 1024
 
 type app struct {
 	cookieDir string
+	mu        sync.Mutex
 }
 
 type cookieCloudRecord struct {
 	Encrypted  string `json:"encrypted"`
 	CryptoType string `json:"crypto_type,omitempty"`
+	Revision   int64  `json:"revision"`
 }
 
 func main() {
@@ -49,7 +53,7 @@ func main() {
 	}
 }
 
-func (a app) route(w http.ResponseWriter, r *http.Request) {
+func (a *app) route(w http.ResponseWriter, r *http.Request) {
 	addCORS(w)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -71,7 +75,7 @@ func (a app) route(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (a app) cookieUpdate(w http.ResponseWriter, r *http.Request) {
+func (a *app) cookieUpdate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSON(w, http.StatusMethodNotAllowed, map[string]string{"error": "method not allowed"})
 		return
@@ -89,6 +93,11 @@ func (a app) cookieUpdate(w http.ResponseWriter, r *http.Request) {
 	uuid := strings.TrimSpace(values.Get("uuid"))
 	encrypted := strings.TrimSpace(values.Get("encrypted"))
 	cryptoType := strings.TrimSpace(values.Get("crypto_type"))
+	expectedRevision, err := strconv.ParseInt(strings.TrimSpace(values.Get("expected_revision")), 10, 64)
+	if err != nil || expectedRevision < 0 {
+		writeJSON(w, http.StatusPreconditionRequired, map[string]string{"error": "expected_revision is required"})
+		return
+	}
 	if cryptoType == "" {
 		cryptoType = "legacy"
 	}
@@ -96,20 +105,38 @@ func (a app) cookieUpdate(w http.ResponseWriter, r *http.Request) {
 		writeText(w, http.StatusBadRequest, "Bad Request")
 		return
 	}
-	record := cookieCloudRecord{Encrypted: encrypted, CryptoType: cryptoType}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	current, err := a.readCookieRecord(uuid)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	if expectedRevision != current.Revision {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error":    "cookie record revision conflict",
+			"revision": current.Revision,
+		})
+		return
+	}
+	record := cookieCloudRecord{
+		Encrypted:  encrypted,
+		CryptoType: cryptoType,
+		Revision:   current.Revision + 1,
+	}
 	raw, err := json.Marshal(record)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	if err := os.WriteFile(a.cookiePath(uuid), raw, 0600); err != nil {
+	if err := writeAtomic(a.cookieDir, a.cookiePath(uuid), raw); err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"action": "done"})
+	writeJSON(w, http.StatusOK, map[string]any{"action": "done", "revision": record.Revision})
 }
 
-func (a app) cookieGet(w http.ResponseWriter, _ *http.Request, uuid string) {
+func (a *app) cookieGet(w http.ResponseWriter, _ *http.Request, uuid string) {
 	uuid = strings.TrimSpace(uuid)
 	if uuid == "" {
 		writeText(w, http.StatusBadRequest, "Bad Request")
@@ -128,8 +155,65 @@ func (a app) cookieGet(w http.ResponseWriter, _ *http.Request, uuid string) {
 	_, _ = w.Write(raw)
 }
 
-func (a app) cookiePath(uuid string) string {
+func (a *app) cookiePath(uuid string) string {
 	return filepath.Join(a.cookieDir, filepath.Base(uuid)+".json")
+}
+
+func (a *app) readCookieRecord(uuid string) (cookieCloudRecord, error) {
+	raw, err := os.ReadFile(a.cookiePath(uuid))
+	if err != nil {
+		return cookieCloudRecord{}, err
+	}
+	var record cookieCloudRecord
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return cookieCloudRecord{}, fmt.Errorf("decode cookie record: %w", err)
+	}
+	return record, nil
+}
+
+func writeAtomic(directory string, destination string, raw []byte) error {
+	temporary, err := os.CreateTemp(directory, ".cookie-record-")
+	if err != nil {
+		return fmt.Errorf("create cookie record: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	committed := false
+	defer func() {
+		if !committed {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	if err := temporary.Chmod(0600); err != nil {
+		temporary.Close()
+		return err
+	}
+	if _, err := temporary.Write(raw); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		return fmt.Errorf("commit cookie record: %w", err)
+	}
+	dir, err := os.Open(directory)
+	if err != nil {
+		return err
+	}
+	if err := dir.Sync(); err != nil {
+		dir.Close()
+		return err
+	}
+	if err := dir.Close(); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 func readBody(r *http.Request) ([]byte, error) {

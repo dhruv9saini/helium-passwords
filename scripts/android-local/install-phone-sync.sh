@@ -33,6 +33,7 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$work_dir/helium-syncd" /data/local/tmp/helium-syncd >/dev/null
 "$adb_bin" push "$work_dir/android-magic-keyboard-remap" /data/local/tmp/android-magic-keyboard-remap >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/cdp-cookiecloud.mjs" /data/local/tmp/cdp-cookiecloud.mjs >/dev/null
+"$adb_bin" push "$repo_root/scripts/android-local/cookie-replication.mjs" /data/local/tmp/cookie-replication.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/cdp-password-sync.mjs" /data/local/tmp/cdp-password-sync.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/password-reconcile.mjs" /data/local/tmp/password-reconcile.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/start-helium-local-sync-root.sh" /data/local/tmp/start-helium-local-sync-root.sh >/dev/null
@@ -90,6 +91,7 @@ install -Dm755 /data/local/tmp/helium-sync \"\$ROOT/usr/local/bin/helium-sync\"
 install -Dm755 /data/local/tmp/helium-syncd \"\$ROOT/usr/local/bin/helium-syncd\"
 install -Dm755 /data/local/tmp/android-magic-keyboard-remap \"\$ROOT/usr/local/bin/android-magic-keyboard-remap\"
 install -Dm755 /data/local/tmp/cdp-cookiecloud.mjs \"\$ROOT/usr/local/bin/cdp-cookiecloud\"
+install -Dm644 /data/local/tmp/cookie-replication.mjs \"\$ROOT/usr/local/bin/cookie-replication.mjs\"
 install -Dm755 /data/local/tmp/cdp-password-sync.mjs \"\$ROOT/usr/local/bin/cdp-password-sync\"
 install -Dm644 /data/local/tmp/password-reconcile.mjs \"\$ROOT/usr/local/bin/password-reconcile.mjs\"
 install -Dm755 /data/local/tmp/start-helium-local-sync-root.sh \"\$ROOT/usr/local/bin/start-helium-local-sync\"
