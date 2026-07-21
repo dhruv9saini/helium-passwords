@@ -33,8 +33,9 @@ profile() {
             memory_high=4G
             memory_max=5G
             tasks_max=256
-            max_disk_bytes=$(gib 100)
-            reserve_bytes=$(gib 20)
+            workspace_limit_bytes=$(gib 100)
+            filesystem_reserve_bytes=$(gib 20)
+            root_reserve_bytes=$(gib 20)
             min_mem_total_bytes=$(gib 7)
             min_mem_available_bytes=$(gib 2)
             watchdog_mem_floor_bytes=$(gib 1)
@@ -48,8 +49,9 @@ profile() {
             memory_high=128M
             memory_max=256M
             tasks_max=32
-            max_disk_bytes=$(gib 1)
-            reserve_bytes=$(gib 1)
+            workspace_limit_bytes=$(gib 1)
+            filesystem_reserve_bytes=$(gib 1)
+            root_reserve_bytes=$(gib 1)
             min_mem_total_bytes=$(gib 1)
             min_mem_available_bytes=$((256 * 1024 * 1024))
             watchdog_mem_floor_bytes=$((64 * 1024 * 1024))
@@ -66,6 +68,18 @@ profile() {
 meminfo_bytes() {
     local field=$1
     awk -v field="${field}:" '$1 == field { print $2 * 1024; exit }' /proc/meminfo
+}
+
+disk_usage_bytes() {
+    du -sx -B1 "$1" | awk '{ print $1 }'
+}
+
+required_available_bytes() {
+    local limit=$1
+    local used=$2
+    local reserve=$3
+    [ "${used}" -le "${limit}" ] || return 1
+    printf '%s\n' "$((limit - used + reserve))"
 }
 
 require_worker_host() {
@@ -90,13 +104,11 @@ require_contained_path() {
 preflight() {
     local profile_name=$1
     local probe_path=${2:-"${work_root}"}
+    local accounted_path=${3:-}
     profile "${profile_name}"
     require_worker_host
 
-    local required=(awk df du find flock ionice nice realpath sha256sum systemctl systemd-run timeout)
-    if [ "${profile_name}" = production ]; then
-        required+=(git python3)
-    fi
+    local required=(awk df du find flock install ionice nice realpath sha256sum stat systemctl systemd-run tar timeout)
     local tool
     for tool in "${required[@]}"; do
         command -v "${tool}" >/dev/null 2>&1 || {
@@ -122,16 +134,39 @@ preflight() {
     probe_path=$(realpath -e "${probe_path}")
     require_contained_path "${probe_path}" "$(realpath -e "${HOME}")"
 
-    local available required_space memory_total memory_available
+    local available workspace_bytes remaining_bytes required_space
+    local root_available probe_device root_device memory_total memory_available
     available=$(df -PB1 "${probe_path}" | awk 'NR == 2 { print $4 }')
-    required_space=$((max_disk_bytes + reserve_bytes))
+    workspace_bytes=0
+    if [ -n "${accounted_path}" ]; then
+        accounted_path=$(realpath -e "${accounted_path}")
+        require_contained_path "${accounted_path}" "$(realpath -e "${work_root}")"
+        workspace_bytes=$(disk_usage_bytes "${accounted_path}")
+    fi
+    [ "${workspace_bytes}" -le "${workspace_limit_bytes}" ] || {
+        echo "preflight failed: workspace_bytes=${workspace_bytes}, workspace_limit_bytes=${workspace_limit_bytes}" >&2
+        return 1
+    }
+    remaining_bytes=$((workspace_limit_bytes - workspace_bytes))
+    required_space=$(required_available_bytes \
+        "${workspace_limit_bytes}" "${workspace_bytes}" \
+        "${filesystem_reserve_bytes}")
+    root_available=$(df -PB1 / | awk 'NR == 2 { print $4 }')
+    probe_device=$(stat -c %d "${probe_path}")
+    root_device=$(stat -c %d /)
     memory_total=$(meminfo_bytes MemTotal)
     memory_available=$(meminfo_bytes MemAvailable)
 
     [ "${available}" -ge "${required_space}" ] || {
-        echo "preflight failed: available_bytes=${available}, required_bytes=${required_space} (workspace cap plus reserve)" >&2
+        echo "preflight failed: available_bytes=${available}, required_bytes=${required_space} (remaining workspace allowance plus filesystem reserve)" >&2
         return 1
     }
+    if [ "${probe_device}" != "${root_device}" ]; then
+        [ "${root_available}" -ge "${root_reserve_bytes}" ] || {
+            echo "preflight failed: root_available_bytes=${root_available}, root_reserve_bytes=${root_reserve_bytes}" >&2
+            return 1
+        }
+    fi
     [ "${memory_total}" -ge "${min_mem_total_bytes}" ] || {
         echo "preflight failed: memory_total_bytes=${memory_total}, required_bytes=${min_mem_total_bytes}" >&2
         return 1
@@ -141,13 +176,25 @@ preflight() {
         return 1
     }
 
+    if [ "${profile_name}" = production ]; then
+        for tool in git python3; do
+            command -v "${tool}" >/dev/null 2>&1 || {
+                echo "preflight failed: missing production tool: ${tool}" >&2
+                return 1
+            }
+        done
+    fi
+
     if systemctl --user --quiet is-active 'helium-job-*.service'; then
         echo "preflight failed: another Helium build is active" >&2
         return 1
     fi
 
-    printf 'preflight=ok\nprofile=%s\navailable_bytes=%s\nrequired_bytes=%s\nmemory_total_bytes=%s\nmemory_available_bytes=%s\n' \
-        "${profile_name}" "${available}" "${required_space}" \
+    printf 'preflight=ok\nprofile=%s\navailable_bytes=%s\nworkspace_bytes=%s\nworkspace_limit_bytes=%s\nremaining_workspace_bytes=%s\nfilesystem_reserve_bytes=%s\nrequired_available_bytes=%s\nroot_available_bytes=%s\nroot_reserve_bytes=%s\nmemory_total_bytes=%s\nmemory_available_bytes=%s\n' \
+        "${profile_name}" "${available}" "${workspace_bytes}" \
+        "${workspace_limit_bytes}" "${remaining_bytes}" \
+        "${filesystem_reserve_bytes}" "${required_space}" \
+        "${root_available}" "${root_reserve_bytes}" \
         "${memory_total}" "${memory_available}"
 }
 
@@ -251,8 +298,9 @@ write_policy() {
         printf 'io_scheduling_class=idle\n'
         printf 'nice=15\n'
         printf 'tasks_max=%s\n' "${tasks_max}"
-        printf 'max_disk_bytes=%s\n' "${max_disk_bytes}"
-        printf 'reserve_bytes=%s\n' "${reserve_bytes}"
+        printf 'workspace_limit_bytes=%s\n' "${workspace_limit_bytes}"
+        printf 'filesystem_reserve_bytes=%s\n' "${filesystem_reserve_bytes}"
+        printf 'root_reserve_bytes=%s\n' "${root_reserve_bytes}"
         printf 'watchdog_mem_floor_bytes=%s\n' "${watchdog_mem_floor_bytes}"
         printf 'wall_seconds=%s\n' "${wall_seconds}"
         printf 'command=%s\n' "${command_text}"
@@ -280,7 +328,10 @@ start_job() {
 
     work_dir=$(realpath -e "${work_dir}")
     require_contained_path "${work_dir}" "$(realpath -e "${work_root}")"
-    preflight "${profile_name}" "${work_dir}"
+    local job_root="${work_root}/${job}"
+    job_root=$(realpath -e "${job_root}")
+    require_contained_path "${job_root}" "$(realpath -e "${work_root}")"
+    preflight "${profile_name}" "${job_root}" "${job_root}"
 
     local state_dir="${state_root}/${job}"
     [ -f "${state_dir}/stage.env" ] || {
@@ -307,6 +358,7 @@ start_job() {
     local log="${state_dir}/job.log"
     local unit="helium-job-${job}.service"
     local watch_unit="helium-watch-${job}.service"
+    mkdir -p "${job_root}/cache" "${job_root}/tmp"
     install -m 700 "$0" "${worker}"
     write_policy "${state_dir}" "${profile_name}" "${work_dir}" "$@"
 
@@ -329,6 +381,10 @@ start_job() {
         --setenv="AUTONINJA_JOBS=${build_jobs}" \
         --setenv="NINJA_JOBS=${build_jobs}" \
         --setenv="GCLIENT_JOBS=${build_jobs}" \
+        --setenv="XDG_CACHE_HOME=${job_root}/cache" \
+        --setenv="CCACHE_DIR=${job_root}/cache/ccache" \
+        --setenv="GIT_CACHE_PATH=${job_root}/cache/git" \
+        --setenv="TMPDIR=${job_root}/tmp" \
         "${worker}" run "${state_dir}" -- "$@"; then
         echo "failed to create isolated build unit" >&2
         exit 1
@@ -340,8 +396,9 @@ start_job() {
         --property=MemoryMax=64M \
         --property=TasksMax=16 \
         --property="RuntimeMaxSec=$((wall_seconds + 300))" \
-        "${worker}" watch "${state_dir}" "${work_dir}" "${unit}" \
-        "${max_disk_bytes}" "${reserve_bytes}" \
+        "${worker}" watch "${state_dir}" "${job_root}" "${unit}" \
+        "${workspace_limit_bytes}" "${filesystem_reserve_bytes}" \
+        "${root_reserve_bytes}" \
         "${watchdog_mem_floor_bytes}" "${watchdog_interval}"; then
         systemctl --user stop "${unit}" >/dev/null 2>&1 || true
         echo "failed to create health watchdog; build stopped" >&2
@@ -381,20 +438,25 @@ watch_job() {
     local unit=$3
     local max_bytes=$4
     local reserve=$5
-    local mem_floor=$6
-    local interval=$7
+    local root_reserve=$6
+    local mem_floor=$7
+    local interval=$8
     local low_memory_count=0
 
     while systemctl --user --quiet is-active "${unit}"; do
-        local available used memory_available load failure
+        local available root_available used memory_available load failure
         available=$(df -PB1 "${work_dir}" | awk 'NR == 2 { print $4 }')
-        used=$(du -sb "${work_dir}" | awk '{ print $1 }')
+        root_available=$(df -PB1 / | awk 'NR == 2 { print $4 }')
+        used=$(disk_usage_bytes "${work_dir}")
         memory_available=$(meminfo_bytes MemAvailable)
         load=$(cut -d' ' -f1-3 /proc/loadavg)
         failure=
 
         if [ "${available}" -lt "${reserve}" ]; then
             failure="disk reserve breached"
+        elif [ "$(stat -c %d "${work_dir}")" != "$(stat -c %d /)" ] && \
+            [ "${root_available}" -lt "${root_reserve}" ]; then
+            failure="root disk reserve breached"
         elif [ "${used}" -gt "${max_bytes}" ]; then
             failure="workspace size limit breached"
         elif [ "${memory_available}" -lt "${mem_floor}" ]; then
@@ -411,6 +473,7 @@ watch_job() {
             printf 'checked_at=%s\n' "$(date --iso-8601=seconds)"
             printf 'unit=%s\n' "${unit}"
             printf 'available_bytes=%s\n' "${available}"
+            printf 'root_available_bytes=%s\n' "${root_available}"
             printf 'workspace_bytes=%s\n' "${used}"
             printf 'memory_available_bytes=%s\n' "${memory_available}"
             printf 'load_average=%s\n' "${load}"
@@ -527,6 +590,10 @@ cleanup_job() {
         >"${state_dir}/cleanup.env"
     printf 'workspace_cleaned=%s\nstate_retained=%s\n' "${job_root}" "${state_dir}"
 }
+
+if [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
 
 command=${1:-}
 shift || true

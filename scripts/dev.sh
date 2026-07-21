@@ -18,6 +18,9 @@ check_shell() {
     while IFS= read -r -d '' script; do
         bash -n "${script}"
     done < <(find "${root_dir}/scripts" -type f -name '*.sh' -print0 | sort -z)
+    while IFS= read -r -d '' test_script; do
+        bash "${test_script}"
+    done < <(find "${root_dir}/scripts/tests" -type f -name '*.test.sh' -print0 2>/dev/null | sort -z)
 }
 
 check_javascript() {
