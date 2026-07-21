@@ -21,10 +21,12 @@ cd "$repo_root"
 go build -o "$tmp_bin/helium-sync" ./cmd/helium-sync
 go build -o "$tmp_bin/helium-syncd" ./cmd/helium-syncd
 go build -o "$tmp_bin/helium-local-syncd" ./cmd/helium-local-syncd
+go build -o "$tmp_bin/helium-tabs" ./cmd/helium-tabs
 
 install -m 0755 "$tmp_bin/helium-sync" "$bin_dir/helium-sync"
 install -m 0755 "$tmp_bin/helium-syncd" "$bin_dir/helium-syncd"
 install -m 0755 "$tmp_bin/helium-local-syncd" "$bin_dir/helium-local-syncd"
+install -m 0755 "$tmp_bin/helium-tabs" "$bin_dir/helium-tabs"
 install -m 0755 "$repo_root/scripts/android-local/cdp-cookiecloud.mjs" "$bin_dir/cdp-cookiecloud"
 install -m 0644 "$repo_root/scripts/android-local/cookie-replication.mjs" "$bin_dir/cookie-replication.mjs"
 install -m 0755 "$repo_root/scripts/android-local/cdp-password-sync.mjs" "$bin_dir/cdp-password-sync"

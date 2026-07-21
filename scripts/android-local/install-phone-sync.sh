@@ -17,6 +17,7 @@ fi
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-local-syncd" "$repo_root/cmd/helium-local-syncd"
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-sync" "$repo_root/cmd/helium-sync"
 GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-syncd" "$repo_root/cmd/helium-syncd"
+GOOS=linux GOARCH=arm64 go build -o "$work_dir/helium-tabs" "$repo_root/cmd/helium-tabs"
 GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$work_dir/android-magic-keyboard-remap" "$repo_root/cmd/android-magic-keyboard-remap"
 input_display_assoc_jar=$("$repo_root/scripts/android-local/build-input-display-assoc.sh")
 connected_display_auto_enable_jar=$("$repo_root/scripts/android-local/build-connected-display-auto-enable.sh")
@@ -31,6 +32,7 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$work_dir/helium-local-syncd" /data/local/tmp/helium-local-syncd >/dev/null
 "$adb_bin" push "$work_dir/helium-sync" /data/local/tmp/helium-sync >/dev/null
 "$adb_bin" push "$work_dir/helium-syncd" /data/local/tmp/helium-syncd >/dev/null
+"$adb_bin" push "$work_dir/helium-tabs" /data/local/tmp/helium-tabs >/dev/null
 "$adb_bin" push "$work_dir/android-magic-keyboard-remap" /data/local/tmp/android-magic-keyboard-remap >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/cdp-cookiecloud.mjs" /data/local/tmp/cdp-cookiecloud.mjs >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/cookie-replication.mjs" /data/local/tmp/cookie-replication.mjs >/dev/null
@@ -89,6 +91,7 @@ CHROOT_GID=\$(awk -F: -v user=\"\$CHROOT_USER\" '\''\$1 == user { print \$4 }'\'
 install -Dm755 /data/local/tmp/helium-local-syncd \"\$ROOT/usr/local/bin/helium-local-syncd\"
 install -Dm755 /data/local/tmp/helium-sync \"\$ROOT/usr/local/bin/helium-sync\"
 install -Dm755 /data/local/tmp/helium-syncd \"\$ROOT/usr/local/bin/helium-syncd\"
+install -Dm755 /data/local/tmp/helium-tabs \"\$ROOT/usr/local/bin/helium-tabs\"
 install -Dm755 /data/local/tmp/android-magic-keyboard-remap \"\$ROOT/usr/local/bin/android-magic-keyboard-remap\"
 install -Dm755 /data/local/tmp/cdp-cookiecloud.mjs \"\$ROOT/usr/local/bin/cdp-cookiecloud\"
 install -Dm644 /data/local/tmp/cookie-replication.mjs \"\$ROOT/usr/local/bin/cookie-replication.mjs\"

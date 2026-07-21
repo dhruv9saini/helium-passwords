@@ -75,8 +75,14 @@ Go checks for the local daemon:
 
 ```bash
 go test ./...
-go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-local-syncd
+go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-local-syncd ./cmd/helium-tabs
+node --test scripts/tests/*.test.mjs
 ```
+
+`helium-tabs` is the independent tab-recovery store. It accepts only an
+explicit browser-API session JSON file and restores only to a new disposable
+state directory; it never reads or overwrites a Chromium profile. See
+[docs/tab-snapshots.md](docs/tab-snapshots.md).
 
 ## Laptop Install
 
@@ -111,6 +117,8 @@ sync component can be applied by Helium platform patch tooling. Desktop
 platform preparation filters the Android password-store replacement file diffs
 out of that patch because current desktop Chromium owns those paths already.
 Keep the overlay and generated patch in sync when editing Chromium-side files.
+Regenerate it with `scripts/chromium/generate-overlay-patch.sh`; the shared
+`scripts/dev.sh check` command fails if the two diverge.
 
 The wrapper also removes `helium/hop/disable-password-manager.patch` from the
 cloned `helium-chromium` submodule before platform builds apply patches.
