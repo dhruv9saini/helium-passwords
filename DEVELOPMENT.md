@@ -128,6 +128,18 @@ the fail-closed chromiumer wrapper in
 Every release artifact must pass these tests in a new disposable profile. A
 settings page rendering is not enough.
 
+Start the repository-owned synthetic origin for this gate with:
+
+```sh
+node scripts/password-lifecycle-fixture.mjs
+```
+
+It binds only `127.0.0.1`, chooses an ephemeral port by default, prints that
+origin, and provides login plus password-change forms. It discards submitted
+bodies without parsing, storing, logging, or reflecting them. Its HTTP tests do
+not claim that browser save prompts or autofill pass; those require the built
+disposable-browser gate below.
+
 1. Confirm `PasswordManagerEnabled` and passkey policy are not forcibly false.
 2. Open the password manager from settings, the app menu, the omnibox action,
    and the toolbar/page action where supported.
