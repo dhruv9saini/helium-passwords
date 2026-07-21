@@ -2,8 +2,20 @@
 set -euxo pipefail
 
 repo_root=${HELIUM_SYNC_REPO:-"$GITHUB_WORKSPACE/helium-sync"}
+repo_root=$(cd "$repo_root" && pwd)
+# shellcheck source=../../chromium/android-build.lock
+. "$repo_root/chromium/android-build.lock"
 workspace=${CHROMIUM_WORKSPACE:-"$GITHUB_WORKSPACE/chromium-android"}
-chromium_ref=${CHROMIUM_REF:-main}
+requested_chromium_ref=${CHROMIUM_REF:-$HELIUM_ANDROID_CHROMIUM_COMMIT}
+if [[ ! "$requested_chromium_ref" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "CHROMIUM_REF must be the immutable commit from chromium/android-build.lock" >&2
+  exit 64
+fi
+if [[ "$requested_chromium_ref" != "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]]; then
+  echo "CHROMIUM_REF does not match the shared Android backbone lock" >&2
+  exit 64
+fi
+chromium_ref=$HELIUM_ANDROID_CHROMIUM_COMMIT
 chromium_url=${CHROMIUM_URL:-https://chromium.googlesource.com/chromium/src.git}
 target_cpu=${TARGET_CPU:-arm64}
 target=${CHROMIUM_TARGET:-${TARGET:-chrome_public_apk}}
@@ -81,6 +93,15 @@ gclient_sync() {
   fi
 }
 
+prepare_helium_dependencies() {
+  local download_cache="$workspace/helium-download-cache"
+  mkdir -p "$download_cache"
+  "$repo_root/helium-chromium/utils/downloads.py" retrieve \
+    -i "$repo_root/helium-chromium/deps.ini" -c "$download_cache"
+  "$repo_root/helium-chromium/utils/downloads.py" unpack \
+    -i "$repo_root/helium-chromium/deps.ini" -c "$download_cache" "$workspace/src"
+}
+
 prepare_android_source() {
   df -h
   setup_depot_tools
@@ -116,6 +137,7 @@ EOF
   cd src
   git fetch origin "$chromium_ref" --depth=1
   git checkout FETCH_HEAD
+  [[ "$(git rev-parse HEAD)" == "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]]
   cd "$workspace"
   gclient_sync --nohooks --no-history --with_branch_heads --with_tags
   df -h
@@ -130,9 +152,12 @@ EOF
   gclient runhooks
   df -h
 
-  "$repo_root/scripts/chromium/apply-patches.sh" "$PWD"
+  prepare_helium_dependencies
+  "$repo_root/scripts/chromium/apply-android-backbone.sh" apply "$PWD"
   generate_android_build_files
-  find "$PWD" -name .git -type d -prune -exec rm -rf {} +
+  # The workflow resolves and records the checked-out Chromium SHA after this
+  # phase. Keep the root repository metadata while dropping nested DEPS repos.
+  find "$PWD" -mindepth 2 -name .git -type d -prune -exec rm -rf {} +
   df -h
 }
 
@@ -149,7 +174,8 @@ generate_android_build_files() {
       effective_use_siso=false
     fi
   fi
-  cat > "$out_dir/args.gn" <<EOF
+  cat "$repo_root/helium-chromium/flags.gn" > "$out_dir/args.gn"
+  cat >> "$out_dir/args.gn" <<EOF
 target_os = "android"
 target_cpu = "$target_cpu"
 is_official_build = $official_build
@@ -157,7 +183,6 @@ is_debug = false
 dcheck_always_on = false
 is_component_build = false
 use_siso = $effective_use_siso
-chrome_pgo_phase = 0
 android_static_analysis = "off"
 symbol_level = 0
 blink_symbol_level = 0
@@ -169,7 +194,10 @@ EOF
     echo 'cc_wrapper = "ccache"' >> "$out_dir/args.gn"
   fi
 
-  gn gen "$out_dir"
+  gn gen "$out_dir" --fail-on-unused-args
+  "$repo_root/scripts/chromium/verify-android-media-config.sh" \
+    "$workspace/src" "$out_dir" "$artifact_dir/build-provenance" \
+    "$repo_root" "$chromium_ref"
 }
 
 touch_out_dir() {
@@ -218,6 +246,7 @@ build_android_target() {
   staging="$artifact_dir/staging"
   rm -rf "$staging"
   mkdir -p "$staging"
+  cp -a "$artifact_dir/build-provenance" "$staging/"
 
   cd "$out_dir"
   mapfile -d '' outputs < <(find . -type f \( -name '*.apk' -o -name '*.apks' -o -name '*.idsig' \) -print0)

@@ -1,0 +1,5 @@
+# One compatible Android source train. Update these values together only after
+# the full Helium + Passwords + Sync patch composition passes on chromiumer.
+HELIUM_ANDROID_CHROMIUM_VERSION=148.0.7778.178
+HELIUM_ANDROID_CHROMIUM_COMMIT=d096af1c9e98c45c3596e59620622b1a049bfecb
+HELIUM_ANDROID_CORE_COMMIT=b4155a785863b8b7ef05b8efd414041c4b49d2c3

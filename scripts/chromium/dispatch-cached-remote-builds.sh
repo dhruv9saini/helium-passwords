@@ -46,6 +46,9 @@ esac
 
 repo=${HELIUM_SYNC_GITHUB_REPO:-dhruv9saini/helium-sync}
 workflow_ref=${HELIUM_SYNC_REF:-main}
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=../../chromium/android-build.lock
+. "$repo_root/chromium/android-build.lock"
 runner=${CHROMIUM_RUNNER:-ubuntu-24.04}
 timeout_minutes=${BUILD_TIMEOUT_MINUTES:-300}
 ccache_max_size=${CCACHE_MAX_SIZE:-5G}
@@ -77,7 +80,7 @@ dispatch_android() {
     -f build_state_cache="$build_state_cache" \
     -f allow_legacy_build_state_cache="${ALLOW_LEGACY_ANDROID_BUILD_STATE_CACHE:-true}" \
     -f chromium_url="${CHROMIUM_URL:-https://chromium.googlesource.com/chromium/src.git}" \
-    -f chromium_ref="${CHROMIUM_REF:-3fdd848305cc4c7a7cf1775e295b2d31054d19d3}" \
+    -f chromium_ref="${CHROMIUM_REF:-$HELIUM_ANDROID_CHROMIUM_COMMIT}" \
     -f target="${CHROMIUM_TARGET:-chrome_public_apk}" \
     -f target_cpu="${TARGET_CPU:-arm64}"
 }

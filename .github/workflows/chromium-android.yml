@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       chromium_ref:
-        description: Chromium ref to build
-        required: true
-        default: main
+        description: Optional immutable Chromium commit; empty uses chromium/android-build.lock
+        required: false
+        default: ''
       chromium_url:
         description: Chromium source repository URL
         required: true
@@ -62,6 +62,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           path: helium-sync
+          submodules: recursive
       - name: Free runner space
         run: |
           set -euxo pipefail
