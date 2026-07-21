@@ -6,10 +6,14 @@ Base lineage:
 
 1. [`imputnet/helium`](https://github.com/imputnet/helium) removes Google
    services, browser sync, and the built-in Chromium password manager.
-2. [`oof-baroomf/helium-passwords`](https://github.com/oof-baroomf/helium-passwords)
+2. [`dhruv9saini/helium-passwords`](https://github.com/dhruv9saini/helium-passwords)
    restores the native Chromium password manager.
-3. `oof-baroomf/helium-sync` adds local password-manager sync and cookie sync on
+3. `dhruv9saini/helium-sync` adds local password-manager sync and cookie sync on
    top of that restored-password Helium fork.
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the shared Passwords/Sync backbone and
+upstream process. [ISSUES.md](ISSUES.md) is the public-backbone ledger; the
+private product ledger is [TODO.md](TODO.md).
 
 ## What This Repo Adds
 
