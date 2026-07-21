@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,7 +22,9 @@ type Store struct {
 	mu          sync.Mutex
 	dataDir     string
 	recordsPath string
+	snapshotDir string
 	aead        anyAEAD
+	snapshotKey []byte
 	records     []StoredRecord
 	nextSeq     int64
 }
@@ -44,18 +47,28 @@ func OpenStore(dataDir string, passphrase string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	aead, err := newAEAD(config, passphrase)
+	aead, snapshotKey, err := newCryptography(config, passphrase)
 	if err != nil {
 		return nil, err
 	}
 	store := &Store{
 		dataDir:     dataDir,
 		recordsPath: filepath.Join(dataDir, recordsFile),
+		snapshotDir: filepath.Join(dataDir, "snapshots"),
 		aead:        aead,
+		snapshotKey: snapshotKey,
 		nextSeq:     1,
 	}
 	if err := store.loadRecords(); err != nil {
-		return nil, err
+		if recoveryErr := store.recoverJournal(err); recoveryErr != nil {
+			return nil, recoveryErr
+		}
+		if err := store.loadRecords(); err != nil {
+			return nil, fmt.Errorf("load recovered journal: %w", err)
+		}
+	}
+	if err := store.createSnapshot(); err != nil {
+		return nil, fmt.Errorf("checkpoint journal: %w", err)
 	}
 	return store, nil
 }
@@ -94,6 +107,8 @@ func (store *Store) loadRecords() error {
 	}
 	defer file.Close()
 
+	store.records = nil
+	store.nextSeq = 1
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 32*1024*1024)
 	line := 0
@@ -110,10 +125,18 @@ func (store *Store) loadRecords() error {
 		if err := validateStored(record); err != nil {
 			return fmt.Errorf("validate records line %d: %w", line, err)
 		}
-		store.records = append(store.records, record)
-		if record.Seq >= store.nextSeq {
-			store.nextSeq = record.Seq + 1
+		if record.Seq != store.nextSeq {
+			return fmt.Errorf("validate records line %d: wanted seq %d, got %d", line, store.nextSeq, record.Seq)
 		}
+		payload, err := decryptRecord(store.aead, record)
+		if err != nil {
+			return fmt.Errorf("decrypt records line %d: %w", line, err)
+		}
+		if !json.Valid(payload) {
+			return fmt.Errorf("validate records line %d: decrypted payload is not JSON", line)
+		}
+		store.records = append(store.records, record)
+		store.nextSeq++
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan records: %w", err)
@@ -150,14 +173,9 @@ func (store *Store) Put(records []PlainRecord, defaultDevice string) (PushRespon
 	if len(records) == 0 {
 		return PushResponse{NextSeq: store.nextSeq}, nil
 	}
-	file, err := os.OpenFile(store.recordsPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
-	if err != nil {
-		return PushResponse{}, fmt.Errorf("open records for append: %w", err)
-	}
-	defer file.Close()
-
 	now := time.Now().UTC()
-	accepted := 0
+	pending := make([]StoredRecord, 0, len(records))
+	var encoded []byte
 	for _, plain := range records {
 		if plain.Deleted && len(plain.Payload) == 0 {
 			plain.Payload = json.RawMessage(emptyJSONObject)
@@ -175,7 +193,7 @@ func (store *Store) Put(records []PlainRecord, defaultDevice string) (PushRespon
 			plain.OriginDevice = defaultDevice
 		}
 		stored := StoredRecord{
-			Seq:          store.nextSeq,
+			Seq:          store.nextSeq + int64(len(pending)),
 			Kind:         plain.Kind,
 			Key:          plain.Key,
 			Version:      plain.Version,
@@ -191,17 +209,34 @@ func (store *Store) Put(records []PlainRecord, defaultDevice string) (PushRespon
 		if err != nil {
 			return PushResponse{}, err
 		}
-		if _, err := file.Write(append(raw, '\n')); err != nil {
-			return PushResponse{}, fmt.Errorf("append record: %w", err)
-		}
-		store.records = append(store.records, stored)
-		store.nextSeq++
-		accepted++
+		encoded = append(encoded, raw...)
+		encoded = append(encoded, '\n')
+		pending = append(pending, stored)
+	}
+	file, err := os.OpenFile(store.recordsPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
+	if err != nil {
+		return PushResponse{}, fmt.Errorf("open records for append: %w", err)
+	}
+	if written, err := file.Write(encoded); err != nil {
+		file.Close()
+		return PushResponse{}, fmt.Errorf("append records: %w", err)
+	} else if written != len(encoded) {
+		file.Close()
+		return PushResponse{}, fmt.Errorf("append records: %w", io.ErrShortWrite)
 	}
 	if err := file.Sync(); err != nil {
+		file.Close()
 		return PushResponse{}, fmt.Errorf("sync records: %w", err)
 	}
-	return PushResponse{Accepted: accepted, NextSeq: store.nextSeq}, nil
+	if err := file.Close(); err != nil {
+		return PushResponse{}, fmt.Errorf("close records: %w", err)
+	}
+	store.records = append(store.records, pending...)
+	store.nextSeq += int64(len(pending))
+	if err := store.createSnapshot(); err != nil {
+		return PushResponse{}, fmt.Errorf("checkpoint records: %w", err)
+	}
+	return PushResponse{Accepted: len(pending), NextSeq: store.nextSeq}, nil
 }
 
 func (store *Store) Pull(since int64, kinds map[Kind]struct{}) (PullResponse, error) {

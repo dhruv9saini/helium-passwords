@@ -3,6 +3,7 @@ package syncstore
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
@@ -45,32 +46,38 @@ func newConfig() (Config, error) {
 	}, nil
 }
 
-func newAEAD(config Config, passphrase string) (cipher.AEAD, error) {
+func newCryptography(config Config, passphrase string) (cipher.AEAD, []byte, error) {
 	if passphrase == "" {
-		return nil, errors.New("passphrase is required")
+		return nil, nil, errors.New("passphrase is required")
 	}
 	if config.Version != configVersion {
-		return nil, fmt.Errorf("unsupported config version %d", config.Version)
+		return nil, nil, fmt.Errorf("unsupported config version %d", config.Version)
 	}
 	if config.KDF != defaultKDF {
-		return nil, fmt.Errorf("unsupported kdf %q", config.KDF)
+		return nil, nil, fmt.Errorf("unsupported kdf %q", config.KDF)
 	}
 	salt, err := base64.StdEncoding.DecodeString(config.Salt)
 	if err != nil {
-		return nil, fmt.Errorf("decode salt: %w", err)
+		return nil, nil, fmt.Errorf("decode salt: %w", err)
 	}
 	if len(salt) < 8 {
-		return nil, errors.New("salt is too short")
+		return nil, nil, errors.New("salt is too short")
 	}
 	key, err := pbkdf2.Key(sha256.New, passphrase, salt, config.PBKDF2Iterations, keyLength)
 	if err != nil {
-		return nil, fmt.Errorf("derive key: %w", err)
+		return nil, nil, fmt.Errorf("derive key: %w", err)
 	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("create cipher: %w", err)
+		return nil, nil, fmt.Errorf("create cipher: %w", err)
 	}
-	return cipher.NewGCM(block)
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte("helium-sync-snapshot-auth-v1"))
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create gcm: %w", err)
+	}
+	return aead, mac.Sum(nil), nil
 }
 
 type aadRecord struct {

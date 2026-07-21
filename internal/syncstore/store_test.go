@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"testing"
 )
 
@@ -86,12 +87,145 @@ func TestWrongPassphraseCannotDecrypt(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	wrong, err := OpenStore(dir, "wrong")
+	if _, err := OpenStore(dir, "wrong"); err == nil {
+		t.Fatal("expected fail-fast authentication failure with wrong passphrase")
+	}
+}
+
+func TestStoreCreatesEncryptedSnapshotGeneration(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, "passphrase")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := wrong.Pull(0, nil); err == nil {
-		t.Fatal("expected decryption failure with wrong passphrase")
+	_, err = store.Put([]PlainRecord{{
+		Kind: KindPassword, Key: "fixture", Payload: json.RawMessage(`{"password":"snapshot-secret"}`),
+	}}, "fixture-device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "snapshots"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) < 2 {
+		t.Fatalf("wanted initial and post-write generations, got %d", len(entries))
+	}
+	for _, entry := range entries {
+		raw, err := os.ReadFile(filepath.Join(dir, "snapshots", entry.Name(), snapshotRecords))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if bytes.Contains(raw, []byte("snapshot-secret")) {
+			t.Fatal("snapshot contains plaintext")
+		}
+	}
+}
+
+func TestStoreRecoversMalformedJournalFromNewestSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, "passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.Put([]PlainRecord{{
+		Kind: KindTabs, Key: "fixture", Version: 1, Payload: json.RawMessage(`{"url":"https://fixture.invalid"}`),
+	}}, "fixture-device")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.OpenFile(filepath.Join(dir, recordsFile), os.O_WRONLY|os.O_APPEND, 0600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("malformed\n"); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := OpenStore(dir, "passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pull, err := recovered.Pull(0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pull.Records) != 1 || pull.Records[0].Key != "fixture" {
+		t.Fatalf("unexpected recovered records: %+v", pull.Records)
+	}
+	quarantine, err := os.ReadDir(filepath.Join(dir, "quarantine"))
+	if err != nil || len(quarantine) != 1 {
+		t.Fatalf("wanted one quarantined journal: entries=%d err=%v", len(quarantine), err)
+	}
+}
+
+func TestStoreSkipsCorruptNewestSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, "passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for version := int64(1); version <= 2; version++ {
+		_, err = store.Put([]PlainRecord{{
+			Kind: KindTabs, Key: "fixture", Version: version,
+			Payload: json.RawMessage(`{"url":"https://fixture.invalid"}`),
+		}}, "fixture-device")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "snapshots"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		names = append(names, entry.Name())
+	}
+	sort.Strings(names)
+	newest := names[len(names)-1]
+	if err := os.WriteFile(filepath.Join(dir, "snapshots", newest, snapshotRecords), []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, recordsFile), []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := OpenStore(dir, "passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pull, err := recovered.Pull(0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pull.Records) != 1 || pull.Records[0].Version != 1 {
+		t.Fatalf("wanted prior generation only, got %+v", pull.Records)
+	}
+}
+
+func TestSnapshotRetentionKeepsEightValidGenerations(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir, "passphrase")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for version := int64(1); version <= 12; version++ {
+		_, err = store.Put([]PlainRecord{{
+			Kind: KindTabs, Key: "fixture", Version: version, Payload: json.RawMessage(`{"tabs":[]}`),
+		}}, "fixture-device")
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(dir, "snapshots"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != snapshotKeepValid {
+		t.Fatalf("wanted %d retained generations, got %d", snapshotKeepValid, len(entries))
 	}
 }
 

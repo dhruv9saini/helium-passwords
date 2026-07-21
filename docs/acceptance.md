@@ -12,8 +12,9 @@ go test ./...
 ```
 
 It currently proves the HS-001 reconcile state machine, cookie partition and
-source/replica semantics, and independent tab generation/retention/restore
-invariants. It does not replace the browser gates below.
+source/replica semantics, independent tab generation/retention/restore
+invariants, and authenticated sync-store journal recovery. It does not replace
+the browser gates below.
 
 ## Gate 0: Provenance and Source Preparation
 

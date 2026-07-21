@@ -227,12 +227,21 @@ fails, bisect the ordered private patches.
 
 ## Store Durability
 
-`records.jsonl` remains an append-only journal, but it is not the only copy.
-The daemon must periodically create authenticated snapshot generations with
-the last sequence, journal hash, record counts, and key/schema inventory.
-Startup validates from newest to oldest, quarantines a damaged tail instead of
-discarding earlier valid records, and never logs decrypted payloads. Backup and
-restore tests use synthetic records only.
+`records.jsonl` remains the append-only primary journal, but it is no longer the
+only copy. After each durable write, `internal/syncstore` commits a complete
+encrypted generation under `snapshots/` by file sync, directory sync, and
+atomic rename. Its passphrase-derived authentication covers the schema,
+creation time, last sequence, record count, byte count, and SHA-256 journal
+hash. Every encrypted record is also authenticated and decrypted during
+startup validation.
+
+If the journal is malformed or fails authentication, startup preserves it
+under `quarantine/`, scans generations newest-first, rejects bad hashes,
+manifests, sequences, keys, or ciphertexts, and atomically restores the newest
+valid copy. Retention keeps eight valid generations and never removes invalid
+evidence. Tests use only synthetic records and assert that neither journal nor
+snapshots contain fixture plaintext. An off-host encrypted copy and a recorded
+daemon restart drill remain operational work under HS-012.
 
 ## References
 
