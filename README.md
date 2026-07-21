@@ -3,6 +3,10 @@
 Password manager and autofill restoration overlay for
 [Helium Browser](https://github.com/imputnet/helium).
 
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the shared Passwords/Sync architecture,
+developer commands, upstream update train, and acceptance gates. The current
+public work inventory is in [ISSUES.md](ISSUES.md).
+
 This is no longer a Linux packaging fork. The repo only keeps the password
 patches plus a small wrapper that clones the official Helium platform repo,
 injects the overlay, removes Helium's upstream password-disable patch, and runs
