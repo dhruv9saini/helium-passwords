@@ -66,6 +66,11 @@ grep -Fq 'verify-android-media-config.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'cp -a "$artifact_dir/build-provenance" "$staging/"' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'CHROMIUM_ANDROID_PROVENANCE_ONLY:-false' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'compile-proof.env' "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'compile-${artifact_target}-${target_cpu}.tar.xz' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'status --short --untracked-files=no' \
   "$repo_root/scripts/chromium/verify-android-media-config.sh"
 ! grep -Fq 'status --short --untracked-files=all' \

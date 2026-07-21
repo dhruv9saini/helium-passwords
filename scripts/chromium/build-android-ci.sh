@@ -23,6 +23,7 @@ out_dir=${OUT_DIR:-out/Default}
 autoninja_jobs=${AUTONINJA_JOBS:-2}
 gclient_jobs=${GCLIENT_JOBS:-}
 artifact_dir=${ARTIFACT_DIR:-"$GITHUB_WORKSPACE/android-artifacts"}
+provenance_only=${CHROMIUM_ANDROID_PROVENANCE_ONLY:-false}
 use_ccache=${USE_CCACHE:-true}
 ccache_max_size=${CCACHE_MAXSIZE:-5G}
 phase=${CHROMIUM_ANDROID_PHASE:-all}
@@ -50,6 +51,14 @@ case "$official_build" in
   true|false) ;;
   *)
     echo "CHROMIUM_ANDROID_OFFICIAL_BUILD must be true or false" >&2
+    exit 64
+    ;;
+esac
+
+case "$provenance_only" in
+  true|false) ;;
+  *)
+    echo "CHROMIUM_ANDROID_PROVENANCE_ONLY must be true or false" >&2
     exit 64
     ;;
 esac
@@ -247,6 +256,20 @@ build_android_target() {
   rm -rf "$staging"
   mkdir -p "$staging"
   cp -a "$artifact_dir/build-provenance" "$staging/"
+
+  if [[ "$provenance_only" == true ]]; then
+    artifact_target=$(printf '%s' "$target" | tr '/:#' '___')
+    {
+      printf 'schema_version=1\n'
+      printf 'target=%s\n' "$target"
+      printf 'target_cpu=%s\n' "$target_cpu"
+      printf 'chromium_commit=%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT"
+      printf 'completed_at=%s\n' "$(date --iso-8601=seconds)"
+    } > "$staging/compile-proof.env"
+    tar -C "$staging" -caf \
+      "$artifact_dir/compile-${artifact_target}-${target_cpu}.tar.xz" .
+    return
+  fi
 
   cd "$out_dir"
   mapfile -d '' outputs < <(find . -type f \( -name '*.apk' -o -name '*.apks' -o -name '*.idsig' \) -print0)
