@@ -42,8 +42,9 @@ test is not mistaken for product validation:
 - Upstream Helium is already `0.14.7`, based on Chromium `150.0.7871.128`.
 - Upstream still applies four direct password/autofill removals, plus several UI
   cleanup patches that remove password-manager entry points.
-- The current public patches were refreshed for Chromium 148. They have not
-  been applied and compiled against Chromium 150.
+- The current public patches were refreshed for Chromium 148. A focused
+  official-source replay now proves they apply after the real ordered Helium
+  series; they have not been compiled on 148 or rebased to Chromium 150.
 - The six fast CI matrix jobs only prove that wrapper injection produced the
   expected patch filenames. They do not apply the patches to Chromium.
 - The last dispatched full build, from 2026-06-05 through 2026-06-07, packaged
@@ -75,6 +76,20 @@ directory, verifies overlay injection, and removes only that generated
 checkout. It still does not prove that a patch applies to Chromium or that
 browser behavior works.
 
+Run the focused source-backed Passwords gate separately because it downloads
+15 official Chromium files and `scripts/dev.sh check` intentionally remains
+offline/lightweight:
+
+```sh
+scripts/check-password-patch-stack.sh
+```
+
+The checker replays the Chromium 148 Helium patch order, skips only the
+password-disable patch exactly as platform preparation does, applies both
+restoration patches, and asserts the restored preference, native UI actions,
+menu, settings redirect, and importer paths. It is not a compile or runtime
+test.
+
 ## Upstream Update Train
 
 Treat Helium core plus its three desktop platform repositories as one immutable
@@ -91,8 +106,9 @@ train. Never build an unrecorded mixture of moving `main` branches.
    `ManagePasswords`, or related action IDs. Restoring only the mandatory
    policy is insufficient because Helium also removes settings, app-menu,
    omnibox, toolbar, importer, and suggestion surfaces.
-5. Run `scripts/dev.sh check`, then patch-application checks against a prepared
-   Chromium source tree on a host with at least 100 GB free.
+5. Run `scripts/dev.sh check` and the focused patch-stack checker, then run the
+   complete patch-application check against a prepared Chromium source tree on
+   chromiumer.
 6. Build the smallest Linux target first. Only after it compiles, run native
    password acceptance tests in a disposable profile.
 7. Build the other desktop targets. Archive an artifact manifest containing
@@ -137,8 +153,10 @@ Dedicated, non-interactive SSH from lm to chromiumer is working. The enforced
 wrapper, health watchdog, immutable source transfer, artifact return, and
 cleanup contract are documented in
 [`docs/chromiumer-builds.md`](docs/chromiumer-builds.md). Chromiumer still
-cannot pass production preflight: it exposes only about 106 GiB free against a
-120 GiB start threshold and lacks the pinned build toolchain. GitHub Actions in
+cannot pass production preflight: an empty job requires 120 GiB available (a
+100 GiB job-tree allowance plus a separate 20 GiB operational reserve), but
+the entire root filesystem is only 116 GiB and exposes about 106 GiB free. It
+also lacks the pinned build toolchain. GitHub Actions in
 the private repo is independently blocked before job startup by the account
 billing/spend limit. Full browser validation remains blocked until chromiumer
 capacity/tooling is provisioned; it must not fall back to lm.
