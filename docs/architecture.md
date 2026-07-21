@@ -40,10 +40,12 @@ Moving `main` is not a build input.
 
 `lm` is the development control plane, not a Chromium executor. Large Linux
 and Android jobs run on chromiumer through the shared fail-closed wrapper in
-`docs/chromiumer-builds.md`. Its cgroup, workspace, reserve, watchdog, and wall
-time policy is part of artifact provenance; a build outside that envelope is
-not an accepted artifact. The NAS receives completed, hashed artifacts but is
-not a compiler workspace.
+`docs/chromiumer-builds.md`. The lm-side wrapper is only the source-transfer and
+control client; its installed chromiumer worker enforces cgroup limits, a
+100 GiB total job-tree allowance, an independent 20 GiB free-space reserve,
+root-filesystem protection, a watchdog, and an eight-hour deadline. That policy
+is part of artifact provenance; a build outside the envelope is not accepted.
+The NAS receives completed, hashed artifacts but is not a compiler workspace.
 
 ## Data Ownership
 
