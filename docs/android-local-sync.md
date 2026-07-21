@@ -3,10 +3,11 @@
 This path handles phone-local cookie sync plus native password-manager sync
 between Android Helium Sync and the Arch chroot browser.
 
-Status: integration pending. HS-001 through HS-003 now have reconcile-first,
-partition-aware, source-to-replica code and synthetic tests. The independent
-tab snapshot portion of HS-004 is also implemented. Do not treat this as a
-validated browser sync system until the remaining browser/device work in
+Status: build/device validation pending. HS-001 through HS-003 now have native
+and CDP reconcile-first, partition-aware, source-to-replica code and synthetic
+tests. HS-004 has both the independent generation store and a native browser
+exporter. Do not treat this as a validated browser sync system until the
+remaining compile/browser/device work in
 [`TODO.md`](../TODO.md) pass the gates in
 [`docs/acceptance.md`](acceptance.md). Device-bound session credentials are not
 portable cookie data and must be re-established on each device.
@@ -23,9 +24,9 @@ It runs all sync services on the phone:
 - `cdp-password-sync` bridges chroot Chromium's native password manager over
   DevTools. It is not a password extension.
 - The old CookieCloud extension is not loaded: it uses the superseded symmetric
-  payload and could overwrite schema v2. The CDP bridge is the only cookie
-  producer/consumer. The wrapper falls back to `chromium` only for temporary
-  testing.
+  payload and could overwrite schema v2. CDP remains the deployed cookie path
+  until the native CookieManager bridge compiles and passes fixtures. The
+  wrapper falls back to `chromium` only for temporary testing.
 
 ## Install
 
@@ -159,9 +160,12 @@ The Android fork forces Chromium's built-in encrypted `Login Data` backend for t
 
 The native Chromium overlays in `chromium/overlay/components/helium_sync` and `chromium/overlay/chrome/browser/helium_sync` serialize profile password entries through Chromium's password-manager APIs and store them in the local encrypted `helium-syncd` record API. `chromium/patches/0002-helium-sync-profile-service.patch` wires the profile service into browser startup, and `chromium/patches/0003-helium-sync-android-profile-startup.patch` starts it for Android profiles. The service stays inactive unless it can read a local token file.
 
-The password payload format is `helium-password-v1`, a small JSON record with
-`url`, `signon_realm`, `username`, `password`, and `note`. Records are encrypted
-at rest by `helium-syncd`. The chroot bridge uses `cdp-password-sync` to call
+Native output is `chromium-password-specifics-data-v1`, containing Chromium's
+serialized `PasswordSpecificsData` so form fields, timestamps, issues, notes,
+federation, sharing metadata, and other supported semantics survive. The old
+lossy `helium-password-v1` format is read-only migration input and is republished
+in the complete format. Records are encrypted at rest by `helium-syncd`. The
+chroot bridge uses `cdp-password-sync` to call
 Chromium's native `chrome.passwordsPrivate` API inside
 `chrome://password-manager`; it is not a password-manager extension. Android
 uses the native C++ bridge.

@@ -64,28 +64,24 @@ dedicated tab recovery layer and are never treated as a cross-version API.
 
 | Area | Completed code | Still requires browser/device integration |
 | --- | --- | --- |
-| Password convergence (HS-001) | Native C++ and CDP bridges use atomic per-credential hash/server-sequence state, reconcile remote before local publication, and fail closed on corrupt state. Pure synthetic tests cover unchanged restart, stale-device conflict, offline edits, and migration. | Compile against the pinned Chromium tree on chromiumer and run native disposable-profile tests on Android and desktop. The payload remains incomplete under HS-008. |
-| Cookie identity/authority (HS-002/HS-003) | CDP schema v2 preserves complete partition identity and explicit source-to-replica generations. Replicas cannot publish; device-bound policy yields reauthentication. Legacy records migrate only with an explicit source declaration. The local server atomically compare-and-swaps revisions so concurrent sources retry instead of losing an update. | Migrate device config, execute the fixture matrix against actual CDP versions, implement the Android native CookieManager path, and replace legacy CookieCloud encryption/backup storage under HS-011. |
-| Independent tab snapshots (part of HS-004) | The Go snapshot store and `helium-tabs` command commit hashed generations by fsync+rename, validate bounded session models, plan hourly/daily/weekly retention, protect known-good/invalid copies, and restore only into a new disposable-state directory. | Export this model from Chromium session/tab APIs, schedule quiescent captures, load disposable profiles for a real browser drill, and implement local-session/foreign-session layers. No code promotes a snapshot into a real profile yet. |
+| Password convergence (HS-001/HS-008) | Native C++ and CDP bridges reconcile remote before local publication with durable hash/server-sequence state. Native output uses complete Chromium `PasswordSpecificsData`; the lossy legacy payload is migration input only. Source and synthetic tests cover restart, stale-device, offline edits, identity, and migration. | Compile on chromiumer and run native disposable-profile save/update/restart/autofill, two-device conflict, and legacy-upgrade tests on Android and desktop. |
+| Cookie identity/authority (HS-002/HS-003) | CDP and new native CookieManager bridges preserve partition/host-domain/scheme/port identity and explicit source-to-replica generations. Replicas cannot publish; device-bound policy sends no value. The server compare-and-swaps concurrent revisions. | Compile the native bridge, unify its wire encoding with CDP schema v2, migrate device policy without values, add server-side device authority, and run built-browser fixtures. |
+| Independent tab snapshots (HS-004) | The native bridge atomically exports the exact bounded Go session model outside the profile. `helium-tabs` commits hashed fsync+rename generations, protects known-good/invalid copies, applies retention safely, and restores only to a new disposable-state directory. | Compile; add unloaded Android tab export, schedule export ingestion, load a disposable browser for a two-restart drill, and implement local-session/foreign-session layers. No code promotes a snapshot into a real profile. |
 
 These statuses describe source and synthetic tests only. They are not artifact
 acceptance: no Chromium build or real profile was used for this work.
 
 ## Password Convergence
 
-The append-only daemon remains a transport/store. HS-001 now persists
+The append-only daemon remains a transport/store. HS-001 persists
 per-credential hashes and last-applied server sequences in the clients and
-removes the export-before-pull startup race. Complete native credential merge
-semantics remain HS-008.
+removes the export-before-pull startup race. HS-008 now serializes Chromium's
+complete password specifics rather than a hand-picked plaintext subset.
 
-The complete record design still needs:
-
-- stable storage key derived with Chromium's password sync rules;
-- schema version and complete `PasswordSpecificsData`-equivalent payload;
-- content hash;
-- source device and device-local mutation counter;
-- server sequence and last-applied sequence per client; and
-- explicit operation (`upsert` only initially).
+The existing stable record key deliberately remains unchanged: switching to a
+new Chromium-derived client tag without transport retirement would leave two
+active records. Remaining design work is safe key retirement/migration,
+explicit deletion semantics, and built-browser conflict validation.
 
 Implemented startup ordering is reconcile-first:
 
@@ -211,19 +207,18 @@ recent and one protected snapshot on every device class.
 
 Media and response streaming are separate test dimensions.
 
-`ffmpeg_branding = "Chrome"` plus `proprietary_codecs = true` enables relevant
-compiled codec support, but does not prove decoder availability, MSE behavior,
-DRM/Widevine, or that the installed APK contains those args. Every APK manifest
-must capture GN args and use deterministic media fixtures. `chrome://media-internals`
-and Android logcat identify demuxer, decoder, and pipeline failures.
+The Android build now fails closed unless resolved GN args contain
+`ffmpeg_branding = "Chrome"`, `proprietary_codecs = true`, and
+`media_use_ffmpeg = true`, and packages those args with patch/source provenance.
+This does not prove decoder availability, MSE behavior, or DRM/Widevine.
 
-ChatGPT is a useful manual scenario but not a reproducible streaming test. The
-automated fixture emits numbered chunks at one-second intervals over HTTP/1.1
-chunked transfer, HTTP/2, HTTP/3, SSE, and a Fetch `ReadableStream`. The driver
-records headers, first byte, each visible chunk, completion, protocol, content
-encoding, and renderer/network errors. Test a clean upstream Chromium APK and a
-patched Helium Sync APK built from the same Chromium commit; if only the latter
-fails, bisect the ordered private patches.
+Deterministic tooling now generates H.264/AAC MP4, fragmented MSE MP4, and
+VP9/Opus WebM fixtures. A loopback server and disposable-CDP driver verify
+HTTP/1.1 progressive Fetch under identity/gzip/Brotli, SSE order, byte ranges,
+UI progress, capability reports, playback, frames, and audio observations.
+HTTP/2, HTTP/3, AV1, HLS/DASH, Widevine expected-failure, built-APK A/B, and
+oneplus runtime remain open. ChatGPT stays a final manual timing scenario that
+records no content or tokens.
 
 ## Store Durability
 

@@ -78,23 +78,29 @@ and then injects the desktop-safe sync patch subset as
 profile service wiring, but excludes Android startup, OSCrypt, branding, and
 password-store replacement files.
 
-Android is still handled separately from the desktop Helium platform repos:
+Android uses the same public/core backbone through a direct pinned Chromium
+composition because Helium has no Android platform repository:
 
 ```sh
 gh workflow run chromium-android.yml
 ```
 
-The Android workflow uses a reduced Chromium Android checkout and builds
-`HeliumSync.apk` by default. It applies `chromium/patches/*.patch`, uses
-`chromium/overlay/` for local development parity, sets Chromium's checkout to
-`small`, skips test-only Android CIPD payloads, changes the package to
-`computer.helium.sync`, and adds `cc_wrapper = "ccache"` to generated GN args.
-Android builds default to `ffmpeg_branding = "Chrome"` and
-`proprietary_codecs = true`, but the resulting codec set and playback path have
-not yet been validated in a post-change APK. These flags do not add DRM support.
+`chromium/android-build.lock` is the single source for the exact Chromium tag,
+Chromium commit, and Helium core commit. `apply-android-backbone.sh` applies the
+ordered Helium core series while omitting only the mandatory password-disable
+patch, then applies the two public Passwords patches, six private Sync patches
+and overlay, Helium transformations/resources, and shared plus Android GN args.
+Contract tests currently count 284 core + 2 Passwords + 6 Sync patches. The
+complete 292-patch apply still needs a prepared source checkout on chromiumer.
 
-Full Chromium builds are expensive. Larger/self-hosted runners are preferred.
-Standard `ubuntu-24.04` runners can smoke-test wiring, but previous full builds
-timed out near GitHub's six-hour hosted-runner limit. The Android workflow keeps
-source-specific Ninja output caches and ccache enabled so reruns can warm the
-build state instead of starting completely over.
+GN generation uses `--fail-on-unused-args`. Media/provenance validation fails
+unless the source lock resolves exactly and GN proves Android target,
+`ffmpeg_branding = "Chrome"`, `proprietary_codecs = true`, and
+`media_use_ffmpeg = true`. Packaged provenance records commits, resolved GN
+args, composition order, and patch/overlay hashes. These flags do not prove a
+device decoder and do not provision Widevine.
+
+Full Chromium builds run only through the isolated chromiumer workflow in
+`chromiumer-builds.md`; lm and the NAS are not compiler workspaces. GitHub
+workflows retain manual source/caching support, but private Actions are
+independently blocked by billing and are not current validation evidence.
