@@ -93,6 +93,31 @@ and overlay, Helium transformations/resources, and shared plus Android GN args.
 Contract tests currently count 284 core + 2 Passwords + 6 Sync patches. The
 complete 292-patch apply still needs a prepared source checkout on chromiumer.
 
+After chromiumer production preflight passes, the first bounded job combines
+strict source preparation, GN generation, and the smallest media-buildflag
+compile. `CHROMIUM_ANDROID_PROVENANCE_ONLY=true` is explicit: without it, a
+non-APK target fails packaging instead of pretending to be an APK artifact.
+
+```sh
+job=hs-android-148-media-flags-01
+scripts/chromiumer-job.sh stage "$job"
+scripts/chromiumer-job.sh start "$job" -- env \
+  HELIUM_SYNC_REPO=. \
+  GITHUB_WORKSPACE=.build \
+  CHROMIUM_ANDROID_PHASE=all \
+  CHROMIUM_TARGET=media:media_buildflags \
+  CHROMIUM_ANDROID_PROVENANCE_ONLY=true \
+  bash scripts/chromium/build-android-ci.sh
+
+scripts/chromiumer-job.sh fetch "$job" \
+  .build/android-artifacts/compile-media_media_buildflags-arm64.tar.xz
+```
+
+The returned proof contains resolved build provenance and `compile-proof.env`,
+not an APK. Use separate unique jobs for `media`, the two Helium sync GN
+targets, and finally `chrome_public_apk`; every job must pass the same admission
+and isolation policy.
+
 GN generation uses `--fail-on-unused-args`. Media/provenance validation fails
 unless the source lock resolves exactly and GN proves Android target,
 `ffmpeg_branding = "Chrome"`, `proprietary_codecs = true`, and
