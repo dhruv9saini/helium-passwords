@@ -1,3 +1,3 @@
-module github.com/oof-baroomf/helium-sync
+module github.com/dhruv9saini/helium-sync
 
 go 1.25

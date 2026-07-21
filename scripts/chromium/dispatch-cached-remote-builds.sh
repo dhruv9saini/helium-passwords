@@ -9,7 +9,7 @@ Dispatch Helium Sync builds on GitHub Actions. This does not build Chromium
 locally.
 
 Environment overrides:
-  HELIUM_SYNC_GITHUB_REPO             GitHub repo to dispatch in (default: oof-baroomf/helium-sync)
+  HELIUM_SYNC_GITHUB_REPO             GitHub repo to dispatch in (default: dhruv9saini/helium-sync)
   HELIUM_SYNC_REF                     helium-sync workflow ref (default: main)
   CHROMIUM_RUNNER                     Actions runner label (default: ubuntu-24.04)
   BUILD_TIMEOUT_MINUTES               soft build timeout (default: 300)
@@ -44,7 +44,7 @@ case "$target" in
     ;;
 esac
 
-repo=${HELIUM_SYNC_GITHUB_REPO:-oof-baroomf/helium-sync}
+repo=${HELIUM_SYNC_GITHUB_REPO:-dhruv9saini/helium-sync}
 workflow_ref=${HELIUM_SYNC_REF:-main}
 runner=${CHROMIUM_RUNNER:-ubuntu-24.04}
 timeout_minutes=${BUILD_TIMEOUT_MINUTES:-300}

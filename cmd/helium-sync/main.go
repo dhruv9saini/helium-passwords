@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oof-baroomf/helium-sync/internal/syncstore"
+	"github.com/dhruv9saini/helium-sync/internal/syncstore"
 )
 
 func main() {
