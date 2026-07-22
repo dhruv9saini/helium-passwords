@@ -83,14 +83,20 @@ while IFS=$'\t' read -r layer entry; do
 done < "$provenance_dir/android-composition.tsv" \
   > "$provenance_dir/android-composition.sha256"
 
-sha256sum \
-  "$provenance_dir/args.gn" \
-  "$provenance_dir/gn-args-resolved.txt" \
-  "$provenance_dir/chromium-source-commit.txt" \
-  "$provenance_dir/helium-core-commit.txt" \
-  "$provenance_dir/helium-sync-commit.txt" \
-  "$provenance_dir/android-composition.sha256" \
-  "$provenance_dir/sync-inputs.sha256" \
-  > "$provenance_dir/provenance.sha256"
+(
+  cd "$provenance_dir"
+  sha256sum \
+    args.gn \
+    gn-args-resolved.txt \
+    chromium-source-commit.txt \
+    chromium-ref-requested.txt \
+    helium-core-commit.txt \
+    helium-sync-commit.txt \
+    helium-sync-status.txt \
+    android-build.lock \
+    android-composition.sha256 \
+    sync-inputs.sha256 \
+    > provenance.sha256
+)
 
 printf 'Android media configuration verified: %s\n' "$provenance_dir"

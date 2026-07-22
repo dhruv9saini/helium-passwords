@@ -65,6 +65,18 @@ the fixture browser an independent app-data directory. The later production
 artifact is a separate clean build with the default `computer.helium.sync`;
 back up that app's complete existing data before installing it.
 
+Make that check executable on lm (the current SDK tool path is explicit):
+
+```sh
+AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
+  scripts/chromium/verify-android-artifact.sh \
+  /srv/nas/helium-builds/JOB/chrome_public_apk-arm64.tar.xz \
+  computer.helium.sync.test HELIUM_SYNC_COMMIT
+```
+
+The verifier also checks the relocatable provenance manifest, pinned Chromium
+commit, clean tracked source status, and exactly one `HeliumSync.apk`.
+
 A copied backup never opens a browser.
 
 ## 3. Prepare lm without activating it
