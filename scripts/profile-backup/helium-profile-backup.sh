@@ -240,15 +240,22 @@ backup() {
 }
 
 verify_receipt_command() {
-  local supplied=$1 generation canonical supplied_hash
+  local supplied=$1 expected_path=${2:-} generation canonical supplied_hash expected_hash
   read_receipt "$supplied"
   generation=${RECEIPT[generation]}
   canonical=$(receipt_path 0 "$generation")
   supplied_hash=$(sha256sum -- "$supplied" | awk '{print $1}')
   verify_generation "$generation"
   [[ "$supplied_hash" == "$(sha256sum -- "$canonical" | awk '{print $1}')" ]] || die "supplied receipt is not the committed receipt"
-  [[ "${RECEIPT[profile_path_sha256]}" == "$(profile_path_hash)" ]] || die "backup receipt belongs to a different profile path"
-  printf 'profile_backup_admission=verified\ngeneration=%s\nsource_device=%s\nprofile_id=%s\n' "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
+  if [[ -n "$expected_path" ]]; then
+    [[ "$expected_path" == /* ]] || die "expected profile path must be absolute"
+    expected_hash=$(printf '%s' "$expected_path" | sha256sum | awk '{print $1}')
+  else
+    expected_hash=$(profile_path_hash)
+  fi
+  [[ "${RECEIPT[profile_path_sha256]}" == "$expected_hash" ]] || die "backup receipt belongs to a different profile path"
+  printf 'profile_backup_admission=verified\ngeneration=%s\nsource_device=%s\nprofile_id=%s\nprofile_path_sha256=%s\n' \
+    "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" "${RECEIPT[profile_path_sha256]}"
 }
 
 retention_apply() {
@@ -331,7 +338,7 @@ case "$command" in
   preflight) [[ $# -eq 2 ]] || { usage; exit 64; }; preflight ;;
   backup) [[ $# -le 3 ]] || { usage; exit 64; }; backup "${3:-}" ;;
   status) [[ $# -eq 3 ]] || { usage; exit 64; }; verify_generation "$3"; printf 'status=healthy\ngeneration=%s\n' "$3" ;;
-  verify-receipt) [[ $# -eq 3 ]] || { usage; exit 64; }; verify_receipt_command "$3" ;;
+  verify-receipt) [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 64; }; verify_receipt_command "$3" "${4:-}" ;;
   retention-apply) [[ $# -eq 2 ]] || { usage; exit 64; }; retention_apply ;;
   quarantine) [[ $# -eq 5 ]] || { usage; exit 64; }; quarantine "$3" "$4" "$5" ;;
   restore-to-disposable) [[ $# -eq 4 ]] || { usage; exit 64; }; restore_to_disposable "$3" "$4" ;;

@@ -1,113 +1,113 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 adb_bin=${ADB:-adb}
-root=${ARCH_CHROOT:-/data/local/chroots/arch}
 package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync}
-base_url=${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}
-device_name=${HELIUM_ANDROID_SYNC_DEVICE_NAME:-helium-android}
-token_src=${HELIUM_PASSWORD_SYNC_TOKEN:-$root/root/.local/share/helium-sync/token}
 
-tmp_token=/data/local/tmp/helium-sync-token.$$
+usage() {
+  cat >&2 <<'EOF'
+usage: configure-android-chromium-sync.sh install ENROLLMENT-DIR PROFILE-BACKUP-CONFIG PROFILE-BACKUP-RECEIPT
+
+Install one already-created oneplus enrollment into the native Chromium
+profile at <dataDir>/app_chrome/Default/helium-sync.  The app is force-stopped,
+the exact full app_chrome profile must already have two verified encrypted
+backup copies, and the prior enrollment is retained as a rollback generation.
+EOF
+}
+
+[[ ${1:-} == install && $# -eq 4 ]] || { usage; exit 64; }
+[[ "$package" == computer.helium.sync || "$package" == computer.helium.sync.test ]] || {
+  echo "unsupported Android package" >&2
+  exit 64
+}
+enrollment=$(realpath -e -- "$2")
+backup_config=$(realpath -e -- "$3")
+backup_receipt=$(realpath -e -- "$4")
+[[ -d "$enrollment" && ! -L "$enrollment" ]] || { echo "enrollment must be a real directory" >&2; exit 1; }
+
+mapfile -t enrollment_files < <(find "$enrollment" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
+[[ "${enrollment_files[*]}" == 'base_url client.json token' ]] || {
+  echo "enrollment directory must contain exactly base_url, client.json, and token" >&2
+  exit 1
+}
+for name in base_url client.json token; do
+  [[ -f "$enrollment/$name" && ! -L "$enrollment/$name" && -s "$enrollment/$name" ]] || {
+    echo "invalid enrollment file: $name" >&2
+    exit 1
+  }
+done
+[[ "$(stat -c %a "$enrollment/token")" =~ ^(400|600)$ ]] || { echo "token must have mode 0400 or 0600" >&2; exit 1; }
+[[ "$(stat -c %a "$enrollment/client.json")" =~ ^(400|600)$ ]] || { echo "client.json must have mode 0400 or 0600" >&2; exit 1; }
+base_url=$(tr -d '\r\n' <"$enrollment/base_url")
+[[ "$base_url" =~ ^https://[^/@[:space:]]+(:[0-9]+)?/?$ && "$base_url" != *'@'* ]] || {
+  echo "base_url must be one direct HTTPS origin without credentials" >&2
+  exit 1
+}
+jq -e --arg package "$package" '
+  .device_id == "oneplus" and .role == "join" and
+  (.phase == "pending" or .phase == "active") and
+  (.keys | type == "object") and (.local_seal_key | type == "string")
+' "$enrollment/client.json" >/dev/null || {
+  echo "client.json is not a oneplus join enrollment" >&2
+  exit 1
+}
+
+data_dir=$("$adb_bin" shell "dumpsys package '$package'" | tr -d '\r' | sed -n 's/.*dataDir=//p' | head -n1)
+[[ "$data_dir" =~ ^/data/(user/[0-9]+|data)/[A-Za-z0-9._]+$ ]] || {
+  echo "could not resolve a safe installed package dataDir" >&2
+  exit 1
+}
+uid=$("$adb_bin" shell "cmd package list packages -U '$package'" | tr -d '\r' | sed -n "s/^package:$package uid://p" | head -n1)
+[[ "$uid" =~ ^[0-9]+$ ]] || { echo "could not resolve package uid" >&2; exit 1; }
+
+backup_admission=$("$repo_root/scripts/profile-backup/helium-profile-backup.sh" \
+  verify-receipt "$backup_config" "$backup_receipt" "$data_dir/app_chrome")
+[[ "$(awk -F= '$1 == "profile_backup_admission" {print $2}' <<<"$backup_admission")" == verified ]] || exit 1
+
+"$adb_bin" shell "am force-stop '$package'"
+if "$adb_bin" shell "pidof '$package'" | grep -q '[0-9]'; then
+  echo "Android package is still running after force-stop" >&2
+  exit 1
+fi
+
+work_dir=$(mktemp -d)
+bundle_name="helium-enrollment-$package-$$.tar"
 cleanup() {
-  "$adb_bin" shell "rm -f '$tmp_token'" >/dev/null 2>&1 || true
+  rm -rf -- "$work_dir"
+  "$adb_bin" shell "rm -f '/data/local/tmp/$bundle_name'" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
+tar --format=pax -C "$enrollment" -cf "$work_dir/enrollment.tar" base_url client.json token
+"$adb_bin" push "$work_dir/enrollment.tar" "/data/local/tmp/$bundle_name" >/dev/null
 
-"$adb_bin" shell "su -c 'test -s \"$token_src\" && cp \"$token_src\" \"$tmp_token\" && chmod 0644 \"$tmp_token\"'"
-
-if ! "$adb_bin" shell "run-as '$package' sh -c '
+"$adb_bin" shell '/debug_ramdisk/su -c "
 set -eu
-for dir in helium-sync app_chrome/helium-sync app_chrome/Default/helium-sync; do
-  mkdir -p \"\$dir\"
-  cp \"$tmp_token\" \"\$dir/token\"
-  printf %s\\\\n \"$base_url\" >\"\$dir/base_url\"
-  printf %s\\\\n \"$device_name\" >\"\$dir/device_name\"
-  chmod 0600 \"\$dir/token\" \"\$dir/base_url\" \"\$dir/device_name\"
-done
-'"; then
-  "$adb_bin" shell "su -c '
-set -eu
-package=\"$package\"
-base_url=\"$base_url\"
-device_name=\"$device_name\"
-tmp_token=\"$tmp_token\"
-data_dir=\$(dumpsys package \"\$package\" | sed -n \"s/.*dataDir=//p\" | head -n1)
-if [ -z \"\$data_dir\" ]; then
-  data_dir=\"/data/user/0/\$package\"
+DATA='"'"$data_dir"'"'
+UID_NUMBER='"'"$uid"'"'
+BUNDLE=/data/local/tmp/'"'"$bundle_name"'"'
+TARGET=\"\$DATA/app_chrome/Default/helium-sync\"
+INCOMING=\"\$DATA/app_chrome/Default/.helium-sync.incoming.\$\$\"
+ROLLBACK_ROOT=\"\$DATA/app_chrome/Default/helium-sync-rollbacks\"
+test ! -e \"\$INCOMING\"
+mkdir -p \"\$DATA/app_chrome/Default\" \"\$ROLLBACK_ROOT\" \"\$INCOMING\"
+/system/bin/tar -xf \"\$BUNDLE\" -C \"\$INCOMING\"
+test -s \"\$INCOMING/base_url\"
+test -s \"\$INCOMING/client.json\"
+test -s \"\$INCOMING/token\"
+chmod 0700 \"\$INCOMING\" \"\$ROLLBACK_ROOT\"
+chmod 0600 \"\$INCOMING/base_url\" \"\$INCOMING/client.json\" \"\$INCOMING/token\"
+chown -R \"\$UID_NUMBER:\$UID_NUMBER\" \"\$INCOMING\" \"\$ROLLBACK_ROOT\"
+restorecon -R \"\$INCOMING\" \"\$ROLLBACK_ROOT\" >/dev/null 2>&1 || true
+if [ -e \"\$TARGET\" ]; then
+  STAMP=\$(date -u +%Y%m%dT%H%M%SZ)
+  test ! -e \"\$ROLLBACK_ROOT/\$STAMP\"
+  mv \"\$TARGET\" \"\$ROLLBACK_ROOT/\$STAMP\"
 fi
-uid=\$(cmd package list packages -U | sed -n \"s/^package:\$package uid://p\" | head -n1)
-if [ -z \"\$uid\" ]; then
-  echo \"Could not resolve package uid for \$package\" >&2
-  exit 1
-fi
-mkdir -p \"\$data_dir/app_chrome/Default\"
-for dir in helium-sync app_chrome/helium-sync app_chrome/Default/helium-sync; do
-  full_dir=\"\$data_dir/\$dir\"
-  mkdir -p \"\$full_dir\"
-  cp \"\$tmp_token\" \"\$full_dir/token\"
-  printf %s\\\\n \"\$base_url\" >\"\$full_dir/base_url\"
-  printf %s\\\\n \"\$device_name\" >\"\$full_dir/device_name\"
-  chmod 0600 \"\$full_dir/token\" \"\$full_dir/base_url\" \"\$full_dir/device_name\"
-done
-chown -R \"\$uid:\$uid\" \"\$data_dir/helium-sync\" \"\$data_dir/app_chrome\"
-chmod 0700 \"\$data_dir/helium-sync\" \"\$data_dir/app_chrome\" \"\$data_dir/app_chrome/Default\"
-chmod 0700 \"\$data_dir/app_chrome/helium-sync\" \"\$data_dir/app_chrome/Default/helium-sync\"
-restorecon -R \"\$data_dir/helium-sync\" \"\$data_dir/app_chrome\" >/dev/null 2>&1 || true
-'"
-fi
+mv \"\$INCOMING\" \"\$TARGET\"
+restorecon -R \"\$TARGET\" >/dev/null 2>&1 || true
+"'
 
-if "$adb_bin" shell "su -c '
-set -eu
-package=\"$package\"
-data_dir=\$(dumpsys package \"\$package\" | sed -n \"s/.*dataDir=//p\" | head -n1)
-if [ -z \"\$data_dir\" ]; then
-  data_dir=\"/data/user/0/\$package\"
-fi
-uid=\$(cmd package list packages -U | sed -n \"s/^package:\$package uid://p\" | head -n1)
-if [ -z \"\$uid\" ]; then
-  echo \"Could not resolve package uid for \$package\" >&2
-  exit 1
-fi
-
-prefs=\"\$data_dir/shared_prefs/\${package}_preferences.xml\"
-mkdir -p \"\$data_dir/shared_prefs\" \"\$data_dir/app_chrome\"
-if [ ! -f \"\$prefs\" ] || ! grep -q \"</map>\" \"\$prefs\"; then
-  printf \"%s\n\" \"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\" \"<map>\" \"</map>\" >\"\$prefs\"
-fi
-for key in first_run_flow lightweight_first_run_flow skip_welcome_page Chrome.FirstRun.SkippedByPolicy; do
-  sed -i \"/name=\\\"\$key\\\"/d\" \"\$prefs\"
-done
-tmp_prefs=/data/local/tmp/helium-first-run-prefs.\$\$
-sed \"/<\\/map>/,\\\$d\" \"\$prefs\" >\"\$tmp_prefs\"
-printf \"%s\n\" \
-  \"    <boolean name=\\\"first_run_flow\\\" value=\\\"true\\\" />\" \
-  \"    <boolean name=\\\"lightweight_first_run_flow\\\" value=\\\"true\\\" />\" \
-  \"    <boolean name=\\\"skip_welcome_page\\\" value=\\\"true\\\" />\" \
-  \"    <boolean name=\\\"Chrome.FirstRun.SkippedByPolicy\\\" value=\\\"true\\\" />\" \
-  \"</map>\" >>\"\$tmp_prefs\"
-cp \"\$tmp_prefs\" \"\$prefs\"
-rm -f \"\$tmp_prefs\"
-
-local_state=\"\$data_dir/app_chrome/Local State\"
-if [ -f \"\$local_state\" ]; then
-  if grep -q \"\\\"EulaAccepted\\\"\" \"\$local_state\"; then
-    sed -i \"s/\\\"EulaAccepted\\\":[ ]*false/\\\"EulaAccepted\\\":true/\" \"\$local_state\"
-  else
-    sed -i \"s/^{/{\\\"EulaAccepted\\\":true,/\" \"\$local_state\"
-  fi
-else
-  printf \"%s\n\" \"{\\\"EulaAccepted\\\":true}\" >\"\$local_state\"
-fi
-
-chown \"\$uid:\$uid\" \"\$prefs\" \"\$local_state\"
-chmod 0660 \"\$prefs\"
-chmod 0600 \"\$local_state\"
-restorecon \"\$prefs\" \"\$local_state\" >/dev/null 2>&1 || true
-'"; then
-  echo "Marked Android Chromium first-run complete for $package."
-else
-  echo "Warning: could not mark Android Chromium first-run complete for $package." >&2
-fi
-
-echo "Configured native Android Chromium Sync for $package as $device_name."
+printf 'android_enrollment=installed\npackage=%s\nprofile_config=%s\nbackup_generation=%s\n' \
+  "$package" "$data_dir/app_chrome/Default/helium-sync" \
+  "$(awk -F= '$1 == "generation" {print $2}' <<<"$backup_admission")"
