@@ -5,10 +5,13 @@ import (
 	"context"
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io/fs"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -157,6 +160,42 @@ func TestStoreOpaqueCASAndTombstones(t *testing.T) {
 	}
 	if _, err := store.Put("d", acceptedKeys("wrong-epoch"), []OpaqueMutation{tombstone}); err == nil {
 		t.Fatal("inactive key epoch was accepted")
+	}
+}
+
+func TestVerifyStoreIsReadOnlyAndNeverRecovers(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := bytes.Repeat([]byte{5}, clientKeyLength)
+	mutation := mustEncrypt(t, key, "d", "epoch", PlainMutation{
+		Kind: KindPassword, Key: "verify/read-only",
+		Payload: json.RawMessage(`{"secret":"not-on-server"}`),
+	}, 1)
+	if _, err := store.Put("d", acceptedKeys("epoch"), []OpaqueMutation{mutation}); err != nil {
+		t.Fatal(err)
+	}
+	before := treeDigest(t, dir)
+	cursor, err := VerifyStore(dir)
+	if err != nil || cursor != 1 {
+		t.Fatalf("read-only verification failed: cursor=%d err=%v", cursor, err)
+	}
+	if after := treeDigest(t, dir); after != before {
+		t.Fatalf("verification mutated server state: before=%s after=%s", before, after)
+	}
+
+	journal := filepath.Join(dir, recordsFile)
+	if err := os.WriteFile(journal, []byte("corrupt\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := treeDigest(t, dir)
+	if _, err := VerifyStore(dir); err == nil {
+		t.Fatal("read-only verification recovered a corrupt journal")
+	}
+	if after := treeDigest(t, dir); after != corrupt {
+		t.Fatalf("failed verification mutated corrupt state: before=%s after=%s", corrupt, after)
 	}
 }
 
@@ -938,6 +977,42 @@ func acceptedKeys(ids ...string) map[string]struct{} {
 		out[id] = struct{}{}
 	}
 	return out
+}
+
+func treeDigest(t *testing.T, root string) string {
+	t.Helper()
+	digest := sha256.New()
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(digest, "%s\x00%s\x00%d\x00", relative,
+			info.Mode().String(), info.Size()); err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if _, err := digest.Write(raw); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hex.EncodeToString(digest.Sum(nil))
 }
 
 func flipBase64(t *testing.T, encoded string) string {

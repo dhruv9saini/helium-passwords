@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 077
 
 data_dir=${HELIUM_SERVER_DATA_DIR:-/var/lib/helium-sync}
 service=${HELIUM_SERVER_SERVICE:-helium-syncd.service}
@@ -16,7 +17,13 @@ require_absolute() {
 
 service_control() {
   case "$service_scope" in
-    system) sudo systemctl "$@" "$service" ;;
+    system)
+      if [[ $EUID -eq 0 ]]; then
+        systemctl "$@" "$service"
+      else
+        sudo systemctl "$@" "$service"
+      fi
+      ;;
     user) systemctl --user "$@" "$service" ;;
     *) echo "HELIUM_SERVER_SERVICE_SCOPE must be system or user" >&2; exit 2 ;;
   esac
@@ -26,11 +33,16 @@ backup() {
   destination=${1:-}
   require_absolute "$data_dir"
   require_absolute "$destination"
+  [[ -d "$data_dir" && ! -L "$data_dir" ]] || {
+    echo "server data must be an existing directory, not a symlink" >&2
+    exit 1
+  }
   [ -s "$data_dir/devices.json" ] || {
     echo "server registry is missing" >&2
     exit 1
   }
   mkdir -p "$destination/generations"
+  chmod 0700 "$destination" "$destination/generations"
   if [[ "$destination" == /srv/nas/* ]]; then
     findmnt -M /srv/nas >/dev/null || {
       echo "/srv/nas is not mounted" >&2
@@ -44,6 +56,7 @@ backup() {
   }
 
   exec 9>"$destination/.backup.lock"
+  chmod 0600 "$destination/.backup.lock"
   flock -n 9 || {
     echo "another server backup is running" >&2
     exit 1
@@ -70,8 +83,21 @@ backup() {
     echo "backup generation already exists" >&2
     exit 1
   }
-  tar --zstd -C "$(dirname "$data_dir")" -cf "$incoming" \
-    "$(basename "$data_dir")"
+  data_parent=$(dirname "$data_dir")
+  data_name=$(basename "$data_dir")
+  archive_members=(
+    "$data_name/devices.json"
+    "$data_name/records.jsonl"
+    "$data_name/snapshots"
+  )
+  if [[ -e "$data_dir/quarantine" ]]; then
+    [[ -d "$data_dir/quarantine" && ! -L "$data_dir/quarantine" ]] || {
+      echo "server quarantine must be a directory, not a symlink" >&2
+      exit 1
+    }
+    archive_members+=("$data_name/quarantine")
+  fi
+  tar --zstd -C "$data_parent" -cf "$incoming" -- "${archive_members[@]}"
   archive_sha=$(sha256sum "$incoming" | awk '{print $1}')
   archive_bytes=$(stat -c %s "$incoming")
   temp_manifest="$manifest.incoming"

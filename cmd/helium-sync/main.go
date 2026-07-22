@@ -162,7 +162,7 @@ func cmdServerVerify(args []string) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	store, err := syncstore.OpenStore(*dataDir)
+	cursor, err := syncstore.VerifyStore(*dataDir)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func cmdServerVerify(args []string) error {
 	}
 	status := registry.KeyStatus()
 	return writePretty(map[string]any{
-		"verified": true, "cursor": store.Cursor(),
+		"verified": true, "cursor": cursor,
 		"active_key_id":   status.ActiveKeyID,
 		"staged_key_id":   status.StagedKeyID,
 		"retiring_key_id": status.RetiringKeyID,

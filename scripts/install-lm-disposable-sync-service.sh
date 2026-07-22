@@ -26,6 +26,17 @@ service=helium-syncd-disposable.service
 backup_timer=helium-sync-server-backup-disposable.timer
 tls_port=44719
 
+case "$action" in
+  install-source|install-endpoint|initialize|backup-drill|enroll-device|revoke-device|enable|disable)
+    exec 8>"$XDG_RUNTIME_DIR/helium-sync-disposable.operator.lock"
+    chmod 0600 "$XDG_RUNTIME_DIR/helium-sync-disposable.operator.lock"
+    flock -n 8 || {
+      echo "another Helium Sync disposable operator action is running" >&2
+      exit 1
+    }
+    ;;
+esac
+
 require_synthetic_marker() {
   [[ -f "$state_root/SYNTHETIC_ONLY" && ! -L "$state_root/SYNTHETIC_ONLY" &&
       "$(cat "$state_root/SYNTHETIC_ONLY")" == synthetic-only-v1 ]] || {
@@ -131,7 +142,7 @@ verify_live_endpoint() {
   tailscale_identity
   local response
   response=$(curl --fail --silent --show-error --max-time 10 \
-    --tlsv1.3 --tls-max 1.3 \
+    --noproxy '*' --tlsv1.3 --tls-max 1.3 \
     --cacert "$tls_root/current/ca-cert.pem" \
     --resolve "$tls_hostname:$tls_port:$tls_ip" \
     "https://$tls_hostname:$tls_port/v2/health")

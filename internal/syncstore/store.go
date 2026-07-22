@@ -52,6 +52,39 @@ func OpenStore(dataDir string) (*Store, error) {
 	return store, nil
 }
 
+// VerifyStore validates an existing opaque journal without creating files,
+// recovering from snapshots, or writing a new checkpoint. Operator backup and
+// restore gates use this path so verification cannot mutate the state being
+// admitted or archived.
+func VerifyStore(dataDir string) (Counter, error) {
+	if strings.TrimSpace(dataDir) == "" {
+		return 0, errors.New("data dir is required")
+	}
+	dataInfo, err := os.Lstat(dataDir)
+	if err != nil {
+		return 0, fmt.Errorf("inspect data dir: %w", err)
+	}
+	if !dataInfo.IsDir() || dataInfo.Mode()&os.ModeSymlink != 0 {
+		return 0, errors.New("data dir must be an existing directory, not a symlink")
+	}
+	recordsPath := filepath.Join(dataDir, recordsFile)
+	recordsInfo, err := os.Lstat(recordsPath)
+	if err != nil {
+		return 0, fmt.Errorf("inspect records journal: %w", err)
+	}
+	if !recordsInfo.Mode().IsRegular() || recordsInfo.Mode()&os.ModeSymlink != 0 {
+		return 0, errors.New("records journal must be a regular file, not a symlink")
+	}
+	store := &Store{
+		dataDir: dataDir, recordsPath: recordsPath,
+		snapshotDir: filepath.Join(dataDir, "snapshots"), nextSeq: 1,
+	}
+	if err := store.loadRecords(); err != nil {
+		return 0, err
+	}
+	return store.Cursor(), nil
+}
+
 func (store *Store) loadRecords() error {
 	file, err := os.OpenFile(store.recordsPath, os.O_RDONLY|os.O_CREATE, 0600)
 	if err != nil {

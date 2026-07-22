@@ -27,6 +27,7 @@ done
 
 grep -Fq -- '-tls-cert-file %h/.local/state/helium-sync-disposable/tls/current/server-cert.pem' "$service"
 grep -Fq -- '-listen ${HELIUM_SYNC_LISTEN}' "$service"
+grep -Fq 'ExecStartPre=/usr/bin/test ! -e %h/.local/state/helium-sync-disposable/tls/current/ca-key.pem' "$service"
 grep -Fqx 'Environment=HELIUM_SERVER_SERVICE_SCOPE=user' "$backup_service"
 grep -Fqx 'BindPaths=/srv/nas/helium-sync-server-disposable' "$backup_service"
 grep -Fq 'synthetic-only-v1' "$installer"
@@ -38,6 +39,8 @@ grep -Fq 'systemctl --user enable --now "$service"' "$installer"
 grep -Fq 'systemctl --user disable --now "$backup_timer" "$service"' "$installer"
 grep -Fq 'service_scope=${HELIUM_SERVER_SERVICE_SCOPE:-system}' \
   "$repo_root/scripts/helium-sync-server-backup.sh"
+grep -Fq 'helium-sync-disposable.operator.lock' "$installer"
+grep -Fq -- "--noproxy '*' --tlsv1.3 --tls-max 1.3" "$installer"
 
 if grep -Fq 'sudo ' "$installer"; then
   echo "disposable installer unexpectedly requires root" >&2

@@ -2,11 +2,26 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)
+script_path=$(realpath -e "${BASH_SOURCE[0]}")
 action=${1:-}
 sync_cli=${HELIUM_SYNC_CLI:-/usr/local/libexec/helium-sync}
 tls_root=${HELIUM_SYNC_TLS_ROOT:-/etc/helium-sync/tls}
 endpoint_env=${HELIUM_SYNC_ENDPOINT_ENV:-/etc/helium-sync/endpoint.env}
 tls_port=44719
+
+case "$action" in
+  install-endpoint|initialize|backup-drill|enroll-device|revoke-device|enable|disable)
+    if [[ $EUID -ne 0 ]]; then
+      exec sudo "$script_path" "$@"
+    fi
+    exec 8>/run/helium-sync-operator.lock
+    chmod 0600 /run/helium-sync-operator.lock
+    flock -n 8 || {
+      echo "another Helium Sync production operator action is running" >&2
+      exit 1
+    }
+    ;;
+esac
 
 tailscale_identity() {
   local status
@@ -77,6 +92,10 @@ verify_endpoint() {
     echo "current TLS generation link is invalid" >&2
     return 1
   }
+  [[ ! -e "$tls_root/current/ca-key.pem" ]] || {
+    echo "CA private key must not be present on lm" >&2
+    return 1
+  }
   "$sync_cli" tls-server-verify \
     --ca-cert "$tls_root/current/ca-cert.pem" \
     --server-cert "$tls_root/current/server-cert.pem" \
@@ -89,6 +108,7 @@ verify_live_endpoint() {
   tailscale_identity
   local response
   response=$(curl --fail --silent --show-error --max-time 10 \
+    --noproxy '*' --tlsv1.3 --tls-max 1.3 \
     --cacert "$tls_root/current/ca-cert.pem" \
     --resolve "$tls_hostname:$tls_port:$tls_ip" \
     "https://$tls_hostname:$tls_port/v2/health")
@@ -168,6 +188,10 @@ perform_registry_update() (
 
 case "$action" in
   install-source)
+    systemctl is-active --quiet helium-syncd.service && {
+      echo "refusing source install while helium-syncd.service is active" >&2
+      exit 1
+    }
     temp_dir=$(mktemp -d /tmp/helium-syncd-install.XXXXXX)
     cleanup() { find "$temp_dir" -depth -delete; }
     trap cleanup EXIT
@@ -299,6 +323,10 @@ case "$action" in
       echo "server registry is not initialized" >&2
       exit 1
     }
+    ss -ltnH "( sport = :$tls_port )" | grep -q . && {
+      echo "port $tls_port already has a listener; stop the synthetic or other service first" >&2
+      exit 1
+    }
     verify_endpoint >/dev/null
     perform_backup_drill >/dev/null
     sudo systemctl enable --now helium-syncd.service
@@ -309,13 +337,18 @@ case "$action" in
     fi
     sudo systemctl enable --now helium-sync-server-backup.timer
     ;;
+  disable)
+    sudo systemctl disable --now helium-sync-server-backup.timer helium-syncd.service
+    echo "production_service=disabled"
+    echo "state_preserved=/var/lib/helium-sync"
+    ;;
   status)
     systemctl --no-pager --full status helium-syncd.service
     verify_endpoint
     verify_live_endpoint
     ;;
   *)
-    echo "usage: $0 <install-source|install-endpoint CA CERT KEY|initialize BOOTSTRAP|backup-drill|enroll-device AUTH_REQUEST|revoke-device DEVICE|verify-endpoint|verify-live-endpoint|enable|status>" >&2
+    echo "usage: $0 <install-source|install-endpoint CA CERT KEY|initialize BOOTSTRAP|backup-drill|enroll-device AUTH_REQUEST|revoke-device DEVICE|verify-endpoint|verify-live-endpoint|enable|disable|status>" >&2
     exit 2
     ;;
 esac

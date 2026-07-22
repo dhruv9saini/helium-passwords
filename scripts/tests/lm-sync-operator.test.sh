@@ -68,6 +68,15 @@ operator_env=(
 env "${operator_env[@]}" \
   "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null
 
+cp "$test_root/offline-ca/ca-key.pem" "$tls_root/generations/$generation/ca-key.pem"
+chmod 0600 "$tls_root/generations/$generation/ca-key.pem"
+if env "${operator_env[@]}" \
+  "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null 2>&1; then
+  echo "endpoint gate accepted a CA private key on lm" >&2
+  exit 1
+fi
+rm "$tls_root/generations/$generation/ca-key.pem"
+
 cp "$test_root/endpoint.env" "$test_root/endpoint.bad"
 sed -i 's/100\.100\.105\.47:44719/100.100.105.48:44719/' "$test_root/endpoint.bad"
 if env "${operator_env[@]}" HELIUM_SYNC_ENDPOINT_ENV="$test_root/endpoint.bad" \
@@ -104,10 +113,12 @@ for directive in \
   'CapabilityBoundingSet=' \
   'ReadOnlyPaths=/etc/helium-sync' \
   'MemoryMax=256M' \
+  'MemorySwapMax=0' \
   'TasksMax=64'; do
   grep -Fqx "$directive" "$unit"
 done
 grep -Fq 'ExecStartPre=/usr/local/libexec/helium-sync tls-server-verify' "$unit"
+grep -Fq 'ExecStartPre=/usr/bin/test ! -e /etc/helium-sync/tls/current/ca-key.pem' "$unit"
 grep -Fq -- '-tls-cert-file /etc/helium-sync/tls/current/server-cert.pem' "$unit"
 grep -Fq -- '-listen ${HELIUM_SYNC_LISTEN}' "$unit"
 if grep -Fq 'IPAddressAllow=localhost' "$unit"; then
@@ -124,6 +135,26 @@ grep -Fq 'perform_registry_update server-enroll' \
   "$repo_root/scripts/install-lm-sync-service.sh"
 grep -Fq 'perform_registry_update server-revoke' \
   "$repo_root/scripts/install-lm-sync-service.sh"
+grep -Fq 'exec 8>/run/helium-sync-operator.lock' \
+  "$repo_root/scripts/install-lm-sync-service.sh"
+grep -Fq -- "--noproxy '*' --tlsv1.3 --tls-max 1.3" \
+  "$repo_root/scripts/install-lm-sync-service.sh"
+grep -Fq 'port $tls_port already has a listener' \
+  "$repo_root/scripts/install-lm-sync-service.sh"
+
+backup_unit="$repo_root/systemd/helium-sync-server-backup.service"
+for directive in \
+  'NoNewPrivileges=yes' \
+  'ProtectSystem=strict' \
+  'ProtectHome=yes' \
+  'ReadOnlyPaths=/var/lib/helium-sync' \
+  'ReadWritePaths=/srv/nas/helium-sync-server' \
+  'RestrictAddressFamilies=AF_UNIX' \
+  'IPAddressDeny=any' \
+  'CapabilityBoundingSet=' \
+  'MemorySwapMax=0'; do
+  grep -Fqx "$directive" "$backup_unit"
+done
 if grep -Fq '[ -s /srv/nas/helium-sync-server/last-restore-drill.env ]' \
   "$repo_root/scripts/install-lm-sync-service.sh"; then
   echo "activation still trusts a stale or unrelated restore receipt" >&2
