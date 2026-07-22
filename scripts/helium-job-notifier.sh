@@ -10,7 +10,6 @@ remote_host=${HELIUM_CHROMIUMER_HOST:-chromiumer}
 remote_worker=${HELIUM_CHROMIUMER_REMOTE_WORKER:-.local/libexec/helium-chromiumer-worker}
 mailbridge_cli=${HELIUM_MAILBRIDGE_CLI:-/home/d/coding/codex-mailbridge/.venv/bin/codex-mailbridge}
 mailbridge_config=${HELIUM_MAILBRIDGE_CONFIG:-/home/d/.config/codex-mailbridge/config.toml}
-recipient=${HELIUM_JOB_NOTIFY_RECIPIENT:-dhruv9saini@gmail.com}
 
 usage() {
     cat >&2 <<'EOF'
@@ -202,7 +201,7 @@ queue_terminal_notification() {
     subject="[Helium] ${product}: ${job} ${result}"
 
     if "${mailbridge_cli}" --config "${mailbridge_config}" queue-notification \
-        --key "${key}" --to "${recipient}" --subject "${subject}" \
+        --key "${key}" --subject "${subject}" \
         --body-file "${body}" >/dev/null 2>&1; then
         replace_json "${path}" \
             --argjson now "$(date +%s)" \
