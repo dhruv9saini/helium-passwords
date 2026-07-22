@@ -82,12 +82,17 @@ restores Chromium's native password manager.
   profile and requires its one HTTPS enrollment directory; it starts no helper
   daemon and exposes no debugging port for synchronization.
 - `scripts/android-local` installs and configures the phone/chroot native sync
-  pieces. `configure-android-chromium-sync.sh` places only profile-local native
-  enrollment material and marks Android Chromium first-run complete. The
+  pieces. `configure-android-chromium-sync.sh` places only one profile-local
+  native enrollment generation at
+  `<dataDir>/app_chrome/Default/helium-sync`; it never edits first-run state or
+  copies credentials from the chroot. It requires a verified full-profile
+  backup receipt, stops the app, and preserves the replaced enrollment. The
   chroot launcher requires `/usr/local/bin/helium` backed by the installed
   `/opt/helium-sync/helium`; it must never fall back to stock Chromium. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium
-  Sync artifact to install `/usr/local/bin/helium` in the phone chroot. The
+  Sync artifact, strict build receipt, and exact-profile backup receipt to
+  install an immutable generation and atomically switch `/usr/local/bin/helium`
+  in the phone chroot. Old generations are rollback data and are not deleted. The
   launcher defaults to `$HOME/.config/helium-passwords`, requires that
   profile's native HTTPS enrollment, and starts no password/cookie sidecar. It
   removes stale Chromium singleton files only when their recorded PID is no
@@ -373,6 +378,15 @@ restores Chromium's native password manager.
   liveness only and must not start a sync sidecar or debugging bridge.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
+- `scripts/profile-backup/helium-profile-backup.sh` is the full-profile
+  pre-install gate for locally visible stopped profiles. It requires exactly
+  two destination filesystems independent of the source and each other,
+  encrypts one generation to at least two recovery recipients, records a
+  deterministic source-tree fingerprint, validates both copies, moves corrupt
+  copies to quarantine, retires old active generations without deleting them,
+  and restores only below a marked mode-0700 `drill-*` root. It never launches
+  a browser or makes a restored copy active. Do not confuse full-profile
+  rollback copies with cross-device tab transport; neither may auto-open tabs.
 - Android APKs intended for local phone use should be release-style,
   non-debuggable builds: keep `is_debug = false` and
   `dcheck_always_on = false`; do not set `is_desktop_android = true`.
