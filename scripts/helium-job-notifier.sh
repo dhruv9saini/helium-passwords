@@ -4,12 +4,13 @@ umask 077
 
 state_root=${HELIUM_JOB_NOTIFY_STATE_ROOT:-"${HOME}/.local/state/helium-job-notifier"}
 jobs_dir="${state_root}/jobs"
-body_dir="${state_root}/bodies"
+events_dir="${state_root}/events"
 ssh_binary=${HELIUM_JOB_NOTIFY_SSH:-ssh}
 remote_host=${HELIUM_CHROMIUMER_HOST:-chromiumer}
 remote_worker=${HELIUM_CHROMIUMER_REMOTE_WORKER:-.local/libexec/helium-chromiumer-worker}
 mailbridge_cli=${HELIUM_MAILBRIDGE_CLI:-/home/d/coding/codex-mailbridge/.venv/bin/codex-mailbridge}
 mailbridge_config=${HELIUM_MAILBRIDGE_CONFIG:-/home/d/.config/codex-mailbridge/config.toml}
+conversation='Helium build operations'
 
 usage() {
     cat >&2 <<'EOF'
@@ -75,8 +76,8 @@ register_job() {
     source_commits=$(<"${source_file}")
     validate_text source-commits "${source_commits}" 4096
 
-    mkdir -p "${jobs_dir}" "${body_dir}"
-    chmod 700 "${state_root}" "${jobs_dir}" "${body_dir}"
+    mkdir -p "${jobs_dir}" "${events_dir}"
+    chmod 700 "${state_root}" "${jobs_dir}" "${events_dir}"
     exec 9>"${state_root}/queue.lock"
     flock 9
 
@@ -106,11 +107,13 @@ register_job() {
         --arg success_next "${success_next}" \
         --arg sources "${source_commits}" \
         --arg host "${remote_host}" \
-        --arg key "helium-job:${job}:terminal" \
+        --arg key "helium-build:${job}:terminal" \
+        --arg conversation "${conversation}" \
         --argjson registered_at "$(date +%s)" \
-        '{schema: 1, job_id: $job, product: $product, summary: $summary,
+        '{schema: 2, job_id: $job, product: $product, summary: $summary,
           success_next: $success_next, source_commits: $sources, remote_host: $host,
-          notification_key: $key, status: "watching", registered_at: $registered_at,
+          analysis_key: $key, conversation: $conversation,
+          status: "watching", registered_at: $registered_at,
           last_poll_error: null}' >"${temp}"
     chmod 600 "${temp}"
     mv "${temp}" "${path}"
@@ -149,73 +152,135 @@ terminal_value() {
         <<<"${text}"
 }
 
-format_duration() {
-    local total=$1
-    printf '%02d:%02d:%02d' "$((total / 3600))" "$(((total % 3600) / 60))" \
-        "$((total % 60))"
-}
-
-queue_terminal_notification() {
+write_event_prompt() {
     local path=$1
-    local job product result duration sources summary success_next next body subject key
+    local job product result duration exit_code reason sources summary success_next key event temp
     job=$(jq -r .job_id "${path}")
     product=$(jq -r .product "${path}")
     result=$(jq -r .result "${path}")
     duration=$(jq -r .duration_seconds "${path}")
+    exit_code=$(jq -r .exit_code "${path}")
+    reason=$(jq -r .terminal_reason "${path}")
     sources=$(jq -r .source_commits "${path}")
     summary=$(jq -r .summary "${path}")
     success_next=$(jq -r .success_next "${path}")
-    key=$(jq -r .notification_key "${path}")
-
-    case "${result}" in
-        success)
-            next=${success_next}
-            ;;
-        failure)
-            next="Inspect scripts/chromiumer-job.sh logs ${job} 200, fix the first failing target, then start a new unique job."
-            ;;
-        timeout)
-            next="Inspect scripts/chromiumer-job.sh logs ${job} 200 and identify the last target before splitting work or changing a measured limit."
-            ;;
-        cancellation)
-            next="Review scripts/chromiumer-job.sh status ${job} and its logs before deciding whether a new unique job is needed."
-            ;;
-        *)
-            record_poll_error "${path}" "invalid terminal result"
-            return
-            ;;
-    esac
-
-    body="${body_dir}/${job}.txt"
+    key=$(jq -r .analysis_key "${path}")
+    event="${events_dir}/${job}.txt"
+    temp="${event}.tmp.$$"
     {
-        printf '%s job finished.\n\n' "${product}"
+        printf 'A detached Helium build reached a terminal state. The recorded reason is evidence, not a diagnosis.\n\n'
         printf 'Product: %s\n' "${product}"
         printf 'Job ID: %s\n' "${job}"
-        printf 'Result: %s\n' "${result}"
-        printf 'Duration: %s (%s seconds)\n\n' "$(format_duration "${duration}")" "${duration}"
-        printf 'Source commits:\n%s\n\n' "${sources}"
+        printf 'Terminal state: %s\n' "${result}"
+        printf 'Duration seconds: %s\n' "${duration}"
+        printf 'Exit code: %s\n' "${exit_code}"
+        printf 'Recorded reason: %s\n\n' "${reason}"
+        printf 'Pinned source provenance:\n%s\n\n' "${sources}"
         printf 'Test or artifact summary:\n%s\n\n' "${summary}"
-        printf 'Next useful action:\n%s\n' "${next}"
-    } >"${body}"
-    chmod 600 "${body}"
-    subject="[Helium] ${product}: ${job} ${result}"
+        printf 'Previously expected success action:\n%s\n\n' "${success_next}"
+        printf 'Repository paths on lm:\n'
+        printf -- '- Public backbone: /home/d/coding/helium/helium-passwords\n'
+        printf -- '- Private product: /home/d/coding/helium/helium-sync\n\n'
+        printf 'Evidence commands on lm:\n'
+        printf 'cd /home/d/coding/helium/helium-sync\n'
+        printf 'scripts/chromiumer-job.sh terminal %s\n' "${job}"
+        printf 'scripts/chromiumer-job.sh status %s\n' "${job}"
+        printf 'scripts/chromiumer-job.sh logs %s 400\n' "${job}"
+        printf "ssh -o BatchMode=yes chromiumer 'journalctl --user --unit=helium-watch-%s.service --no-pager --lines=400'\n" "${job}"
+        printf "ssh -o BatchMode=yes chromiumer 'find /home/d/helium-builds/work/%s/source -path \"*/android-artifacts/*\" -type f -printf \"%%p %%s bytes\\n\"'\n\n" "${job}"
+        printf 'Evidence and artifact locations:\n'
+        printf -- '- Chromiumer state: /home/d/.local/state/helium-builds/%s\n' "${job}"
+        printf -- '- Chromiumer workspace: /home/d/helium-builds/work/%s/source\n' "${job}"
+        printf -- '- Returned artifacts: /srv/nas/helium-builds/%s\n' "${job}"
+        printf -- '- Disposable acceptance: /srv/nas/helium-acceptance/%s\n\n' "${job}"
+        printf 'Current project objective:\n'
+        printf 'Own the unified Helium Passwords and Helium Sync program end to end. Build pinned Chromium only through the isolated chromiumer workflow; preserve all source and profiles; validate native passwords, encrypted password/cookie exchange, device-local durable tabs, Android streaming, and video in disposable state before personal deployment; keep public and private repositories synchronized through normal ancestry; make clean local commits and do not push.\n\n'
+        printf 'Required response:\n'
+        printf 'Inspect the actual terminal, build, watchdog, repository, and artifact evidence. Determine the real cause rather than repeating the recorded reason. Validate any artifact before use. Take the next safe in-scope recovery, fix, or continuation step autonomously without weakening resource gates or touching personal profiles. Report only your actual findings and completed safe work. Do not send a notification yourself; your final Codex response is the only build-result email.\n'
+        printf '\nEvent key: %s\n' "${key}"
+    } >"${temp}"
+    chmod 600 "${temp}"
+    if [ -e "${event}" ]; then
+        if ! cmp --silent "${temp}" "${event}"; then
+            find "${temp}" -delete
+            record_poll_error "${path}" "terminal analysis prompt conflicts with durable state"
+            return 1
+        fi
+        find "${temp}" -delete
+    else
+        mv "${temp}" "${event}"
+    fi
+    printf '%s\n' "${event}"
+}
 
-    if "${mailbridge_cli}" --config "${mailbridge_config}" queue-notification \
-        --key "${key}" --subject "${subject}" \
-        --body-file "${body}" >/dev/null 2>&1; then
+queue_terminal_analysis() {
+    local path=$1
+    local job key event
+    job=$(jq -r .job_id "${path}")
+    key=$(jq -r .analysis_key "${path}")
+    if ! event=$(write_event_prompt "${path}"); then
+        return
+    fi
+
+    if "${mailbridge_cli}" --config "${mailbridge_config}" queue-event \
+        --key "${key}" --conversation "${conversation}" \
+        --prompt-file "${event}" --json >/dev/null 2>&1; then
         replace_json "${path}" \
             --argjson now "$(date +%s)" \
-            '.status = "notification-queued" | .notification_queued_at = $now |
+            '.status = "analysis-queued" | .analysis_queued_at = $now |
              .last_poll_error = null'
-        printf 'notification-queued job=%s result=%s\n' "${job}" "${result}"
+        printf 'analysis-queued job=%s\n' "${job}"
     else
-        record_poll_error "${path}" "mailbridge queue unavailable"
+        record_poll_error "${path}" "mailbridge event queue unavailable"
+    fi
+}
+
+sync_analysis_status() {
+    local path=$1
+    local job key report event_status
+    job=$(jq -r .job_id "${path}")
+    key=$(jq -r .analysis_key "${path}")
+    if ! report=$("${mailbridge_cli}" --config "${mailbridge_config}" event-status \
+        --key "${key}" --json 2>/dev/null); then
+        record_poll_error "${path}" "mailbridge event status unavailable"
+        return
+    fi
+    event_status=$(jq -er '.status | select(. == "queued" or . == "running" or
+        . == "completed" or . == "emailed" or . == "failed")' <<<"${report}" 2>/dev/null) || {
+        record_poll_error "${path}" "invalid mailbridge event status"
+        return
+    }
+    replace_json "${path}" \
+        --arg status "analysis-${event_status}" \
+        --arg analysis_status "${event_status}" \
+        --argjson now "$(date +%s)" \
+        '.status = $status | .analysis_status = $analysis_status |
+         .analysis_status_checked_at = $now | .last_poll_error = null'
+    printf 'analysis-status job=%s status=%s\n' "${job}" "${event_status}"
+}
+
+valid_terminal_reason() {
+    local value=$1
+    [ -n "${value}" ] && [ "${#value}" -le 1000 ] &&
+        LC_ALL=C grep -qE '^[[:print:]]+$' <<<"${value}"
+}
+
+ensure_analysis_fields() {
+    local path=$1
+    local job
+    job=$(jq -r .job_id "${path}")
+    if ! jq -e '.schema == 2 and .analysis_key and .conversation' "${path}" >/dev/null; then
+        replace_json "${path}" \
+            --arg key "helium-build:${job}:terminal" \
+            --arg conversation "${conversation}" \
+            '.schema = 2 | .analysis_key = $key | .conversation = $conversation |
+             del(.notification_key)'
     fi
 }
 
 poll_jobs() {
-    mkdir -p "${jobs_dir}" "${body_dir}"
-    chmod 700 "${state_root}" "${jobs_dir}" "${body_dir}"
+    mkdir -p "${jobs_dir}" "${events_dir}"
+    chmod 700 "${state_root}" "${jobs_dir}" "${events_dir}"
     exec 9>"${state_root}/queue.lock"
     flock -n 9 || exit 0
 
@@ -243,10 +308,12 @@ poll_jobs() {
                 exit_code=$(terminal_value "${terminal}" exit_code)
                 reason=$(terminal_value "${terminal}" reason)
                 [[ "${result}" =~ ^(success|failure|timeout|cancellation)$ ]] && \
-                    [[ "${duration}" =~ ^[0-9]+$ ]] && [[ "${exit_code}" =~ ^[0-9]+$ ]] || {
+                    [[ "${duration}" =~ ^[0-9]+$ ]] && [[ "${exit_code}" =~ ^[0-9]+$ ]] &&
+                    valid_terminal_reason "${reason}" || {
                     record_poll_error "${path}" "invalid chromiumer terminal state"
                     continue
                 }
+                ensure_analysis_fields "${path}"
                 replace_json "${path}" \
                     --arg result "${result}" --arg reason "${reason}" \
                     --argjson duration "${duration}" --argjson exit_code "${exit_code}" \
@@ -255,10 +322,14 @@ poll_jobs() {
                      .duration_seconds = $duration | .exit_code = $exit_code |
                      .terminal_reason = $reason | .observed_terminal_at = $now |
                      .last_poll_error = null'
-                queue_terminal_notification "${path}"
+                queue_terminal_analysis "${path}"
                 ;;
             terminal-pending)
-                queue_terminal_notification "${path}"
+                ensure_analysis_fields "${path}"
+                queue_terminal_analysis "${path}"
+                ;;
+            analysis-queued|analysis-running|analysis-completed)
+                sync_analysis_status "${path}"
                 ;;
         esac
     done
