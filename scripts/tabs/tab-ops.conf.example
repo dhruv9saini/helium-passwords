@@ -1,5 +1,5 @@
 # Paths only. Keep the private age identity outside the repository.
-version=2
+version=3
 source_device=da
 key_id=da-tabs-v1
 profile=default
@@ -14,6 +14,9 @@ chromium_version=148.0.7778.178
 interval_seconds=900
 age_recipients=/home/d/.config/helium-sync/tab-backup-da.recipients
 age_identity=/run/helium-offline-recovery/tab-backup-da.identity
+ssh_user=d
+ssh_identity=/home/d/.ssh/helium_tabs_backup_ed25519
+ssh_known_hosts=/home/d/.ssh/helium_tabs_known_hosts
 destination_reserve_bytes=1073741824
 
 # The topology is fixed: da writes ciphertext to the NAS on lm and to d.

@@ -71,6 +71,9 @@ tab_ops_load_config() {
     TAB_INTERVAL_SECONDS=900
     TAB_AGE_RECIPIENTS=
     TAB_AGE_IDENTITY=
+	TAB_SSH_USER=
+	TAB_SSH_IDENTITY=
+	TAB_SSH_KNOWN_HOSTS=
     TAB_DESTINATION_RESERVE_BYTES=1073741824
     TAB_DEST_IDS=()
 	TAB_DEST_ROLES=()
@@ -103,6 +106,9 @@ tab_ops_load_config() {
             interval_seconds) TAB_INTERVAL_SECONDS=${value} ;;
             age_recipients) TAB_AGE_RECIPIENTS=${value} ;;
             age_identity) TAB_AGE_IDENTITY=${value} ;;
+			ssh_user) TAB_SSH_USER=${value} ;;
+			ssh_identity) TAB_SSH_IDENTITY=${value} ;;
+			ssh_known_hosts) TAB_SSH_KNOWN_HOSTS=${value} ;;
             destination_reserve_bytes) TAB_DESTINATION_RESERVE_BYTES=${value} ;;
             destination)
 				local destination_id destination_role destination_kind destination_host destination_ssh destination_root
@@ -122,7 +128,7 @@ tab_ops_load_config() {
         esac
     done <"${config_file}"
 
-	[ "${TAB_CONFIG_VERSION}" = 2 ] || {
+	[ "${TAB_CONFIG_VERSION}" = 3 ] || {
         echo "unsupported tab operations config version" >&2
         return 1
     }
@@ -152,6 +158,17 @@ tab_ops_load_config() {
 			return 1
 			;;
 	esac
+	[[ "${TAB_SSH_USER}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || {
+		echo "ssh_user is invalid" >&2
+		return 1
+	}
+	for ssh_path in "${TAB_SSH_IDENTITY}" "${TAB_SSH_KNOWN_HOSTS}"; do
+		tab_ops_require_absolute ssh_path "${ssh_path}"
+		[[ "${ssh_path}" =~ ^/[A-Za-z0-9._/-]+$ && "${ssh_path}" != *..* ]] || {
+			echo "SSH material path contains unsupported characters" >&2
+			return 1
+		}
+	done
     [[ "${TAB_INTERVAL_SECONDS}" =~ ^[1-9][0-9]*$ ]] || {
         echo "interval_seconds must be positive" >&2
         return 1
@@ -160,6 +177,34 @@ tab_ops_load_config() {
         echo "destination_reserve_bytes must be positive" >&2
         return 1
     }
+}
+
+tab_ops_require_ssh_material() {
+	local material material_name material_mode material_owner
+	for material_name in identity known_hosts; do
+		case "${material_name}" in
+			identity) material=${TAB_SSH_IDENTITY} ;;
+			known_hosts) material=${TAB_SSH_KNOWN_HOSTS} ;;
+		esac
+		[ -f "${material}" ] && [ ! -L "${material}" ] || {
+			echo "SSH ${material_name} is not a regular non-symlink file: ${material}" >&2
+			return 1
+		}
+		material_owner=$(stat -c %u "${material}")
+		[ "${material_owner}" = "$(id -u)" ] || {
+			echo "SSH ${material_name} is not owned by the source user" >&2
+			return 1
+		}
+		material_mode=$(stat -c %a "${material}")
+		[ "${material_mode}" = 600 ] || {
+			echo "SSH ${material_name} must be mode 0600" >&2
+			return 1
+		}
+	done
+	[ -s "${TAB_SSH_IDENTITY}" ] && [ -s "${TAB_SSH_KNOWN_HOSTS}" ] || {
+		echo "SSH identity and known-hosts files must be nonempty" >&2
+		return 1
+	}
 }
 
 tab_ops_validate_destinations() {

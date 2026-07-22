@@ -12,7 +12,7 @@ synthetic exports.
 ## Source-local scheduler
 
 Copy `scripts/tabs/tab-ops.conf.example` outside the repository, make it mode
-`0600`, and set one source device/profile namespace. Configuration version 2
+`0600`, and set one source device/profile namespace. Configuration version 3
 accepts only `d`, `da`, or `oneplus`; `key_id` must be the corresponding
 `DEVICE-tabs-v1`. One configuration owns one store. The store and operation
 state must remain outside the browser profile.
@@ -114,6 +114,15 @@ All destinations use noninteractive SSH. The lm destination fails preflight
 and backup if `findmnt` resolves its target to `/`; a directory on lm's system
 disk cannot masquerade as the NAS. No source device or chromiumer can count as
 one of its own copies.
+
+Each source config names `ssh_user`, a source-local dedicated `ssh_identity`,
+and a source-local `ssh_known_hosts` file. Both files must be owned by the
+source user, mode `0600`, nonempty regular files, and not symlinks. The
+transport ignores user SSH config, offers only that identity, requires a
+matching pinned host key, disables forwarding and TTY allocation, and uses
+BatchMode. Give the public half of this key a `restrict` authorization on each
+destination. This makes the unattended route explicit without reusing a
+general-purpose login key or trusting a first connection.
 
 Each device has its own `key_id` and age-recipient file. The normalized
 recipient-set fingerprint is bound into every backup manifest. At least two

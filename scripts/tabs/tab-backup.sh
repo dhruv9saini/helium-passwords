@@ -50,8 +50,17 @@ destination_run() {
     local index=$1 command_text
     shift
 	printf -v command_text '%q ' "$@"
-	ssh -o BatchMode=yes -o ConnectTimeout=10 \
+	ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 \
+		-o ClearAllForwardings=yes -o RequestTTY=no -o IdentitiesOnly=yes \
+		-o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null \
+		-o "UserKnownHostsFile=${TAB_SSH_KNOWN_HOSTS}" \
+		-i "${TAB_SSH_IDENTITY}" -l "${TAB_SSH_USER}" \
 		"${TAB_DEST_SSH[index]}" "${command_text}"
+}
+
+destination_rsh() {
+	printf 'ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes -o RequestTTY=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=%s -i %s -l %s\n' \
+		"${TAB_SSH_KNOWN_HOSTS}" "${TAB_SSH_IDENTITY}" "${TAB_SSH_USER}"
 }
 
 verify_destination_host() {
@@ -183,8 +192,8 @@ backup_preflight() {
 
 copy_file_to_destination() {
     local index=$1 source_file=$2 incoming=$3
-	rsync -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' \
-		--archive --chmod=F600 "${source_file}" "${TAB_DEST_SSH[index]}:${incoming}"
+	rsync -e "$(destination_rsh)" --archive --chmod=F600 "${source_file}" \
+		"${TAB_DEST_SSH[index]}:${incoming}"
 }
 
 copy_to_destination() {
@@ -427,7 +436,7 @@ retention_apply() {
 
 fetch_destination_file() {
     local index=$1 remote_file=$2 local_file=$3
-	rsync -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' --archive \
+	rsync -e "$(destination_rsh)" --archive \
 		"${TAB_DEST_SSH[index]}:${remote_file}" "${local_file}"
 	chmod 600 "${local_file}"
 }
@@ -507,6 +516,7 @@ shift 2
 tab_ops_load_config "${config_file}"
 tab_ops_validate_destinations
 tab_ops_require_source_host
+tab_ops_require_ssh_material
 tab_ops_require_absolute age_recipients "${TAB_AGE_RECIPIENTS}"
 tab_ops_require_absolute age_identity "${TAB_AGE_IDENTITY}"
 

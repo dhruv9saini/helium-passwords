@@ -59,7 +59,13 @@ cat >"${temporary}/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 while [[ "${1:-}" == -* ]]; do
-    if [ "$1" = -o ]; then shift 2; else shift; fi
+	case "$1" in
+		-F) [ "$2" = /dev/null ]; shift 2 ;;
+		-o) shift 2 ;;
+		-i) [ "$2" = "${TAB_TEST_SSH_IDENTITY}" ]; shift 2 ;;
+		-l) [ "$2" = d ]; shift 2 ;;
+		*) echo "unexpected SSH option: $1" >&2; exit 1 ;;
+	esac
 done
 remote_alias=$1
 shift
@@ -76,6 +82,13 @@ cat >"${temporary}/bin/rsync" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 arguments=("$@")
+[ "$1" = -e ]
+[[ "$2" == *"-F /dev/null"* ]]
+[[ "$2" == *"-o IdentitiesOnly=yes"* ]]
+[[ "$2" == *"-o StrictHostKeyChecking=yes"* ]]
+[[ "$2" == *"-o UserKnownHostsFile=${TAB_TEST_SSH_KNOWN_HOSTS}"* ]]
+[[ "$2" == *"-i ${TAB_TEST_SSH_IDENTITY}"* ]]
+[[ "$2" == *"-l d"* ]]
 count=${#arguments[@]}
 source_file=${arguments[count-2]}
 destination_file=${arguments[count-1]}
@@ -105,11 +118,14 @@ printf '%s\n' \
     'age1pppppppppppppppppppppppppppppppppppppppppppppppppppp' \
     >"${temporary}/recipients.txt"
 printf 'AGE-SECRET-KEY-SYNTHETIC\n' >"${temporary}/identity.txt"
-chmod 600 "${temporary}/recipients.txt" "${temporary}/identity.txt"
+printf 'SYNTHETIC-SSH-PRIVATE-KEY\n' >"${temporary}/ssh-identity"
+printf 'lm ssh-ed25519 SYNTHETIC\nd ssh-ed25519 SYNTHETIC\n' >"${temporary}/known-hosts"
+chmod 600 "${temporary}/recipients.txt" "${temporary}/identity.txt" \
+	"${temporary}/ssh-identity" "${temporary}/known-hosts"
 
 config="${temporary}/tab-ops.conf"
 cat >"${config}" <<EOF
-version=2
+version=3
 source_device=da
 key_id=da-tabs-v1
 profile=default
@@ -124,12 +140,17 @@ chromium_version=fixture
 interval_seconds=60
 age_recipients=${temporary}/recipients.txt
 age_identity=${temporary}/identity.txt
+ssh_user=d
+ssh_identity=${temporary}/ssh-identity
+ssh_known_hosts=${temporary}/known-hosts
 destination_reserve_bytes=1
 destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-tab-backups
 destination=d-copy|device|ssh|d|d|${temporary}/destination-two
 EOF
 chmod 600 "${config}"
 export TAB_TEST_NAS_ROOT="${temporary}/destination-lm"
+export TAB_TEST_SSH_IDENTITY="${temporary}/ssh-identity"
+export TAB_TEST_SSH_KNOWN_HOSTS="${temporary}/known-hosts"
 export PATH="${temporary}/bin:${PATH}"
 
 adapter="${repo_root}/scripts/tabs/helium-tab-exporter.sh"
@@ -273,7 +294,7 @@ chmod 600 "${temporary}/d.recipients" "${temporary}/oneplus.recipients"
 make_fleet_config() {
 	local source_device=$1 peer=$2 recipients=$3 output=$4
 	cat >"${output}" <<EOF
-version=2
+version=3
 source_device=${source_device}
 key_id=${source_device}-tabs-v1
 profile=default
@@ -288,6 +309,9 @@ chromium_version=fixture
 interval_seconds=60
 age_recipients=${recipients}
 age_identity=${temporary}/${source_device}.identity
+ssh_user=d
+ssh_identity=${temporary}/ssh-identity
+ssh_known_hosts=${temporary}/known-hosts
 destination_reserve_bytes=1
 destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-tab-backups
 destination=${peer}-copy|device|ssh|${peer}|${peer}|${temporary}/fleet-${peer}
