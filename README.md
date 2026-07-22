@@ -79,6 +79,12 @@ substitute for a native compile or disposable browser run.
 
 ## Chromium builds
 
+On chromiumer, do not use the Docker-backed local command. Use the isolated
+Nix entry point and `scripts/build-chromiumer-linux.sh x86_64` exactly as shown
+in [docs/chromiumer-builds.md](docs/chromiumer-builds.md). The driver returns
+one provenance-bound archive; `scripts/verify-linux-runtime.sh` must admit it
+before the executable can enter the disposable native-password gate.
+
 The source of truth is the pinned Nix environment and detached wrapper:
 
 ```sh

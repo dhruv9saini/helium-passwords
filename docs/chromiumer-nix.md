@@ -12,8 +12,10 @@ The expression is `chromium/nix/chromiumer-shell.nix`. It uses the exact
 nixpkgs revision and hash selected by Chromium 150.0.7871.181 at commit
 `24b04c927b23c39cf9c5227cc8dc6f64a744c8e9`. It adds Helium's Python modules,
 source-transfer, patch, archive, and provenance tools to Chromium's matching
-NixOS runtime libraries. It deliberately omits Chromium's Google Cloud SDK and
-downloaded clangd bundle because Helium does not use remote execution on
+NixOS runtime libraries. The public Linux path additionally supplies the exact
+host tools its pinned platform build invokes directly: Node 22, Ninja, Bison,
+Flex, Yasm, and ImageMagick. It deliberately omits Chromium's Google Cloud SDK
+and downloaded clangd bundle because Helium does not use remote execution on
 chromiumer and the host's disk reserve is small.
 
 The expression returns the `buildFHSEnv` derivation, whose output contains
@@ -45,7 +47,7 @@ separate accounting for Nix.
 cd /home/d/coding/helium/helium-passwords
 scripts/chromiumer-job.sh connection
 scripts/chromiumer-job.sh preflight 20
-job=hp-nix-env-150
+job=hp-nix-linux-150-01
 scripts/chromiumer-job.sh stage "$job" 20
 scripts/chromiumer-job.sh start "$job" \
   --summary "Pinned Chromium 150 Nix environment realization" \
@@ -63,12 +65,14 @@ scripts/chromiumer-job.sh cleanup "$job"
 scripts/chromiumer-job.sh preflight 80
 ```
 
-`realise` refuses direct SSH execution and creates the stable GC root
-`~/.local/state/helium-build-env/chromium-150`; it refuses to replace an
-existing root. `provenance` records its resolved store path, complete closure
-hash and size, Nix version, Chromium commit, and nixpkgs commit. Copy that
-output into the build's provenance directory. Do not run `nix-collect-garbage`
-as part of a Helium job.
+`realise` refuses direct SSH execution and creates a stable GC root named
+`~/.local/state/helium-build-env/chromium-150-<expression-hash-prefix>`; it
+refuses to replace an existing root. An expression change therefore creates a
+new root instead of silently reusing an older closure. `provenance` records
+the full expression hash, resolved store path, complete closure hash and size,
+Nix version, Chromium commit, and nixpkgs commit. Copy that output into the
+build's provenance directory. Do not remove an older root or run
+`nix-collect-garbage` as part of a Helium job.
 
 The provenance also records realization start/end free bytes, measured delta,
 20 GiB realization budget, 82 GiB post-realization floor, and 102 GiB start
@@ -109,3 +113,26 @@ admits the repository's declared build budgets, so successful shell
 realization is not evidence that a full compile will fit. The first validation
 must remain the bounded source/patch and small-target sequence documented in
 `docs/chromiumer-builds.md`.
+
+After the currently active Chromiumer job has reached a terminal state, its
+artifact is returned, and its workspace is eligible for cleanup, run the
+one-time public Linux realization sequence above. Do not stage the browser
+compile until that realization succeeds, its provenance is returned, its
+workspace is cleaned through the wrapper, and a fresh 80 GiB preflight passes.
+The exact compile successor is then:
+
+```sh
+cd /home/d/coding/helium/helium-passwords
+scripts/chromiumer-job.sh preflight 80
+job=hp-linux-150-passwords-01
+scripts/chromiumer-job.sh stage "$job" 80
+scripts/chromiumer-job.sh start "$job" \
+  --summary "Linux x86_64 browser artifact and password acceptance input" \
+  --next "Fetch and verify the packaged artifact, then run the disposable password gate on da." -- \
+  scripts/chromiumer-nix.sh run -- \
+    bash scripts/build-chromiumer-linux.sh x86_64
+```
+
+Use `scripts/chromiumer-job.sh cancel "$job"` as the one cancellation command.
+Fetch and verify the returned archive exactly as documented in
+`chromiumer-builds.md`.

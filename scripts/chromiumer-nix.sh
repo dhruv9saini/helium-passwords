@@ -3,7 +3,8 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 environment_file="${repo_root}/chromium/nix/chromiumer-shell.nix"
-environment_root="${HELIUM_CHROMIUMER_NIX_ROOT:-${HOME}/.local/state/helium-build-env/chromium-150}"
+environment_source_sha256=$(sha256sum "${environment_file}" | awk '{ print $1 }')
+environment_root="${HELIUM_CHROMIUMER_NIX_ROOT:-${HOME}/.local/state/helium-build-env/chromium-150-${environment_source_sha256:0:16}}"
 realise_state="${environment_root}.realise.env"
 expected_chromium_commit=24b04c927b23c39cf9c5227cc8dc6f64a744c8e9
 expected_nixpkgs_commit=a793ee3962cf3be3d0e9ed1022147ea9cd34eea9
@@ -85,7 +86,8 @@ realise_environment() {
         echo "environment root already exists; inspect it instead of replacing it" >&2
         exit 1
     }
-    local start_available available consumed nix_pid failure_reason= state_temporary
+    local start_available available consumed nix_pid state_temporary
+    local failure_reason=''
     start_available=$(df -PB1 / | awk 'NR == 2 { print $4 }')
     [ "${start_available}" -ge "${realise_start_gate_bytes}" ] || {
         echo "environment realization requires 102 GiB free: 80 GiB future build + 2 GiB root floor + 20 GiB Nix budget" >&2
@@ -141,10 +143,16 @@ provenance() {
         echo "pinned Chromium environment is not realised: ${environment_root}" >&2
         exit 1
     }
-    local realised closure_hash closure_bytes
+    local realised expected_derivation expected_output closure_hash closure_bytes
     realised=$(readlink -f "${environment_root}")
     [ -x "${realised}/bin/helium-chromium-150-env" ] || {
         echo "realised environment entry point is missing" >&2
+        exit 1
+    }
+    expected_derivation=$(nix-instantiate "${environment_file}")
+    expected_output=$(nix-store --query --outputs "${expected_derivation}")
+    [ "${realised}" = "${expected_output}" ] || {
+        echo "realised environment does not match the current Nix expression" >&2
         exit 1
     }
     closure_hash=$(nix-store --query --requisites "${realised}" | sort | sha256sum | awk '{ print $1 }')
@@ -153,6 +161,8 @@ provenance() {
     printf 'nix_environment=%s\nclosure_sha256=%s\nclosure_bytes=%s\nchromium_commit=%s\nnixpkgs_commit=%s\nnix_version=%s\n' \
         "${realised}" "${closure_hash}" "${closure_bytes}" \
         "${expected_chromium_commit}" "${expected_nixpkgs_commit}" "$(nix --version)"
+    printf 'environment_source_sha256=%s\n' "${environment_source_sha256}"
+    printf 'nix_derivation=%s\n' "${expected_derivation}"
     [ ! -f "${realise_state}" ] || cat "${realise_state}"
 }
 

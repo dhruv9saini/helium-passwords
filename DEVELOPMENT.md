@@ -143,7 +143,9 @@ cleanup rules are executable through
 [`scripts/password-runtime/acceptance.mjs`](scripts/password-runtime/acceptance.mjs)
 and documented in
 [`docs/password-runtime-acceptance.md`](docs/password-runtime-acceptance.md).
-It is source-complete but still needs a compiled artifact receipt.
+Linux admission now requires the receipt from the strict returned-runtime
+verifier. The gate is source-complete but still needs a compiled artifact
+receipt.
 
 For quick form-shape checks that do not claim browser behavior, start the
 repository-owned stateless synthetic origin with:
@@ -186,11 +188,15 @@ cleanup contract are documented in
 disk budget: use 80 GiB for the bounded compile proof and 100 GiB for a full
 build. The existing SSD passes the bounded-proof disk gate while keeping a
 2 GiB unprivileged root floor in addition to ext4's 5.91 GiB root-only reserve.
-Chromiumer still needs a pinned Nix tool environment, and its 7.6 GiB RAM with
-no swap may make compilation fail inside the deliberately strict 5 GiB cgroup
-limit. GitHub Actions in the private repo is independently blocked before job
-startup by the account billing/spend limit. Browser validation must use
-chromiumer and must not fall back to lm.
+Chromiumer has a realized Android-oriented Nix closure, but the public Linux
+expression now includes the direct platform build's Node/Ninja/tool inputs and
+uses an expression-hash-named GC root. That exact closure still needs its own
+isolated realization after the active Android job finishes. The direct Linux
+driver deliberately avoids Docker so compiler processes, temporary files, and
+outputs remain inside the enforced cgroup and workspace accounting. Its 7.6
+GiB RAM with no swap may still make compilation fail inside the deliberately
+strict 5 GiB cgroup limit. Browser validation must use chromiumer and must not
+fall back to lm.
 
 The build wrapper also requires a job-specific result summary and success
 action before startup. Its terminal-state notification path is installed on

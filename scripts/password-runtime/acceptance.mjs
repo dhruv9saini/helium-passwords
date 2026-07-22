@@ -90,6 +90,51 @@ async function readPreparedAndroidAdmission(artifactPath, artifactHash, packageN
   }
 }
 
+async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPath) {
+  if (!receiptPath) throw new Error("Linux acceptance requires a verified artifact receipt");
+  const receipt = await regularFile(receiptPath, "Linux artifact receipt");
+  if ((receipt.stat.mode & 0o077) !== 0) {
+    throw new Error("Linux artifact receipt must not be group- or world-accessible");
+  }
+  const raw = await fsp.readFile(receipt.resolved, "utf8");
+  const values = new Map();
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const separator = line.indexOf("=");
+    if (separator < 1) throw new Error("Linux artifact receipt is malformed");
+    const key = line.slice(0, separator);
+    if (values.has(key)) throw new Error("Linux artifact receipt contains duplicate keys");
+    values.set(key, line.slice(separator + 1));
+  }
+  const expectedKeys = [
+    "schema_version", "product", "platform", "arch", "source_commit",
+    "helium_core_commit", "chromium_version", "chromium_commit",
+    "platform_commit", "bundle", "bundle_sha256",
+    "provenance_manifest_sha256", "browser_executable", "browser_sha256",
+    "verified_at",
+  ].sort();
+  if (JSON.stringify([...values.keys()].sort()) !== JSON.stringify(expectedKeys)) {
+    throw new Error("Linux artifact receipt has an unexpected field inventory");
+  }
+  const commitFields = [
+    "source_commit", "helium_core_commit", "chromium_commit", "platform_commit",
+  ];
+  const digestFields = [
+    "bundle_sha256", "provenance_manifest_sha256", "browser_sha256",
+  ];
+  if (values.get("schema_version") !== "1" ||
+      values.get("product") !== "helium-passwords" ||
+      values.get("platform") !== "linux" || values.get("arch") !== "x86_64" ||
+      path.resolve(path.dirname(receipt.resolved),
+        values.get("browser_executable") || "") !== artifactPath ||
+      values.get("browser_sha256") !== artifactHash ||
+      commitFields.some(name => !/^[0-9a-f]{40}$/.test(values.get(name) || "")) ||
+      digestFields.some(name => !/^[0-9a-f]{64}$/.test(values.get(name) || ""))) {
+    throw new Error("Linux artifact receipt does not admit this audited browser executable");
+  }
+  return {resolved: receipt.resolved, raw};
+}
+
 async function writeJSON(filePath, value, {exclusive = false} = {}) {
   const data = `${JSON.stringify(value, null, 2)}\n`;
   if (exclusive) {
@@ -106,7 +151,8 @@ async function loadRun(runRoot) {
   const {value} = await readJSON(path.join(root, "run.json"), "acceptance run");
   exactKeys(value, [
     "schema_version", "run_root", "platform", "package", "artifact_path",
-    "artifact_sha256", "profile_path", "created_at", "expected_steps", "captures",
+    "artifact_sha256", "artifact_receipt", "artifact_receipt_sha256",
+    "profile_path", "created_at", "expected_steps", "captures",
   ], "acceptance run");
   if (value.schema_version !== SCHEMA_VERSION || value.run_root !== root ||
       !Array.isArray(value.expected_steps) || !Array.isArray(value.captures)) {
@@ -115,7 +161,9 @@ async function loadRun(runRoot) {
   return {root, run: value};
 }
 
-export async function initializeRun({artifact, output, platform, packageName = ""}) {
+export async function initializeRun({
+  artifact, output, platform, packageName = "", artifactReceipt = "",
+}) {
   if (platform !== "linux" && platform !== "android") {
     throw new Error("platform must be linux or android");
   }
@@ -130,8 +178,12 @@ export async function initializeRun({artifact, output, platform, packageName = "
   if (platform === "linux" && (artifactInfo.stat.mode & 0o111) === 0) {
     throw new Error("Linux browser artifact must be the executable that will be launched");
   }
+  let linuxAdmission = null;
   if (platform === "android") {
     await readPreparedAndroidAdmission(artifactInfo.resolved, artifactHash, packageName);
+  } else {
+    linuxAdmission = await readLinuxArtifactAdmission(
+      artifactInfo.resolved, artifactHash, artifactReceipt);
   }
   const root = path.resolve(output);
   await fsp.mkdir(path.dirname(root), {recursive: true});
@@ -150,6 +202,8 @@ export async function initializeRun({artifact, output, platform, packageName = "
     package: packageName,
     artifact_path: artifactInfo.resolved,
     artifact_sha256: artifactHash,
+    artifact_receipt: linuxAdmission?.resolved || null,
+    artifact_receipt_sha256: linuxAdmission ? sha256(linuxAdmission.raw) : null,
     profile_path: profile,
     created_at: new Date().toISOString(),
     expected_steps: NATIVE_PASSWORD_STEPS,
@@ -232,6 +286,7 @@ export function validateAcceptance(run, fixtureEvidence) {
     schema_version: 1,
     result: "passed",
     artifact_sha256: run.artifact_sha256,
+    artifact_receipt_sha256: run.artifact_receipt_sha256,
     platform: run.platform,
     package: run.package,
     fixture_origin: fixtureEvidence.fixture_origin,
@@ -253,6 +308,11 @@ export async function auditRun({runRoot, fixtureEvidence}) {
     if (run.profile_path !== path.join(root, "profile") ||
         await fsp.readFile(marker, "utf8") !== PROFILE_MARKER) {
       throw new Error("Linux disposable profile marker is missing or invalid");
+    }
+    const admission = await readLinuxArtifactAdmission(
+      artifact.resolved, run.artifact_sha256, run.artifact_receipt);
+    if (sha256(admission.raw) !== run.artifact_receipt_sha256) {
+      throw new Error("Linux artifact receipt changed after acceptance initialization");
     }
   } else if (run.platform === "android" && validAndroidTestPackage(run.package)) {
     await readPreparedAndroidAdmission(artifact.resolved, run.artifact_sha256, run.package);
@@ -310,7 +370,7 @@ function requireArgs(args, names) {
 
 function usage() {
   return `usage:
-  acceptance.mjs init --artifact FILE --platform linux --output NEW_DIR
+  acceptance.mjs init --artifact FILE --artifact-receipt FILE --platform linux --output NEW_DIR
   acceptance.mjs init --artifact Browser-test.apk --platform android --package APP.test --output NEW_DIR
   acceptance.mjs capture --run DIR --step STEP --screenshot PNG
   acceptance.mjs verify --run DIR --fixture-evidence JSON\n`;
@@ -321,13 +381,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const command = process.argv[2];
     const args = parseArgs(process.argv.slice(3));
     if (command === "init") {
-      const expected = args.platform === "android" ? ["artifact", "platform", "package", "output"] : ["artifact", "platform", "output"];
+      const expected = args.platform === "android" ?
+        ["artifact", "platform", "package", "output"] :
+        ["artifact", "artifact-receipt", "platform", "output"];
       requireArgs(args, expected);
       const run = await initializeRun({
         artifact: args.artifact,
         output: args.output,
         platform: args.platform,
         packageName: args.package || "",
+        artifactReceipt: args["artifact-receipt"] || "",
       });
       process.stdout.write(`${JSON.stringify({event: "initialized", run: run.run_root, profile: run.profile_path})}\n`);
     } else if (command === "capture") {
