@@ -58,7 +58,8 @@ git -C "${depot_tools}" checkout --detach \
     "${HELIUM_ANDROID_DEPOT_TOOLS_COMMIT}"
 "${repo_root}/scripts/chromium/verify-depot-tools-cache-contract.sh" \
     "${depot_tools}" "${HELIUM_ANDROID_DEPOT_TOOLS_COMMIT}" >/dev/null
-DEPOT_TOOLS_UPDATE=0 "${depot_tools}/ensure_bootstrap"
+PATH="${depot_tools}/.cipd_bin:${depot_tools}:${PATH}" \
+    DEPOT_TOOLS_UPDATE=0 "${depot_tools}/ensure_bootstrap"
 "${repo_root}/scripts/chromium/verify-depot-tools-cache-contract.sh" \
     "${depot_tools}" "${HELIUM_ANDROID_DEPOT_TOOLS_COMMIT}" >/dev/null
 python3_reldir=$(<"${depot_tools}/python3_bin_reldir.txt")

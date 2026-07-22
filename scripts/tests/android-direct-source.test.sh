@@ -252,7 +252,9 @@ proof_budget_bytes=$((2 * gib_bytes))
 [[ "$((proof_budget_bytes - retained_tree_bytes))" -eq 663654400 ]]
 
 source_helper="$repo_root/scripts/chromium/prepare-android-source.sh"
-grep -Fq 'DEPOT_TOOLS_UPDATE=0 "${depot_tools}/ensure_bootstrap"' \
+grep -Fq 'PATH="${depot_tools}/.cipd_bin:${depot_tools}:${PATH}" \' \
+  "$source_helper"
+grep -Fq '    DEPOT_TOOLS_UPDATE=0 "${depot_tools}/ensure_bootstrap"' \
   "$source_helper"
 grep -Fq 'python3_reldir=$(<"${depot_tools}/python3_bin_reldir.txt")' \
   "$source_helper"
