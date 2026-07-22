@@ -188,15 +188,16 @@ cleanup contract are documented in
 disk budget: use 80 GiB for the bounded compile proof and 100 GiB for a full
 build. The existing SSD passes the bounded-proof disk gate while keeping a
 2 GiB unprivileged root floor in addition to ext4's 5.91 GiB root-only reserve.
-Chromiumer has a realized Android-oriented Nix closure, but the public Linux
-expression now includes the direct platform build's Node/Ninja/tool inputs and
-uses an expression-hash-named GC root. That exact closure still needs its own
-isolated realization after the active Android job finishes. The direct Linux
+The exact public Linux expression is realized at the expression-hash-named GC
+root `chromium-150-a0820646387c653b`. Its returned provenance binds the current
+expression, Chromium/nixpkgs pins, derivation, output, and complete closure; a
+fresh 80 GiB preflight passed after realization and cleanup. The direct Linux
 driver deliberately avoids Docker so compiler processes, temporary files, and
 outputs remain inside the enforced cgroup and workspace accounting. Its 7.6
 GiB RAM with no swap may still make compilation fail inside the deliberately
-strict 5 GiB cgroup limit. Browser validation must use chromiumer and must not
-fall back to lm.
+strict 5 GiB cgroup limit. The serialized Android validation train currently
+owns chromiumer admission; the public build waits for its explicit handoff.
+Browser validation must use chromiumer and must not fall back to lm.
 
 The build wrapper also requires a job-specific result summary and success
 action before startup. Its terminal-state notification path is installed on

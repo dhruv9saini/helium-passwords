@@ -76,10 +76,14 @@ build's provenance directory. Do not remove an older root or run
 
 The provenance also records realization start/end free bytes, measured delta,
 20 GiB realization budget, 82 GiB post-realization floor, and 102 GiB start
-gate. At the latest capacity check, chromiumer exposed 110,753,861,632 bytes
-(103.15 GiB) to the build user. The start gate therefore has only 1.15 GiB of
-current headroom; always use the live byte check, because any unrelated growth
-can correctly refuse or stop realization.
+gate. Job `hs-nix-150-a0820646-01` realized the current expression at
+`chromium-150-a0820646387c653b`. Root availability changed from 110,053,076,992
+to 109,691,019,264 bytes, a measured 362,057,728-byte delta. The exact closure
+contains 1,853,912,336 bytes and hashes to
+`a3e8b195d0e69263de2239e5410fc3509de22c8c3ed0657c82d387816bd40d57`.
+Returned provenance is stored at
+`/srv/nas/helium-builds/hs-nix-150-a0820646-01/chromiumer-nix.env`; its SHA-256
+is `a87f590a5519db58633cd31f99a67d09b4f9e1ea9ac3ffb448fe94f0f4d147b6`.
 
 The environment has not been realized merely because its source and pin checks
 pass. A successful `realise`, a recorded closure, and a fresh production
@@ -114,12 +118,11 @@ realization is not evidence that a full compile will fit. The first validation
 must remain the bounded source/patch and small-target sequence documented in
 `docs/chromiumer-builds.md`.
 
-After the currently active Chromiumer job has reached a terminal state, its
-artifact is returned, and its workspace is eligible for cleanup, run the
-one-time public Linux realization sequence above. Do not stage the browser
-compile until that realization succeeds, its provenance is returned, its
-workspace is cleaned through the wrapper, and a fresh 80 GiB preflight passes.
-The exact compile successor is then:
+The current realization, provenance return, cleanup, and fresh 80 GiB preflight
+are complete. The serialized Android validation train retains chromiumer until
+its explicit artifact-and-cleanup handoff. After that handoff, rerun connection
+and preflight because admission is always based on live capacity. The exact
+compile successor is:
 
 ```sh
 cd /home/d/coding/helium/helium-passwords
