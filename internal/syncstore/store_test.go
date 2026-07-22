@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -41,6 +42,34 @@ func TestCounterRequiresInt64DecimalString(t *testing.T) {
 	}
 	if err := json.Unmarshal([]byte(`{"seq":1}`), &decoded); err == nil {
 		t.Fatal("numeric counter must fail closed")
+	}
+}
+
+func TestSequenceExhaustionFailsClosedWithoutWrapping(t *testing.T) {
+	if !hasSequenceCapacity(Counter(math.MaxInt64), false, 1) ||
+		hasSequenceCapacity(Counter(math.MaxInt64), false, 2) ||
+		hasSequenceCapacity(Counter(math.MaxInt64), true, 1) {
+		t.Fatal("inclusive terminal sequence capacity is incorrect")
+	}
+	dir := t.TempDir()
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.nextSeq = Counter(math.MaxInt64)
+	store.seqExhausted = true
+	if cursor := store.Cursor(); cursor != Counter(math.MaxInt64) {
+		t.Fatalf("exhausted cursor wrapped: %d", cursor)
+	}
+	response, err := store.Put("d", acceptedKeys("epoch"), nil)
+	if err != nil || response.NextSeq != Counter(math.MaxInt64) {
+		t.Fatalf("exhausted no-op lost the terminal cursor: response=%+v err=%v", response, err)
+	}
+	mutation := mustEncrypt(t, bytes.Repeat([]byte{9}, clientKeyLength), "d", "epoch", PlainMutation{
+		Kind: KindPassword, Key: "exhausted", Payload: json.RawMessage(`{"value":1}`),
+	}, 1)
+	if _, err := store.Put("d", acceptedKeys("epoch"), []OpaqueMutation{mutation}); err == nil || !strings.Contains(err.Error(), "sequence space exhausted") {
+		t.Fatalf("write after sequence exhaustion did not fail closed: %v", err)
 	}
 }
 

@@ -47,15 +47,16 @@ func (store *Store) createSnapshot() error {
 	}
 	digest := sha256.Sum256(raw)
 	hash := hex.EncodeToString(digest[:])
+	cursor := store.cursorLocked()
 	if newest, err := store.newestValidSnapshot(); err == nil &&
 		newest.metadata.RecordsSHA256 == hash &&
 		newest.metadata.RecordCount == len(store.records) &&
-		newest.metadata.LastSeq == int64(store.nextSeq-1) {
+		newest.metadata.LastSeq == int64(cursor) {
 		return nil
 	}
 
 	created := time.Now().UTC()
-	name := fmt.Sprintf("%020d-%020d", store.nextSeq-1, created.UnixNano())
+	name := fmt.Sprintf("%020d-%020d", cursor, created.UnixNano())
 	temp, err := os.MkdirTemp(store.snapshotDir, ".incoming-")
 	if err != nil {
 		return err
@@ -69,7 +70,7 @@ func (store *Store) createSnapshot() error {
 	metadata := snapshotMetadata{
 		Version:       snapshotVersion,
 		CreatedAt:     created,
-		LastSeq:       int64(store.nextSeq - 1),
+		LastSeq:       int64(cursor),
 		RecordCount:   len(store.records),
 		RecordsBytes:  int64(len(raw)),
 		RecordsSHA256: hash,

@@ -16,12 +16,13 @@ import (
 const recordsFile = "records.jsonl"
 
 type Store struct {
-	mu          sync.Mutex
-	dataDir     string
-	recordsPath string
-	snapshotDir string
-	records     []OpaqueRecord
-	nextSeq     Counter
+	mu           sync.Mutex
+	dataDir      string
+	recordsPath  string
+	snapshotDir  string
+	records      []OpaqueRecord
+	nextSeq      Counter
+	seqExhausted bool
 }
 
 func OpenStore(dataDir string) (*Store, error) {
@@ -58,6 +59,7 @@ func (store *Store) loadRecords() error {
 
 	store.records = nil
 	store.nextSeq = 1
+	store.seqExhausted = false
 	revisions := make(map[string]Counter)
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 32*1024*1024)
@@ -75,6 +77,9 @@ func (store *Store) loadRecords() error {
 		if err := record.validate(); err != nil {
 			return fmt.Errorf("validate records line %d: %w", line, err)
 		}
+		if store.seqExhausted {
+			return fmt.Errorf("validate records line %d: sequence space exhausted", line)
+		}
 		if record.Seq != store.nextSeq {
 			return fmt.Errorf("validate records line %d: wanted seq %d, got %d", line, store.nextSeq, record.Seq)
 		}
@@ -84,7 +89,11 @@ func (store *Store) loadRecords() error {
 		}
 		revisions[identity] = record.Revision
 		store.records = append(store.records, record)
-		store.nextSeq++
+		if record.Seq == Counter(math.MaxInt64) {
+			store.seqExhausted = true
+		} else {
+			store.nextSeq++
+		}
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan records: %w", err)
@@ -103,9 +112,9 @@ func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mut
 		return PushResponse{}, errors.New("authenticated device id is required")
 	}
 	if len(mutations) == 0 {
-		return PushResponse{Records: []OpaqueRecord{}, NextSeq: store.nextSeq - 1}, nil
+		return PushResponse{Records: []OpaqueRecord{}, NextSeq: store.cursorLocked()}, nil
 	}
-	if int64(store.nextSeq) > math.MaxInt64-int64(len(mutations)) {
+	if !hasSequenceCapacity(store.nextSeq, store.seqExhausted, len(mutations)) {
 		return PushResponse{}, errors.New("sequence space exhausted")
 	}
 	latest := make(map[string]Counter)
@@ -173,11 +182,17 @@ func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mut
 		return PushResponse{}, fmt.Errorf("close records: %w", err)
 	}
 	store.records = append(store.records, pending...)
-	store.nextSeq += Counter(len(pending))
+	lastSeq := pending[len(pending)-1].Seq
+	if lastSeq == Counter(math.MaxInt64) {
+		store.nextSeq = lastSeq
+		store.seqExhausted = true
+	} else {
+		store.nextSeq = lastSeq + 1
+	}
 	if err := store.createSnapshot(); err != nil {
 		return PushResponse{}, fmt.Errorf("checkpoint records: %w", err)
 	}
-	return PushResponse{Records: pending, NextSeq: store.nextSeq - 1}, nil
+	return PushResponse{Records: pending, NextSeq: store.cursorLocked()}, nil
 }
 
 func (store *Store) Pull(since Counter, kinds map[Kind]struct{}) PullResponse {
@@ -190,7 +205,7 @@ func (store *Store) Pull(since Counter, kinds map[Kind]struct{}) PullResponse {
 			out = append(out, record)
 		}
 	}
-	return PullResponse{Records: out, NextSeq: store.nextSeq - 1}
+	return PullResponse{Records: out, NextSeq: store.cursorLocked()}
 }
 
 // Latest always returns tombstones. Omitting them can resurrect deleted data on
@@ -211,13 +226,27 @@ func (store *Store) Latest(kinds map[Kind]struct{}) PullResponse {
 			out = append(out, record)
 		}
 	}
-	return PullResponse{Records: out, NextSeq: store.nextSeq - 1}
+	return PullResponse{Records: out, NextSeq: store.cursorLocked()}
 }
 
 func (store *Store) Cursor() Counter {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	return store.cursorLocked()
+}
+
+func (store *Store) cursorLocked() Counter {
+	if store.seqExhausted {
+		return store.nextSeq
+	}
 	return store.nextSeq - 1
+}
+
+func hasSequenceCapacity(next Counter, exhausted bool, count int) bool {
+	if exhausted || next <= 0 || count <= 0 {
+		return false
+	}
+	return int64(count-1) <= math.MaxInt64-int64(next)
 }
 
 func recordIdentity(kind Kind, key string) string {
