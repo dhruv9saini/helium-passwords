@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -548,7 +549,7 @@ func cmdEnrollmentComplete(args []string) error {
 	if err != nil {
 		return err
 	}
-	passwordSequence, err := readVerifiedSequence(*passwordState, 3)
+	passwordSequence, err := readPasswordVerifiedSequence(*passwordState)
 	if err != nil {
 		return fmt.Errorf("password readiness: %w", err)
 	}
@@ -631,8 +632,8 @@ func cmdKeyRekey(args []string) error {
 	if err != nil {
 		return err
 	}
-	passwordSequence, passwordRevisions, err := readBrowserRevisions(
-		*passwordState, 3, "credentials", "revision")
+	passwordSequence, passwordRevisions, err := readPasswordRevisions(
+		*passwordState)
 	if err != nil {
 		return fmt.Errorf("password rekey readiness: %w", err)
 	}
@@ -1073,6 +1074,69 @@ func readVerifiedSequence(path string, expectedSchema int) (int64, error) {
 		return 0, errors.New("verified_sequence is not a non-negative int64 string")
 	}
 	return sequence, nil
+}
+
+func validateCanonicalPasswordState(path string) error {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return err
+	}
+	var identitySchema, migrationStatus string
+	if err := json.Unmarshal(root["identity_schema"], &identitySchema); err != nil ||
+		identitySchema != "password-form-unique-key-v2" {
+		return errors.New("password identity schema is not canonical v2")
+	}
+	if err := json.Unmarshal(root["migration_status"], &migrationStatus); err != nil ||
+		migrationStatus != "complete" {
+		return errors.New("password identity migration is incomplete")
+	}
+	var legacy map[string]json.RawMessage
+	if err := json.Unmarshal(root["legacy_credentials"], &legacy); err != nil ||
+		len(legacy) != 0 {
+		return errors.New("password state retains legacy credentials")
+	}
+	var credentials map[string]json.RawMessage
+	if err := json.Unmarshal(root["credentials"], &credentials); err != nil {
+		return errors.New("password credentials are missing or invalid")
+	}
+	for key, recordRaw := range credentials {
+		const prefix = "credential/v2/"
+		if !strings.HasPrefix(key, prefix) || len(key) != len(prefix)+64 {
+			return fmt.Errorf("password credential key %q is not canonical v2", key)
+		}
+		if _, err := hex.DecodeString(strings.TrimPrefix(key, prefix)); err != nil {
+			return fmt.Errorf("password credential key %q is invalid", key)
+		}
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal(recordRaw, &record); err != nil {
+			return fmt.Errorf("password credential state %q is invalid", key)
+		}
+		if _, pending := record["pending_publication"]; pending {
+			return fmt.Errorf("password credential %q has an unresolved publication", key)
+		}
+		if _, queued := record["queued_mutation"]; queued {
+			return fmt.Errorf("password credential %q has an unpublished mutation", key)
+		}
+	}
+	return nil
+}
+
+func readPasswordVerifiedSequence(path string) (int64, error) {
+	if err := validateCanonicalPasswordState(path); err != nil {
+		return 0, err
+	}
+	return readVerifiedSequence(path, 4)
+}
+
+func readPasswordRevisions(path string) (int64, map[string]syncstore.Counter, error) {
+	if err := validateCanonicalPasswordState(path); err != nil {
+		return 0, nil, err
+	}
+	return readBrowserRevisions(path, 4, "credentials", "revision")
 }
 
 func readBrowserRevisions(path string, expectedSchema int,

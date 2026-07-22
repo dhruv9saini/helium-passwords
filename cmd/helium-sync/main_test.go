@@ -105,33 +105,73 @@ func TestCredentialActivationRequiresStoppedAbsoluteProfile(t *testing.T) {
 func TestReadBrowserRevisionsRequiresSchemaCursorAndStringRevisions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "password-state.json")
 	raw := `{
-  "schema_version": 3,
+  "schema_version": 4,
+  "identity_schema": "password-form-unique-key-v2",
+  "migration_status": "complete",
   "verified_sequence": "19",
+  "legacy_credentials": {},
   "credentials": {
-    "record-a": {"revision": "4", "ignored": true},
-    "record-b": {"revision": "0"}
+    "credential/v2/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {"revision": "4", "ignored": true},
+    "credential/v2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {"revision": "0"}
   }
 }`
 	if err := os.WriteFile(path, []byte(raw), 0600); err != nil {
 		t.Fatal(err)
 	}
-	sequence, revisions, err := readBrowserRevisions(
-		path, 3, "credentials", "revision")
+	sequence, revisions, err := readPasswordRevisions(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sequence != 19 || revisions["record-a"] != 4 || revisions["record-b"] != 0 {
+	if sequence != 19 ||
+		revisions["credential/v2/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"] != 4 ||
+		revisions["credential/v2/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"] != 0 {
 		t.Fatalf("unexpected browser revisions: sequence=%d revisions=%v",
 			sequence, revisions)
 	}
-	if _, _, err := readBrowserRevisions(path, 2, "credentials", "revision"); err == nil {
+	if _, _, err := readBrowserRevisions(path, 3, "credentials", "revision"); err == nil {
 		t.Fatal("wrong browser bridge schema was accepted")
 	}
 	bad := strings.Replace(raw, `"revision": "4"`, `"revision": 4`, 1)
 	if err := os.WriteFile(path, []byte(bad), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := readBrowserRevisions(path, 3, "credentials", "revision"); err == nil {
+	if _, _, err := readPasswordRevisions(path); err == nil {
 		t.Fatal("numeric browser revision was accepted")
+	}
+}
+
+func TestCanonicalPasswordStateRejectsMigrationAndPublicationWork(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "password-state.json")
+	base := `{
+  "schema_version": 4,
+  "identity_schema": "password-form-unique-key-v2",
+  "migration_status": "complete",
+  "verified_sequence": "19",
+  "legacy_credentials": {},
+  "credentials": {
+    "credential/v2/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {"revision": "4"}
+  }
+}`
+	if err := os.WriteFile(path, []byte(base), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPasswordVerifiedSequence(path); err != nil {
+		t.Fatal(err)
+	}
+	legacy := strings.Replace(base, `"legacy_credentials": {}`,
+		`"legacy_credentials": {"credential/old": {}}`, 1)
+	if err := os.WriteFile(path, []byte(legacy), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPasswordVerifiedSequence(path); err == nil {
+		t.Fatal("legacy password migration state was accepted")
+	}
+	pending := strings.Replace(base, `{"revision": "4"}`,
+		`{"revision": "4", "pending_publication": {}}`, 1)
+	if err := os.WriteFile(path, []byte(pending), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPasswordVerifiedSequence(path); err == nil {
+		t.Fatal("unresolved password publication was accepted")
 	}
 }
