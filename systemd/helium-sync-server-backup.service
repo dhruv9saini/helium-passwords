@@ -1,0 +1,14 @@
+[Unit]
+Description=Create a verified opaque Helium Sync server backup
+After=srv-nas.mount
+RequiresMountsFor=/srv/nas
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/libexec/helium-sync-server-backup backup /srv/nas/helium-sync-server
+UMask=0077
+Nice=10
+IOSchedulingClass=idle
+CPUQuota=25%
+MemoryMax=256M
+TasksMax=32

@@ -105,8 +105,7 @@ On lm:
 
 ```sh
 scripts/install-lm-sync-service.sh initialize /secure/incoming/lm-bootstrap.json
-# Back up and restore /var/lib/helium-sync into a disposable directory here.
-# The copy contains only credential hashes and opaque ciphertext.
+scripts/install-lm-sync-service.sh backup-drill
 scripts/install-lm-sync-service.sh enable
 scripts/install-lm-sync-service.sh status
 ```

@@ -28,6 +28,8 @@ func main() {
 		err = cmdSeedInit(os.Args[2:])
 	case "server-init":
 		err = cmdServerInit(os.Args[2:])
+	case "server-verify":
+		err = cmdServerVerify(os.Args[2:])
 	case "seed-public":
 		err = cmdSeedPublic(os.Args[2:])
 	case "join-request":
@@ -131,6 +133,30 @@ func cmdServerInit(args []string) error {
 	fmt.Printf("opaque data dir: %s\n", *dataDir)
 	fmt.Printf("device registry: %s\n", *devicesFile)
 	return nil
+}
+
+func cmdServerVerify(args []string) error {
+	flags := flag.NewFlagSet("server-verify", flag.ExitOnError)
+	dataDir := flags.String("data-dir", defaultDataDir(), "disposable restored opaque data directory")
+	devicesFile := flags.String("devices-file", filepath.Join(defaultDataDir(), "devices.json"), "restored hashed device registry")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	store, err := syncstore.OpenStore(*dataDir)
+	if err != nil {
+		return err
+	}
+	registry, err := syncstore.OpenDeviceRegistry(*devicesFile)
+	if err != nil {
+		return err
+	}
+	status := registry.KeyStatus()
+	return writePretty(map[string]any{
+		"verified": true, "cursor": store.Cursor(),
+		"active_key_id":   status.ActiveKeyID,
+		"staged_key_id":   status.StagedKeyID,
+		"retiring_key_id": status.RetiringKeyID,
+	})
 }
 
 func cmdSeedPublic(args []string) error {
@@ -709,7 +735,7 @@ func writePretty(value any) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: helium-sync <seed-init|server-init|seed-public|join-request|seed-wrap|join-install|key-update-request|key-update-install|server-enroll|server-revoke|enrollment-complete|key-*|credential-*|push|pull|latest> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: helium-sync <seed-init|server-init|server-verify|seed-public|join-request|seed-wrap|join-install|key-update-request|key-update-install|server-enroll|server-revoke|enrollment-complete|key-*|credential-*|push|pull|latest> [flags]")
 }
 
 func defaultDataDir() string {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily opaque Helium Sync server backup
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+Unit=helium-sync-server-backup.service
+
+[Install]
+WantedBy=timers.target
