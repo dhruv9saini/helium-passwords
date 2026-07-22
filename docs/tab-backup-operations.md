@@ -42,13 +42,13 @@ preflight and only then enables it. The timer runs one full cycle every 15
 minutes; failed conditions skip the service rather than running a partial
 backup.
 
-Oneplus/Android has no systemd manager, and its current Arch chroot also
-exposes no systemctl. `scripts/tabs/oneplus-tab-cycle-service.sh` is the
-disabled source template for the existing Magisk `service.d` mechanism. If it
-is eventually deployed, it exits without starting unless the config,
-`helium-tabs`, exporter, age, and jq already exist inside the chroot. No
-installer or service was deployed or enabled by this repository change. Do not
-create a second profile reader to work around the exporter.
+Oneplus/Android has no running systemd manager: the current Arch chroot has a
+`systemctl` binary but reports `offline`. `scripts/tabs/oneplus-tab-cycle-service.sh`
+is therefore the disabled source template for the existing Magisk `service.d`
+mechanism. If it is eventually deployed, it exits without starting unless the
+config, `helium-tabs`, exporter, age, and jq already exist inside the chroot.
+No installer or service was deployed or enabled by this repository change. Do
+not create a second profile reader to work around the exporter.
 
 ## Two encrypted off-device copies
 
@@ -129,10 +129,14 @@ can promote a restore into a live browser profile.
 - da and d are online in Tailscale. Dedicated BatchMode SSH from lm now works
   for da; d still rejects lm's available keys, so the example's second copy is
   not deployable yet.
+- da has about 208 GiB free, a running systemd user manager, `jq`, `rsync`, and
+  the standard integrity tools, but no `age`/`age-keygen` yet.
 - oneplus is online and reachable through authorized ADB, with roughly 410 GiB
-  free under `/data`. Port 22 is closed. Its Android shell/chroot currently
-  lacks `age` and `jq`; no scheduler or backup service should be deployed until
-  those tools and a noninteractive destination route are present.
+  free under `/data`. Port 22 is closed. Its Android shell lacks both `age` and
+  `jq`; its Arch chroot has `jq`, `rsync`, and the integrity tools but lacks
+  `age` and has no running systemd manager. No scheduler or backup service
+  should be deployed until age and two noninteractive destination routes are
+  present.
 
 These are deployment gates, not reasons to weaken destination independence or
 copy unencrypted tab data through an intermediary.
