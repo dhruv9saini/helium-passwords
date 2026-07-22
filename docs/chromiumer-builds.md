@@ -128,10 +128,15 @@ second, including while that scan is running and during the 30-second delay
 before the next scan, it takes a fresh `/` free-space reading and a fresh
 `MemAvailable` reading. A root-floor breach stops the build on that check; two
 consecutive low-memory readings stop it on the second check. Disk-budget
-evaluation occurs only after one complete valid scan. `health.env` is then
-atomically replaced with that disk result and the latest fresh filesystem,
-memory, and load readings. Consequently health-file cadence is scan duration
-plus the 30-second inter-scan delay, not one second or exactly 30 seconds.
+evaluation occurs only after one complete valid scan. A status-published scan
+failure with no diagnostic is retried once because a concurrent build-tree
+deletion can make a traversal fail silently; the retry is recorded in
+`disk-scan-retry.env`. A diagnostic scan failure, an unexpectedly terminated
+scanner, or a second consecutive silent failure remains fatal. `health.env` is
+then atomically replaced with the successful disk result and the latest fresh
+filesystem, memory, and load readings. Consequently health-file cadence is
+scan duration plus the 30-second inter-scan delay, not one second or exactly 30
+seconds.
 
 `watchdog-ready.env` is written only after the first complete healthy disk
 scan. The build command waits for that marker and an active watchdog before it
@@ -267,6 +272,7 @@ at:
 ```text
 /home/d/.local/state/helium-builds/<job>/policy.env
 /home/d/.local/state/helium-builds/<job>/health.env
+/home/d/.local/state/helium-builds/<job>/disk-scan-retry.env
 /home/d/.local/state/helium-builds/<job>/result.env
 /home/d/.local/state/helium-builds/<job>/terminal.env
 ```
