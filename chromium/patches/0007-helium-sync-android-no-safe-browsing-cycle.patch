@@ -20,3 +20,4 @@ diff --git a/chrome/browser/safe_browsing/BUILD.gn b/chrome/browser/safe_browsin
      deps += [
        "//chrome/browser/password_manager/android:utils",
        "//chrome/browser/ui/android/safe_browsing",
+       "//chrome/browser/ui/android/tab_model",
