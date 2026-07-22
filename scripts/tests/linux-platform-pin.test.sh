@@ -2,8 +2,14 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-# shellcheck source=../../helium-passwords.conf
-. "$repo_root/helium-passwords.conf"
+if [[ -f "$repo_root/go.mod" ]]; then
+  build_config="$repo_root/helium-sync.conf"
+else
+  build_config="$repo_root/helium-passwords.conf"
+fi
+[[ -f "$build_config" ]]
+# shellcheck source=/dev/null
+. "$build_config"
 
 [[ "$HELIUM_LINUX_PLATFORM_REF" == 0.12.4.1 ]]
 [[ "$HELIUM_LINUX_PLATFORM_COMMIT" == \
