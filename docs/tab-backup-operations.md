@@ -90,13 +90,21 @@ Each preflight and cycle uses Android's `unshare -u`, sets the isolated UTS
 hostname to exactly `oneplus`, verifies it, and only then enters the chroot.
 Android's global `localhost` hostname is unchanged. `preflight` deliberately
 uses the Magisk path rather than `systemctl`; it reports whether `/proc` happens
-to be mounted but does not require or mount it. The nested backup preflight
-still requires `age`, `jq`, `helium-tabs`, a fresh native export, and both
-authenticated outbound SSH destinations. A future operator must run this
-preflight successfully before separately installing the runner into
-`service.d` and creating the enable marker. No installer or service was
-deployed or enabled by this repository change. Do not create a second profile
-reader to work around the exporter.
+to be mounted but does not require or mount it. Immediately before every
+chroot entry, the runner verifies that Android `/dev/null` is a non-symlink
+character device with major/minor `1:3`. It accepts the chroot only with the
+same invariant; otherwise it makes exactly one `mount -o bind /dev CHROOT/dev`
+and rechecks the device identity before continuing. A failed mount or invalid
+post-mount identity fails closed without entering the chroot. The broader
+desktop `android-bind-mounts.sh` helper also mounts `/proc`, `/sys`, and
+`devpts`, so the headless runner intentionally does not invoke it or depend on
+a desktop session having run. The nested backup preflight still requires
+`age`, `jq`, `helium-tabs`, a fresh native export, and both authenticated
+outbound SSH destinations. A future operator must run this preflight
+successfully before separately installing the runner into `service.d` and
+creating the enable marker. No installer or service was deployed or enabled by
+this repository change. Do not create a second profile reader to work around
+the exporter.
 
 ## Two encrypted off-device copies
 
@@ -252,9 +260,12 @@ directory. It never deletes bytes and it never happens automatically.
   reaches lm and da noninteractively with strict pinned-host-key verification.
   OpenSSH 10.3p1 on lm and in the chroot both parse `-F none`; a synthetic
   command-only route proof also reaches both destinations without reading a
-  client config or relying on the chroot's malformed `/dev/null`. The source
-  remains disabled until offline public recovery recipients and the native
-  browser export exist.
+  client config or relying on the chroot's malformed `/dev/null`. The
+  underlying unmounted chroot path is still a mode-0666, 43-byte regular file;
+  the source runner now binds only Android `/dev` and verifies `1:3` before any
+  headless chroot entry. This invariant is synthetic-tested but has not mounted
+  the live chroot in this audit. The source remains disabled until offline
+  public recovery recipients and the native browser export exist.
 - da's dedicated public-key fingerprint is
   `SHA256:AxzKZUs3u5vVOxzhrHKRXMShn5amwgQxE/zemOtVPV4`; oneplus's is
   `SHA256:HyHqmUFOnyo5rNWP+OYTq6QM36Sbr+pYc2dd1n7nhCM`. Destinations authorize

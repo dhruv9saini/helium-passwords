@@ -6,6 +6,8 @@ set -eu
 android_root=${HELIUM_TAB_ANDROID_ROOT:-}
 system_bin=${android_root}/system/bin
 chroot_root=${android_root}/data/local/chroots/arch
+android_dev=${android_root}/dev
+chroot_dev=${chroot_root}/dev
 state_root=${android_root}/data/adb/helium-tab-ops
 enabled_marker=${state_root}/enabled-v1
 config=/root/.config/helium-sync/tab-ops.conf
@@ -21,7 +23,7 @@ log_failure() {
 }
 
 require_android_boundary() {
-    for binary in unshare sh hostname uname chroot sleep id stat cat; do
+    for binary in unshare sh hostname uname chroot sleep id stat cat mount; do
         [ -x "${system_bin}/${binary}" ] || {
             log_failure "missing Android boundary tool: ${binary}"
             return 1
@@ -31,9 +33,39 @@ require_android_boundary() {
     [ -d "${chroot_root}" ] || { log_failure 'Arch chroot is missing'; return 1; }
 }
 
+null_device_is_valid() {
+    null_path=$1
+    [ ! -L "${null_path}" ] || return 1
+    null_identity=$("${system_bin}/stat" -c '%F %t:%T' "${null_path}") || return 1
+    [ "${null_identity}" = 'character device 1:3' ]
+}
+
+ensure_chroot_dev() {
+    [ -d "${android_dev}" ] && [ ! -L "${android_dev}" ] && \
+        null_device_is_valid "${android_dev}/null" || {
+        log_failure 'Android /dev/null is not character device 1:3'
+        return 1
+    }
+    [ -d "${chroot_dev}" ] && [ ! -L "${chroot_dev}" ] || {
+        log_failure 'Arch chroot /dev is missing or unsafe'
+        return 1
+    }
+    null_device_is_valid "${chroot_dev}/null" && return 0
+
+    "${system_bin}/mount" -o bind "${android_dev}" "${chroot_dev}" || {
+        log_failure 'failed to bind Android /dev into the Arch chroot'
+        return 1
+    }
+    null_device_is_valid "${chroot_dev}/null" || {
+        log_failure 'Arch chroot /dev/null is not character device 1:3 after bind'
+        return 1
+    }
+}
+
 run_in_oneplus_uts() {
     operation=$1
     target=$2
+    ensure_chroot_dev
     "${system_bin}/unshare" -u "${system_bin}/sh" -c '
         system_bin=$1
         chroot_root=$2
