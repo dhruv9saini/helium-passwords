@@ -48,7 +48,16 @@ first_sync=$(grep -n '^sync' "$plan" | head -1 | cut -d: -f1)
 [[ "$last_core" -lt "$first_password" ]]
 [[ "$last_password" -lt "$first_sync" ]]
 
-grep -Fq 'prune_binaries.py' "$repo_root/scripts/chromium/apply-android-backbone.sh"
+grep -Fq '"$core_root/utils/prune_binaries.py" --keep-contingent-paths \' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh"
+prune_fixture="$test_root/prune-fixture"
+mkdir -p "$prune_fixture/chrome/android/java/res_chromium_base/values"
+printf '<resources/>\n' > \
+  "$prune_fixture/chrome/android/java/res_chromium_base/values/channel_constants.xml"
+: > "$test_root/empty-pruning.list"
+"$repo_root/helium-chromium/utils/prune_binaries.py" --keep-contingent-paths \
+  "$prune_fixture" "$test_root/empty-pruning.list"
+[[ -f "$prune_fixture/chrome/android/java/res_chromium_base/values/channel_constants.xml" ]]
 grep -Fq 'domain_substitution.py' "$repo_root/scripts/chromium/apply-android-backbone.sh"
 grep -Fq 'name_substitution.py' "$repo_root/scripts/chromium/apply-android-backbone.sh"
 grep -Fq 'i18n_apply.py' "$repo_root/scripts/chromium/apply-android-backbone.sh"

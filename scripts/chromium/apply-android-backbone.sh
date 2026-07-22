@@ -122,7 +122,8 @@ apply_backbone() {
   }
   command -v patch >/dev/null
 
-  "$core_root/utils/prune_binaries.py" "$source_tree" "$core_root/pruning.list"
+  "$core_root/utils/prune_binaries.py" --keep-contingent-paths \
+    "$source_tree" "$core_root/pruning.list"
   apply_series core "$core_root/patches" "$source_tree"
   "$repo_root/scripts/chromium/apply-git-series.sh" \
     "$password_root/series" "$password_root" "$source_tree"
