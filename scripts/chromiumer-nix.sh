@@ -148,7 +148,8 @@ provenance() {
         exit 1
     }
     closure_hash=$(nix-store --query --requisites "${realised}" | sort | sha256sum | awk '{ print $1 }')
-    closure_bytes=$(nix path-info --closure-size "${realised}" | awk '{ print $2 }')
+    closure_bytes=$(nix-store --query --requisites "${realised}" | \
+        xargs nix-store --query --size | awk '{ total += $1 } END { print total }')
     printf 'nix_environment=%s\nclosure_sha256=%s\nclosure_bytes=%s\nchromium_commit=%s\nnixpkgs_commit=%s\nnix_version=%s\n' \
         "${realised}" "${closure_hash}" "${closure_bytes}" \
         "${expected_chromium_commit}" "${expected_nixpkgs_commit}" "$(nix --version)"
