@@ -21,6 +21,14 @@ make_backup_receipt() {
   cipher_size=$(stat -c %s "$cipher")
   recipients_sha=$(sort -u "$test_root/recipients.txt" | sha256sum | awk '{print $1}')
   path_sha=$(printf %s "$source_path" | sha256sum | awk '{print $1}')
+  if [[ -d "$source_path" ]]; then
+    tree_sha=$(tar --sort=name --format=posix \
+      --pax-option=delete=atime,delete=ctime --mtime=@0 \
+      --owner=0 --group=0 --numeric-owner -C "$source_path" -cf - . | \
+      sha256sum | awk '{print $1}')
+  else
+    tree_sha=$(printf 'synthetic-tree-%s' "$profile_id" | sha256sum | awk '{print $1}')
+  fi
   cat >"$config" <<EOF
 version=1
 source_device=fixture
@@ -44,6 +52,7 @@ schema_version=1
 source_device=fixture
 profile_id=$profile_id
 profile_path_sha256=$path_sha
+source_tree_sha256=$tree_sha
 archive_root=profile
 generation=$generation
 cipher_sha256=$cipher_sha

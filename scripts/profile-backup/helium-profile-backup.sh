@@ -93,6 +93,15 @@ profile_path_hash() {
   printf '%s' "$(realpath -e -- "$PROFILE_SOURCE_PATH")" | sha256sum | awk '{print $1}'
 }
 
+profile_tree_fingerprint() {
+  local path=${1:-$PROFILE_SOURCE_PATH}
+  [[ -d "$path" && ! -L "$path" ]] || die "profile tree is unavailable for fingerprinting"
+  tar --sort=name --format=posix \
+    --pax-option=delete=atime,delete=ctime --mtime=@0 \
+    --owner=0 --group=0 --numeric-owner -C "$path" -cf - . | \
+    sha256sum | awk '{print $1}'
+}
+
 profile_open_pid() {
   local proc fd target canonical
   canonical=$(realpath -e -- "$PROFILE_SOURCE_PATH")/
@@ -149,7 +158,7 @@ read_receipt() {
   local file=$1 line key value allowed
   [[ -f "$file" && ! -L "$file" ]] || die "receipt is unavailable: $file"
   declare -gA RECEIPT=()
-  allowed=' schema_version source_device profile_id profile_path_sha256 archive_root generation cipher_sha256 cipher_size source_bytes recipients_sha256 created_at '
+  allowed=' schema_version source_device profile_id profile_path_sha256 source_tree_sha256 archive_root generation cipher_sha256 cipher_size source_bytes recipients_sha256 created_at '
   while IFS= read -r line || [[ -n "$line" ]]; do
     [[ -n "$line" && "$line" == *=* ]] || die "invalid profile backup receipt line"
     key=${line%%=*}; value=${line#*=}
@@ -158,10 +167,10 @@ read_receipt() {
     [[ -n "$value" ]] || die "empty profile backup receipt field: $key"
     RECEIPT[$key]=$value
   done <"$file"
-  [[ ${#RECEIPT[@]} -eq 11 ]] || die "incomplete profile backup receipt"
+  [[ ${#RECEIPT[@]} -eq 12 ]] || die "incomplete profile backup receipt"
   [[ "${RECEIPT[schema_version]:-}" == 1 && "${RECEIPT[source_device]:-}" == "$PROFILE_SOURCE_DEVICE" && "${RECEIPT[profile_id]:-}" == "$PROFILE_ID" ]] || die "profile backup receipt namespace mismatch"
   valid_generation "${RECEIPT[generation]:-}" || die "invalid receipt generation"
-  [[ "${RECEIPT[cipher_sha256]:-}" =~ ^[a-f0-9]{64}$ && "${RECEIPT[recipients_sha256]:-}" =~ ^[a-f0-9]{64}$ && "${RECEIPT[profile_path_sha256]:-}" =~ ^[a-f0-9]{64}$ ]] || die "invalid profile backup receipt hashes"
+  [[ "${RECEIPT[cipher_sha256]:-}" =~ ^[a-f0-9]{64}$ && "${RECEIPT[recipients_sha256]:-}" =~ ^[a-f0-9]{64}$ && "${RECEIPT[profile_path_sha256]:-}" =~ ^[a-f0-9]{64}$ && "${RECEIPT[source_tree_sha256]:-}" =~ ^[a-f0-9]{64}$ ]] || die "invalid profile backup receipt hashes"
   [[ "${RECEIPT[cipher_size]:-}" =~ ^[1-9][0-9]*$ && "${RECEIPT[source_bytes]:-}" =~ ^[0-9]+$ ]] || die "invalid profile backup receipt sizes"
   [[ "${RECEIPT[archive_root]:-}" != */* && "${RECEIPT[archive_root]:-}" != . && "${RECEIPT[archive_root]:-}" != .. ]] || die "invalid archive root"
 }
@@ -189,7 +198,7 @@ verify_generation() {
 
 backup() {
   local generation=${1:-} index ns incoming first_cipher first_receipt archive_root
-  local cipher_hash cipher_size source_bytes recipients profile_hash temporary_receipt
+  local cipher_hash cipher_size source_bytes recipients profile_hash tree_hash tree_hash_after temporary_receipt
   preflight >/dev/null
   [[ -n "$generation" ]] || generation="$(date -u +%Y%m%dT%H%M%SZ)-$(tr -d - </proc/sys/kernel/random/uuid | cut -c1-16)"
   valid_generation "$generation" || die "invalid generation"
@@ -198,6 +207,7 @@ backup() {
   source_bytes=$(du -sb -- "$PROFILE_SOURCE_PATH" | awk '{print $1}')
   recipients=$(recipients_fingerprint)
   profile_hash=$(profile_path_hash)
+  tree_hash=$(profile_tree_fingerprint)
 
   for index in 0 1; do
     ns=$(namespace "$index")
@@ -211,12 +221,14 @@ backup() {
   trap 'rm -f -- "${first_cipher:-}" "${first_receipt:-}" "${second_cipher:-}" "${second_receipt:-}"' EXIT
   tar --format=pax --numeric-owner -C "$(dirname -- "$PROFILE_SOURCE_PATH")" -cf - "$archive_root" | \
     zstd -q -T1 -3 | age --encrypt --recipients-file "$PROFILE_AGE_RECIPIENTS" --output "$first_cipher"
+  tree_hash_after=$(profile_tree_fingerprint)
+  [[ "$tree_hash_after" == "$tree_hash" ]] || die "source profile changed while the backup was being created"
   chmod 600 "$first_cipher"
   cipher_hash=$(sha256sum -- "$first_cipher" | awk '{print $1}')
   cipher_size=$(stat -c %s -- "$first_cipher")
   {
     printf 'schema_version=1\nsource_device=%s\nprofile_id=%s\n' "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
-    printf 'profile_path_sha256=%s\narchive_root=%s\ngeneration=%s\n' "$profile_hash" "$archive_root" "$generation"
+    printf 'profile_path_sha256=%s\nsource_tree_sha256=%s\narchive_root=%s\ngeneration=%s\n' "$profile_hash" "$tree_hash" "$archive_root" "$generation"
     printf 'cipher_sha256=%s\ncipher_size=%s\nsource_bytes=%s\n' "$cipher_hash" "$cipher_size" "$source_bytes"
     printf 'recipients_sha256=%s\ncreated_at=%s\n' "$recipients" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } >"$first_receipt"
@@ -251,9 +263,13 @@ verify_receipt_command() {
     [[ "$expected_path" == /* ]] || die "expected profile path must be absolute"
     expected_hash=$(printf '%s' "$expected_path" | sha256sum | awk '{print $1}')
   else
+    ensure_source_stopped
     expected_hash=$(profile_path_hash)
   fi
   [[ "${RECEIPT[profile_path_sha256]}" == "$expected_hash" ]] || die "backup receipt belongs to a different profile path"
+  if [[ -z "$expected_path" ]]; then
+    [[ "${RECEIPT[source_tree_sha256]}" == "$(profile_tree_fingerprint)" ]] || die "profile changed after the admitted backup"
+  fi
   printf 'profile_backup_admission=verified\ngeneration=%s\nsource_device=%s\nprofile_id=%s\nprofile_path_sha256=%s\n' \
     "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" "${RECEIPT[profile_path_sha256]}"
 }
@@ -319,6 +335,7 @@ restore_to_disposable() {
   ' "$listing" || die "backup archive contains unsafe or foreign paths"
   age --decrypt --identity "$PROFILE_AGE_IDENTITY" "$(cipher_path 0 "$generation")" | zstd -q -d | tar --no-same-owner --no-same-permissions -xf - -C "$temporary"
   [[ -d "$temporary/$archive_root" && ! -L "$temporary/$archive_root" ]] || die "restored archive root is invalid"
+  [[ "$(profile_tree_fingerprint "$temporary/$archive_root")" == "${RECEIPT[source_tree_sha256]}" ]] || die "restored profile content does not match the admitted source"
   mv -- "$temporary/$archive_root" "$destination"
   rmdir "$temporary"
   {
