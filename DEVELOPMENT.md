@@ -174,6 +174,13 @@ limit. GitHub Actions in the private repo is independently blocked before job
 startup by the account billing/spend limit. Browser validation must use
 chromiumer and must not fall back to lm.
 
+The build wrapper also requires a job-specific result summary and success
+action before startup. Its terminal-state notification path is installed on
+lm, survives shell and host restarts, and is documented in
+[`docs/job-notifications.md`](docs/job-notifications.md). Chromiumer never
+receives mail credentials. Codex turn hooks are intentionally not part of this
+path because they run at turn scope and would notify for routine agent work.
+
 ## References
 
 - Chromium Android build requirements and target:

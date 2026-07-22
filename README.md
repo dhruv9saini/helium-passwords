@@ -17,7 +17,9 @@ private product ledger is [TODO.md](TODO.md).
 
 Large Linux and Android builds use the enforced lm-to-chromiumer workflow in
 [docs/chromiumer-builds.md](docs/chromiumer-builds.md); never build Chromium on
-lm or use the NAS as a live compiler workspace.
+lm or use the NAS as a live compiler workspace. Terminal build results are
+delivered through the lm-only durable path in
+[docs/job-notifications.md](docs/job-notifications.md).
 
 The current audit, target architecture, and release gates are in
 [docs/audit-2026-07-21.md](docs/audit-2026-07-21.md),

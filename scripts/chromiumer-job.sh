@@ -8,6 +8,7 @@ remote_worker=.local/libexec/helium-chromiumer-worker
 remote_state=.local/state/helium-builds
 remote_work=helium-builds/work
 default_artifact_root=${HELIUM_ARTIFACT_ROOT:-/srv/nas/helium-builds}
+local_notifier=${HELIUM_JOB_NOTIFIER:-/home/d/.local/libexec/helium-job-notifier}
 
 usage() {
     cat >&2 <<'EOF'
@@ -17,8 +18,9 @@ Commands:
   connection
   preflight <disk-budget-gib>
   stage <job-id> <disk-budget-gib> [repository]
-  start <job-id> -- <command> [arguments...]
+  start <job-id> --summary <text> --next <success-action> -- <command> [arguments...]
   status <job-id>
+  terminal <job-id>
   limits <job-id>
   logs <job-id> [line-count]
   cancel <job-id>
@@ -114,9 +116,15 @@ stage() {
         printf 'commit=%s\n' "$(git -C "${repository}" rev-parse HEAD)"
         printf 'tree=%s\n' "$(git -C "${repository}" rev-parse HEAD^{tree})"
         printf 'helium_submodule=%s\n' "$(git -C "${repository}" rev-parse HEAD:helium-chromium)"
+        printf 'chromium_version=%s\n' \
+            "$(tr -d '\r\n' <"${repository}/helium-chromium/chromium_version.txt")"
+        if [ -f "${repository}/chromium/android-build.lock" ]; then
+            awk -F= '/^HELIUM_ANDROID_(CHROMIUM_COMMIT|CORE_COMMIT)=/ { print }' \
+                "${repository}/chromium/android-build.lock"
+        fi
         printf 'archive_sha256=%s\n' "${archive_sha}"
         printf 'transferred_at=%s\n' "$(date --iso-8601=seconds)"
-        printf 'transferred_from=%s\n' "$(hostname -s)"
+        printf 'transferred_from=%s\n' "$(uname -n)"
     } >"${manifest}"
 
     rsync --archive --checksum "${archive}" "${manifest}" \
@@ -132,6 +140,18 @@ start() {
     local job=$1
     shift
     validate_job "${job}"
+    [ "${1:-}" = --summary ] && [ "$#" -ge 6 ] || {
+        usage
+        exit 2
+    }
+    local summary=$2
+    shift 2
+    [ "${1:-}" = --next ] || {
+        usage
+        exit 2
+    }
+    local success_next=$2
+    shift 2
     [ "${1:-}" = -- ] || {
         usage
         exit 2
@@ -141,14 +161,57 @@ start() {
         echo "missing build command" >&2
         exit 2
     }
+    [ -x "${local_notifier}" ] || {
+        echo "Helium job notifier is not installed: ${local_notifier}" >&2
+        exit 1
+    }
     install_worker
-    remote_exec "${remote_worker}" start production "${job}" \
-        "${remote_work}/${job}/source" -- "$@"
+
+    local temp_dir source_file source_info repository product registration existing output
+    temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
+    source_file="${temp_dir}/source.env"
+    cleanup_start() {
+        local result=$?
+        find "${temp_dir}" -depth -delete
+        return "${result}"
+    }
+    trap cleanup_start EXIT
+    source_info=$(remote_exec "${remote_worker}" source-info "${job}")
+    printf '%s\n' "${source_info}" >"${source_file}"
+    chmod 600 "${source_file}"
+    repository=$(awk -F= '$1 == "repository" { print $2; exit }' <<<"${source_info}")
+    case "${repository}" in
+        helium-passwords) product="Helium Passwords" ;;
+        helium-sync) product="Helium Sync" ;;
+        *)
+            echo "unsupported staged Helium repository: ${repository}" >&2
+            exit 1
+            ;;
+    esac
+    registration=$("${local_notifier}" register "${job}" "${product}" "${summary}" \
+        "${success_next}" "${source_file}")
+    existing=$(awk -F= '$1 == "existing" { print $2; exit }' <<<"${registration}")
+
+    if ! output=$(remote_exec "${remote_worker}" start production "${job}" \
+        "${remote_work}/${job}/source" -- "$@"); then
+        if [ "${existing}" = false ]; then
+            "${local_notifier}" abandon "${job}" >/dev/null || true
+        fi
+        return 1
+    fi
+    printf '%s\nnotification=armed\n' "${output}"
+    find "${temp_dir}" -depth -delete
+    trap - EXIT
 }
 
 status() {
     install_worker
     remote_exec "${remote_worker}" status "$1"
+}
+
+terminal() {
+    install_worker
+    remote_exec "${remote_worker}" terminal "$1"
 }
 
 limits() {
@@ -206,7 +269,7 @@ fetch_artifact() {
         printf 'artifact=%s\n' "${local_path}"
         printf 'sha256=%s\n' "${local_sha}"
         printf 'received_at=%s\n' "$(date --iso-8601=seconds)"
-        printf 'received_on=%s\n' "$(hostname -s)"
+        printf 'received_on=%s\n' "$(uname -n)"
     } >"${destination}/artifact-receipt.env"
     remote_exec "${remote_worker}" mark-returned "${job}" "${local_sha}"
     printf 'artifact=%s\nsha256=%s\n' "${local_path}" "${local_sha}"
@@ -252,8 +315,9 @@ case "${command}" in
     connection) [ "$#" -eq 0 ] || exit 2; connection ;;
     preflight) [ "$#" -eq 1 ] || exit 2; preflight "$@" ;;
     stage) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; stage "$@" ;;
-    start) [ "$#" -ge 3 ] || exit 2; start "$@" ;;
+    start) [ "$#" -ge 7 ] || exit 2; start "$@" ;;
     status) [ "$#" -eq 1 ] || exit 2; status "$@" ;;
+    terminal) [ "$#" -eq 1 ] || exit 2; terminal "$@" ;;
     limits) [ "$#" -eq 1 ] || exit 2; limits "$@" ;;
     logs) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || exit 2; logs "$@" ;;
     cancel) [ "$#" -eq 1 ] || exit 2; cancel "$@" ;;

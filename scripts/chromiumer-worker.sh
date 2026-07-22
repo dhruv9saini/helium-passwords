@@ -310,6 +310,7 @@ write_policy() {
         printf 'watchdog_mem_floor_bytes=%s\n' "${watchdog_mem_floor_bytes}"
         printf 'wall_seconds=%s\n' "${wall_seconds}"
         printf 'command=%s\n' "${command_text}"
+        printf 'started_at_epoch=%s\n' "$(date +%s)"
         printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
     } >"${temp}"
     mv "${temp}" "${state_dir}/policy.env"
@@ -431,20 +432,75 @@ run_job() {
     shift
     [ "${1:-}" = -- ] || exit 2
     shift
+    terminal_from_signal() {
+        trap - TERM INT
+        local result reason exit_code
+        if [ -f "${state_dir}/cancel.env" ]; then
+            result=cancellation
+            reason="cancelled through chromiumer-job.sh"
+            exit_code=130
+        elif [ -f "${state_dir}/watchdog-stop.env" ]; then
+            result=failure
+            reason=$(awk -F= '$1 == "reason" { print substr($0, 8); exit }' \
+                "${state_dir}/watchdog-stop.env")
+            exit_code=1
+        else
+            result=timeout
+            reason="systemd stopped the job at its wall-time limit"
+            exit_code=124
+        fi
+        write_terminal "${state_dir}" "${result}" "${exit_code}" "${reason}"
+        exit "${exit_code}"
+    }
+    trap terminal_from_signal TERM INT
+
     printf 'job_started_at=%s\n' "$(date --iso-8601=seconds)"
     printf 'job_pid=%s\n' "$$"
     set +e
     ionice -c 3 nice -n 15 "$@"
     local result=$?
     set -e
-    local temp="${state_dir}/result.env.tmp"
+    trap - TERM INT
+    if [ "${result}" -eq 0 ]; then
+        write_terminal "${state_dir}" success "${result}" "build command completed"
+    else
+        write_terminal "${state_dir}" failure "${result}" "build command exited non-zero"
+    fi
+    printf 'job_finished_at=%s\nexit_code=%s\n' "$(date --iso-8601=seconds)" "${result}"
+    exit "${result}"
+}
+
+write_terminal() {
+    local state_dir=$1
+    local result=$2
+    local exit_code=$3
+    local reason=$4
+    [ ! -e "${state_dir}/terminal.env" ] || return 0
+    local started finished duration temp
+    started=$(awk -F= '$1 == "started_at_epoch" { print $2; exit }' \
+        "${state_dir}/policy.env")
+    finished=$(date +%s)
+    duration=$((finished - started))
+    [ "${duration}" -ge 0 ] || duration=0
+
+    temp="${state_dir}/result.env.tmp"
     {
-        printf 'exit_code=%s\n' "${result}"
+        printf 'exit_code=%s\n' "${exit_code}"
         printf 'finished_at=%s\n' "$(date --iso-8601=seconds)"
     } >"${temp}"
     mv "${temp}" "${state_dir}/result.env"
-    printf 'job_finished_at=%s\nexit_code=%s\n' "$(date --iso-8601=seconds)" "${result}"
-    exit "${result}"
+
+    temp="${state_dir}/terminal.env.tmp"
+    {
+        printf 'state=terminal\n'
+        printf 'result=%s\n' "${result}"
+        printf 'exit_code=%s\n' "${exit_code}"
+        printf 'started_at_epoch=%s\n' "${started}"
+        printf 'finished_at_epoch=%s\n' "${finished}"
+        printf 'duration_seconds=%s\n' "${duration}"
+        printf 'reason=%s\n' "${reason}"
+    } >"${temp}"
+    mv "${temp}" "${state_dir}/terminal.env"
 }
 
 watch_job() {
@@ -517,7 +573,7 @@ status_job() {
     printf 'job=%s\nunit_state=%s\nstate_dir=%s\nlogs=journalctl --user --unit=%s\n' \
         "${job}" "$(systemctl --user is-active "${unit}" 2>/dev/null || true)" \
         "${state_dir}" "${unit}"
-    for file in policy.env health.env result.env watchdog-stop.env cancel.env; do
+    for file in policy.env health.env result.env terminal.env watchdog-stop.env cancel.env; do
         if [ -f "${state_dir}/${file}" ]; then
             printf -- '--- %s ---\n' "${file}"
             cat "${state_dir}/${file}"
@@ -546,11 +602,57 @@ logs_job() {
 cancel_job() {
     local job=$1
     validate_job "${job}"
+    local state_dir="${state_root}/${job}"
+    [ -d "${state_dir}" ] || {
+        echo "unknown job: ${job}" >&2
+        exit 1
+    }
+    if [ -f "${state_dir}/terminal.env" ]; then
+        echo "job is already terminal: ${job}" >&2
+        exit 1
+    fi
+    systemctl --user --quiet is-active "helium-job-${job}.service" || {
+        echo "job is not active and has no terminal state: ${job}" >&2
+        exit 1
+    }
+    printf 'cancelled_at=%s\n' "$(date --iso-8601=seconds)" >"${state_dir}/cancel.env"
     systemctl --user stop "helium-watch-${job}.service" >/dev/null 2>&1 || true
     systemctl --user stop "helium-job-${job}.service" >/dev/null 2>&1 || true
-    mkdir -p "${state_root}/${job}"
-    printf 'cancelled_at=%s\n' "$(date --iso-8601=seconds)" >"${state_root}/${job}/cancel.env"
     printf 'cancelled=%s\n' "${job}"
+}
+
+terminal_job() {
+    local job=$1
+    validate_job "${job}"
+    local state_dir="${state_root}/${job}"
+    local unit="helium-job-${job}.service"
+    [ -d "${state_dir}" ] || {
+        echo "unknown job: ${job}" >&2
+        exit 1
+    }
+    if [ -f "${state_dir}/terminal.env" ]; then
+        cat "${state_dir}/terminal.env"
+    elif systemctl --user --quiet is-active "${unit}"; then
+        printf 'state=running\n'
+    elif [ -f "${state_dir}/policy.env" ]; then
+        printf 'state=finishing\n'
+    else
+        printf 'state=staged\n'
+    fi
+}
+
+source_info() {
+    local job=$1
+    validate_job "${job}"
+    local manifest="${state_root}/${job}/source.manifest"
+    [ -f "${manifest}" ] || {
+        echo "job has no completed source manifest: ${job}" >&2
+        exit 1
+    }
+    awk -F= '$1 == "repository" || $1 == "commit" || $1 == "tree" ||
+        $1 == "helium_submodule" || $1 == "chromium_version" ||
+        $1 == "HELIUM_ANDROID_CHROMIUM_COMMIT" ||
+        $1 == "HELIUM_ANDROID_CORE_COMMIT" { print }' "${manifest}"
 }
 
 artifact_info() {
@@ -624,6 +726,8 @@ case "${command}" in
     limits) limits_job "$@" ;;
     logs) logs_job "$@" ;;
     cancel) cancel_job "$@" ;;
+    terminal) terminal_job "$@" ;;
+    source-info) source_info "$@" ;;
     artifact-info) artifact_info "$@" ;;
     mark-returned) mark_returned "$@" ;;
     cleanup) cleanup_job "$@" ;;

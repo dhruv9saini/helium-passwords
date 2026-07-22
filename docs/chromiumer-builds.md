@@ -160,13 +160,18 @@ remains under:
 ## Starting a Build
 
 Start only after `preflight` and staging succeed. The commands return
-immediately after creating the isolated job and watchdog.
+immediately after creating the isolated job and watchdog. `--summary` records
+what the job tests or produces; `--next` is the useful action included in a
+success notification. Both are mandatory and must describe the particular
+job, not a generic build class.
 
 For public Linux x86_64, the prepared platform wrapper forwards the enforced
 two-job limit into its Dockerized Ninja invocation:
 
 ```sh
-scripts/chromiumer-job.sh start "$job" -- \
+scripts/chromiumer-job.sh start "$job" \
+    --summary "Linux x86_64 browser artifact and password acceptance input" \
+    --next "Fetch and verify the packaged artifact, then run the disposable password gate." -- \
     bash scripts/build.sh linux x86_64
 ```
 
@@ -174,7 +179,9 @@ For Sync Android, pin `CHROMIUM_REF` to an immutable Chromium commit; never use
 the script's moving `main` default for a validation artifact:
 
 ```sh
-scripts/chromiumer-job.sh start "$job" -- \
+scripts/chromiumer-job.sh start "$job" \
+    --summary "OnePlus arm64 APK for streaming, video, password, tab, and cookie validation" \
+    --next "Fetch the APK and execute the documented disposable OnePlus acceptance sequence." -- \
     env \
       HELIUM_SYNC_REPO=. \
       GITHUB_WORKSPACE=.build \
@@ -195,6 +202,7 @@ These commands run from the repository on `lm`:
 
 ```sh
 scripts/chromiumer-job.sh status "$job"
+scripts/chromiumer-job.sh terminal "$job"
 scripts/chromiumer-job.sh limits "$job"
 scripts/chromiumer-job.sh logs "$job" 120
 scripts/chromiumer-job.sh cancel "$job"
@@ -208,7 +216,15 @@ at:
 /home/d/.local/state/helium-builds/<job>/policy.env
 /home/d/.local/state/helium-builds/<job>/health.env
 /home/d/.local/state/helium-builds/<job>/result.env
+/home/d/.local/state/helium-builds/<job>/terminal.env
 ```
+
+`terminal.env` is atomically written exactly once and classifies the outcome
+as `success`, `failure`, `timeout`, or `cancellation`, with the exit code,
+duration, and reason. The lm notification timer observes only that record; it
+does not infer completion from an SSH connection or a shell lifetime. See
+[job-notifications.md](job-notifications.md) for installation, retry, and
+acceptance details.
 
 Build stdout and stderr go to the systemd journal. `logs` invokes
 `journalctl --user --unit=helium-job-<job>.service`; no second log file or log
