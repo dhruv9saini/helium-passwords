@@ -171,13 +171,16 @@ publishes lm's certificate name to Certificate Transparency and is therefore a
 real external gate. After it is enabled:
 
 ```sh
-sudo tailscale serve --bg --yes --https=443 http://127.0.0.1:44719
-tailscale serve status --json | jq .
+scripts/install-lm-sync-service.sh configure-endpoint
+scripts/install-lm-sync-service.sh verify-endpoint
 ```
 
-Do not use Funnel. Verify the resulting `https://lm.<tailnet>.ts.net` name
-from disposable d, da, and oneplus clients and confirm the backend port is not
-reachable from non-loopback lm interfaces.
+`configure-endpoint` refuses to replace any existing Serve configuration.
+`verify-endpoint` requires exactly one HTTPS `:443` proxy to
+`http://127.0.0.1:44719`, rejects HTTP or raw-TCP forwarding, and rejects any
+Funnel-enabled listener. Verify the resulting `https://lm.<tailnet>.ts.net`
+name from disposable d, da, and oneplus clients and confirm the backend port is
+not reachable from non-loopback lm interfaces.
 
 ## 4. Create d seed and recovery material
 
@@ -197,12 +200,59 @@ helium-sync seed-public \
 The bootstrap contains only d, the active key ID, and a token hash. Transfer
 that bootstrap to lm. Do not transfer `client.json` or the token to lm.
 
-Before initializing lm, create two encrypted backups of d's complete seed
-state and token, to two off-d destinations, using two separately held recovery
-recipients. Restore one copy into a new disposable directory, load it with
-`helium-sync seed-public`, and compare only the public output. Record hashes
-and the drill; then remove the disposable plaintext. This proof is mandatory
-and is not satisfied by a copy inside d, lm's server directory, or Git.
+Before initializing lm, create two dedicated recovery identities directly on
+two independently held recovery media. Run each command on its recovery holder,
+not on d, lm, the NAS, or chromiumer:
+
+```sh
+helium-sync recovery-keygen --output-dir /MOUNTED/RECOVERY-A/helium-sync-d
+helium-sync recovery-keygen --output-dir /MOUNTED/RECOVERY-B/helium-sync-d
+```
+
+Transfer only each `recipient.txt` to d through authenticated routes. On d,
+create one recipient set and export a new encrypted generation:
+
+```sh
+umask 077
+cat /secure/incoming/recovery-A-recipient.txt \
+    /secure/incoming/recovery-B-recipient.txt \
+  > /secure/device/helium-sync/recovery-recipients.txt
+helium-sync recovery-export \
+  --state-file /secure/device/helium-sync/client.json \
+  --token-file /secure/device/helium-sync/token \
+  --recipients-file /secure/device/helium-sync/recovery-recipients.txt \
+  --output /secure/export/d-recovery-GENERATION.age
+sha256sum /secure/export/d-recovery-GENERATION.age
+```
+
+The export refuses fewer than two distinct native age recipients and never
+writes a plaintext archive. Copy the exact encrypted generation to two
+off-d destinations and verify the printed SHA-256 independently at each.
+Neither destination may contain an identity file.
+
+Restore each destination copy with a different identity into a nonexistent
+disposable directory. The authenticated seed-public file must arrive through a
+route independent of the ciphertext:
+
+```sh
+helium-sync recovery-import \
+  --input /OFFSOURCE-A/d-recovery-GENERATION.age \
+  --identity-file /MOUNTED/RECOVERY-A/helium-sync-d/identity.txt \
+  --expected-seed-public-file /secure/incoming/d-seed-signing-public \
+  --output-dir /secure/disposable/d-recovery-drill-A
+helium-sync seed-public \
+  --state-file /secure/disposable/d-recovery-drill-A/client.json \
+  --output /secure/disposable/d-recovery-drill-A/seed-public
+cmp /secure/incoming/d-seed-signing-public \
+  /secure/disposable/d-recovery-drill-A/seed-public
+```
+
+Repeat from off-source copy B with recovery identity B. Import authenticates
+the age ciphertext, validates the complete d keypair/keyring/token, binds it to
+the expected public trust anchor, and refuses an existing output directory.
+Record the two hashes and restore receipts, then securely dispose of only the
+disposable plaintext drill directories. This proof is not satisfied by a copy
+inside d, lm's server directory, or Git.
 
 On lm:
 
@@ -265,17 +315,24 @@ printf '%s\n' 'https://lm.TAILNET.ts.net' \
   > PROFILE/Default/helium-sync/base_url
 ```
 
-Start the disposable browser. It remains pull-only. Verify applied passwords
-and cookies, then stop it and promote only with:
+Start the disposable browser. It remains pull-only until both native bridges
+have applied, read back, and durably acknowledged the same current cursor. The
+profile coordinator then completes that one joint cursor and reloads both
+bridge clients before resuming. Verify `client.json` became `active`, verify
+the applied passwords and cookies, restart, and prove zero unchanged writes.
+
+If a disposable join remains pending after both bridge states are present,
+stop the browser and use the offline equivalent below. It is intentionally the
+same joint schema/cursor/server gate, not a bypass:
 
 ```sh
 helium-sync enrollment-complete \
   --url https://lm.TAILNET.ts.net \
-  --profile-dir PROFILE \
-  --state-file PROFILE/Default/helium-sync/client.json \
-  --password-state PROFILE/Default/helium-sync/password-state.json \
-  --cookie-state PROFILE/Default/helium-sync/cookie-state.json \
-  --token-file PROFILE/Default/helium-sync/token
+  --profile-dir /ABSOLUTE/PROFILE \
+  --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
+  --password-state /ABSOLUTE/PROFILE/Default/helium-sync/password-state.json \
+  --cookie-state /ABSOLUTE/PROFILE/Default/helium-sync/cookie-state.json \
+  --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token
 ```
 
 The command rejects a profile lock, wrong schema, unequal cursor, stale server
@@ -284,23 +341,67 @@ Only then repeat the sequence for oneplus.
 
 ## 6. Rotation and revocation
 
-Content-key rotation order is fixed:
+Content-key rotation order is fixed. Every remote command also receives
+`--url https://lm.TAILNET.ts.net`, its device's `--state-file`, and its current
+`--token-file`.
 
-1. d: `key-stage`.
-2. da/oneplus: `key-update-request`; d: `seed-wrap`; join:
-   `key-update-install`; then `key-ack-install`.
-3. d: `key-activate`, then every join: `key-adopt`.
-4. d: `key-rekey`; every device pulls/applies/verifies; joins:
-   `key-ack-rekey`.
-5. d: `key-retire`.
+1. On d, run `key-stage` and record `staged_key_id`. Then run
+   `key-ack-install` on d; d is an active device and its acknowledgement is
+   required too.
+2. On each join, run `key-update-request --pending-file NEW_PENDING
+   --request-file NEW_REQUEST`. On d, wrap each request with `seed-wrap`. Back
+   on that join, run `key-update-install --pending-file NEW_PENDING
+   --wrapped-file WRAPPED --required-key-id OLD --required-key-id STAGED`, then
+   run `key-ack-install`.
+3. On d, run `key-activate`. On every join, run `key-adopt`. The server accepts
+   both epochs during this interval.
+4. Quiesce browser publication and let d's native bridges reach one current
+   verified cursor. On d run:
+
+   ```sh
+   helium-sync key-rekey \
+     --url https://lm.TAILNET.ts.net \
+     --state-file /ABSOLUTE/D-PROFILE/Default/helium-sync/client.json \
+     --password-state /ABSOLUTE/D-PROFILE/Default/helium-sync/password-state.json \
+     --cookie-state /ABSOLUTE/D-PROFILE/Default/helium-sync/cookie-state.json \
+     --token-file /ABSOLUTE/D-PROFILE/Default/helium-sync/token
+   ```
+
+   This refuses unless both native revision inventories use the expected
+   schemas and their verified cursors equal `client.json`; only then does it
+   CAS-rekey every latest record and tombstone and acknowledge d's rekey.
+5. Let every join pull/apply/read back the rekey, then run `key-ack-rekey` on
+   each join. Finally run `key-retire` on d. Retirement fails until every live
+   active device has acknowledged.
 
 Never retire while a device is offline or before every acknowledgement.
 
-Credential rotation uses `credential-stage --new-token-file NEW`, then tests
-the new credential with `credential-confirm --token-file NEW`. Atomically
-install NEW into the stopped profile, restart and verify, then run
-`credential-retire` using the new token. If any step fails, both credentials
-remain valid and the build/data result is unchanged.
+Credential rotation is per-device and crash-resumable. `NEW` and `OLD_BACKUP`
+must be absolute paths on that device:
+
+```sh
+helium-sync credential-stage \
+  --url https://lm.TAILNET.ts.net \
+  --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
+  --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token \
+  --new-token-file /secure/device/helium-sync/token.new
+# Stop the browser before the cutover.
+helium-sync credential-activate \
+  --url https://lm.TAILNET.ts.net \
+  --profile-dir /ABSOLUTE/PROFILE \
+  --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
+  --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token \
+  --new-token-file /secure/device/helium-sync/token.new \
+  --old-token-file /secure/device/helium-sync/token.rollback
+```
+
+`credential-activate` first preserves or verifies the mode-0600 rollback copy,
+authenticates and confirms with the staged new credential, and only then
+atomically replaces the stopped profile's token. If confirmation or the local
+rename fails, the old server credential remains valid. Restart and verify sync,
+then run `credential-retire` with the newly installed token. Preserve the old
+rollback file until the old credential is proven rejected and the new one has
+survived a restart.
 
 Revoke a lost join on lm with:
 

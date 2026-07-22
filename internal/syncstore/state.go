@@ -155,6 +155,38 @@ func (state *ClientState) revision(kind Kind, key string) Counter {
 	return state.Revisions[recordIdentity(kind, key)]
 }
 
+// ImportBrowserRevisionBaseline installs the revision inventory already
+// applied and read back by d's native password and cookie bridges. The cursor
+// must exactly match client.json, so this cannot manufacture rekey readiness
+// from a stale or partial bridge state.
+func (state *ClientState) ImportBrowserRevisionBaseline(
+	sequence Counter, revisions map[Kind]map[string]Counter) error {
+	if state.Role != RoleSeed || state.DeviceID != "d" || state.Phase != PhaseActive {
+		return errors.New("only active d may import a browser revision baseline")
+	}
+	if sequence != state.Sequence {
+		return fmt.Errorf("browser cursor %d does not match client cursor %d",
+			sequence, state.Sequence)
+	}
+	if len(revisions) != len(allKinds) {
+		return errors.New("password and cookie revision inventories are both required")
+	}
+	verified := make(map[string]Counter)
+	for kind, records := range revisions {
+		if _, ok := allKinds[kind]; !ok {
+			return fmt.Errorf("unknown browser revision kind %q", kind)
+		}
+		for key, revision := range records {
+			if strings.TrimSpace(key) == "" || revision < 0 {
+				return errors.New("browser revision inventory is invalid")
+			}
+			verified[recordIdentity(kind, key)] = revision
+		}
+	}
+	state.Revisions = verified
+	return state.Save()
+}
+
 func (state *ClientState) decodedKey(keyID string) ([]byte, error) {
 	encoded, ok := state.Keys[keyID]
 	if !ok {
@@ -212,6 +244,10 @@ func (state *ClientState) validate() error {
 	if !validDeviceID.MatchString(state.DeviceID) {
 		return errors.New("invalid device id")
 	}
+	publicKey, err := base64.StdEncoding.DecodeString(state.SeedSigningPublic)
+	if err != nil || len(publicKey) != ed25519.PublicKeySize {
+		return errors.New("seed signing public key is invalid")
+	}
 	if state.Role == RoleSeed {
 		if state.DeviceID != "d" || state.Phase != PhaseActive {
 			return errors.New("only d may have the seed role")
@@ -220,15 +256,15 @@ func (state *ClientState) validate() error {
 		if err != nil || len(privateKey) != ed25519.PrivateKeySize {
 			return errors.New("seed signing private key is invalid")
 		}
+		derivedPublic := ed25519.PrivateKey(privateKey).Public().(ed25519.PublicKey)
+		if !bytes.Equal(derivedPublic, publicKey) {
+			return errors.New("seed signing keypair does not match")
+		}
 	} else if state.Role != RoleJoin || state.DeviceID == "d" ||
 		(state.Phase != PhasePending && state.Phase != PhaseActive) {
 		return errors.New("non-d devices must have the join role")
 	} else if state.SeedSigningPrivate != "" {
 		return errors.New("join state must not contain the seed signing private key")
-	}
-	publicKey, err := base64.StdEncoding.DecodeString(state.SeedSigningPublic)
-	if err != nil || len(publicKey) != ed25519.PublicKeySize {
-		return errors.New("seed signing public key is invalid")
 	}
 	localSealKey, err := base64.StdEncoding.DecodeString(state.LocalSealKey)
 	if err != nil || len(localSealKey) != clientKeyLength {

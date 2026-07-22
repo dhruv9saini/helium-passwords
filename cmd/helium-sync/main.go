@@ -42,14 +42,24 @@ func main() {
 		err = cmdKeyUpdateRequest(os.Args[2:])
 	case "key-update-install":
 		err = cmdKeyUpdateInstall(os.Args[2:])
+	case "recovery-keygen":
+		err = cmdRecoveryKeygen(os.Args[2:])
+	case "recovery-export":
+		err = cmdRecoveryExport(os.Args[2:])
+	case "recovery-import":
+		err = cmdRecoveryImport(os.Args[2:])
 	case "server-enroll":
 		err = cmdServerEnroll(os.Args[2:])
 	case "server-revoke":
 		err = cmdServerRevoke(os.Args[2:])
 	case "enrollment-complete":
 		err = cmdEnrollmentComplete(os.Args[2:])
+	case "credential-activate":
+		err = cmdCredentialActivate(os.Args[2:])
+	case "key-rekey":
+		err = cmdKeyRekey(os.Args[2:])
 	case "key-stage", "key-ack-install", "key-activate", "key-adopt",
-		"key-rekey", "key-ack-rekey", "key-retire", "credential-stage",
+		"key-ack-rekey", "key-retire", "credential-stage",
 		"credential-confirm", "credential-retire":
 		err = cmdRemoteAction(os.Args[1], os.Args[2:])
 	case "push":
@@ -326,6 +336,69 @@ func cmdKeyUpdateInstall(args []string) error {
 	return state.InstallKeyUpdate(*pendingFile, wrapped, requiredKeyIDs)
 }
 
+func cmdRecoveryKeygen(args []string) error {
+	flags := flag.NewFlagSet("recovery-keygen", flag.ExitOnError)
+	outputDir := flags.String("output-dir", "", "new directory on independently held recovery media")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *outputDir == "" {
+		return errors.New("--output-dir is required")
+	}
+	if err := syncstore.GenerateRecoveryIdentity(*outputDir); err != nil {
+		return err
+	}
+	fmt.Printf("recovery_identity=%s\nrecovery_recipient=%s\n",
+		filepath.Join(*outputDir, "identity.txt"),
+		filepath.Join(*outputDir, "recipient.txt"))
+	return nil
+}
+
+func cmdRecoveryExport(args []string) error {
+	flags := flag.NewFlagSet("recovery-export", flag.ExitOnError)
+	stateFile := flags.String("state-file", defaultClientStatePath(), "d seed client state")
+	tokenFile := flags.String("token-file", defaultTokenPath(), "d device credential")
+	recipientsFile := flags.String("recipients-file", "", "file containing at least two distinct age recipients")
+	output := flags.String("output", "", "new encrypted recovery generation")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *recipientsFile == "" || *output == "" {
+		return errors.New("--recipients-file and --output are required")
+	}
+	receipt, err := syncstore.ExportSeedRecovery(
+		*stateFile, *tokenFile, *recipientsFile, *output)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("recovery_export=%s\nsha256=%s\nrecipient_count=%d\n",
+		*output, receipt.SHA256, receipt.RecipientCount)
+	return nil
+}
+
+func cmdRecoveryImport(args []string) error {
+	flags := flag.NewFlagSet("recovery-import", flag.ExitOnError)
+	input := flags.String("input", "", "encrypted recovery generation")
+	identityFile := flags.String("identity-file", "", "dedicated age identity file")
+	expectedSeedPublic := flags.String("expected-seed-public-file", "", "independently authenticated d public key")
+	outputDir := flags.String("output-dir", "", "new disposable recovery directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *input == "" || *identityFile == "" || *expectedSeedPublic == "" ||
+		*outputDir == "" {
+		return errors.New("--input, --identity-file, --expected-seed-public-file, and --output-dir are required")
+	}
+	receipt, err := syncstore.ImportSeedRecovery(
+		*input, *identityFile, *expectedSeedPublic, *outputDir)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("recovery_import=%s\ndevice_id=%s\nactive_key_id=%s\n",
+		*outputDir, receipt.DeviceID, receipt.ActiveKeyID)
+	return nil
+}
+
 func cmdServerEnroll(args []string) error {
 	flags := flag.NewFlagSet("server-enroll", flag.ExitOnError)
 	devicesFile := flags.String("devices-file", filepath.Join(defaultDataDir(), "devices.json"), "hashed device registry")
@@ -378,9 +451,7 @@ func cmdEnrollmentComplete(args []string) error {
 	if *profileDir == "" {
 		return errors.New("--profile-dir is required")
 	}
-	if _, err := os.Lstat(filepath.Join(*profileDir, "SingletonLock")); err == nil {
-		return errors.New("browser profile still has a SingletonLock; stop the browser before promotion")
-	} else if !errors.Is(err, os.ErrNotExist) {
+	if err := requireStoppedProfile(*profileDir); err != nil {
 		return err
 	}
 	clientState, err := syncstore.LoadClientState(*stateFile)
@@ -408,6 +479,99 @@ func cmdEnrollmentComplete(args []string) error {
 		return err
 	}
 	return client.CompleteEnrollment(context.Background())
+}
+
+func cmdCredentialActivate(args []string) error {
+	flags := flag.NewFlagSet("credential-activate", flag.ExitOnError)
+	baseURL := flags.String("url", envOrDefault("HELIUM_SYNC_URL", ""), "HTTPS daemon URL")
+	stateFile := flags.String("state-file", defaultClientStatePath(), "client E2EE state")
+	tokenFile := flags.String("token-file", defaultTokenPath(), "current profile credential")
+	newTokenFile := flags.String("new-token-file", "", "staged new credential")
+	oldTokenFile := flags.String("old-token-file", "", "new rollback copy of the old credential")
+	profileDir := flags.String("profile-dir", "", "browser profile root, which must be stopped")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *newTokenFile == "" || *oldTokenFile == "" || *profileDir == "" {
+		return errors.New("--new-token-file, --old-token-file, and --profile-dir are required")
+	}
+	if err := requireStoppedProfile(*profileDir); err != nil {
+		return err
+	}
+	currentToken, err := readPrivateSecret(*tokenFile)
+	if err != nil {
+		return err
+	}
+	newToken, err := readPrivateSecret(*newTokenFile)
+	if err != nil {
+		return err
+	}
+	if currentToken == newToken {
+		return errors.New("new credential is identical to the installed credential")
+	}
+	if err := ensureCredentialBackup(*oldTokenFile, currentToken); err != nil {
+		return err
+	}
+	client, err := syncstore.NewClient(*baseURL, newToken, *stateFile)
+	if err != nil {
+		return err
+	}
+	if err := client.ConfirmCredential(context.Background()); err != nil {
+		return fmt.Errorf("new credential was not accepted and confirmed: %w", err)
+	}
+	if err := replaceCredentialAtomically(*tokenFile, currentToken, newToken); err != nil {
+		return err
+	}
+	fmt.Printf("credential_activated=%s\nold_credential_backup=%s\n",
+		*tokenFile, *oldTokenFile)
+	return nil
+}
+
+func cmdKeyRekey(args []string) error {
+	flags := flag.NewFlagSet("key-rekey", flag.ExitOnError)
+	baseURL := flags.String("url", envOrDefault("HELIUM_SYNC_URL", ""), "HTTPS daemon URL")
+	tokenFile := flags.String("token-file", defaultTokenPath(), "d credential file")
+	stateFile := flags.String("state-file", defaultClientStatePath(), "d seed E2EE state")
+	passwordState := flags.String("password-state", filepath.Join(defaultConfigDir(), "password-state.json"), "browser-verified password state")
+	cookieState := flags.String("cookie-state", filepath.Join(defaultConfigDir(), "cookie-state.json"), "browser-verified cookie state")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	state, err := syncstore.LoadClientState(*stateFile)
+	if err != nil {
+		return err
+	}
+	passwordSequence, passwordRevisions, err := readBrowserRevisions(
+		*passwordState, 3, "credentials", "revision")
+	if err != nil {
+		return fmt.Errorf("password rekey readiness: %w", err)
+	}
+	cookieSequence, cookieRevisions, err := readBrowserRevisions(
+		*cookieState, 2, "records", "remote_revision")
+	if err != nil {
+		return fmt.Errorf("cookie rekey readiness: %w", err)
+	}
+	if passwordSequence != cookieSequence ||
+		passwordSequence != int64(state.Sequence) {
+		return fmt.Errorf("rekey is not ready: password=%d cookie=%d client=%d",
+			passwordSequence, cookieSequence, state.Sequence)
+	}
+	if err := state.ImportBrowserRevisionBaseline(state.Sequence,
+		map[syncstore.Kind]map[string]syncstore.Counter{
+			syncstore.KindPassword: passwordRevisions,
+			syncstore.KindCookie:   cookieRevisions,
+		}); err != nil {
+		return err
+	}
+	token, err := readSecret(*tokenFile)
+	if err != nil {
+		return err
+	}
+	client, err := syncstore.NewClient(*baseURL, token, *stateFile)
+	if err != nil {
+		return err
+	}
+	return client.RekeyAllLatest(context.Background())
 }
 
 func cmdRemoteAction(action string, args []string) error {
@@ -441,8 +605,6 @@ func cmdRemoteAction(action string, args []string) error {
 		return client.ActivateStagedKey(ctx)
 	case "key-adopt":
 		return client.AdoptServerKeyStatus(ctx)
-	case "key-rekey":
-		return client.RekeyAllLatest(ctx)
 	case "key-ack-rekey":
 		return client.AcknowledgeActiveRekey(ctx)
 	case "key-retire":
@@ -451,15 +613,17 @@ func cmdRemoteAction(action string, args []string) error {
 		if *newTokenFile == "" {
 			return errors.New("--new-token-file is required")
 		}
-		if _, err := os.Lstat(*newTokenFile); err == nil {
-			return fmt.Errorf("refusing to replace existing credential: %s", *newTokenFile)
-		} else if !errors.Is(err, os.ErrNotExist) {
+		if !filepath.IsAbs(*newTokenFile) {
+			return errors.New("--new-token-file must be absolute")
+		}
+		if _, err := os.Lstat(*newTokenFile); errors.Is(err, os.ErrNotExist) {
+			if err := ensureSecretFile(*newTokenFile, 32); err != nil {
+				return err
+			}
+		} else if err != nil {
 			return err
 		}
-		if err := ensureSecretFile(*newTokenFile, 32); err != nil {
-			return err
-		}
-		newToken, err := readSecret(*newTokenFile)
+		newToken, err := readPrivateSecret(*newTokenFile)
 		if err != nil {
 			return err
 		}
@@ -604,6 +768,99 @@ func readSecret(path string) (string, error) {
 	return secret, nil
 }
 
+func readPrivateSecret(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("credential path must be absolute: %s", path)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0 {
+		return "", fmt.Errorf("credential must be a regular file with mode 0600 or stricter: %s", path)
+	}
+	return readSecret(path)
+}
+
+func ensureCredentialBackup(path, expected string) error {
+	if !filepath.IsAbs(path) {
+		return fmt.Errorf("credential backup path must be absolute: %s", path)
+	}
+	if _, err := os.Lstat(path); err == nil {
+		backup, err := readPrivateSecret(path)
+		if err != nil {
+			return err
+		}
+		if backup != expected {
+			return errors.New("existing credential backup does not match the installed credential")
+		}
+		return nil
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return writeExclusive(path, []byte(expected+"\n"), 0600)
+}
+
+func replaceCredentialAtomically(path, expected, replacement string) error {
+	installed, err := readPrivateSecret(path)
+	if err != nil {
+		return err
+	}
+	if installed != expected {
+		return errors.New("installed credential changed during activation")
+	}
+	directory := filepath.Dir(path)
+	temp, err := os.CreateTemp(directory, ".helium-credential-*.tmp")
+	if err != nil {
+		return err
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+	if err := temp.Chmod(0600); err != nil {
+		return err
+	}
+	if _, err := temp.WriteString(replacement + "\n"); err != nil {
+		return err
+	}
+	if err := temp.Sync(); err != nil {
+		return err
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	installed, err = readPrivateSecret(path)
+	if err != nil {
+		return err
+	}
+	if installed != expected {
+		return errors.New("installed credential changed before atomic activation")
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	dir, err := os.Open(directory)
+	if err != nil {
+		return err
+	}
+	defer dir.Close()
+	return dir.Sync()
+}
+
+func requireStoppedProfile(profileDir string) error {
+	if !filepath.IsAbs(profileDir) {
+		return fmt.Errorf("profile directory must be absolute: %s", profileDir)
+	}
+	if _, err := os.Lstat(filepath.Join(profileDir, "SingletonLock")); err == nil {
+		return errors.New("browser profile still has a SingletonLock; stop the browser first")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func readJSONFile(path string, value any) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -728,6 +985,46 @@ func readVerifiedSequence(path string, expectedSchema int) (int64, error) {
 	return sequence, nil
 }
 
+func readBrowserRevisions(path string, expectedSchema int,
+	collectionField, revisionField string) (int64, map[string]syncstore.Counter, error) {
+	sequence, err := readVerifiedSequence(path, expectedSchema)
+	if err != nil {
+		return 0, nil, err
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0, nil, err
+	}
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &root); err != nil {
+		return 0, nil, err
+	}
+	var records map[string]json.RawMessage
+	if err := json.Unmarshal(root[collectionField], &records); err != nil {
+		return 0, nil, fmt.Errorf("%s is missing or invalid", collectionField)
+	}
+	revisions := make(map[string]syncstore.Counter, len(records))
+	for key, recordRaw := range records {
+		if strings.TrimSpace(key) == "" {
+			return 0, nil, errors.New("browser revision inventory contains an empty key")
+		}
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal(recordRaw, &record); err != nil {
+			return 0, nil, fmt.Errorf("browser revision for %q is invalid", key)
+		}
+		var encoded string
+		if err := json.Unmarshal(record[revisionField], &encoded); err != nil {
+			return 0, nil, fmt.Errorf("browser revision for %q is missing", key)
+		}
+		value, err := strconv.ParseInt(encoded, 10, 64)
+		if err != nil || value < 0 {
+			return 0, nil, fmt.Errorf("browser revision for %q is invalid", key)
+		}
+		revisions[key] = syncstore.Counter(value)
+	}
+	return sequence, revisions, nil
+}
+
 func writePretty(value any) error {
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -735,7 +1032,7 @@ func writePretty(value any) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: helium-sync <seed-init|server-init|server-verify|seed-public|join-request|seed-wrap|join-install|key-update-request|key-update-install|server-enroll|server-revoke|enrollment-complete|key-*|credential-*|push|pull|latest> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: helium-sync <seed-init|server-init|server-verify|seed-public|join-request|seed-wrap|join-install|key-update-request|key-update-install|recovery-keygen|recovery-export|recovery-import|server-enroll|server-revoke|enrollment-complete|key-*|credential-*|push|pull|latest> [flags]")
 }
 
 func defaultDataDir() string {

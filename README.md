@@ -37,7 +37,8 @@ canonical private issue ledger.
   snapshot integration.
 - `chromium/patches/`: generated overlay plus desktop/Android wiring.
 - `internal/syncstore/`: opaque server, client-side E2EE protocol, enrollment,
-  scoped credentials, rotations, CAS conflicts, tombstones, and recovery.
+  scoped credentials, rotations, CAS conflicts, tombstones, and encrypted d
+  recovery export/import.
 - `internal/tabsnapshot/` and `scripts/tabs/`: device-local generations,
   validation, retention, encrypted two-destination backup, quarantine, and
   disposable restore.
@@ -45,7 +46,8 @@ canonical private issue ledger.
   and remote compile entry points.
 - `systemd/helium-syncd.service`: least-privilege loopback service for lm.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
-  it does not enable the service unless Tailscale HTTPS Serve is configured.
+  it does not enable the service unless an HTTPS-only, no-Funnel Tailscale
+  Serve route targets the loopback daemon exactly.
 - `docs/deployment.md`: exact seed, join, rotation, backup, and rollback
   sequence.
 

@@ -16,6 +16,51 @@ go build -trimpath -o "$test_root/helium-sync" "$repo_root/cmd/helium-sync"
   --state-file "$test_root/d/client.json" \
   --output "$test_root/relay/seed-public" >/dev/null
 
+"$test_root/helium-sync" recovery-keygen \
+  --output-dir "$test_root/recovery-media-1" >/dev/null
+"$test_root/helium-sync" recovery-keygen \
+  --output-dir "$test_root/recovery-media-2" >/dev/null
+cat "$test_root/recovery-media-1/recipient.txt" \
+  "$test_root/recovery-media-2/recipient.txt" \
+  >"$test_root/relay/recovery-recipients.txt"
+recovery_output=$("$test_root/helium-sync" recovery-export \
+  --state-file "$test_root/d/client.json" \
+  --token-file "$test_root/d/token" \
+  --recipients-file "$test_root/relay/recovery-recipients.txt" \
+  --output "$test_root/relay/d-recovery.age")
+grep -q '^recipient_count=2$' <<<"$recovery_output"
+grep -Eq '^sha256=[0-9a-f]{64}$' <<<"$recovery_output"
+if grep -Fq -- "$(tr -d '\n' <"$test_root/d/token")" \
+  "$test_root/relay/d-recovery.age"; then
+  echo "recovery export contains the plaintext token" >&2
+  exit 1
+fi
+"$test_root/helium-sync" recovery-import \
+  --input "$test_root/relay/d-recovery.age" \
+  --identity-file "$test_root/recovery-media-1/identity.txt" \
+  --expected-seed-public-file "$test_root/relay/seed-public" \
+  --output-dir "$test_root/recovery-drill-1" >/dev/null
+"$test_root/helium-sync" recovery-import \
+  --input "$test_root/relay/d-recovery.age" \
+  --identity-file "$test_root/recovery-media-2/identity.txt" \
+  --expected-seed-public-file "$test_root/relay/seed-public" \
+  --output-dir "$test_root/recovery-drill-2" >/dev/null
+cmp "$test_root/d/token" "$test_root/recovery-drill-1/token"
+cmp "$test_root/d/token" "$test_root/recovery-drill-2/token"
+"$test_root/helium-sync" seed-public \
+  --state-file "$test_root/recovery-drill-1/client.json" \
+  --output "$test_root/relay/restored-seed-public" >/dev/null
+cmp "$test_root/relay/seed-public" "$test_root/relay/restored-seed-public"
+
+if "$test_root/helium-sync" recovery-export \
+  --state-file "$test_root/d/client.json" \
+  --token-file "$test_root/d/token" \
+  --recipients-file "$test_root/recovery-media-1/recipient.txt" \
+  --output "$test_root/relay/weak-recovery.age" >/dev/null 2>&1; then
+  echo "single-recipient recovery export was accepted" >&2
+  exit 1
+fi
+
 jq -e '.device_id == "d" and (.active_key_id | length > 0) and
   (.token_sha256 | test("^[0-9a-f]{64}$")) and
   (has("keys") | not) and (has("token") | not)' \

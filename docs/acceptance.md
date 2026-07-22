@@ -60,8 +60,10 @@ Use three disposable profiles named `oneplus-test`, `d-test`, and `da-test`.
 
 - d is explicitly created as the sole seed. da and oneplus start pending and
   pull d's inventory without publishing any pre-existing local credential.
-- Promotion fails unless password state, cookie state, and client state record
-  the same current server cursor while the browser is stopped.
+- Native promotion occurs only after password and cookie bridges independently
+  apply, read back, persist, and acknowledge the same current server cursor;
+  mismatched cursors trigger another pull and publish nothing. The offline
+  completion command proves the equivalent stopped-profile gate.
 - Restarting an unchanged profile publishes zero password records.
 - One profile changes a password while a second is offline; reconnecting the
   stale profile does not overwrite the newer value.
@@ -73,7 +75,8 @@ Use three disposable profiles named `oneplus-test`, `d-test`, and `da-test`.
 - A malformed, oversized, unknown-version, or unauthenticated record is
   rejected while the last good record stays usable.
 - Token rotation completes with an overlap window, then the old token is
-  rejected on every client.
+  rejected on every client. The stopped-profile cutover preserves a mode-0600
+  rollback token and atomically installs only a server-confirmed new token.
 - No plaintext password or bearer token appears in daemon/browser logs.
 
 ## Gate 3: Cookies and Login State
@@ -180,8 +183,10 @@ and every expected failure is explicit.
 
 - Before any install, stop the disposable or personal browser and create a
   checksum manifest plus two recoverable copies of its complete profile.
-- Prove opaque server backup restore and d recovery-material restore before
-  registering the first join device.
+- Prove opaque server backup restore before registering the first join device.
+- Prove both independently held recovery identities can decrypt their own
+  off-source copy into new disposable directories and recover the authenticated
+  d signing public key; a single recipient or existing restore target fails.
 - Install only a hash-verified artifact returned by chromiumer. Keep the prior
   application and untouched profile backup until all gates pass.
 - Enroll d first, da second, and oneplus third. After each join, prove zero

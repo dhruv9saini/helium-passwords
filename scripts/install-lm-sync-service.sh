@@ -3,6 +3,35 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)
 action=${1:-}
+backend=http://127.0.0.1:44719
+
+verify_no_funnel() {
+  local funnel_status
+  funnel_status=$(tailscale funnel status --json)
+  jq -e '
+    [.. | objects | .AllowFunnel? // empty | .. | booleans] |
+    all(. == false)
+  ' <<<"$funnel_status" >/dev/null || {
+    echo "Tailscale Funnel must not be enabled for Helium Sync" >&2
+    return 1
+  }
+}
+
+verify_endpoint() {
+  local serve_status
+  serve_status=$(tailscale serve status --json)
+  jq -e --arg backend "$backend" '
+    ([.. | objects | .Proxy? // empty] == [$backend]) and
+    ([.. | objects | .HTTPS? // empty] == [true]) and
+    ([.. | objects | .HTTP? // empty] | length == 0) and
+    ([.. | objects | .TCPForward? // empty] | length == 0) and
+    ([.. | objects | keys[]] | any(test("\\.ts\\.net:443$")))
+  ' <<<"$serve_status" >/dev/null || {
+    echo "Tailscale Serve must expose exactly one HTTPS :443 proxy to $backend" >&2
+    return 1
+  }
+  verify_no_funnel
+}
 
 case "$action" in
   install-source)
@@ -64,6 +93,21 @@ case "$action" in
     trap - EXIT
     echo "backup_restore_drill=passed"
     ;;
+  configure-endpoint)
+    jq -e 'type == "object" and length == 0' \
+      < <(tailscale serve status --json) >/dev/null || {
+      echo "refusing to replace an existing Tailscale Serve configuration" >&2
+      exit 1
+    }
+    verify_no_funnel
+    sudo tailscale serve --bg --yes --https=443 "$backend"
+    verify_endpoint
+    echo "tailscale_endpoint=verified"
+    ;;
+  verify-endpoint)
+    verify_endpoint
+    echo "tailscale_endpoint=verified"
+    ;;
   enable)
     [ -s /var/lib/helium-sync/devices.json ] || {
       echo "server registry is not initialized" >&2
@@ -73,11 +117,7 @@ case "$action" in
       echo "server backup restore drill has not passed" >&2
       exit 1
     }
-    tailscale serve status --json | jq -e \
-      '.. | strings | select(test("127\\.0\\.0\\.1:44719"))' >/dev/null || {
-      echo "Tailscale HTTPS Serve is not forwarding to 127.0.0.1:44719" >&2
-      exit 1
-    }
+    verify_endpoint
     sudo systemctl enable --now helium-syncd.service
     sudo systemctl enable --now helium-sync-server-backup.timer
     ;;
@@ -86,7 +126,7 @@ case "$action" in
     tailscale serve status
     ;;
   *)
-    echo "usage: $0 <install-source|initialize BOOTSTRAP|backup-drill|enable|status>" >&2
+    echo "usage: $0 <install-source|initialize BOOTSTRAP|backup-drill|configure-endpoint|verify-endpoint|enable|status>" >&2
     exit 2
     ;;
 esac

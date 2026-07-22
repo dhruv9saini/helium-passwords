@@ -43,10 +43,12 @@ d / da / oneplus browser
 
 lm sees record identity metadata and ciphertext. It has no content key and
 cannot decrypt passwords or cookies. All enrolled browser profiles with a live
-content key can decrypt the shared records. Recovery holders can decrypt only
-if they possess a separately stored, d-signed encrypted key export and its
-recipient private key. Neither belongs in the server data directory, NAS copy
-of that directory, a repository, or chromiumer.
+content key can decrypt the shared records. d recovery uses an age-encrypted
+generation containing d's complete validated client state and credential. One
+generation is encrypted to at least two dedicated recovery identities and
+copied to two off-d locations; no recipient identity is stored with the
+ciphertext. None of this recovery material belongs in the server data
+directory, its NAS backup, a repository, or chromiumer.
 
 The browser reads exactly one enrollment directory:
 
@@ -87,11 +89,14 @@ A join is explicit:
 5. The native password and cookie bridges pull, validate, apply, read back, and
    persist the same global verified cursor. Pending bridges baseline unrelated
    local data and cannot publish.
-6. With the browser stopped, `enrollment-complete` requires both bridge
-   schemas and cursors to equal `client.json`, then asks the server to promote
-   that exact current cursor. The server atomically grants `push` only then.
-7. The restarted browser reloads the now-active state. An unchanged restart
-   emits no records.
+6. The native profile coordinator accepts readiness only after both bridges
+   have durably acknowledged the same global cursor. It then completes that
+   exact server cursor once and requires both bridge clients to reload the
+   activated state before either resumes. A missing password store, failed
+   readback, cursor mismatch, stale server cursor, or reload failure leaves the
+   flow fail-closed. The offline `enrollment-complete` command performs the
+   same schema/cursor gate with a stopped profile for recovery and diagnosis.
+7. An unchanged active restart emits no records.
 
 Credentials are per-device, hash-verified, scoped, independently rotatable with
 an overlap/confirm/retire sequence, and revocable. d cannot be revoked because
@@ -102,6 +107,9 @@ Content-key rotation is staged. d creates and distributes a signed encrypted
 keyring update, every active device acknowledges installation, d activates the
 new epoch, latest records and tombstones are CAS-re-encrypted, every device
 acknowledges the verified rekey cursor, and only then can d retire the old key.
+Before the CAS pass, `key-rekey` imports password and cookie revisions from
+their native bridge state only when both schema versions and verified cursors
+equal d's `client.json`; it cannot infer readiness from server ciphertext.
 
 ## Password convergence
 
@@ -175,8 +183,11 @@ lm is the control plane and hosts only the loopback opaque service. Tailscale
 Serve terminates TLS and applies tailnet access control. The service unit is
 `helium-syncd.service`, runs as the dedicated `helium-sync` account, and is
 hardened by systemd. `scripts/install-lm-sync-service.sh` installs and
-initializes it but refuses activation until Tailscale Serve is visibly
-forwarding to `127.0.0.1:44719`.
+initializes it but refuses activation until the Serve status describes exactly
+one HTTPS `:443` proxy to `http://127.0.0.1:44719`, no HTTP/raw-TCP listener,
+and no Funnel exposure. The service cgroup denies non-loopback IP traffic,
+capabilities, writable system/home paths, host process visibility, and device
+access; only `/var/lib/helium-sync` is writable.
 
 Every Chromium compile runs on chromiumer through
 `scripts/chromiumer-job.sh` and the pinned Nix environment. The wrapper
@@ -189,13 +200,13 @@ receipts, and exactly-once completion notification to
 
 | Area | Implemented and source-tested | Still required before personal data |
 | --- | --- | --- |
-| Transport | Opaque v2 E2EE, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery | Native Chromium compile, TLS endpoint, supervised live recovery drill |
+| Transport | Opaque v2 E2EE, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery | Native Chromium compile, configure the verified Tailscale HTTPS endpoint, supervised live recovery drill |
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations | Execute on disposable profiles, then provision d/da/oneplus |
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop | Built-browser prompts, save/update/delete/autofill and three-device restart tests |
 | Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
 | Origin state | Explicitly absent | Per-origin storage audit and safe adapters where observed necessary |
 | Tabs | Local exporter/store, atomic generations, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; deploy independent schedules/routes; disposable browser restore on every device |
 | Media/streaming | Reproducible fixtures and strict codec GN provenance checks | Control/Sync APK A/B on oneplus, HTTP/2+HTTP/3, video/audio/ChatGPT timing |
-| Deployment | Source unit/install gate and rollback-preserving installers | Tailscale HTTPS enablement, d SSH/auth route, artifacts, profile backups, sequential enrollment |
+| Deployment | Executable d recovery export/import, credential cutover, strict endpoint verification, source unit/install gate, and rollback-preserving installers | Create off-device recovery identities/copies, Tailscale HTTPS enablement, d SSH/auth route, artifacts, profile backups, sequential enrollment |
 
 No personal profile, credential, cookie, or tab content is read by source tests.
