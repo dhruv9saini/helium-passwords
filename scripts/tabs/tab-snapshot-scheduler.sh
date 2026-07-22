@@ -81,7 +81,6 @@ capture_once() {
         echo "helium-tabs executable is unavailable" >&2
         return 1
     }
-    tab_ops_require_absolute exporter "${TAB_EXPORTER}"
     [ -x "${TAB_EXPORTER}" ] || {
         write_status blocked browser_exporter_unavailable
         echo "browser API tab exporter is unavailable" >&2
@@ -106,7 +105,9 @@ capture_once() {
     capture_json="${temporary}/capture.json"
     write_status running browser_export
 
-    if ! "${TAB_EXPORTER}" --output "${session_json}" >"${temporary}/export.stdout" 2>"${temporary}/export.stderr"; then
+	if ! "${TAB_EXPORTER}" --source "${TAB_BROWSER_EXPORT}" \
+		--max-age-seconds "${TAB_BROWSER_EXPORT_MAX_AGE_SECONDS}" \
+		--output "${session_json}" >"${temporary}/export.stdout" 2>"${temporary}/export.stderr"; then
         write_status failure browser_export_failed
         echo "browser API tab export failed; payload and exporter output were discarded" >&2
         return 1

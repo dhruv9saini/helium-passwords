@@ -64,6 +64,8 @@ tab_ops_load_config() {
     TAB_STATE_ROOT=
     TAB_HELIUM_TABS=
     TAB_EXPORTER=
+	TAB_BROWSER_EXPORT=
+	TAB_BROWSER_EXPORT_MAX_AGE_SECONDS=
     TAB_BROWSER_VERSION=
     TAB_CHROMIUM_VERSION=
     TAB_INTERVAL_SECONDS=900
@@ -94,6 +96,8 @@ tab_ops_load_config() {
             state_root) TAB_STATE_ROOT=${value} ;;
             helium_tabs) TAB_HELIUM_TABS=${value} ;;
             exporter) TAB_EXPORTER=${value} ;;
+			browser_export) TAB_BROWSER_EXPORT=${value} ;;
+			browser_export_max_age_seconds) TAB_BROWSER_EXPORT_MAX_AGE_SECONDS=${value} ;;
             browser_version) TAB_BROWSER_VERSION=${value} ;;
             chromium_version) TAB_CHROMIUM_VERSION=${value} ;;
             interval_seconds) TAB_INTERVAL_SECONDS=${value} ;;
@@ -134,6 +138,20 @@ tab_ops_load_config() {
     tab_ops_require_absolute snapshot_store "${TAB_SNAPSHOT_STORE}"
     tab_ops_require_absolute state_root "${TAB_STATE_ROOT}"
     tab_ops_require_absolute helium_tabs "${TAB_HELIUM_TABS}"
+	tab_ops_require_absolute exporter "${TAB_EXPORTER}"
+	tab_ops_require_absolute browser_export "${TAB_BROWSER_EXPORT}"
+	[[ "${TAB_BROWSER_EXPORT_MAX_AGE_SECONDS}" =~ ^[0-9]+$ ]] && \
+		[ "${TAB_BROWSER_EXPORT_MAX_AGE_SECONDS}" -ge 300 ] && \
+		[ "${TAB_BROWSER_EXPORT_MAX_AGE_SECONDS}" -le 600 ] || {
+		echo "browser_export_max_age_seconds must be between 300 and 600" >&2
+		return 1
+	}
+	case "${TAB_BROWSER_EXPORT}" in
+		"${TAB_SNAPSHOT_STORE}"|"${TAB_SNAPSHOT_STORE}"/*|"${TAB_STATE_ROOT}"|"${TAB_STATE_ROOT}"/*)
+			echo "browser_export must be outside snapshot_store and state_root" >&2
+			return 1
+			;;
+	esac
     [[ "${TAB_INTERVAL_SECONDS}" =~ ^[1-9][0-9]*$ ]] || {
         echo "interval_seconds must be positive" >&2
         return 1

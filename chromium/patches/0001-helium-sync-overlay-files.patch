@@ -43,10 +43,10 @@ index 0000000..f30691c
 +}
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
 new file mode 100644
-index 0000000..4437b05
+index 0000000..eed7911
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
-@@ -0,0 +1,1506 @@
+@@ -0,0 +1,1538 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
@@ -629,12 +629,14 @@ index 0000000..4437b05
 +       std::unique_ptr<HeliumSyncClient> client,
 +       base::FilePath state_path,
 +       base::FilePath rollback_path,
-+       base::FilePath reauth_signal_path)
++       base::FilePath reauth_signal_path,
++       base::RepeatingCallback<void(int64_t)> verified_baseline_callback)
 +      : profile_(profile),
 +        client_(std::move(client)),
 +        state_path_(std::move(state_path)),
 +        rollback_path_(std::move(rollback_path)),
-+        reauth_signal_path_(std::move(reauth_signal_path)) {}
++        reauth_signal_path_(std::move(reauth_signal_path)),
++        verified_baseline_callback_(std::move(verified_baseline_callback)) {}
 +
 +  ~Impl() { Stop(); }
 +
@@ -663,6 +665,22 @@ index 0000000..4437b05
 +    weak_factory_.InvalidateWeakPtrs();
 +    reconcile_in_flight_ = false;
 +    operation_queue_.clear();
++  }
++
++  void PullAndApply() { Reconcile(); }
++
++  bool EnrollmentActivated(std::string* error) {
++    if (!client_ || !client_->ReloadEnrollmentState(error)) {
++      return false;
++    }
++    if (client_->enrollment_phase() != "active") {
++      if (error) {
++        *error = "cookie client enrollment is not active";
++      }
++      return false;
++    }
++    verified_baseline_callback_.Reset();
++    return true;
 +  }
 +
 + private:
@@ -1068,6 +1086,9 @@ index 0000000..4437b05
 +    }
 +    if (client_->enrollment_phase() == "pending") {
 +      reconcile_in_flight_ = false;
++      if (verified_baseline_callback_) {
++        verified_baseline_callback_.Run(state_.verified_sequence);
++      }
 +    }
 +    return true;
 +  }
@@ -1526,6 +1547,7 @@ index 0000000..4437b05
 +  bool restoring_ = false;
 +  bool reconcile_in_flight_ = false;
 +  int64_t pending_next_seq_ = 0;
++  base::RepeatingCallback<void(int64_t)> verified_baseline_callback_;
 +  base::RepeatingTimer reconcile_timer_;
 +  base::WeakPtrFactory<Impl> weak_factory_{this};
 +};
@@ -1535,12 +1557,14 @@ index 0000000..4437b05
 +    std::unique_ptr<HeliumSyncClient> client,
 +    base::FilePath state_path,
 +    base::FilePath rollback_path,
-+    base::FilePath reauth_signal_path)
++    base::FilePath reauth_signal_path,
++    base::RepeatingCallback<void(int64_t)> verified_baseline_callback)
 +    : impl_(std::make_unique<Impl>(profile,
 +                                   std::move(client),
 +                                   std::move(state_path),
 +                                   std::move(rollback_path),
-+                                   std::move(reauth_signal_path))) {}
++                                   std::move(reauth_signal_path),
++                                   std::move(verified_baseline_callback))) {}
 +
 +HeliumCookieSyncBridge::~HeliumCookieSyncBridge() = default;
 +
@@ -1552,20 +1576,32 @@ index 0000000..4437b05
 +  impl_->Stop();
 +}
 +
++void HeliumCookieSyncBridge::PullAndApply() {
++  impl_->PullAndApply();
++}
++
++bool HeliumCookieSyncBridge::EnrollmentActivated(std::string* error) {
++  return impl_->EnrollmentActivated(error);
++}
++
 +}  // namespace helium_sync
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.h b/chrome/browser/helium_sync/helium_cookie_sync_bridge.h
 new file mode 100644
-index 0000000..442bd9d
+index 0000000..70340e6
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.h
-@@ -0,0 +1,38 @@
+@@ -0,0 +1,46 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 +#define CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 +
++#include <cstdint>
 +#include <memory>
++#include <string>
++
 +#include "base/files/file_path.h"
++#include "base/functional/callback.h"
 +
 +class Profile;
 +
@@ -1581,13 +1617,17 @@ index 0000000..442bd9d
 +                         std::unique_ptr<HeliumSyncClient> client,
 +                         base::FilePath state_path,
 +                         base::FilePath rollback_path,
-+                         base::FilePath reauth_signal_path);
++                         base::FilePath reauth_signal_path,
++                         base::RepeatingCallback<void(int64_t)>
++                             verified_baseline_callback);
 +  HeliumCookieSyncBridge(const HeliumCookieSyncBridge&) = delete;
 +  HeliumCookieSyncBridge& operator=(const HeliumCookieSyncBridge&) = delete;
 +  ~HeliumCookieSyncBridge();
 +
 +  void Start();
 +  void Stop();
++  void PullAndApply();
++  bool EnrollmentActivated(std::string* error);
 +
 + private:
 +  class Impl;
@@ -1599,10 +1639,10 @@ index 0000000..442bd9d
 +#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 diff --git a/chrome/browser/helium_sync/helium_sync_service.cc b/chrome/browser/helium_sync/helium_sync_service.cc
 new file mode 100644
-index 0000000..1bed1ec
+index 0000000..6f99321
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_sync_service.cc
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,286 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_sync_service.h"
@@ -1615,6 +1655,7 @@ index 0000000..1bed1ec
 +#include "base/base64.h"
 +#include "base/files/file_path.h"
 +#include "base/files/file_util.h"
++#include "base/functional/bind.h"
 +#include "base/json/json_reader.h"
 +#include "base/logging.h"
 +#include "base/strings/string_util.h"
@@ -1674,7 +1715,12 @@ index 0000000..1bed1ec
 +                       : std::optional<std::string>(std::move(value));
 +}
 +
-+std::optional<std::string> ReadClientDeviceId(
++struct ClientEnrollment {
++  std::string device_id;
++  std::string phase;
++};
++
++std::optional<ClientEnrollment> ReadClientEnrollment(
 +    const base::FilePath& client_state_path) {
 +  std::string raw;
 +  if (!base::ReadFileToString(client_state_path, &raw)) {
@@ -1710,7 +1756,7 @@ index 0000000..1bed1ec
 +      return std::nullopt;
 +    }
 +  }
-+  return *device_id;
++  return ClientEnrollment{*device_id, *phase};
 +}
 +
 +}  // namespace
@@ -1730,9 +1776,10 @@ index 0000000..1bed1ec
 +      ReadConfigValue(config_dir, kBaseUrlFile);
 +  const base::FilePath client_state_path =
 +      config_dir.AppendASCII(kClientStateFile);
-+  std::optional<std::string> device_id = ReadClientDeviceId(client_state_path);
++  std::optional<ClientEnrollment> enrollment =
++      ReadClientEnrollment(client_state_path);
 +  GURL base_url(base_url_value.value_or(""));
-+  if (!token || !device_id || !base_url.is_valid() ||
++  if (!token || !enrollment || !base_url.is_valid() ||
 +      !base_url.SchemeIs(url::kHttpsScheme) || base_url.host().empty() ||
 +      base_url.has_username() || base_url.has_password()) {
 +    LOG(WARNING) << "Helium sync inactive: profile-local enrollment config is "
@@ -1743,13 +1790,26 @@ index 0000000..1bed1ec
 +
 +  LOG(WARNING) << "Helium sync starting from profile-local enrollment";
 +  AndroidStatusLog("starting from profile-local enrollment");
++  base::RepeatingCallback<void(int64_t)> cookie_baseline_callback;
++  base::RepeatingCallback<void(int64_t)> password_baseline_callback;
++  if (enrollment->phase == "pending") {
++    enrollment_client_ = std::make_unique<helium_sync::HeliumSyncClient>(
++        profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
++    cookie_baseline_callback = base::BindRepeating(
++        &HeliumSyncService::OnCookieBaselineVerified,
++        weak_factory_.GetWeakPtr());
++    password_baseline_callback = base::BindRepeating(
++        &HeliumSyncService::OnPasswordBaselineVerified,
++        weak_factory_.GetWeakPtr());
++  }
 +  auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
 +      profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
 +  cookie_bridge_ = std::make_unique<helium_sync::HeliumCookieSyncBridge>(
 +      profile, std::move(cookie_client),
 +      config_dir.AppendASCII(kCookieStateFile),
 +      config_dir.AppendASCII(kCookieRollbackFile),
-+      config_dir.AppendASCII(kCookieReauthSignalFile));
++      config_dir.AppendASCII(kCookieReauthSignalFile),
++      std::move(cookie_baseline_callback));
 +  cookie_bridge_->Start();
 +
 +  scoped_refptr<password_manager::PasswordStoreInterface> password_store =
@@ -1764,14 +1824,16 @@ index 0000000..1bed1ec
 +  auto client = std::make_unique<helium_sync::HeliumSyncClient>(
 +      profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
 +  password_bridge_ = std::make_unique<helium_sync::HeliumPasswordSyncBridge>(
-+      password_store, std::move(client), *device_id,
-+      config_dir.AppendASCII(kPasswordStateFile));
++      password_store, std::move(client), enrollment->device_id,
++      config_dir.AppendASCII(kPasswordStateFile),
++      std::move(password_baseline_callback));
 +  password_bridge_->Start();
 +}
 +
 +HeliumSyncService::~HeliumSyncService() = default;
 +
 +void HeliumSyncService::Shutdown() {
++  weak_factory_.InvalidateWeakPtrs();
 +  if (cookie_bridge_) {
 +    cookie_bridge_->Stop();
 +    cookie_bridge_.reset();
@@ -1784,20 +1846,106 @@ index 0000000..1bed1ec
 +    tab_snapshot_bridge_->Stop();
 +    tab_snapshot_bridge_.reset();
 +  }
++  enrollment_client_.reset();
++}
++
++void HeliumSyncService::OnCookieBaselineVerified(int64_t sequence) {
++  if (enrollment_complete_) {
++    return;
++  }
++  cookie_verified_sequence_ = sequence;
++  MaybeCompleteEnrollment();
++}
++
++void HeliumSyncService::OnPasswordBaselineVerified(int64_t sequence) {
++  if (enrollment_complete_) {
++    return;
++  }
++  password_verified_sequence_ = sequence;
++  MaybeCompleteEnrollment();
++}
++
++void HeliumSyncService::MaybeCompleteEnrollment() {
++  if (!enrollment_client_ || !cookie_bridge_ || !password_bridge_ ||
++      enrollment_completion_in_flight_ || !cookie_verified_sequence_ ||
++      !password_verified_sequence_) {
++    return;
++  }
++  if (*cookie_verified_sequence_ != *password_verified_sequence_) {
++    cookie_verified_sequence_.reset();
++    password_verified_sequence_.reset();
++    cookie_bridge_->PullAndApply();
++    password_bridge_->PullAndApply();
++    return;
++  }
++
++  const int64_t verified_sequence = *cookie_verified_sequence_;
++  std::string error;
++  if (!enrollment_client_->AcknowledgeApplied(verified_sequence, &error)) {
++    LOG(WARNING) << "Helium enrollment coordinator could not acknowledge the "
++                    "joint verified cursor: "
++                 << error;
++    AndroidStatusLog("enrollment joint cursor acknowledgement failed");
++    cookie_verified_sequence_.reset();
++    password_verified_sequence_.reset();
++    return;
++  }
++  enrollment_completion_in_flight_ = true;
++  enrollment_client_->CompleteEnrollment(
++      verified_sequence,
++      base::BindOnce(&HeliumSyncService::OnEnrollmentComplete,
++                     weak_factory_.GetWeakPtr()));
++}
++
++void HeliumSyncService::OnEnrollmentComplete(bool ok, std::string error) {
++  enrollment_completion_in_flight_ = false;
++  if (!ok) {
++    LOG(WARNING) << "Helium joint enrollment completion failed: " << error;
++    AndroidStatusLog("joint enrollment completion failed");
++    cookie_verified_sequence_.reset();
++    password_verified_sequence_.reset();
++    return;
++  }
++
++  std::string cookie_error;
++  std::string password_error;
++  const bool cookie_active =
++      cookie_bridge_->EnrollmentActivated(&cookie_error);
++  const bool password_active =
++      password_bridge_->EnrollmentActivated(&password_error);
++  if (!cookie_active || !password_active) {
++    LOG(WARNING) << "Helium enrollment activated but bridge state reload "
++                    "failed closed: cookie="
++                 << cookie_error << " password=" << password_error;
++    AndroidStatusLog("enrollment bridge state reload failed closed");
++    return;
++  }
++
++  enrollment_complete_ = true;
++  LOG(WARNING) << "Helium password and cookie enrollment activated at joint "
++                  "verified cursor "
++               << *cookie_verified_sequence_;
++  AndroidStatusLog("password and cookie enrollment activated");
++  cookie_bridge_->PullAndApply();
++  password_bridge_->PullAndApply();
 +}
 diff --git a/chrome/browser/helium_sync/helium_sync_service.h b/chrome/browser/helium_sync/helium_sync_service.h
 new file mode 100644
-index 0000000..38202e6
+index 0000000..4bebef9
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_sync_service.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,50 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
 +#define CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
 +
++#include <cstdint>
 +#include <memory>
++#include <optional>
++#include <string>
 +
++#include "base/memory/weak_ptr.h"
 +#include "components/keyed_service/core/keyed_service.h"
 +
 +class Profile;
@@ -1805,6 +1953,7 @@ index 0000000..38202e6
 +namespace helium_sync {
 +class HeliumCookieSyncBridge;
 +class HeliumPasswordSyncBridge;
++class HeliumSyncClient;
 +class HeliumTabSnapshotBridge;
 +}  // namespace helium_sync
 +
@@ -1819,9 +1968,20 @@ index 0000000..38202e6
 +  void Shutdown() override;
 +
 + private:
++  void OnCookieBaselineVerified(int64_t sequence);
++  void OnPasswordBaselineVerified(int64_t sequence);
++  void MaybeCompleteEnrollment();
++  void OnEnrollmentComplete(bool ok, std::string error);
++
 +  std::unique_ptr<helium_sync::HeliumCookieSyncBridge> cookie_bridge_;
 +  std::unique_ptr<helium_sync::HeliumPasswordSyncBridge> password_bridge_;
++  std::unique_ptr<helium_sync::HeliumSyncClient> enrollment_client_;
 +  std::unique_ptr<helium_sync::HeliumTabSnapshotBridge> tab_snapshot_bridge_;
++  std::optional<int64_t> cookie_verified_sequence_;
++  std::optional<int64_t> password_verified_sequence_;
++  bool enrollment_completion_in_flight_ = false;
++  bool enrollment_complete_ = false;
++  base::WeakPtrFactory<HeliumSyncService> weak_factory_{this};
 +};
 +
 +#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
@@ -1925,10 +2085,10 @@ index 0000000..8e56fda
 +#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_FACTORY_H_
 diff --git a/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc b/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc
 new file mode 100644
-index 0000000..0ccbd6e
+index 0000000..0cc2ee6
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc
-@@ -0,0 +1,203 @@
+@@ -0,0 +1,211 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
@@ -1949,6 +2109,7 @@ index 0000000..0ccbd6e
 +#include "base/task/sequenced_task_runner.h"
 +#include "base/time/time.h"
 +#include "base/values.h"
++#include "build/build_config.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "chrome/browser/tab_list/tab_list_interface.h"
 +#include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -1958,7 +2119,6 @@ index 0000000..0ccbd6e
 +#include "content/public/browser/navigation_controller.h"
 +#include "content/public/browser/navigation_entry.h"
 +#include "content/public/browser/web_contents.h"
-+#include "crypto/sha2.h"
 +
 +namespace helium_sync {
 +namespace {
@@ -2112,16 +2272,24 @@ index 0000000..0ccbd6e
 +    return false;
 +  }
 +  raw.push_back('\n');
-+  std::string fingerprint = base::HexEncodeLower(crypto::SHA256HashString(raw));
-+  if (fingerprint == last_fingerprint_) {
-+    return true;
++  if (!base::CreateDirectory(export_path_.DirName())) {
++    return false;
 +  }
-+  if (!base::CreateDirectory(export_path_.DirName()) ||
-+      !base::ImportantFileWriter::WriteFileAtomically(export_path_, raw,
++#if BUILDFLAG(IS_POSIX)
++  if (!base::SetPosixFilePermissions(export_path_.DirName(), 0700)) {
++    return false;
++  }
++#endif
++  if (!base::ImportantFileWriter::WriteFileAtomically(export_path_, raw,
 +                                                      "HeliumSync")) {
 +    return false;
 +  }
-+  last_fingerprint_ = std::move(fingerprint);
++#if BUILDFLAG(IS_POSIX)
++  if (!base::SetPosixFilePermissions(export_path_, 0600)) {
++    base::DeleteFile(export_path_);
++    return false;
++  }
++#endif
 +  return true;
 +}
 +
@@ -2134,16 +2302,14 @@ index 0000000..0ccbd6e
 +}  // namespace helium_sync
 diff --git a/chrome/browser/helium_sync/helium_tab_snapshot_bridge.h b/chrome/browser/helium_sync/helium_tab_snapshot_bridge.h
 new file mode 100644
-index 0000000..6a6ac14
+index 0000000..c02c37b
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_tab_snapshot_bridge.h
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,42 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_TAB_SNAPSHOT_BRIDGE_H_
 +#define CHROME_BROWSER_HELIUM_SYNC_HELIUM_TAB_SNAPSHOT_BRIDGE_H_
-+
-+#include <string>
 +
 +#include "base/files/file_path.h"
 +#include "base/memory/raw_ptr.h"
@@ -2175,7 +2341,6 @@ index 0000000..6a6ac14
 +
 +  raw_ptr<Profile> profile_;
 +  const base::FilePath export_path_;
-+  std::string last_fingerprint_;
 +  base::RepeatingTimer capture_timer_;
 +  base::WeakPtrFactory<HeliumTabSnapshotBridge> weak_factory_{this};
 +};
@@ -2292,10 +2457,10 @@ index 0000000..9747ead
 +}
 diff --git a/components/helium_sync/helium_password_sync_bridge.cc b/components/helium_sync/helium_password_sync_bridge.cc
 new file mode 100644
-index 0000000..237bf1f
+index 0000000..8af376f
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.cc
-@@ -0,0 +1,805 @@
+@@ -0,0 +1,824 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_password_sync_bridge.h"
@@ -2477,10 +2642,11 @@ index 0000000..237bf1f
 +HeliumPasswordSyncBridge::HeliumPasswordSyncBridge(
 +    scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
 +    std::unique_ptr<HeliumSyncClient> client, std::string device_name,
-+    base::FilePath state_path)
++    base::FilePath state_path,
++    base::RepeatingCallback<void(int64_t)> verified_baseline_callback)
 +    : profile_store_(std::move(profile_store)), client_(std::move(client)),
-+      device_name_(std::move(device_name)), state_path_(std::move(state_path)) {
-+}
++      device_name_(std::move(device_name)), state_path_(std::move(state_path)),
++      verified_baseline_callback_(std::move(verified_baseline_callback)) {}
 +
 +HeliumPasswordSyncBridge::~HeliumPasswordSyncBridge() { Stop(); }
 +
@@ -2522,6 +2688,20 @@ index 0000000..237bf1f
 +  client_->Latest({kPasswordKind},
 +                  base::BindOnce(&HeliumPasswordSyncBridge::OnPullComplete,
 +                                 weak_factory_.GetWeakPtr()));
++}
++
++bool HeliumPasswordSyncBridge::EnrollmentActivated(std::string *error) {
++  if (!client_ || !client_->ReloadEnrollmentState(error)) {
++    return false;
++  }
++  if (client_->enrollment_phase() != "active") {
++    if (error) {
++      *error = "password client enrollment is not active";
++    }
++    return false;
++  }
++  verified_baseline_callback_.Reset();
++  return true;
 +}
 +
 +void HeliumPasswordSyncBridge::RequestReconcileRead() {
@@ -2998,6 +3178,10 @@ index 0000000..237bf1f
 +    return;
 +  }
 +  reconciling_ = false;
++  if (client_->enrollment_phase() == "pending" &&
++      verified_baseline_callback_) {
++    verified_baseline_callback_.Run(verified_sequence_);
++  }
 +  if (!observing_ && profile_store_) {
 +    observing_ = true;
 +    profile_store_->AddObserver(this);
@@ -3103,10 +3287,10 @@ index 0000000..237bf1f
 +} // namespace helium_sync
 diff --git a/components/helium_sync/helium_password_sync_bridge.h b/components/helium_sync/helium_password_sync_bridge.h
 new file mode 100644
-index 0000000..863cdf3
+index 0000000..dbc94e4
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.h
-@@ -0,0 +1,118 @@
+@@ -0,0 +1,121 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
@@ -3136,7 +3320,8 @@ index 0000000..863cdf3
 +  HeliumPasswordSyncBridge(
 +      scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
 +      std::unique_ptr<HeliumSyncClient> client, std::string device_name,
-+      base::FilePath state_path);
++      base::FilePath state_path,
++      base::RepeatingCallback<void(int64_t)> verified_baseline_callback);
 +  HeliumPasswordSyncBridge(const HeliumPasswordSyncBridge &) = delete;
 +  HeliumPasswordSyncBridge &
 +  operator=(const HeliumPasswordSyncBridge &) = delete;
@@ -3145,6 +3330,7 @@ index 0000000..863cdf3
 +  void Start();
 +  void Stop();
 +  void PullAndApply();
++  bool EnrollmentActivated(std::string *error);
 +
 +private:
 +  void RequestReconcileRead();
@@ -3218,6 +3404,7 @@ index 0000000..863cdf3
 +  int post_apply_empty_read_retries_ = 0;
 +  int64_t pending_next_seq_ = 0;
 +  int64_t verified_sequence_ = 0;
++  base::RepeatingCallback<void(int64_t)> verified_baseline_callback_;
 +  base::RepeatingTimer pull_timer_;
 +  base::WeakPtrFactory<HeliumPasswordSyncBridge> weak_factory_{this};
 +};
@@ -3227,10 +3414,10 @@ index 0000000..863cdf3
 +#endif // COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
 diff --git a/components/helium_sync/helium_sync_client.cc b/components/helium_sync/helium_sync_client.cc
 new file mode 100644
-index 0000000..6b8bac9
+index 0000000..a3f9df3
 --- /dev/null
 +++ b/components/helium_sync/helium_sync_client.cc
-@@ -0,0 +1,735 @@
+@@ -0,0 +1,760 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_sync_client.h"
@@ -3515,6 +3702,31 @@ index 0000000..6b8bac9
 +    return false;
 +  }
 +  state_.sequence = next_seq;
++  return true;
++}
++
++bool HeliumSyncClient::ReloadEnrollmentState(std::string *error) {
++  if (!error) {
++    return false;
++  }
++  ClientState previous = state_;
++  state_error_.clear();
++  if (!LoadClientState(client_state_path_)) {
++    *error = state_error_;
++    state_ = std::move(previous);
++    return false;
++  }
++  if (state_.device_id != previous.device_id || state_.role != previous.role ||
++      state_.active_key_id != previous.active_key_id ||
++      state_.keys != previous.keys ||
++      state_.local_seal_key != previous.local_seal_key ||
++      state_.sequence < previous.sequence ||
++      (previous.phase == "active" && state_.phase != "active")) {
++    state_ = std::move(previous);
++    state_error_ = "client enrollment state changed unexpectedly";
++    *error = state_error_;
++    return false;
++  }
 +  return true;
 +}
 +
@@ -3968,10 +4180,10 @@ index 0000000..6b8bac9
 +} // namespace helium_sync
 diff --git a/components/helium_sync/helium_sync_client.h b/components/helium_sync/helium_sync_client.h
 new file mode 100644
-index 0000000..73a1e0c
+index 0000000..3d3dfea
 --- /dev/null
 +++ b/components/helium_sync/helium_sync_client.h
-@@ -0,0 +1,125 @@
+@@ -0,0 +1,126 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
@@ -4045,6 +4257,7 @@ index 0000000..73a1e0c
 +  std::string_view device_id() const { return state_.device_id; }
 +  std::string_view enrollment_phase() const { return state_.phase; }
 +  bool AcknowledgeApplied(int64_t next_seq, std::string *error);
++  bool ReloadEnrollmentState(std::string *error);
 +  void CompleteEnrollment(int64_t acknowledged_seq, StatusCallback callback);
 +
 +  // Cookie rollback and other local durable data use the content keyring with a

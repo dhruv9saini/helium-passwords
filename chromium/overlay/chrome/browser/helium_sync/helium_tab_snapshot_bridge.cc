@@ -18,6 +18,7 @@
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
 #include "base/values.h"
+#include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/tab_list/tab_list_interface.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
@@ -27,7 +28,6 @@
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/web_contents.h"
-#include "crypto/sha2.h"
 
 namespace helium_sync {
 namespace {
@@ -181,16 +181,24 @@ bool HeliumTabSnapshotBridge::CaptureNowForTesting() {
     return false;
   }
   raw.push_back('\n');
-  std::string fingerprint = base::HexEncodeLower(crypto::SHA256HashString(raw));
-  if (fingerprint == last_fingerprint_) {
-    return true;
+  if (!base::CreateDirectory(export_path_.DirName())) {
+    return false;
   }
-  if (!base::CreateDirectory(export_path_.DirName()) ||
-      !base::ImportantFileWriter::WriteFileAtomically(export_path_, raw,
+#if BUILDFLAG(IS_POSIX)
+  if (!base::SetPosixFilePermissions(export_path_.DirName(), 0700)) {
+    return false;
+  }
+#endif
+  if (!base::ImportantFileWriter::WriteFileAtomically(export_path_, raw,
                                                       "HeliumSync")) {
     return false;
   }
-  last_fingerprint_ = std::move(fingerprint);
+#if BUILDFLAG(IS_POSIX)
+  if (!base::SetPosixFilePermissions(export_path_, 0600)) {
+    base::DeleteFile(export_path_);
+    return false;
+  }
+#endif
   return true;
 }
 

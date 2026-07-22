@@ -20,6 +20,13 @@ The wire kinds are exactly `passwords` and `cookies`. Tabs are prohibited from
 the transport, endpoint filters, server store, and client credentials. The
 native tab exporter writes only to the device-local snapshot path.
 
+The profile-local `tab_snapshot_export_path` value must equal the dedicated
+absolute `browser_export` path in tab operations config and remain outside the
+profile. The native bridge atomically refreshes it every five minutes even when
+the payload is unchanged. `helium-tab-exporter.sh` admits only a recent,
+same-user, mode-0600 regular file into `helium-tabs`; this freshness boundary
+prevents a stopped browser's old export from satisfying backup health.
+
 ### Passwords
 
 Suggested key:

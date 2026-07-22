@@ -17,6 +17,7 @@ install_files() {
     install -m 700 "${source_dir}/tab-ops-lib.sh" "${install_root}/tab-ops-lib.sh"
     install -m 700 "${source_dir}/tab-backup.sh" "${install_root}/tab-backup.sh"
     install -m 700 "${source_dir}/tab-snapshot-scheduler.sh" "${install_root}/tab-snapshot-scheduler.sh"
+	install -m 700 "${source_dir}/helium-tab-exporter.sh" "${HOME}/.local/libexec/helium-tab-exporter"
     install -m 600 "${config_file}" "${config_root}/tab-ops.conf"
     install -m 644 "${source_dir}/systemd/helium-tab-cycle.service" "${unit_root}/helium-tab-cycle.service"
     install -m 644 "${source_dir}/systemd/helium-tab-cycle.timer" "${unit_root}/helium-tab-cycle.timer"

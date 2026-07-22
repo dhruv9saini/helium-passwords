@@ -164,6 +164,8 @@ backup_preflight() {
     command -v age >/dev/null || { echo "age is unavailable" >&2; return 1; }
     command -v jq >/dev/null || { echo "jq is unavailable" >&2; return 1; }
     validate_recipients
+	"${TAB_EXPORTER}" --source "${TAB_BROWSER_EXPORT}" \
+		--max-age-seconds "${TAB_BROWSER_EXPORT_MAX_AGE_SECONDS}" --check >/dev/null
     local index
 	for index in 0 1; do
         verify_destination_host "${index}"

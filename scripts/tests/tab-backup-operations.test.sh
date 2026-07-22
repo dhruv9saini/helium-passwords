@@ -14,11 +14,8 @@ mkdir -p "${temporary}/bin" "${temporary}/snapshots" "${temporary}/state" \
     "${temporary}/destination-lm" "${temporary}/destination-two"
 go build -o "${temporary}/bin/helium-tabs" "${repo_root}/cmd/helium-tabs"
 
-cat >"${temporary}/bin/exporter" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-[ "$1" = --output ] && [ "$#" -eq 2 ]
-cat >"$2" <<'JSON'
+browser_export="${temporary}/browser-export.json"
+cat >"${browser_export}" <<'JSON'
 {
   "schema_version": 1,
   "windows": [{
@@ -32,7 +29,7 @@ cat >"$2" <<'JSON'
   }]
 }
 JSON
-EOF
+chmod 600 "${browser_export}"
 
 cat >"${temporary}/bin/age" <<'EOF'
 #!/usr/bin/env bash
@@ -101,9 +98,8 @@ cat >"${temporary}/bin/findmnt" <<'EOF'
 set -euo pipefail
 printf '/synthetic-separate-nas\n'
 EOF
-chmod 700 "${temporary}/bin/exporter" "${temporary}/bin/age" \
-	"${temporary}/bin/ssh" "${temporary}/bin/rsync" "${temporary}/bin/uname" \
-	"${temporary}/bin/findmnt"
+chmod 700 "${temporary}/bin/age" "${temporary}/bin/ssh" \
+	"${temporary}/bin/rsync" "${temporary}/bin/uname" "${temporary}/bin/findmnt"
 printf '%s\n' \
     'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' \
     'age1pppppppppppppppppppppppppppppppppppppppppppppppppppp' \
@@ -120,7 +116,9 @@ profile=default
 snapshot_store=${temporary}/snapshots
 state_root=${temporary}/state
 helium_tabs=${temporary}/bin/helium-tabs
-exporter=${temporary}/bin/exporter
+exporter=${repo_root}/scripts/tabs/helium-tab-exporter.sh
+browser_export=${browser_export}
+browser_export_max_age_seconds=420
 browser_version=fixture
 chromium_version=fixture
 interval_seconds=60
@@ -133,6 +131,32 @@ EOF
 chmod 600 "${config}"
 export TAB_TEST_NAS_ROOT="${temporary}/destination-lm"
 export PATH="${temporary}/bin:${PATH}"
+
+adapter="${repo_root}/scripts/tabs/helium-tab-exporter.sh"
+"${adapter}" --source "${browser_export}" --max-age-seconds 420 --check >/dev/null
+adapter_output="${temporary}/adapter-output.json"
+"${adapter}" --source "${browser_export}" --max-age-seconds 420 \
+	--output "${adapter_output}" >/dev/null
+cmp "${browser_export}" "${adapter_output}"
+if "${adapter}" --source "${browser_export}" --max-age-seconds 420 \
+	--output "${adapter_output}" >/dev/null 2>&1; then
+	echo "tab exporter overwrote an existing output" >&2
+	exit 1
+fi
+
+stale_export="${temporary}/stale-export.json"
+install -m 600 "${browser_export}" "${stale_export}"
+touch -d "@$(( $(date +%s) - 421 ))" "${stale_export}"
+if "${adapter}" --source "${stale_export}" --max-age-seconds 420 --check >/dev/null 2>&1; then
+	echo "stale browser tab export was accepted" >&2
+	exit 1
+fi
+linked_export="${temporary}/linked-export.json"
+ln -s "${browser_export}" "${linked_export}"
+if "${adapter}" --source "${linked_export}" --max-age-seconds 420 --check >/dev/null 2>&1; then
+	echo "symlink browser tab export was accepted" >&2
+	exit 1
+fi
 
 cycle_output=$("${repo_root}/scripts/tabs/tab-snapshot-scheduler.sh" cycle "${config}")
 generation=$(awk -F= '$1 == "generation" { print $2; exit }' <<<"${cycle_output}")
@@ -148,6 +172,16 @@ chmod 600 "${changed_config}"
 if "${repo_root}/scripts/tabs/tab-snapshot-scheduler.sh" status \
 	"${changed_config}" >/dev/null 2>&1; then
 	echo "health proof remained valid after configuration changed" >&2
+	exit 1
+fi
+
+unbounded_freshness_config="${temporary}/unbounded-freshness.conf"
+sed 's/browser_export_max_age_seconds=420/browser_export_max_age_seconds=601/' \
+	"${config}" >"${unbounded_freshness_config}"
+chmod 600 "${unbounded_freshness_config}"
+if "${repo_root}/scripts/tabs/tab-backup.sh" preflight \
+	"${unbounded_freshness_config}" >/dev/null 2>&1; then
+	echo "unbounded browser export freshness was accepted" >&2
 	exit 1
 fi
 
@@ -247,6 +281,8 @@ snapshot_store=${temporary}/snapshots-${source_device}
 state_root=${temporary}/state-${source_device}
 helium_tabs=${temporary}/bin/helium-tabs
 exporter=${temporary}/bin/exporter
+browser_export=${browser_export}
+browser_export_max_age_seconds=420
 browser_version=fixture
 chromium_version=fixture
 interval_seconds=60
@@ -287,6 +323,7 @@ installer_output=$(HOME="${temporary}/home" \
     "${repo_root}/scripts/tabs/install-linux-tab-scheduler.sh" install "${config}")
 grep -q '^enabled=false$' <<<"${installer_output}"
 test -x "${temporary}/home/.local/libexec/helium-tab-ops/tab-backup.sh"
+test -x "${temporary}/home/.local/libexec/helium-tab-exporter"
 test -f "${temporary}/home/.config/systemd/user/helium-tab-cycle.timer"
 grep -q 'ExecCondition=.*tab-backup.sh preflight' \
     "${temporary}/home/.config/systemd/user/helium-tab-cycle.service"

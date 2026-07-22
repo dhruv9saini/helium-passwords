@@ -14,6 +14,10 @@ const service = fs.readFileSync(new URL(
   "../../chromium/overlay/chrome/browser/helium_sync/helium_sync_service.cc",
   import.meta.url,
 ), "utf8");
+const tabExporter = fs.readFileSync(new URL(
+  "../tabs/helium-tab-exporter.sh",
+  import.meta.url,
+), "utf8");
 
 test("native cookie identity includes partition, host/domain form, scheme, and port", () => {
   const identity = cookie.slice(
@@ -69,7 +73,9 @@ test("native tab export matches the independent store schema and is atomic", () 
     assert.match(tabs, new RegExp(`Set\\(\"${field}\"`));
   }
   assert.match(tabs, /ImportantFileWriter::WriteFileAtomically/);
-  assert.match(tabs, /fingerprint == last_fingerprint_/);
+  assert.match(tabs, /SetPosixFilePermissions\(export_path_\.DirName\(\), 0700\)/);
+  assert.match(tabs, /SetPosixFilePermissions\(export_path_, 0600\)/);
+  assert.doesNotMatch(tabs, /last_fingerprint_|SHA256HashString/);
   assert.match(tabs, /if \(!contents\)/);
   assert.match(tabs, /valid = false/);
   assert.match(tabs, /SchemeIsHTTPOrHTTPS/);
@@ -83,4 +89,14 @@ test("tab snapshots stay independent of remote-sync credentials and profile file
   assert.doesNotMatch(tabs, /Session_|Tabs_|Login Data|Network\/Cookies/);
   assert.doesNotMatch(tabs, /HeliumSyncClient|Latest\(|Push\(|AcknowledgeApplied/);
   assert.doesNotMatch(tabs, /base_url|token|client\.json|syncstore/i);
+});
+
+test("tab export adapter rejects stale or mutable source boundaries", () => {
+  assert.match(tabExporter, /\[ ! -L "\$\{source_file\}" \] && \[ -f/);
+  assert.match(tabExporter, /stat -c %u/);
+  assert.match(tabExporter, /8#077/);
+  assert.match(tabExporter, /age_seconds.*max_age_seconds/s);
+  assert.match(tabExporter, /before=.*stat -c.*%d:%i:%s:%Y/s);
+  assert.match(tabExporter, /\[ "\$\{before\}" = "\$\{after\}" \]/);
+  assert.match(tabExporter, /\[ ! -e "\$\{output_file\}" \]/);
 });

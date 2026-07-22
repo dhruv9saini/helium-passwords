@@ -3,8 +3,6 @@
 #ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_TAB_SNAPSHOT_BRIDGE_H_
 #define CHROME_BROWSER_HELIUM_SYNC_HELIUM_TAB_SNAPSHOT_BRIDGE_H_
 
-#include <string>
-
 #include "base/files/file_path.h"
 #include "base/memory/raw_ptr.h"
 #include "base/memory/weak_ptr.h"
@@ -35,7 +33,6 @@ class HeliumTabSnapshotBridge {
 
   raw_ptr<Profile> profile_;
   const base::FilePath export_path_;
-  std::string last_fingerprint_;
   base::RepeatingTimer capture_timer_;
   base::WeakPtrFactory<HeliumTabSnapshotBridge> weak_factory_{this};
 };

@@ -1,10 +1,11 @@
 # Independent Tab Snapshots
 
 `helium-tabs` is the implemented recovery-store portion of HS-004. It does not
-read Chromium session files or accept a profile path. A future Chromium
-producer must export the bounded JSON model through session/tab APIs while the
-browser is quiescent; until that producer exists, use only synthetic or
-disposable-profile exports.
+read Chromium session files or accept a profile path. The native Chromium
+bridge exports the bounded JSON model through session/tab APIs to a dedicated
+file outside the profile and refreshes it every five minutes. The source exists
+but has not passed a Chromium compile or disposable-profile run, so use only
+synthetic exports until that validation is complete.
 
 The store must live outside both the browser profile and `helium-syncd` data
 directory. One store belongs to one logical device/profile namespace.

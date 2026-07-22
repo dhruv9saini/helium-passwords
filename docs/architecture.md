@@ -146,7 +146,11 @@ adapter; arbitrary application databases will never be live-merged.
 ## Device-local durable tabs
 
 The browser tab bridge exports a bounded neutral snapshot outside the profile
-using create-new, fsync, and atomic rename. `helium-tabs` validates checksums,
+using create-new, fsync, and atomic rename. It refreshes the file every five
+minutes even when content is unchanged. A source-local adapter rejects exports
+older than a bounded margin, with unsafe permissions or ownership, through a
+symlink, or replaced during capture; a stopped browser therefore cannot turn a
+stale file into a healthy generation. `helium-tabs` validates checksums,
 commits immutable generations, explicitly quarantines corruption without
 deletion, applies 24-hourly/14-daily/12-weekly retention without deleting the
 last known-good copy, and restores only to a nonexistent disposable state

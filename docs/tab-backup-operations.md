@@ -2,10 +2,12 @@
 
 This layer schedules and copies the neutral `helium-tabs` snapshot model. It
 does not read Chromium `Sessions`, `Login Data`, cookies, a browser profile, or
-the syncstore. The missing browser integration is a narrow exporter that calls
-Chromium's session/tab APIs and accepts only `--output NEW-FILE`. Until that
-producer has compiled and passed a disposable-profile test, use these commands
-only with synthetic exporters.
+the syncstore. Chromium's tab bridge calls only session/tab APIs and atomically
+refreshes one neutral export outside the profile every five minutes, including
+when tabs are unchanged. `helium-tab-exporter.sh` is the narrow boundary from
+that fixed file to a new scheduler-owned input. Until the native producer has
+compiled and passed a disposable-profile test, use this workflow only with
+synthetic exports.
 
 ## Source-local scheduler
 
@@ -14,6 +16,16 @@ Copy `scripts/tabs/tab-ops.conf.example` outside the repository, make it mode
 accepts only `d`, `da`, or `oneplus`; `key_id` must be the corresponding
 `DEVICE-tabs-v1`. One configuration owns one store. The store and operation
 state must remain outside the browser profile.
+
+Set `browser_export` to a dedicated path outside the profile, and put the same
+absolute path in the profile-local `helium-sync/tab_snapshot_export_path`
+control file. `browser_export_max_age_seconds=420` gives the five-minute native
+refresh one bounded scheduling margin; configuration rejects values outside
+300 through 600 seconds. The adapter rejects a missing, empty,
+oversized, symlinked, wrong-owner, non-0600, future-dated, or older export. It
+also refuses an existing output and detects a source replacement during copy.
+Consequently a stopped browser ages out and cannot create a healthy snapshot
+cycle from an old export.
 
 ```sh
 scripts/tabs/tab-snapshot-scheduler.sh run-once "$config"
@@ -28,7 +40,7 @@ durability paths:
 scripts/tabs/tab-snapshot-scheduler.sh cycle "$config"
 ```
 
-`run-once` takes a nonblocking namespace lock, gives the exporter a new mode
+`run-once` takes a nonblocking namespace lock, gives the adapter a new mode
 `0600` temporary file, commits through `helium-tabs`, validates the committed
 generation, discards exporter output, and atomically records a status without
 URLs. `cycle` continues through encryption, both off-device transfers, health,
@@ -44,6 +56,8 @@ Every command verifies that short `uname -n` equals `source_device`. A config
 for d cannot capture, copy, restore, or apply retention on da, oneplus, or lm.
 This is a deployment gate for oneplus: measure or set its hostname before
 enabling the service rather than weakening the check.
+`preflight` also runs the adapter's freshness check, so enabling a timer fails
+while the browser export is absent or stale.
 
 For d and da, `scripts/tabs/install-linux-tab-scheduler.sh install CONFIG`
 installs the scripts, config, and constrained systemd user service/timer but
@@ -186,6 +200,9 @@ directory. It never deletes bytes and it never happens automatically.
   `age` and has no running systemd manager. No scheduler or backup service
   should be deployed until age and two noninteractive destination routes are
   present.
+- The source adapter and native five-minute refresh contract are implemented
+  and synthetic-tested. The native bridge still requires a chromiumer compile
+  and disposable-profile run before any scheduler is installed or enabled.
 
 These are deployment gates, not reasons to weaken destination independence or
 copy unencrypted tab data through an intermediary.
