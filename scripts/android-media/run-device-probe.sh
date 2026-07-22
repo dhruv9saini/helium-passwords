@@ -203,7 +203,7 @@ cp "$acceptance/acceptance.env" "$staged/acceptance.env"
   sha256sum result.json actions.env acceptance.env > EVIDENCE_SHA256SUMS
 )
 mv "$staged" "$evidence"
+cleanup
 trap - EXIT INT TERM
-find "$temporary" -depth -delete
 printf 'evidence_directory=%s\n' "$evidence"
 printf 'result_sha256=%s\n' "$(sha256sum "$evidence/result.json" | cut -d' ' -f1)"
