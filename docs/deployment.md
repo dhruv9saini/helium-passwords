@@ -200,6 +200,14 @@ scripts/install-lm-disposable-sync-service.sh enable
 scripts/install-lm-disposable-sync-service.sh status
 ```
 
+Every state-changing disposable action holds
+`$XDG_RUNTIME_DIR/helium-sync-disposable.operator.lock`; concurrent
+installation, registry, backup-drill, enable, or disable operations fail
+instead of racing. The live verifier bypasses environment proxies, resolves
+the authenticated `.ts.net` name directly to lm's current Tailscale IPv4, and
+requires exactly TLS 1.3. The unit refuses to start if a CA private key appears
+in the installed TLS generation.
+
 The fixed state root is
 `/home/d/.local/state/helium-sync-disposable`; binaries are under
 `/home/d/.local/share/helium-sync-disposable/bin`; backups are namespaced under
@@ -239,6 +247,22 @@ d-owned files, so never enroll personal devices or put personal records into
 this synthetic endpoint.
 
 ### Dedicated-account production endpoint
+
+First prove there is at most one endpoint owner. These commands inspect only
+service and socket metadata:
+
+```sh
+systemctl is-active helium-syncd.service || true
+XDG_RUNTIME_DIR=/run/user/$(id -u) \
+  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus \
+  systemctl --user is-active helium-syncd-disposable.service || true
+ss -ltnp '( sport = :44719 )'
+```
+
+The production `enable` action refuses any existing listener on port 44719.
+If the synthetic service owns it, explicitly preserve and stop that endpoint
+first with `scripts/install-lm-disposable-sync-service.sh disable`; production
+activation never silently replaces another service.
 
 ```sh
 scripts/install-lm-sync-service.sh install-source
@@ -296,7 +320,10 @@ older generations for rollback. It neither starts the service nor changes
 Tailscale. Verification requires both Tailscale Serve and Funnel to remain
 empty. The hardened unit re-verifies the generation at every start, binds only
 `100.100.105.47:44719`, permits only tailnet IPv4 peers, and requires TLS 1.3.
-No `:443` capability is needed.
+No `:443` capability is needed. A CA private key in the installed generation
+is a hard start failure. Live verification bypasses proxy environment
+variables, resolves the authenticated name to the exact current tailnet IPv4,
+and permits only TLS 1.3.
 
 Before a client receives a URL or credential, authenticate the printed
 `ca_sha256` through a route independent of lm and explicitly enroll that exact
@@ -419,6 +446,34 @@ scripts/install-lm-sync-service.sh enable
 scripts/install-lm-sync-service.sh status
 ```
 
+Endpoint installation, initialization, backup-drill, registry, activation,
+and disable actions automatically cross one sudo boundary, then hold
+`/run/helium-sync-operator.lock` for the complete action.
+Enrollment and revocation stop the in-memory registry owner, perform the
+CLI's fsync-and-rename registry transaction, validate the new registry and
+opaque journal without modifying either, restart only if the service was
+previously active, and require direct-TLS health. A concurrent operator action
+fails immediately. Do not invoke low-level `server-enroll` or `server-revoke`
+against the production registry.
+
+The backup helper also validates the source without snapshot creation or
+automatic journal recovery. It archives only `devices.json`, `records.jsonl`,
+`snapshots/`, and an optional opaque `quarantine/`; all backup directories,
+archives, manifests, receipts, and locks are private. d's age recipients and
+both recovery identities remain a separate client-side flow and are never
+members of the lm/NAS opaque archive. The production backup unit has no
+network access, a read-only server-state view, one writable NAS namespace, an
+empty capability set, and bounded CPU, memory, swap, and tasks.
+
+The nondestructive production stop is:
+
+```sh
+scripts/install-lm-sync-service.sh disable
+```
+
+It disables the service and backup timer while preserving
+`/var/lib/helium-sync`, TLS generations, and every NAS generation.
+
 Activation refuses unless the direct TLS generation matches lm's live
 Tailscale identity and Serve and Funnel are empty. `enable` does not trust the
 presence of an older receipt: immediately before activation it creates a fresh
@@ -470,6 +525,23 @@ the low-level `server-enroll` command against its file while it is active does
 not authorize the device until a restart and can race a server-side registry
 write. Use the corresponding disposable installer action only for the
 synthetic rootless endpoint.
+
+The complete temporary-state service proof is executable without a browser,
+personal credential, production service, or live profile:
+
+```sh
+bash scripts/tests/central-service-readiness.test.sh
+```
+
+It creates an E2EE d seed, two independent age recovery identities, restores
+both encrypted seed copies, writes one encrypted record through a supervised
+loopback daemon, creates and validates an allowlisted opaque server archive,
+starts a new daemon from the disposable restore, and proves d can decrypt the
+record while the restored server journal cannot. It then proves a separately
+wrapped da join is pull-only, cannot publish before promotion, is independently
+revocable, and that revocation does not affect d. This is source/protocol
+evidence; it does not replace production TLS installation or native browser
+acceptance.
 
 On the join device, use the active key ID recorded in the server bootstrap:
 

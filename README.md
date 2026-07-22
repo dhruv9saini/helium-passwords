@@ -54,7 +54,13 @@ its private Sync evidence extension is
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
   it keeps Tailscale Serve/Funnel empty and does not enable the service unless
   an offline-CA-signed, endpoint-constrained TLS generation matches lm's live
-  tailnet identity and the opaque restore drill passed.
+  tailnet identity and the opaque restore drill passed. State-changing
+  operator actions are serialized, and activation refuses any existing
+  listener on the canonical service port.
+- `scripts/helium-sync-server-backup.sh`: read-only validation and versioned
+  backup of only the hashed registry, opaque journal, journal snapshots, and
+  optional opaque quarantine. It never archives d client state, content keys,
+  recovery identities, or recovery-recipient configuration.
 - `docs/deployment.md`: exact seed, join, rotation, backup, and rollback
   sequence.
 
