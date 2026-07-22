@@ -103,28 +103,44 @@ stage() {
     remote_exec "${remote_worker}" stage-init "${job}" "${disk_budget_gib}"
     stage_initialized=true
 
-    local archive submodule_archive manifest archive_sha helium_submodule
+    local archive checkout manifest archive_sha helium_submodule
+    local repository_commit repository_origin core_origin
     temp_dir=$(mktemp -d /tmp/helium-source.XXXXXX)
     archive="${temp_dir}/source.tar"
-    submodule_archive="${temp_dir}/helium-chromium.tar"
+    checkout="${temp_dir}/source"
     manifest="${temp_dir}/source.manifest.incoming"
 
+    repository_commit=$(git -C "${repository}" rev-parse HEAD)
+    repository_origin=$(git -C "${repository}" remote get-url origin)
     helium_submodule=$(git -C "${repository}" rev-parse HEAD:helium-chromium)
+    core_origin=$(git -C "${repository}/helium-chromium" remote get-url origin)
     [ "$(git -C "${repository}/helium-chromium" rev-parse HEAD)" = \
         "${helium_submodule}" ] || {
         echo "helium-chromium checkout does not match the committed gitlink" >&2
         exit 1
     }
-    git -C "${repository}" archive --format=tar --output="${archive}" HEAD
-    git -C "${repository}/helium-chromium" archive --format=tar \
-        --prefix=helium-chromium/ --output="${submodule_archive}" \
-        "${helium_submodule}"
-    tar --concatenate --file="${archive}" "${submodule_archive}"
+
+    git init --quiet "${checkout}"
+    git -C "${checkout}" fetch --quiet --depth=1 \
+        "file://${repository}" "${repository_commit}"
+    git -C "${checkout}" checkout --quiet --detach FETCH_HEAD
+    git -C "${checkout}" -c protocol.file.allow=always \
+        -c "submodule.helium-chromium.url=file://${repository}/helium-chromium" \
+        submodule update --quiet --init --depth=1
+    [ "$(git -C "${checkout}" rev-parse HEAD)" = "${repository_commit}" ] && \
+        [ "$(git -C "${checkout}/helium-chromium" rev-parse HEAD)" = \
+            "${helium_submodule}" ] || {
+        echo "materialized source checkout does not match the committed revisions" >&2
+        exit 1
+    }
+    git -C "${checkout}" remote add origin "${repository_origin}"
+    git -C "${checkout}/helium-chromium" remote set-url origin "${core_origin}"
+    tar --create --file="${archive}" --directory="${checkout}" .
     archive_sha=$(sha256sum "${archive}" | awk '{ print $1 }')
     {
         printf 'repository=%s\n' "$(basename "${repository}")"
-        printf 'origin=%s\n' "$(git -C "${repository}" remote get-url origin)"
-        printf 'commit=%s\n' "$(git -C "${repository}" rev-parse HEAD)"
+        printf 'origin=%s\n' "${repository_origin}"
+        printf 'commit=%s\n' "${repository_commit}"
         printf 'tree=%s\n' "$(git -C "${repository}" rev-parse HEAD^{tree})"
         printf 'helium_submodule=%s\n' "${helium_submodule}"
         printf 'chromium_version=%s\n' \
