@@ -39,9 +39,10 @@ scripts/chromiumer-job.sh preflight 80
 
 The **local wrapper** is `scripts/chromiumer-job.sh` in the Helium checkout on
 `lm`. “Local” means it is the control client: it validates job IDs and a clean
-Git tree, archives exactly `HEAD`, transfers that archive, and provides the one
-interface for start/status/logs/cancel/fetch/cleanup. It does not compile and it
-does not enforce cgroups on `lm`.
+Git tree, archives the superproject `HEAD` together with the exact
+`helium-chromium` gitlink commit, transfers that composite archive, and provides
+the one interface for start/status/logs/cancel/fetch/cleanup. It does not
+compile and it does not enforce cgroups on `lm`.
 
 The local wrapper installs the matching `scripts/chromiumer-worker.sh` as
 `~/.local/libexec/helium-chromiumer-worker` on chromiumer. That **remote
@@ -141,10 +142,12 @@ bounds rather than substitutes for the watcher.
 
 ## Immutable Source Transfer
 
-Use a unique lowercase job ID. Staging refuses a dirty repository, archives
-exactly `HEAD`, transfers it directly over the dedicated SSH connection, checks
-the archive SHA-256 on chromiumer, and expands it under the job workspace. It
-does not push a branch or disclose private Sync source to a public remote.
+Use a unique lowercase job ID. Staging refuses a dirty repository, requires the
+checked-out `helium-chromium` submodule to match the superproject gitlink,
+archives the superproject `HEAD` and that exact submodule commit, transfers the
+composite archive directly over the dedicated SSH connection, checks the
+archive SHA-256 on chromiumer, and expands it under the job workspace. It does
+not push a branch or disclose private Sync source to a public remote.
 
 ```sh
 cd /home/d/coding/helium/helium-passwords
