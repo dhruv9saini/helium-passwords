@@ -3,8 +3,11 @@ import fs from "node:fs";
 import test from "node:test";
 
 import {
+  applyCookieTransaction,
+  canonicalCookieIdentity,
   EMPTY_COOKIE_FINGERPRINT,
   decideCookieReconcile,
+  previewCookieTransaction,
 } from "./cookie-whole-profile-model.mjs";
 
 const repoFile = relative => fs.readFileSync(
@@ -26,6 +29,69 @@ const remote = {
   keyId: "key-a",
   payloadFingerprint: "payload-a",
 };
+
+const firstCookie = {
+  name: "session",
+  value: "generation-one",
+  domain: ".fixture.invalid",
+  path: "/",
+  sourceScheme: 2,
+  sourcePort: 443,
+  secure: true,
+  httpOnly: true,
+  partitionKey: null,
+};
+
+test("disposable canonical identity preserves partition and source dimensions", () => {
+  const partitioned = {
+    ...firstCookie,
+    partitionKey: {
+      topLevelSite: "https://top.fixture",
+      hasCrossSiteAncestor: false,
+    },
+  };
+  const crossSitePartitioned = {
+    ...partitioned,
+    partitionKey: { ...partitioned.partitionKey, hasCrossSiteAncestor: true },
+  };
+  const identities = [
+    firstCookie,
+    { ...firstCookie, domain: "fixture.invalid" },
+    { ...firstCookie, sourcePort: 8443 },
+    partitioned,
+    crossSitePartitioned,
+  ].map(canonicalCookieIdentity);
+  assert.equal(new Set(identities).size, identities.length);
+});
+
+test("disposable cookie preview commits exact target and rolls back rejection", () => {
+  const secondCookie = {
+    ...firstCookie,
+    name: "rotation",
+    value: "generation-two",
+  };
+  const replacement = { ...firstCookie, value: "generation-three" };
+  const preview = previewCookieTransaction(
+    [firstCookie, secondCookie],
+    [
+      { action: "set", cookie: replacement },
+      { action: "delete", cookie: secondCookie },
+    ],
+  );
+  assert.equal(preview.setCount, 1);
+  assert.equal(preview.deleteCount, 1);
+  assert.notEqual(preview.beforeFingerprint, preview.targetFingerprint);
+  assert.deepEqual(applyCookieTransaction(preview), {
+    status: "committed",
+    cookies: preview.targetCookies,
+  });
+
+  const rejected = applyCookieTransaction(preview, {
+    rejectIdentity: canonicalCookieIdentity(secondCookie),
+  });
+  assert.equal(rejected.status, "rolled-back");
+  assert.deepEqual(rejected.cookies, preview.beforeCookies);
+});
 
 test("restart with no cookie mutation publishes nothing", () => {
   assert.deepEqual(decideCookieReconcile({
