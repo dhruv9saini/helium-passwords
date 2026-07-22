@@ -236,11 +236,19 @@ run_scan_case() {
                     printf '640\n'
                     ;;
                 silent-persistent) return 7 ;;
-                disk-budget) printf '1001\n' ;;
-                scan-error)
-                    echo 'synthetic non-race find failure' >&2
+                diagnostic-retry)
+                    if [ ! -e "${case_root}/scan-attempted" ]; then
+                        : >"${case_root}/scan-attempted"
+                        echo 'synthetic first diagnostic' >&2
+                        return 7
+                    fi
+                    printf '640\n'
+                    ;;
+                diagnostic-persistent)
+                    echo 'synthetic persistent diagnostic' >&2
                     return 7
                     ;;
+                disk-budget) printf '1001\n' ;;
             esac
         }
         meminfo_bytes() {
@@ -257,14 +265,22 @@ run_scan_case() {
     local watcher_pid=$!
     watcher_pids+=("${watcher_pid}")
 
-    if [[ "${kind}" == healthy || "${kind}" == silent-retry ]]; then
+    if [[ "${kind}" == healthy || "${kind}" == silent-retry || \
+        "${kind}" == diagnostic-retry ]]; then
         wait_for_file "${state_dir}/watchdog-ready.env"
         grep -Fqx 'workspace_bytes=640' "${state_dir}/health.env"
         grep -Fqx 'status=ok' "${state_dir}/health.env"
-        if [ "${kind}" = silent-retry ]; then
+        if [[ "${kind}" == silent-retry || \
+            "${kind}" == diagnostic-retry ]]; then
             grep -Fqx 'exit_code=7' "${state_dir}/disk-scan-retry.env"
-            grep -Fqx 'reason=silent disk usage scan failure' \
+            grep -Fqx 'reason=disk usage scan failure' \
                 "${state_dir}/disk-scan-retry.env"
+            grep -Fqx 'first_diagnostic=disk-scan-first-error.log' \
+                "${state_dir}/disk-scan-retry.env"
+        fi
+        if [ "${kind}" = diagnostic-retry ]; then
+            grep -Fqx 'synthetic first diagnostic' \
+                "${state_dir}/disk-scan-first-error.log"
         fi
         find "${active}" -delete
     else
@@ -278,7 +294,8 @@ run_scan_case() {
     wait "${watcher_pid}"
     local result=$?
     set -e
-    if [[ "${kind}" == healthy || "${kind}" == silent-retry ]]; then
+    if [[ "${kind}" == healthy || "${kind}" == silent-retry || \
+        "${kind}" == diagnostic-retry ]]; then
         if [ "${result}" -ne 0 ]; then
             cat "${case_root}/watch.error" >&2
             echo "healthy watcher exited ${result}" >&2
@@ -295,12 +312,16 @@ run_scan_case() {
 
 run_scan_case healthy
 run_scan_case silent-retry
+run_scan_case diagnostic-retry
 run_scan_case silent-persistent \
-    'disk usage scan repeatedly failed without diagnostics'
+    'disk usage scan repeatedly failed'
+run_scan_case diagnostic-persistent \
+    'disk usage scan repeatedly failed'
+grep -Fqx 'synthetic persistent diagnostic' \
+    "${test_root}/diagnostic-persistent/state/disk-scan-first-error.log"
+grep -Fq 'disk usage scan: synthetic persistent diagnostic' \
+    "${test_root}/diagnostic-persistent/watch.error"
 run_scan_case disk-budget 'job disk budget breached'
-run_scan_case scan-error 'disk usage scan failed'
-grep -Fq 'disk usage scan: synthetic non-race find failure' \
-    "${test_root}/scan-error/watch.error"
 
 printf 'chromiumer_watchdog_scan=passed\n'
 printf 'transient_deletion=ignored_by_gnu_find\n'

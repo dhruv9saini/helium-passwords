@@ -613,7 +613,7 @@ watch_job() {
     local interval=$7
     local check_interval=$8
     local low_memory_count=0
-    local silent_scan_retry_count=0
+    local scan_retry_count=0
     [[ "${interval}" =~ ^[1-9][0-9]*$ ]] && \
         [[ "${check_interval}" =~ ^[1-9][0-9]*$ ]] || exit 2
 
@@ -621,7 +621,10 @@ watch_job() {
     local scan_error="${state_dir}/disk-usage.error.$$"
     local scan_status="${state_dir}/disk-usage.status.$$"
     local scan_status_temp="${scan_status}.tmp"
-    local scan_pid= next_scan_at=0
+    local scan_retry="${state_dir}/disk-scan-retry.env"
+    local scan_retry_error="${state_dir}/disk-scan-first-error.log"
+    local scan_pid=''
+    local next_scan_at=0
 
     cleanup_scan() {
         trap - EXIT TERM INT
@@ -654,6 +657,34 @@ watch_job() {
         record_watchdog_stop "${state_dir}" "${reason}"
         systemctl --user stop "${unit}" >/dev/null 2>&1 || true
         exit 1
+    }
+
+    report_scan_error() {
+        [ ! -s "${scan_error}" ] || \
+            sed 's/^/disk usage scan: /' "${scan_error}" >&2
+    }
+
+    record_scan_retry() {
+        local result=$1
+        local reason=$2
+        [ "${scan_retry_count}" -eq 0 ] || return 1
+        scan_retry_count=1
+
+        local retry_temp="${scan_retry}.tmp"
+        local retry_error_temp="${scan_retry_error}.tmp"
+        install -m 600 "${scan_error}" "${retry_error_temp}"
+        {
+            printf 'retried_at=%s\n' "$(date --iso-8601=seconds)"
+            printf 'exit_code=%s\n' "${result}"
+            printf 'reason=%s\n' "${reason}"
+            printf 'first_diagnostic=disk-scan-first-error.log\n'
+        } >"${retry_temp}"
+        mv "${retry_error_temp}" "${scan_retry_error}"
+        mv "${retry_temp}" "${scan_retry}"
+        find "${scan_result}" "${scan_error}" "${scan_status}" \
+            -delete 2>/dev/null || true
+        scan_pid=
+        next_scan_at=${SECONDS}
     }
 
     while systemctl --user --quiet is-active "${unit}"; do
@@ -689,11 +720,18 @@ watch_job() {
 
         if [ -n "${scan_pid}" ] && [ ! -f "${scan_status}" ] && \
             ! kill -0 "${scan_pid}" 2>/dev/null; then
-            wait "${scan_pid}" 2>/dev/null || true
-            if [ -s "${scan_error}" ]; then
-                sed 's/^/disk usage scan: /' "${scan_error}" >&2
+            local wait_result
+            if wait "${scan_pid}" 2>/dev/null; then
+                wait_result=0
+            else
+                wait_result=$?
             fi
-            fail_watchdog "disk usage scan failed"
+            report_scan_error
+            if record_scan_retry "${wait_result}" \
+                "disk usage scan exited before publishing status"; then
+                continue
+            fi
+            fail_watchdog "disk usage scan repeatedly failed"
         fi
         if [ -n "${scan_pid}" ] && [ -f "${scan_status}" ]; then
             result=$(<"${scan_status}")
@@ -702,32 +740,17 @@ watch_job() {
                     "disk usage scan status was inconsistent"
             else
                 local wait_result=$?
-                if [ -s "${scan_error}" ]; then
-                    sed 's/^/disk usage scan: /' "${scan_error}" >&2
-                    fail_watchdog "disk usage scan failed"
-                fi
                 [ "${result}" = "${wait_result}" ] || fail_watchdog \
                     "disk usage scan status was inconsistent"
-                scan_pid=
-                if [ "${silent_scan_retry_count}" -eq 0 ]; then
-                    silent_scan_retry_count=1
-                    local retry_temp="${state_dir}/disk-scan-retry.env.tmp"
-                    {
-                        printf 'retried_at=%s\n' "$(date --iso-8601=seconds)"
-                        printf 'exit_code=%s\n' "${result}"
-                        printf 'reason=silent disk usage scan failure\n'
-                    } >"${retry_temp}"
-                    mv "${retry_temp}" "${state_dir}/disk-scan-retry.env"
-                    find "${scan_result}" "${scan_error}" "${scan_status}" \
-                        -delete 2>/dev/null || true
-                    next_scan_at=${SECONDS}
+                report_scan_error
+                if record_scan_retry "${result}" \
+                    "disk usage scan failure"; then
                     continue
                 fi
-                fail_watchdog \
-                    "disk usage scan repeatedly failed without diagnostics"
+                fail_watchdog "disk usage scan repeatedly failed"
             fi
             scan_pid=
-            silent_scan_retry_count=0
+            scan_retry_count=0
             used=$(<"${scan_result}")
             [[ "${used}" =~ ^[0-9]+$ ]] || fail_watchdog \
                 "disk usage scan produced invalid output"
@@ -785,6 +808,11 @@ status_job() {
             cat "${state_dir}/${file}"
         fi
     done
+    if [ -f "${state_dir}/disk-scan-first-error.log" ]; then
+        printf '%s\n' '--- disk-scan-first-error.log ---'
+        sed 's/^/disk usage scan: /' \
+            "${state_dir}/disk-scan-first-error.log"
+    fi
 }
 
 limits_job() {
