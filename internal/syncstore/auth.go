@@ -151,11 +151,54 @@ func (registry *DeviceRegistry) ActiveKeyID() string {
 func (registry *DeviceRegistry) AcceptedWriteKeyIDs() map[string]struct{} {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
-	accepted := map[string]struct{}{registry.document.ActiveKeyID: {}}
-	if registry.document.RetiringKeyID != "" {
-		accepted[registry.document.RetiringKeyID] = struct{}{}
+	return registry.acceptedWriteKeyIDsLocked()
+}
+
+// PutAuthorized holds the registry read lock through the durable journal
+// commit. A key activation therefore cannot race a request that was authorized
+// under the previous epoch. Once activation completes, only the new active key
+// may write; retiring keys remain readable solely for the bounded rekey pass.
+func (registry *DeviceRegistry) PutAuthorized(
+	store *Store, principal DevicePrincipal,
+	mutations []OpaqueMutation) (PushResponse, error) {
+	if store == nil {
+		return PushResponse{}, errors.New("sync store is not configured")
 	}
-	return accepted
+	registry.mu.RLock()
+	defer registry.mu.RUnlock()
+	if !registry.principalAllowsLocked(principal, ScopePush) {
+		return PushResponse{}, errDeviceAuthorizationChanged
+	}
+	return store.Put(principal.ID, registry.acceptedWriteKeyIDsLocked(), mutations)
+}
+
+func (registry *DeviceRegistry) acceptedWriteKeyIDsLocked() map[string]struct{} {
+	return map[string]struct{}{registry.document.ActiveKeyID: {}}
+}
+
+func (registry *DeviceRegistry) principalAllowsLocked(
+	principal DevicePrincipal, scope DeviceScope) bool {
+	for _, device := range registry.document.Devices {
+		if device.ID != principal.ID || device.Revoked ||
+			device.Phase != principal.Phase || device.Role != principal.Role {
+			continue
+		}
+		credentialMatches := false
+		for _, candidate := range device.TokenHashes {
+			credentialMatches = subtle.ConstantTimeCompare(
+				[]byte(candidate), []byte(principal.CredentialHash)) == 1 || credentialMatches
+		}
+		if !credentialMatches {
+			return false
+		}
+		for _, candidate := range device.Scopes {
+			if candidate == scope {
+				return true
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func (registry *DeviceRegistry) KeyStatus() KeyTransitionResponse {

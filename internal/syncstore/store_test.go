@@ -14,6 +14,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -703,8 +704,14 @@ func TestContentKeyRotationRekeysLatestAndTombstones(t *testing.T) {
 	if err := client.ActivateStagedKey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, accepted := registry.AcceptedWriteKeyIDs()[oldKeyID]; !accepted {
-		t.Fatal("old epoch lost overlap immediately after activation")
+	if _, accepted := registry.AcceptedWriteKeyIDs()[oldKeyID]; accepted {
+		t.Fatal("retiring epoch remained write-active after activation")
+	}
+	if _, err := joinClient.Push(context.Background(), []PlainMutation{{
+		Kind: KindPassword, Key: "blocked-old-epoch",
+		Payload: json.RawMessage(`{"value":3}`),
+	}}); err == nil {
+		t.Fatal("client wrote with the retiring epoch before adopting active key")
 	}
 	if err := joinClient.AdoptServerKeyStatus(context.Background()); err != nil {
 		t.Fatal(err)
@@ -783,6 +790,59 @@ func TestStoreRecoversOpaqueJournalFromSnapshot(t *testing.T) {
 	}
 	if records := recovered.Pull(0, nil).Records; len(records) != 1 || records[0].Key != "fixture" {
 		t.Fatalf("unexpected recovered records: %+v", records)
+	}
+}
+
+func TestAuthorizedPutHoldsRegistryEpochThroughJournalCommit(t *testing.T) {
+	seed, err := CreateSeedState(filepath.Join(t.TempDir(), "seed.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := CreateDeviceRegistry(
+		filepath.Join(t.TempDir(), "devices.json"), seedToken, seed.ActiveKeyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := registry.Authenticate(seedToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := seed.decodedKey(seed.ActiveKeyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := mustEncrypt(t, key, "d", seed.ActiveKeyID, PlainMutation{
+		Kind: KindPassword, Key: "epoch-lock", Payload: json.RawMessage(`{"value":1}`),
+	}, 1)
+
+	store.mu.Lock()
+	putDone := make(chan error, 1)
+	go func() {
+		_, err := registry.PutAuthorized(store, principal, []OpaqueMutation{mutation})
+		putDone <- err
+	}()
+
+	locked := false
+	for attempts := 0; attempts < 1000; attempts++ {
+		if registry.mu.TryLock() {
+			registry.mu.Unlock()
+			runtime.Gosched()
+			continue
+		}
+		locked = true
+		break
+	}
+	if !locked {
+		store.mu.Unlock()
+		t.Fatal("authorized put did not hold the registry read lock while blocked on the journal")
+	}
+	store.mu.Unlock()
+	if err := <-putDone; err != nil {
+		t.Fatal(err)
 	}
 }
 
