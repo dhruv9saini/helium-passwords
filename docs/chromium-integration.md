@@ -55,13 +55,20 @@ must verify the target revision and fingerprint, including after restart.
 
 ### Cookies
 
-Suggested key:
+Implemented key identity:
 
 ```text
-<partition-key>/<domain>/<path>/<name>
+<partition-key including ancestor bit>/<exact domain form>/<path>/<name>/<source scheme>/<source port>
 ```
 
-Suggested payload fields should mirror `net::CanonicalCookie` fields needed for `network::mojom::CookieManager::SetCanonicalCookie`.
+The length-framed identity is hashed for the record key. The v3 payload mirrors
+the `net::CanonicalCookie` fields needed by
+`network::mojom::CookieManager::SetCanonicalCookie`; DBSC site/session
+inventory is local rejection evidence and is never put in the cookie payload.
+A higher remote revision may change key epoch only to the client's active
+epoch. Destination rejection is persisted for exactly that record/revision and
+cleared only by a later verified apply or a verified local mutation published
+through the next CAS revision.
 
 ## Build Strategy
 

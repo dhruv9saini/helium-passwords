@@ -125,16 +125,32 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   separate across two top-level sites.
 - All live cookies are selected by default, including session, persistent,
   HttpOnly, Secure, SameSite, host-only, domain, and partitioned cookies. Only
-  expired/malformed, explicit deny, or observed non-clonable records are absent.
+  expired/malformed records or an exact destination-rejected revision are
+  absent from the destination after verified rollback.
 - One authenticated device rotates a token twice; destinations receive each
   revision and never ping-pong the previous token. A concurrent local edit and
   newer remote revision stops without discarding the last good local session.
+- After a stopped-browser content-key cutover, a higher CAS revision
+  re-encrypted under the active epoch applies and advances the cookie record's
+  epoch. Same-revision epoch substitution, higher revisions under a stale
+  epoch, and unknown epochs all fail closed.
 - Expired cookies are not recreated. A verified local deletion creates a
   revisioned tombstone.
-- A device-bound-session fixture or known DBSC test site reports that the
-  target device must reauthenticate rather than claiming cookie-sync success.
+- A device-bound-session fixture or known DBSC test site never classifies all
+  cookies on the site. An actual destination rejection records the exact
+  canonical cookie key, remote revision and payload fingerprint plus exact
+  same-site session keys observed locally, without claiming a session-to-cookie
+  binding or successful destination authentication.
+- A synthetic schema-2 cookie state migrates to schema 3 after writing an
+  atomic mode-0600 `schema-v2.bak`; the active state rewrite is also atomic.
+  Revisions, fingerprints, deletion state, and pending CAS state survive; the
+  old site-wide `non_clonable` fields do not.
 - Every apply records a destination preview and sealed rollback first. A
   rejected set or verification mismatch restores the destination snapshot.
+- The same rejected revision is not retried every cycle. A higher active-epoch
+  remote revision retries transactionally; a real local cookie change after
+  reauthentication may publish the next CAS revision; successful readback
+  clears the prior exception without overwriting the last-good rollback state.
 - Android browser suspension and process restart recover without overwriting a
   newer remote record. No DevTools path participates.
 - Cookie payload corruption is detected before apply.

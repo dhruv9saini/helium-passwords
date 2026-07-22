@@ -70,6 +70,7 @@ public:
   void Latest(std::vector<std::string> kinds, RecordsCallback callback);
   std::string_view device_id() const { return state_.device_id; }
   std::string_view enrollment_phase() const { return state_.phase; }
+  std::string_view active_key_id() const { return state_.active_key_id; }
   bool AcknowledgeApplied(int64_t next_seq, std::string *error);
   bool ReloadEnrollmentState(std::string *error);
   void CompleteEnrollment(int64_t acknowledged_seq, StatusCallback callback);

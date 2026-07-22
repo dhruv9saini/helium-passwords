@@ -19,6 +19,8 @@ import (
 	"github.com/dhruv9saini/helium-sync/internal/syncstore"
 )
 
+const cookieBridgeStateSchema = 3
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -553,7 +555,8 @@ func cmdEnrollmentComplete(args []string) error {
 	if err != nil {
 		return fmt.Errorf("password readiness: %w", err)
 	}
-	cookieSequence, err := readVerifiedSequence(*cookieState, 2)
+	cookieSequence, err := readVerifiedSequence(*cookieState,
+		cookieBridgeStateSchema)
 	if err != nil {
 		return fmt.Errorf("cookie readiness: %w", err)
 	}
@@ -638,7 +641,7 @@ func cmdKeyRekey(args []string) error {
 		return fmt.Errorf("password rekey readiness: %w", err)
 	}
 	cookieSequence, cookieRevisions, err := readBrowserRevisions(
-		*cookieState, 2, "records", "remote_revision")
+		*cookieState, cookieBridgeStateSchema, "records", "remote_revision")
 	if err != nil {
 		return fmt.Errorf("cookie rekey readiness: %w", err)
 	}

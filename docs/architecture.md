@@ -148,6 +148,12 @@ acknowledges the verified rekey cursor, and only then can d retire the old key.
 Before the CAS pass, `key-rekey` imports password and cookie revisions from
 their native bridge state only when both schema versions and verified cursors
 equal d's `client.json`; it cannot infer readiness from server ciphertext.
+After the stopped-browser client-state cutover, the native cookie bridge accepts
+a higher CAS revision under the new active epoch and updates its established
+epoch after verified apply. A same-revision epoch substitution, a higher
+revision still using the retiring epoch, or an epoch absent from the local
+keyring fails closed. This distinction permits the planned re-encryption pass
+without treating an arbitrary key change as authoritative.
 
 ## Password convergence
 
@@ -234,6 +240,27 @@ A rejection restores the saved destination state. Expected revisions,
 authenticated source device IDs, durable pending-publication state, and
 fingerprints stop token-rotation ping-pong and stale overwrites.
 
+Destination exceptions are exact and temporary. The record-state map scopes
+one exception to the canonical cookie record key, rejected remote revision,
+and authenticated payload fingerprint. The DBSC manager exposes schemeful-site
+and session-ID keys but no authoritative cookie-to-session mapping, so its
+inventory is recorded only as same-site evidence in the local reauthentication
+signal; it never marks every cookie on a site non-clonable and never enters the
+synced cookie payload. After verified rollback, the rejected revision is not
+retried unchanged. A later active-epoch remote revision is eligible for a new
+transaction, and an actual local cookie change after reauthentication is
+eligible for the next CAS publication. Verified destination readback clears
+the old exception. This is source/model behavior, not evidence that a
+destination authenticated successfully.
+
+Cookie bridge state schema 2 migrates to schema 3 on first load. It first writes
+an atomic mode-0600 `schema-v2.bak` copy of the pre-migration document, then
+atomically rewrites the active state. The rewrite keeps authority revisions,
+payload and local fingerprints, deletion state, and pending CAS publications.
+The old site-wide `non_clonable` marker, reason, and site are deliberately not
+carried forward: only a newly observed rejection of one exact canonical cookie
+may create a destination exception.
+
 The build-independent disposable model exercises the same identity dimensions,
 exact set/delete preview, successful target verification, and a partial apply
 followed by verified rollback. That is executable synthetic proof, not
@@ -254,10 +281,11 @@ were removed, and the post-test NAS restore drill passed. This is still not
 CookieManager or authenticated-site portability evidence.
 
 Chromium device-bound sessions are observed through its device-bound-session
-manager. A cookie proven device-bound, or a cookie rejected on the destination,
-is marked non-clonable for that exact session; the last local session is
-preserved and a reauthentication request is recorded. Automatic password-based
-reauthentication is not browser-integrated yet. The metadata-only origin-state
+manager. Only an actual exact-cookie destination rejection creates a
+revision-scoped local exception and reauthentication request; observed
+same-site session keys are supporting evidence, not a portability or
+authentication claim. Automatic password-based reauthentication is not
+browser-integrated yet. The metadata-only origin-state
 audit binds controlled cookie/auth/DBSC outcomes and storage requirements to an
 exact target and synthetic or disposable artifact hash, rejects secret-bearing
 fields, and prevents synthetic evidence from creating a concrete portability
@@ -374,7 +402,7 @@ evidence.
 | Transport | Opaque v2 E2EE, direct TLS 1.3 server, offline constrained CA issuance/verification, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; synthetic rootless endpoint and scheduled NAS restore proof live on lm | Restore root authorization, install the dedicated-account service, and enroll the public root on disposable browser clients |
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations; consolidated TLS-backed three-device protocol lifecycle passes | Execute native bridge promotion on disposable profiles, then provision personal d/da/oneplus only after backups |
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; complete `PasswordForm` unique-key identity; schema-3 preservation/collision stop; durable one-at-a-time publication and pull-verified ambiguous outcomes; artifact-bound native fixture/capture/receipt gate | Compile the bridge, then run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete, rapid observer events, ambiguous-success restarts, and three-device stale conflicts |
-| Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
+| Cookies | Whole-profile canonical identity, E2EE, active-epoch CAS rekey, preview/apply/readback/rollback, exact revision-scoped rejection evidence and retry model | Compile the bridge; prove destination rejection/readback/rollback, later-revision retry, local reauthentication publication, DBSC evidence scope, and authenticated-site behavior in disposable browsers; automatic password reauth remains open |
 | Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; no state values accepted | Disposable-browser evidence collector and safe origin-scoped adapters only where observed necessary |
 | Tabs | Local exporter/store, atomic checked generations, standalone content-bound neutral restore, atomic marked-root current-URL browser consumer, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; authorize da's dedicated key on d; provision independent recovery recipients; enable schedules only after two-route preflight; implement full tab topology reconstruction and prove first/second disposable browser starts on every device |
 | Media/streaming | Reproducible fixtures, strict codec GN provenance, separate no-patch upstream-control builder, and explicit codec-versus-Widevine evidence | Same-commit control/Sync APK A/B on oneplus, HTTP/2+HTTP/3, video/audio/ChatGPT timing; CDM provisioning remains separate |

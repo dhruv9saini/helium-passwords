@@ -28,6 +28,13 @@ restores Chromium's native password manager.
 - Cookie sync must use Chromium's native `CookieManager` bridge. Do not add a
   CookieCloud extension/API, DevTools cookie writer, phone-local sync daemon,
   domain-policy fallback, or raw profile-database copying.
+- Cookie records use the complete canonical identity. A newer authoritative
+  revision is accepted across a content-key change only when it uses the
+  client's active epoch; same-revision key changes and newer stale/unknown
+  epochs fail closed. DBSC inventory is evidence only: never label every cookie
+  at a site device-bound. A destination exception belongs to one canonical
+  record key, remote revision, and payload; rollback preserves the last local
+  state, while a later revision or real local reauthentication may retry.
 - Treat synced payloads as sensitive. Avoid logging decrypted cookies,
   passwords, tokens, passphrases, or full cookie/password payloads.
 - Keep `README.md`, `docs/`, and this file current when integration paths or

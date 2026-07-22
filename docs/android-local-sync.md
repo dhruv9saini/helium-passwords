@@ -57,9 +57,12 @@ delete recovered pages through CDP.
 The native bridge transports every valid live cookie returned by CookieManager,
 including session, persistent, Secure, HttpOnly, SameSite, host-only, domain,
 and partitioned cookies. A destination snapshot and sealed rollback precede
-every apply. Chromium device-bound sessions and destination rejection are
-classified from observed browser results, preserve the last local session, and
-request password reauthentication.
+every apply. A destination rejection is scoped to the exact canonical cookie
+record and remote revision, restores the last local session, and requests
+password reauthentication. Chromium's same-site DBSC session keys are recorded
+only as local evidence; they do not classify every cookie on the site or prove
+destination authentication. A later active-epoch revision or a verified local
+cookie change after reauthentication may proceed through normal CAS.
 
 Authentication state in localStorage, IndexedDB, service-worker storage, or
 other profile stores is not copied. Each target origin needs a disposable audit

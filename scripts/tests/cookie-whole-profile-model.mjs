@@ -131,10 +131,83 @@ export function applyCookieTransaction(preview, { rejectIdentity = "" } = {}) {
   return { status: "rolled-back", cookies: rollback };
 }
 
-export function decideCookieReconcile({ state, remote, localFingerprint }) {
+export function scopeDestinationRejection({
+  cookie,
+  remote,
+  site,
+  observedSessions = [],
+}) {
+  const recordKey = canonicalCookieIdentity(cookie);
+  if (!remote || remote.recordKey !== recordKey ||
+      !Number.isInteger(remote.revision) || remote.revision <= 0 ||
+      typeof remote.payloadFingerprint !== "string" ||
+      !remote.payloadFingerprint || typeof site !== "string" || !site) {
+    throw new Error("invalid rejected remote cookie scope");
+  }
+  const seen = new Set();
+  const sessions = observedSessions.filter(session => session?.site === site)
+    .map(session => {
+      if (!session || typeof session.site !== "string" || !session.site ||
+          typeof session.sessionId !== "string" || !session.sessionId) {
+        throw new Error("invalid observed device-bound session identity");
+      }
+      const identity = `${Buffer.byteLength(session.site, "utf8")}:${session.site}` +
+        `${Buffer.byteLength(session.sessionId, "utf8")}:${session.sessionId}`;
+      if (seen.has(identity)) {
+        throw new Error("duplicate observed device-bound session identity");
+      }
+      seen.add(identity);
+      return structuredClone(session);
+    }).sort((left, right) => stableJSON(left).localeCompare(stableJSON(right)));
+  return {
+    recordKey,
+    remoteRevision: remote.revision,
+    remotePayloadFingerprint: remote.payloadFingerprint,
+    reason: "destination-set-rejected",
+    site,
+    observedSessions: sessions,
+  };
+}
+
+export function migrateCookieStateV2(document) {
+  if (!document || document.schema_version !== 2 ||
+      !document.records || typeof document.records !== "object" ||
+      Array.isArray(document.records)) {
+    throw new Error("invalid cookie state schema 2 document");
+  }
+  const migrated = structuredClone(document);
+  migrated.schema_version = 3;
+  for (const record of Object.values(migrated.records)) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) {
+      throw new Error("invalid cookie state schema 2 record");
+    }
+    delete record.non_clonable;
+    delete record.non_clonable_reason;
+    delete record.site;
+  }
+  return migrated;
+}
+
+export function decideCookieReconcile({
+  state,
+  remote,
+  localFingerprint,
+  activeKeyId,
+  recordKey = "",
+}) {
   if (!localFingerprint) throw new Error("local fingerprint is required");
+  if (typeof activeKeyId !== "string" || !activeKeyId) {
+    throw new Error("active content key id is required");
+  }
   if (state?.blockedReason) {
     return { action: "stop", reason: state.blockedReason };
+  }
+  if (state?.destinationException &&
+      (state.destinationException.recordKey !== recordKey ||
+       state.destinationException.remoteRevision !== state.remoteRevision ||
+       state.destinationException.remotePayloadFingerprint !==
+         state.remotePayloadFingerprint)) {
+    return { action: "stop", reason: "destination-exception-scope-mismatch" };
   }
 
   if (state?.pendingPublish) {
@@ -149,6 +222,9 @@ export function decideCookieReconcile({ state, remote, localFingerprint }) {
     }
     if (remote.revision === pending.targetRevision &&
         remote.payloadFingerprint === pending.payloadFingerprint) {
+      if (remote.keyId !== activeKeyId) {
+        return { action: "stop", reason: "publication-confirmed-under-stale-key-epoch" };
+      }
       return { action: "accept-publication" };
     }
     if (remote.revision === pending.expectedRevision &&
@@ -161,6 +237,9 @@ export function decideCookieReconcile({ state, remote, localFingerprint }) {
 
   if (!state || state.remoteRevision === 0) {
     if (remote && !remote.deleted) {
+      if (remote.keyId !== activeKeyId) {
+        return { action: "stop", reason: "initial-record-uses-stale-key-epoch" };
+      }
       return localFingerprint === EMPTY_COOKIE_FINGERPRINT
         ? { action: "apply" }
         : { action: "stop", reason: "uninitialized-local-and-remote-state" };
@@ -173,16 +252,20 @@ export function decideCookieReconcile({ state, remote, localFingerprint }) {
   if (!remote || remote.revision < state.remoteRevision) {
     return { action: "stop", reason: "authority-revision-regressed" };
   }
-  if (remote.keyId !== state.keyId) {
-    return { action: "stop", reason: "key-epoch-changed" };
-  }
   if (remote.revision === state.remoteRevision) {
+    if (remote.keyId !== state.keyId) {
+      return { action: "stop", reason: "same-revision-key-epoch-changed" };
+    }
     if (remote.payloadFingerprint !== state.remotePayloadFingerprint) {
       return { action: "stop", reason: "same-revision-payload-changed" };
     }
     return localFingerprint === state.baselineLocalFingerprint
       ? { action: "none" }
       : { action: "publish", expectedRevision: state.remoteRevision };
+  }
+
+  if (remote.keyId !== activeKeyId) {
+    return { action: "stop", reason: "newer-record-uses-stale-key-epoch" };
   }
 
   return localFingerprint === state.baselineLocalFingerprint

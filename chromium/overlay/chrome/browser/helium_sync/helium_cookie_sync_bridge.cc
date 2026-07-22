@@ -46,12 +46,12 @@ namespace helium_sync {
 namespace {
 
 constexpr char kCookieKind[] = "cookies";
-constexpr char kCookiePayloadFormat[] = "helium-cookie-v2";
+constexpr char kCookiePayloadFormat[] = "helium-cookie-v3";
 constexpr char kRollbackPayloadFormat[] = "helium-cookie-rollback-v1";
 constexpr char kRollbackPurpose[] = "cookie-apply-rollback-v1";
-constexpr int kStateSchema = 2;
+constexpr int kStateSchema = 3;
 constexpr int kRollbackSchema = 1;
-constexpr int kReauthSchema = 1;
+constexpr int kReauthSchema = 2;
 constexpr size_t kMaxCookieRecords = 50000;
 constexpr size_t kMaxCookiePayloadBytes = 64 * 1024;
 constexpr size_t kMaxRollbackPayloadBytes = 32 * 1024 * 1024;
@@ -67,6 +67,14 @@ struct PendingPublish {
   bool deleted = false;
 };
 
+struct DestinationException {
+  int64_t remote_revision = 0;
+  std::string remote_payload_fingerprint;
+  std::string reason;
+  std::string site;
+  std::set<std::string> observed_session_ids;
+};
+
 struct RecordState {
   int64_t remote_revision = 0;
   std::string key_id;
@@ -74,9 +82,7 @@ struct RecordState {
   std::string remote_payload_fingerprint;
   std::string baseline_cookie_fingerprint;
   bool remote_deleted = false;
-  bool non_clonable = false;
-  std::string non_clonable_reason;
-  std::string site;
+  std::optional<DestinationException> destination_exception;
   std::optional<PendingPublish> pending;
 };
 
@@ -100,9 +106,10 @@ struct RemoteCookie {
   std::string payload_fingerprint;
   std::string cookie_fingerprint = kDeletedFingerprint;
   bool effective_deleted = false;
-  bool device_bound = false;
-  std::string site;
 };
+
+using DeviceBoundSessionInventory =
+    std::map<std::string, std::set<std::string>>;
 
 struct CookieOperation {
   bool set = false;
@@ -354,8 +361,7 @@ std::string SiteForCookie(const net::CanonicalCookie& cookie) {
 }
 
 std::optional<std::string> MakeCookiePayload(
-    const net::CanonicalCookie& cookie,
-    const std::set<std::string>& device_bound_sites) {
+    const net::CanonicalCookie& cookie) {
   std::optional<base::DictValue> serialized = CookieToValue(cookie);
   if (!serialized) {
     return std::nullopt;
@@ -363,14 +369,6 @@ std::optional<std::string> MakeCookiePayload(
   base::DictValue root;
   root.Set("format", kCookiePayloadFormat);
   root.Set("cookie", std::move(*serialized));
-  std::string site = SiteForCookie(cookie);
-  if (!site.empty() && device_bound_sites.contains(site)) {
-    base::DictValue auxiliary;
-    auxiliary.Set("kind", "device-bound-session");
-    auxiliary.Set("site", site);
-    auxiliary.Set("transfer", "password-reauthentication");
-    root.Set("auxiliary_state", std::move(auxiliary));
-  }
   std::string raw;
   if (!base::JSONWriter::Write(root, &raw) ||
       raw.size() > kMaxCookiePayloadBytes) {
@@ -419,19 +417,6 @@ std::optional<RemoteCookie> ParseRemoteCookie(Record record) {
   if (!key || *key != out.record.key || !fingerprint) {
     return std::nullopt;
   }
-  if (const base::DictValue* auxiliary =
-          parsed->GetDict().FindDict("auxiliary_state")) {
-    const std::string* kind = auxiliary->FindString("kind");
-    const std::string* site = auxiliary->FindString("site");
-    const std::string* transfer = auxiliary->FindString("transfer");
-    if (!kind || *kind != "device-bound-session" || !site || site->empty() ||
-        !transfer || *transfer != "password-reauthentication" ||
-        *site != SiteForCookie(*cookie)) {
-      return std::nullopt;
-    }
-    out.device_bound = true;
-    out.site = *site;
-  }
   out.payload_fingerprint = Sha256(out.record.payload_json);
   out.cookie_fingerprint = std::move(*fingerprint);
   out.effective_deleted = cookie->IsExpired(base::Time::Now());
@@ -462,9 +447,23 @@ base::DictValue RecordStateToValue(const RecordState& state) {
   value.Set("remote_payload_fingerprint", state.remote_payload_fingerprint);
   value.Set("baseline_cookie_fingerprint", state.baseline_cookie_fingerprint);
   value.Set("remote_deleted", state.remote_deleted);
-  value.Set("non_clonable", state.non_clonable);
-  value.Set("non_clonable_reason", state.non_clonable_reason);
-  value.Set("site", state.site);
+  if (state.destination_exception) {
+    base::DictValue exception;
+    exception.Set(
+        "remote_revision",
+        base::NumberToString(state.destination_exception->remote_revision));
+    exception.Set("remote_payload_fingerprint",
+                  state.destination_exception->remote_payload_fingerprint);
+    exception.Set("reason", state.destination_exception->reason);
+    exception.Set("site", state.destination_exception->site);
+    base::ListValue sessions;
+    for (const std::string& session_id :
+         state.destination_exception->observed_session_ids) {
+      sessions.Append(session_id);
+    }
+    exception.Set("observed_session_ids", std::move(sessions));
+    value.Set("destination_exception", std::move(exception));
+  }
   if (state.pending) {
     base::DictValue pending;
     pending.Set("expected_revision",
@@ -498,12 +497,37 @@ std::optional<RecordState> RecordStateFromValue(const base::DictValue& value) {
   state.remote_payload_fingerprint = *remote_payload;
   state.baseline_cookie_fingerprint = *baseline;
   state.remote_deleted = *deleted;
-  state.non_clonable = value.FindBool("non_clonable").value_or(false);
-  if (const std::string* reason = value.FindString("non_clonable_reason")) {
-    state.non_clonable_reason = *reason;
-  }
-  if (const std::string* site = value.FindString("site")) {
-    state.site = *site;
+  if (const base::DictValue* exception =
+          value.FindDict("destination_exception")) {
+    DestinationException parsed;
+    std::optional<int64_t> exception_revision =
+        Int64FromJSON(*exception, "remote_revision");
+    const std::string* exception_payload =
+        exception->FindString("remote_payload_fingerprint");
+    const std::string* reason = exception->FindString("reason");
+    const std::string* site = exception->FindString("site");
+    const base::ListValue* sessions =
+        exception->FindList("observed_session_ids");
+    if (!exception_revision || *exception_revision <= 0 || !exception_payload ||
+        !IsLowerHexDigest(*exception_payload) || !reason || reason->empty() ||
+        !site || site->empty() || !sessions) {
+      return std::nullopt;
+    }
+    parsed.remote_revision = *exception_revision;
+    parsed.remote_payload_fingerprint = *exception_payload;
+    parsed.reason = *reason;
+    parsed.site = *site;
+    for (const base::Value& session : *sessions) {
+      if (!session.is_string() || session.GetString().empty() ||
+          !parsed.observed_session_ids.insert(session.GetString()).second) {
+        return std::nullopt;
+      }
+    }
+    if (parsed.remote_revision != state.remote_revision ||
+        parsed.remote_payload_fingerprint != state.remote_payload_fingerprint) {
+      return std::nullopt;
+    }
+    state.destination_exception = std::move(parsed);
   }
   if (const base::DictValue* pending = value.FindDict("pending_publish")) {
     PendingPublish parsed;
@@ -656,8 +680,15 @@ class HeliumCookieSyncBridge::Impl {
       state_.migrated_from_policy_v1 = true;
       return true;
     }
-    if (schema != kStateSchema) {
+    const bool migrate_schema_v2 = schema == 2;
+    if (!migrate_schema_v2 && schema != kStateSchema) {
       return false;
+    }
+    if (migrate_schema_v2) {
+      base::FilePath backup = state_path_.AddExtensionASCII("schema-v2.bak");
+      if (!base::PathExists(backup) && !WriteSecretFile(backup, raw)) {
+        return false;
+      }
     }
     if (const std::string* blocked =
             parsed->GetDict().FindString("blocked_reason")) {
@@ -685,7 +716,7 @@ class HeliumCookieSyncBridge::Impl {
       }
       state_.records.emplace(key, std::move(*record));
     }
-    return true;
+    return !migrate_schema_v2 || SaveState();
   }
 
   bool SaveState() const {
@@ -766,7 +797,8 @@ class HeliumCookieSyncBridge::Impl {
     auto* manager =
         profile_->GetDefaultStoragePartition()->GetDeviceBoundSessionManager();
     if (!manager) {
-      ReconcileSnapshots(std::move(remote), std::move(*local), {});
+      ReconcileSnapshots(std::move(remote), std::move(*local),
+                         DeviceBoundSessionInventory());
       return;
     }
     manager->GetAllSessions(
@@ -778,19 +810,21 @@ class HeliumCookieSyncBridge::Impl {
       std::map<std::string, RemoteCookie> remote,
       CookieSnapshot local,
       std::vector<network::mojom::DeviceBoundSessionKeyPtr> sessions) {
-    std::set<std::string> sites;
+    DeviceBoundSessionInventory inventory;
     for (const auto& session : sessions) {
-      if (!session || session->site.opaque()) {
+      if (!session || session->site.opaque() || session->id.empty()) {
         continue;
       }
-      sites.insert(session->site.Serialize());
+      inventory[session->site.Serialize()].insert(session->id);
     }
-    ReconcileSnapshots(std::move(remote), std::move(local), std::move(sites));
+    ReconcileSnapshots(std::move(remote), std::move(local),
+                       std::move(inventory));
   }
 
   void ReconcileSnapshots(std::map<std::string, RemoteCookie> remote,
                           CookieSnapshot local,
-                          std::set<std::string> device_bound_sites) {
+                          DeviceBoundSessionInventory session_inventory) {
+    observed_device_bound_sessions_ = std::move(session_inventory);
     // First resolve ambiguous successful pushes from the durable pending state.
     for (auto& [key, record_state] : state_.records) {
       if (!record_state.pending) {
@@ -802,12 +836,19 @@ class HeliumCookieSyncBridge::Impl {
               record_state.pending->target_revision &&
           found->second.payload_fingerprint ==
               record_state.pending->payload_fingerprint &&
-          found->second.record.deleted == record_state.pending->deleted) {
+          found->second.record.deleted == record_state.pending->deleted &&
+          found->second.record.key_id == client_->active_key_id()) {
         AcceptRemoteState(found->second,
-                          record_state.pending->cookie_fingerprint,
-                          /*non_clonable=*/false, "");
+                          record_state.pending->cookie_fingerprint);
         state_.records[key].pending.reset();
         continue;
+      }
+      if (found != remote.end() &&
+          found->second.record.revision ==
+              record_state.pending->target_revision &&
+          found->second.record.key_id != client_->active_key_id()) {
+        Block("cookie-publication-confirmed-under-stale-key-epoch");
+        return;
       }
       if (found == remote.end() &&
           record_state.pending->expected_revision == 0) {
@@ -822,7 +863,6 @@ class HeliumCookieSyncBridge::Impl {
     }
 
     std::map<std::string, RemoteCookie> apply_updates;
-    std::set<std::string> reauth_sites;
     for (auto& [key, remote_cookie] : remote) {
       auto state_it = state_.records.find(key);
       auto local_it = local.cookies.find(key);
@@ -832,16 +872,15 @@ class HeliumCookieSyncBridge::Impl {
 
       if (state_it == state_.records.end() ||
           state_it->second.remote_revision == 0) {
-        if (remote_cookie.device_bound) {
-          AcceptRemoteState(remote_cookie, local_fingerprint,
-                            /*non_clonable=*/true, "device-bound-session");
-          reauth_sites.insert(remote_cookie.site);
-        } else if (remote_cookie.effective_deleted ||
-                   local_it == local.cookies.end()) {
+        if (remote_cookie.record.key_id != client_->active_key_id()) {
+          Block("cookie-initial-record-uses-stale-key-epoch");
+          return;
+        }
+        if (remote_cookie.effective_deleted ||
+            local_it == local.cookies.end()) {
           apply_updates.emplace(key, remote_cookie);
         } else if (local_fingerprint == remote_cookie.cookie_fingerprint) {
-          AcceptRemoteState(remote_cookie, local_fingerprint,
-                            /*non_clonable=*/false, "");
+          AcceptRemoteState(remote_cookie, local_fingerprint);
         } else {
           Block("uninitialized-cookie-has-local-and-remote-values");
           return;
@@ -854,11 +893,11 @@ class HeliumCookieSyncBridge::Impl {
         Block("cookie-authority-revision-regressed");
         return;
       }
-      if (remote_cookie.record.key_id != established.key_id) {
-        Block("cookie-key-epoch-changed");
-        return;
-      }
       if (remote_cookie.record.revision == established.remote_revision) {
+        if (remote_cookie.record.key_id != established.key_id) {
+          Block("cookie-same-revision-key-epoch-changed");
+          return;
+        }
         if (remote_cookie.payload_fingerprint !=
                 established.remote_payload_fingerprint ||
             remote_cookie.record.deleted != established.remote_deleted) {
@@ -867,20 +906,13 @@ class HeliumCookieSyncBridge::Impl {
         }
         continue;
       }
+      if (remote_cookie.record.key_id != client_->active_key_id()) {
+        Block("cookie-newer-record-uses-stale-key-epoch");
+        return;
+      }
       if (local_fingerprint != established.baseline_cookie_fingerprint) {
         Block("concurrent-local-and-remote-cookie-change");
         return;
-      }
-      if (remote_cookie.device_bound || established.non_clonable) {
-        AcceptRemoteState(remote_cookie, local_fingerprint,
-                          /*non_clonable=*/true,
-                          remote_cookie.device_bound
-                              ? "device-bound-session"
-                              : established.non_clonable_reason);
-        if (!remote_cookie.site.empty()) {
-          reauth_sites.insert(remote_cookie.site);
-        }
-        continue;
       }
       apply_updates.emplace(key, remote_cookie);
     }
@@ -888,13 +920,6 @@ class HeliumCookieSyncBridge::Impl {
     for (const auto& [key, established] : state_.records) {
       if (established.remote_revision > 0 && !remote.contains(key)) {
         Block("cookie-authority-record-disappeared");
-        return;
-      }
-    }
-    if (!reauth_sites.empty()) {
-      if (!WriteReauthSignal("non-clonable-device-bound-session",
-                             reauth_sites)) {
-        Block("cookie-reauth-signal-write-failed");
         return;
       }
     }
@@ -908,14 +933,11 @@ class HeliumCookieSyncBridge::Impl {
       return;
     }
 
-    PublishLocalMutations(std::move(local), std::move(remote),
-                          std::move(device_bound_sites));
+    PublishLocalMutations(std::move(local));
   }
 
   void AcceptRemoteState(const RemoteCookie& remote,
-                         std::string baseline,
-                         bool non_clonable,
-                         std::string reason) {
+                         std::string baseline) {
     RecordState& state = state_.records[remote.record.key];
     state.remote_revision = remote.record.revision;
     state.key_id = remote.record.key_id;
@@ -923,15 +945,11 @@ class HeliumCookieSyncBridge::Impl {
     state.remote_payload_fingerprint = remote.payload_fingerprint;
     state.baseline_cookie_fingerprint = std::move(baseline);
     state.remote_deleted = remote.record.deleted;
-    state.non_clonable = non_clonable;
-    state.non_clonable_reason = std::move(reason);
-    state.site = remote.site;
+    state.destination_exception.reset();
     state.pending.reset();
   }
 
-  void PublishLocalMutations(CookieSnapshot local,
-                             std::map<std::string, RemoteCookie> remote,
-                             std::set<std::string> device_bound_sites) {
+  void PublishLocalMutations(CookieSnapshot local) {
     if (client_->enrollment_phase() == "pending") {
       for (const auto& [key, cookie] : local.cookies) {
         if (state_.records.contains(key)) {
@@ -940,7 +958,6 @@ class HeliumCookieSyncBridge::Impl {
         RecordState baseline;
         baseline.baseline_cookie_fingerprint =
             local.cookie_fingerprints.at(key);
-        baseline.site = SiteForCookie(cookie);
         state_.records.emplace(key, std::move(baseline));
       }
       FinishVerifiedInventory();
@@ -955,15 +972,13 @@ class HeliumCookieSyncBridge::Impl {
       auto state_it = state_.records.find(key);
       std::string fingerprint = local.cookie_fingerprints.at(key);
       if (state_it != state_.records.end() &&
-          (state_it->second.non_clonable ||
-           fingerprint == state_it->second.baseline_cookie_fingerprint)) {
+          fingerprint == state_it->second.baseline_cookie_fingerprint) {
         continue;
       }
       int64_t expected = state_it == state_.records.end()
                              ? 0
                              : state_it->second.remote_revision;
-      std::optional<std::string> payload =
-          MakeCookiePayload(cookie, device_bound_sites);
+      std::optional<std::string> payload = MakeCookiePayload(cookie);
       if (!payload) {
         Block("cookie-payload-not-fully-serializable");
         return;
@@ -982,8 +997,7 @@ class HeliumCookieSyncBridge::Impl {
 
     for (auto& [key, record_state] : state_.records) {
       if (record_state.remote_revision == 0 || record_state.remote_deleted ||
-          record_state.non_clonable || local.cookies.contains(key) ||
-          record_state.pending) {
+          local.cookies.contains(key) || record_state.pending) {
         continue;
       }
       Record mutation;
@@ -1077,7 +1091,7 @@ class HeliumCookieSyncBridge::Impl {
         std::string baseline = target.cookies.contains(key)
                                    ? target.cookie_fingerprints.at(key)
                                    : kDeletedFingerprint;
-        AcceptRemoteState(remote, std::move(baseline), false, "");
+        AcceptRemoteState(remote, std::move(baseline));
       }
       if (!SaveState()) {
         Block("cookie-state-write-failed-after-empty-apply");
@@ -1344,8 +1358,9 @@ class HeliumCookieSyncBridge::Impl {
         Block("cookie-rollback-set-rejected");
         return;
       }
-      rejected_record_key_ = current_operation_->record_key;
-      rejected_site_ = SiteForCookie(current_operation_->cookie);
+      rejected_record_keys_.insert(current_operation_->record_key);
+      rejected_sites_[current_operation_->record_key] =
+          SiteForCookie(current_operation_->cookie);
       OnOperationFailed("destination-set-rejected");
       return;
     }
@@ -1362,6 +1377,9 @@ class HeliumCookieSyncBridge::Impl {
 
   void OnOperationFailed(std::string reason) {
     LOG(WARNING) << "Helium cookie operation failed: " << reason;
+    if (rejected_record_keys_.empty()) {
+      unscoped_apply_failure_ = true;
+    }
     operation_queue_.clear();
     current_operation_.reset();
     profile_->GetDefaultStoragePartition()
@@ -1402,30 +1420,66 @@ class HeliumCookieSyncBridge::Impl {
         Block("cookie-rollback-recovery-state-write-failed");
         return;
       }
-      if (!rejected_record_key_.empty()) {
-        auto remote = apply_updates_.find(rejected_record_key_);
-        if (remote != apply_updates_.end()) {
-          std::string baseline =
-              current->cookies.contains(rejected_record_key_)
-                  ? current->cookie_fingerprints.at(rejected_record_key_)
-                  : kDeletedFingerprint;
-          AcceptRemoteState(remote->second, std::move(baseline), true,
-                            "destination-set-rejected");
-          if (!WriteReauthSignal("destination-cookie-rejected",
-                                 {rejected_site_}) ||
-              !SaveState()) {
-            Block("cookie-rejection-state-write-failed");
-            return;
-          }
+      std::map<std::string, DestinationException> exceptions;
+      for (const std::string& record_key : rejected_record_keys_) {
+        auto remote = apply_updates_.find(record_key);
+        auto site = rejected_sites_.find(record_key);
+        if (remote == apply_updates_.end() || site == rejected_sites_.end() ||
+            site->second.empty()) {
+          Block("cookie-rejection-scope-invalid");
+          return;
         }
+        std::string baseline = current->cookies.contains(record_key)
+                                   ? current->cookie_fingerprints.at(record_key)
+                                   : kDeletedFingerprint;
+        AcceptRemoteState(remote->second, std::move(baseline));
+        DestinationException exception;
+        exception.remote_revision = remote->second.record.revision;
+        exception.remote_payload_fingerprint =
+            remote->second.payload_fingerprint;
+        exception.reason = "destination-set-rejected";
+        exception.site = site->second;
+        auto observed = observed_device_bound_sessions_.find(site->second);
+        if (observed != observed_device_bound_sessions_.end()) {
+          exception.observed_session_ids = observed->second;
+        }
+        state_.records[record_key].destination_exception = exception;
+        exceptions.emplace(record_key, std::move(exception));
       }
+      if (!SaveState() ||
+          (!exceptions.empty() && !WriteReauthSignal(exceptions))) {
+        Block("cookie-rejection-state-write-failed");
+        return;
+      }
+      bool block_unscoped = unscoped_apply_failure_;
       ResetApply();
+      if (block_unscoped) {
+        Block("cookie-post-apply-unscoped-mismatch");
+        return;
+      }
       reconcile_in_flight_ = false;
       Reconcile();
       return;
     }
 
     if (current->fingerprint != apply_target_.fingerprint) {
+      for (const auto& [key, remote] : apply_updates_) {
+        bool matches = remote.effective_deleted
+                           ? !current->cookies.contains(key)
+                           : current->cookies.contains(key) &&
+                                 current->cookie_fingerprints.at(key) ==
+                                     remote.cookie_fingerprint;
+        if (matches) {
+          continue;
+        }
+        rejected_record_keys_.insert(key);
+        if (remote.cookie) {
+          rejected_sites_[key] = SiteForCookie(*remote.cookie);
+        } else if (apply_before_.cookies.contains(key)) {
+          rejected_sites_[key] =
+              SiteForCookie(apply_before_.cookies.at(key));
+        }
+      }
       OnOperationFailed("cookie-post-apply-verification-mismatch");
       return;
     }
@@ -1433,7 +1487,7 @@ class HeliumCookieSyncBridge::Impl {
       std::string baseline = current->cookies.contains(key)
                                  ? current->cookie_fingerprints.at(key)
                                  : kDeletedFingerprint;
-      AcceptRemoteState(remote, std::move(baseline), false, "");
+      AcceptRemoteState(remote, std::move(baseline));
     }
     if (!SaveState()) {
       Block("cookie-state-write-failed-after-apply");
@@ -1456,25 +1510,40 @@ class HeliumCookieSyncBridge::Impl {
     apply_before_ = CookieSnapshot();
     apply_target_ = CookieSnapshot();
     active_journal_.reset();
-    rejected_record_key_.clear();
-    rejected_site_.clear();
+    rejected_record_keys_.clear();
+    rejected_sites_.clear();
+    observed_device_bound_sessions_.clear();
+    unscoped_apply_failure_ = false;
     restoring_ = false;
   }
 
-  bool WriteReauthSignal(std::string reason,
-                         const std::set<std::string>& sites) const {
-    base::ListValue list;
-    for (const std::string& site : sites) {
-      if (!site.empty()) {
-        list.Append(site);
+  bool WriteReauthSignal(
+      const std::map<std::string, DestinationException>& exceptions) const {
+    base::ListValue targets;
+    for (const auto& [record_key, exception] : exceptions) {
+      base::ListValue sessions;
+      for (const std::string& session_id : exception.observed_session_ids) {
+        base::DictValue session;
+        session.Set("site", exception.site);
+        session.Set("session_id", session_id);
+        sessions.Append(std::move(session));
       }
+      base::DictValue target;
+      target.Set("canonical_cookie_record_key", record_key);
+      target.Set("remote_revision",
+                 base::NumberToString(exception.remote_revision));
+      target.Set("remote_payload_fingerprint",
+                 exception.remote_payload_fingerprint);
+      target.Set("site", exception.site);
+      target.Set("observed_site_sessions", std::move(sessions));
+      targets.Append(std::move(target));
     }
     base::DictValue root;
     root.Set("schema_version", kReauthSchema);
-    root.Set("action", "automatic-password-reauthentication");
+    root.Set("action", "password-reauthentication-required");
     root.Set("status", "pending-browser-integration");
-    root.Set("reason", std::move(reason));
-    root.Set("sites", std::move(list));
+    root.Set("reason", "destination-cookie-rejected");
+    root.Set("targets", std::move(targets));
     root.Set("created_at", base::TimeToISO8601(base::Time::Now()));
     std::string raw;
     return base::JSONWriter::Write(root, &raw) &&
@@ -1489,12 +1558,14 @@ class HeliumCookieSyncBridge::Impl {
   BridgeState state_;
   CookieSnapshot apply_before_;
   CookieSnapshot apply_target_;
+  DeviceBoundSessionInventory observed_device_bound_sessions_;
   std::map<std::string, RemoteCookie> apply_updates_;
   std::deque<CookieOperation> operation_queue_;
   std::optional<CookieOperation> current_operation_;
   std::optional<RollbackJournal> active_journal_;
-  std::string rejected_record_key_;
-  std::string rejected_site_;
+  std::set<std::string> rejected_record_keys_;
+  std::map<std::string, std::string> rejected_sites_;
+  bool unscoped_apply_failure_ = false;
   bool restoring_ = false;
   bool reconcile_in_flight_ = false;
   int64_t pending_next_seq_ = 0;
