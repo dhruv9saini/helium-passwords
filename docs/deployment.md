@@ -74,6 +74,13 @@ the fixture browser an independent app-data directory. The later production
 artifact is a separate clean build with the default `computer.helium.sync`;
 back up that app's complete existing data before installing it.
 
+Run the native password lifecycle through
+`docs/password-runtime-acceptance.md`. The fixture and receipt validator are
+`scripts/password-runtime/fixture-server.mjs` and
+`scripts/password-runtime/acceptance.mjs`. A passing receipt requires native
+UI screenshots plus fixture/state/journal agreement; CDP password writes,
+extensions, raw password databases, and checklist-only evidence are rejected.
+
 Make that check executable on lm (the current SDK tool path is explicit):
 
 ```sh

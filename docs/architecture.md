@@ -154,6 +154,16 @@ Android enrollment file-publish requirement: Android uses atomic
 links in `/data/local/tmp`. This is transport/protocol/CLI evidence, not native
 password UI evidence.
 
+The remaining native UI gate now has an executable parent-repository protocol.
+It creates or admits only a disposable Linux profile or parallel Android test
+package, uses an ordered loopback fixture that never emits submitted values,
+and binds visually inspected native UI screenshots to secret-free bridge state
+and opaque-journal metadata. Its verifier requires one save revision, one
+changed update revision, the next tombstone revision, and byte-identical state
+and journal hashes across unchanged restarts. It contains no password-store
+writer, extension, `chrome.passwordsPrivate`, or raw database reader. This is
+ready to run when a browser artifact exists; no runtime receipt exists yet.
+
 ## Cookie and login-session convergence
 
 Every live, structurally valid, non-expired cookie returned by
@@ -304,7 +314,7 @@ evidence.
 | --- | --- | --- |
 | Transport | Opaque v2 E2EE, direct TLS 1.3 server, offline constrained CA issuance/verification, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; synthetic rootless endpoint and scheduled NAS restore proof live on lm | Restore root authorization, install the dedicated-account service, and enroll the public root on disposable browser clients |
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations; consolidated TLS-backed three-device protocol lifecycle passes | Execute native bridge promotion on disposable profiles, then provision personal d/da/oneplus only after backups |
-| Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop | Built-browser prompts, save/update/delete/autofill and three-device restart tests |
+| Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop; artifact-bound native fixture/capture/receipt gate | Run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete and three-device restarts |
 | Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
 | Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; no state values accepted | Disposable-browser evidence collector and safe origin-scoped adapters only where observed necessary |
 | Tabs | Local exporter/store, atomic checked generations, standalone content-bound disposable-restore validator, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; authorize da's dedicated key on d; provision independent recovery recipients; enable schedules only after two-route preflight; disposable browser restore on every device |

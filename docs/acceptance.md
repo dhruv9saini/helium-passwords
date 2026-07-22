@@ -54,6 +54,12 @@ replace the browser gates below.
 ## Gate 1: Helium Passwords
 
 Run on Linux first, then the supported manual subset on macOS and Windows.
+The executable artifact-bound protocol is
+[`password-runtime-acceptance.md`](password-runtime-acceptance.md). Its final
+receipt requires the complete ordered native UI screenshot set, loopback
+fixture attestation, secret-free bridge state, opaque-journal metadata, and
+byte-identical no-op restart snapshots; a checklist alone cannot pass this
+gate.
 
 - Native settings, app-menu, omnibox, toolbar/page-action, and importer entry
   points open the intended native surfaces.
@@ -64,6 +70,9 @@ Run on Linux first, then the supported manual subset on macOS and Windows.
 - Decline and never-save behavior is scoped correctly.
 - Guest and incognito sessions do not persist credentials.
 - Browser restart and upgrade do not corrupt the native store.
+- The runtime harness receipt binds all evidence to the unchanged artifact,
+  Linux synthetic profile or `computer.helium.sync.test` package, save/update/
+  tombstone revisions, and three no-op restart journal hashes.
 
 ## Gate 2: Password Sync
 

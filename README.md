@@ -44,6 +44,8 @@ canonical private issue ledger.
   disposable restore.
 - `scripts/chromium/`: pinned Android composition, codec/streaming provenance,
   and remote compile entry points.
+- `scripts/password-runtime/`: artifact-bound synthetic native password
+  fixture, ordered UI/state capture, and final acceptance receipt validator.
 - `systemd/helium-syncd.service`: least-privilege direct TLS service bound only
   to lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
