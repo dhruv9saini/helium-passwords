@@ -999,7 +999,7 @@ func writeJSONExclusive(path string, value any) (resultErr error) {
 	if err := temp.Close(); err != nil {
 		return err
 	}
-	if err := os.Link(tempPath, path); err != nil {
+	if err := installExclusive(tempPath, path); err != nil {
 		return fmt.Errorf("install %s without overwrite: %w", path, err)
 	}
 	dir, err := os.Open(directory)

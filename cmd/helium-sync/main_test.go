@@ -1,11 +1,49 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestWriteJSONExclusivePublishesCompleteFileWithoutOverwrite(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "request.json")
+	want := map[string]string{"device_id": "oneplus"}
+	if err := writeJSONExclusive(path, want); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]string
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["device_id"] != want["device_id"] {
+		t.Fatalf("published wrong JSON: %v", got)
+	}
+	if err := writeJSONExclusive(path, map[string]string{"device_id": "da"}); err == nil {
+		t.Fatal("exclusive JSON publish replaced an existing file")
+	}
+	rawAfter, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(rawAfter) != string(raw) {
+		t.Fatal("failed exclusive publish changed the existing file")
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != filepath.Base(path) {
+		t.Fatalf("temporary publish files remain: %v", entries)
+	}
+}
 
 func TestCredentialActivationPreservesRollbackAndReplacesAtomically(t *testing.T) {
 	root := t.TempDir()
