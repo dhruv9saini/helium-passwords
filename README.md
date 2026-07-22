@@ -10,7 +10,10 @@ device-local tab durability for d, da, and oneplus.
 The product contract and current implementation boundary are
 [docs/architecture.md](docs/architecture.md). The executable release gates are
 [docs/acceptance.md](docs/acceptance.md), and [TODO.md](TODO.md) is the
-canonical private issue ledger.
+canonical private issue ledger. The shared artifact-bound native password
+protocol is [docs/password-runtime-acceptance.md](docs/password-runtime-acceptance.md);
+its private Sync evidence extension is
+[docs/password-runtime-sync-acceptance.md](docs/password-runtime-sync-acceptance.md).
 
 ## Invariants
 
@@ -44,8 +47,8 @@ canonical private issue ledger.
   disposable restore.
 - `scripts/chromium/`: pinned Android composition, codec/streaming provenance,
   and remote compile entry points.
-- `scripts/password-runtime/`: artifact-bound synthetic native password
-  fixture, ordered UI/state capture, and final acceptance receipt validator.
+- `scripts/password-runtime/`: shared artifact-bound native password fixture
+  and UI receipt plus the private Sync state/journal receipt extension.
 - `systemd/helium-syncd.service`: least-privilege direct TLS service bound only
   to lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;

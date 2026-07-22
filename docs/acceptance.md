@@ -56,10 +56,8 @@ replace the browser gates below.
 Run on Linux first, then the supported manual subset on macOS and Windows.
 The executable artifact-bound protocol is
 [`password-runtime-acceptance.md`](password-runtime-acceptance.md). Its final
-receipt requires the complete ordered native UI screenshot set, loopback
-fixture attestation, secret-free bridge state, opaque-journal metadata, and
-byte-identical no-op restart snapshots; a checklist alone cannot pass this
-gate.
+public receipt requires the complete ordered native UI screenshot set and
+loopback fixture attestation; a checklist alone cannot pass this gate.
 
 - Native settings, app-menu, omnibox, toolbar/page-action, and importer entry
   points open the intended native surfaces.
@@ -70,13 +68,17 @@ gate.
 - Decline and never-save behavior is scoped correctly.
 - Guest and incognito sessions do not persist credentials.
 - Browser restart and upgrade do not corrupt the native store.
-- The runtime harness receipt binds all evidence to the unchanged artifact,
-  Linux synthetic profile or `computer.helium.sync.test` package, save/update/
-  tombstone revisions, and three no-op restart journal hashes.
+- The runtime harness receipt binds all public evidence to the unchanged
+  artifact and Linux synthetic profile or `computer.helium.sync.test` package.
 
 ## Gate 2: Password Sync
 
 Use three disposable profiles named `oneplus-test`, `d-test`, and `da-test`.
+For the native lifecycle, run the private extension in
+[`password-runtime-sync-acceptance.md`](password-runtime-sync-acceptance.md).
+Its receipt binds secret-free bridge state and opaque-journal metadata to the
+public screenshots and enforces save/update/tombstone revisions plus three
+byte-identical no-op restart snapshots.
 
 - d is explicitly created as the sole seed. da and oneplus start pending and
   pull d's inventory without publishing any pre-existing local credential.

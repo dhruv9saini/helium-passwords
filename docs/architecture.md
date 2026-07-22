@@ -154,15 +154,17 @@ Android enrollment file-publish requirement: Android uses atomic
 links in `/data/local/tmp`. This is transport/protocol/CLI evidence, not native
 password UI evidence.
 
-The remaining native UI gate now has an executable parent-repository protocol.
-It creates or admits only a disposable Linux profile or parallel Android test
-package, uses an ordered loopback fixture that never emits submitted values,
-and binds visually inspected native UI screenshots to secret-free bridge state
-and opaque-journal metadata. Its verifier requires one save revision, one
-changed update revision, the next tombstone revision, and byte-identical state
-and journal hashes across unchanged restarts. It contains no password-store
-writer, extension, `chrome.passwordsPrivate`, or raw database reader. This is
-ready to run when a browser artifact exists; no runtime receipt exists yet.
+The remaining native UI gate now has a public browser-generic protocol and a
+private Sync extension. The public gate creates or admits only a disposable
+Linux profile or metadata-proven Android `.test` package and binds an ordered
+loopback fixture to visually inspected native UI screenshots. The private
+extension binds its secret-free bridge state and opaque-journal metadata to
+those exact screenshot hashes. It requires one save revision, one changed
+update revision, the next tombstone revision, and byte-identical state and
+journal hashes across unchanged restarts. Neither layer contains a
+password-store writer, extension, `chrome.passwordsPrivate`, or raw database
+reader. Both are source-tested and ready when an artifact exists; no runtime
+receipt exists yet.
 
 ## Cookie and login-session convergence
 

@@ -1,32 +1,31 @@
 # Native Password Runtime Acceptance
 
-This is the executable gate for HS-008 after a hash-verified Linux browser or
-parallel Android test APK returns from chromiumer. It never operates on a
-personal profile or the production Android package. It does not use an
-extension, `chrome.passwordsPrivate`, the historical CDP password writer, or a
-raw password database.
+This is the executable browser gate for HP-002 and HP-008 after a verified
+Linux browser or Android test APK returns from the build host. It uses only a
+new disposable profile or a separately installable Android package ending in
+`.test`. It does not use an extension, `chrome.passwordsPrivate`, CDP to write
+passwords, or a raw password database.
 
-The gate combines three independent observations:
+The gate combines two independent observations:
 
-1. native UI screenshots, inspected by Codex before each capture;
-2. a loopback fixture attestation that compares submitted synthetic
-   credentials in memory without writing or returning their values; and
-3. the native bridge's secret-free `password-state.json` plus metadata and a
-   hash from the isolated opaque journal.
+1. native UI screenshots, inspected by Codex before each capture; and
+2. a loopback fixture that compares submitted synthetic credentials in memory
+   without writing or returning their values.
 
-The final verifier proves that one credential was published, survived an
-unchanged restart without another journal write, changed by exactly one
-revision, survived a second unchanged restart, became the next revision's
-tombstone, and stayed unchanged after deletion/restart. Screenshot hashes make
-the inspected native prompt/settings/suggestion evidence immutable. The
-verifier does not interpret pixels; a screenshot must be captured only after
-Codex has visually confirmed the named native surface.
+The fixture proves that the browser submitted the saved password after a
+restart, submitted the changed password after a second restart, and left the
+login form empty after native deletion. The screenshot sequence proves that
+those fixture observations came through the native settings, prompt,
+suggestion, generation, update, storage, and delete surfaces. The verifier
+does not interpret pixels: capture a screenshot only after Codex has visually
+confirmed the named native surface. Hashes make that reviewed evidence
+immutable and bind it to the admitted browser artifact.
 
 ## Admission
 
 Use a new result directory and the exact returned artifact. For Linux, `init`
 creates the only allowed profile below the result directory. Launch the
-returned browser with that exact `--user-data-dir`; never substitute an
+admitted executable with that exact `--user-data-dir`; never substitute an
 existing profile.
 
 ```sh
@@ -36,33 +35,25 @@ node scripts/password-runtime/acceptance.mjs init \
   --platform linux \
   --output "$run"
 
-# First verify the extracted executable against the returned artifact receipt.
-# Launch that exact admitted executable using:
+# Launch only the artifact passed above, with:
 #   --user-data-dir="$run/profile"
 ```
 
-For Android, first pass `verify-android-artifact.sh`. `init` accepts only the
-parallel test identity, which must coexist with and remain separate from
-`computer.helium.sync`. It also requires the prepared directory's matching
-`acceptance.env` and `PACKAGE_SHA256SUMS`, so a package-name argument alone
-cannot admit an arbitrary APK:
+For Android, first prepare and verify the build output. The artifact directory
+must contain `Browser-test.apk`, `acceptance.env`, and `PACKAGE_SHA256SUMS`.
+The package named by both the APK metadata and `--package` must end in `.test`,
+which keeps the acceptance app separate from a production installation:
 
 ```sh
 node scripts/password-runtime/acceptance.mjs init \
   --artifact /srv/nas/helium-acceptance/JOB/Browser-test.apk \
   --platform android \
-  --package computer.helium.sync.test \
+  --package computer.helium.passwords.test \
   --output "$run"
 ```
 
-Clearing or uninstalling is permitted only for
-`computer.helium.sync.test`. Never run `pm clear` against the production
-package. Stage enrollment, bridge state, and journal evidence only in the
-disposable test namespace. On Linux, prefer a run-local loopback
-`helium-syncd` under `$run/server`; on Android, use a separately initialized
-synthetic endpoint and copy only the test package's metadata state for each
-capture. Do not read `Login Data`, app data from `computer.helium.sync`, or any
-personal profile.
+Clearing or uninstalling is permitted only for the admitted `.test` package.
+Do not read any other app data, `Login Data`, or a personal profile.
 
 Start the stateful fixture and keep it running across browser restarts:
 
@@ -72,57 +63,44 @@ node scripts/password-runtime/fixture-server.mjs \
   --evidence "$run/fixture-evidence.json"
 ```
 
-The fixture binds only `127.0.0.1`. For Android, expose that exact port with
-one bounded `adb reverse` entry and remove only that entry during cleanup. The
-fixture stores only SHA-256 comparisons in memory and writes no submitted
-username or password. Its evidence file is create-new and appears only after
-the complete ordered lifecycle.
+It binds only `127.0.0.1`. For Android, expose that exact port with one bounded
+`adb reverse` entry and remove only that entry during cleanup. The fixture
+stores only SHA-256 comparisons in memory and writes no submitted username or
+password. Its create-new evidence file appears only after the complete ordered
+lifecycle.
 
 ## Ordered native lifecycle
 
 Use one synthetic username and synthetic passwords. Never place their values
-in filenames, commands that are retained as evidence, browser logs, or the
-capture receipt. For every row, inspect the UI, take a PNG screenshot, then
-run `capture`. The screenshot source may be overwritten after capture; the
-harness copies it to a mode-0600 step-specific file.
+in filenames, commands retained as evidence, or browser logs. For every row,
+inspect the native UI, take a PNG screenshot, and then run `capture`. The
+harness copies the screenshot to a mode-0600 step-specific file.
 
-| Step | Required action and observation | Metadata snapshot |
-| --- | --- | --- |
-| `settings_entry` | Open the app menu/settings entry and verify the native password-manager surface opens. | No |
-| `save_prompt` | On `/login`, type the initial fixture credential, submit, verify the native save prompt, then accept Save. | No |
-| `saved_store` | Open the native password manager and verify exactly the fixture entry is present. Wait for the bridge publication. | Yes |
-| `suggestions` | Cleanly restart, return to `/login`, focus the fields without typing, and verify the native suggestion surface. | No |
-| `saved_restart_autofill` | Select the native suggestion and submit without typing. The fixture must accept the exact original credential. | Yes; must equal `saved_store` and leave the journal hash unchanged |
-| `generation` | Open `/change-password`, focus the new-password field, verify the native generated-password surface, and accept it. | No |
-| `update_prompt` | Submit the change form, verify the native update prompt, then accept Update. | No |
-| `updated_store` | Verify the same native fixture entry exists with the new generated password and wait for bridge publication. | Yes |
-| `updated_restart_autofill` | Cleanly restart and submit `/login` using only native fill. The fixture must accept the updated credential. | Yes; must equal `updated_store` and leave the journal hash unchanged |
-| `delete` | Delete the fixture entry through the native settings surface and verify the native confirmation/result. | No |
-| `tombstone` | Verify the native entry is absent and wait for bridge publication. | Yes; must be the next revision and `deleted=true` |
-| `deleted_restart_empty` | Cleanly restart, return to `/login`, verify no fixture suggestion appears and both fields stay empty, then click “Confirm empty after native deletion.” | Yes; must equal `tombstone` and leave the journal hash unchanged |
+| Step | Required action and observation |
+| --- | --- |
+| `settings_entry` | Open the app menu/settings entry and verify the native password-manager surface opens. |
+| `save_prompt` | On `/login`, type the initial fixture credential, submit, verify the native save prompt, and accept Save. |
+| `saved_store` | Open the native password manager and verify exactly the fixture entry is present. |
+| `suggestions` | Cleanly restart, return to `/login`, focus the fields without typing, and verify the native suggestion surface. |
+| `saved_restart_autofill` | Select the native suggestion and submit without typing. The fixture must accept the exact original credential. |
+| `generation` | Open `/change-password`, focus the new-password field, verify the native generated-password surface, and accept it. |
+| `update_prompt` | Submit the change form, verify the native update prompt, and accept Update. |
+| `updated_store` | Verify the same native fixture entry exists with the new generated password. |
+| `updated_restart_autofill` | Cleanly restart and submit `/login` using only native fill. The fixture must accept the updated credential. |
+| `delete` | Delete the fixture entry through the native settings surface and verify the native confirmation. |
+| `deleted_store` | Verify the fixture entry is absent from the native password manager. |
+| `deleted_restart_empty` | Cleanly restart, verify no fixture suggestion appears and both login fields stay empty, then click “Confirm empty after native deletion.” |
 
-Capture a UI-only step with:
+Capture each step immediately after inspection:
 
 ```sh
 node scripts/password-runtime/acceptance.mjs capture \
   --run "$run" --step STEP --screenshot /ABSOLUTE/SCREEN.png
 ```
 
-For the six metadata steps, also supply new point-in-time copies of the
-disposable state and journal:
-
-```sh
-node scripts/password-runtime/acceptance.mjs capture \
-  --run "$run" --step STEP --screenshot /ABSOLUTE/SCREEN.png \
-  --password-state /ABSOLUTE/DISPOSABLE/password-state.json \
-  --journal /ABSOLUTE/DISPOSABLE/records.jsonl
-```
-
-The capture command parses the state and journal but retains only schema-3
-credential fingerprints/revisions/deletion/key IDs, password-record metadata,
-and the complete journal hash. It rejects unexpected state fields, plaintext-
-shaped record keys, malformed counters, symlinks, non-PNG screenshots,
-out-of-order steps, and a second capture of the same step.
+The command rejects non-PNG input, symlinks, unexpected or out-of-order steps,
+duplicate arguments, and a second capture of the same step. No command accepts
+password values or a password-store path.
 
 After the fixture writes its evidence, finalize once:
 
@@ -132,22 +110,20 @@ node scripts/password-runtime/acceptance.mjs verify \
   --fixture-evidence "$run/fixture-evidence.json"
 ```
 
-`verify` rehashes the admitted artifact and every captured screenshot, checks
-the Linux synthetic-profile marker or Android test package, validates the
-fixture's loopback/no-secret contract, and enforces revisions `N`, `N+1`, and
-`N+2` for save, update, and tombstone. It creates `receipt.json` with mode 0600
-and refuses to replace an existing receipt.
+`verify` rehashes the artifact and every captured screenshot, rechecks the
+Linux synthetic-profile marker or Android test-package admission, and verifies
+the fixture's loopback/no-secret contract. It creates `receipt.json` with mode
+0600 and refuses to replace an existing receipt.
 
 ## Failure and cleanup
 
 Any missing prompt, wrong native surface, unexpected credential, rejected
-fixture submission, changed no-op journal hash, malformed state, revision gap,
-or absent tombstone fails the run. Preserve the failed result directory as
-evidence and initialize a new directory for another artifact/run. Do not edit
-or reuse a failed `run.json`.
+fixture submission, modified artifact or screenshot, incomplete sequence, or
+non-test Android identity fails the run. Preserve a failed result directory as
+evidence and initialize a new directory for another attempt. Do not edit or
+reuse a failed `run.json`.
 
 Stop only the disposable browser and fixture. Remove only ADB reverse/forward
 entries created for this run. Keep the artifact, receipt, screenshots, and
-synthetic server evidence until the program audit is complete. No successful
-runtime receipt authorizes a personal-profile install; the separate backup,
-three-device enrollment, and rollout gates still apply.
+synthetic fixture evidence until the program audit is complete. A successful
+receipt does not authorize installation into a personal profile.
