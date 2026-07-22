@@ -5,7 +5,12 @@ import path from "node:path";
 import test from "node:test";
 
 import { createFixtureServer } from "../android-media/fixture-server.mjs";
-import { atomicWriteJSON, runProbe, validateProbeResult } from "../android-media/run-cdp-probe.mjs";
+import {
+  atomicWriteJSON,
+  createContentFreeChatGPTTiming,
+  runProbe,
+  validateProbeResult,
+} from "../android-media/run-cdp-probe.mjs";
 
 test("streams numbered Fetch chunks progressively for identity, gzip, and Brotli", async t => {
   const fixture = await createFixtureServer({ port: 0, chunks: 4, delayMs: 40 });
@@ -14,6 +19,8 @@ test("streams numbered Fetch chunks progressively for identity, gzip, and Brotli
   for (const encoding of ["identity", "gzip", "br"]) {
     const response = await fetch(`${fixture.origin}/stream/fetch?encoding=${encoding}`);
     assert.equal(response.status, 200);
+    assert.equal(response.headers.get("access-control-allow-origin"), "*");
+    assert.equal(response.headers.get("timing-allow-origin"), "*");
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let body = "";
@@ -45,7 +52,17 @@ test("serves an ordered event stream", async t => {
 test("serves media only from the fixed fixture names and honors one byte range", async t => {
   const mediaDir = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-media-fixture-"));
   t.after(() => fsp.rm(mediaDir, { recursive: true, force: true }));
-  await fsp.writeFile(path.join(mediaDir, "h264-aac.mp4"), Buffer.from("0123456789"));
+  const fixtureNames = [
+    "h264-aac.mp4", "h264-high-aac.mp4", "h264-aac-fragmented.mp4",
+    "vp9-opus.webm", "av1-opus.webm", "hls/stream.m3u8", "hls/init.mp4",
+    "hls/segment-000.m4s", "hls/segment-001.m4s", "dash/stream.mpd",
+    "dash/h264-aac-fragmented.mp4",
+  ];
+  await fsp.mkdir(path.join(mediaDir, "hls"));
+  await fsp.mkdir(path.join(mediaDir, "dash"));
+  for (const name of fixtureNames) {
+    await fsp.writeFile(path.join(mediaDir, name), Buffer.from("0123456789"));
+  }
   const fixture = await createFixtureServer({ port: 0, mediaDir });
   t.after(() => fixture.close());
 
@@ -61,6 +78,19 @@ test("serves media only from the fixed fixture names and honors one byte range",
   assert.equal(manifest.schema_version, 1);
   assert.equal(manifest.files.mp4.bytes, 10);
   assert.equal(manifest.files.mp4.sha256.length, 64);
+  assert.deepEqual(Object.values(manifest.files).map(item => item.name).sort(), fixtureNames.sort());
+  assert.match(
+    (await fetch(`${fixture.origin}/media/hls/stream.m3u8`)).headers.get("content-type"),
+    /^application\/vnd\.apple\.mpegurl/,
+  );
+  assert.match(
+    (await fetch(`${fixture.origin}/media/dash/stream.mpd`)).headers.get("content-type"),
+    /^application\/dash\+xml/,
+  );
+  assert.match(
+    (await fetch(`${fixture.origin}/media/hls/segment-000.m4s`)).headers.get("content-type"),
+    /^video\/iso\.segment/,
+  );
 });
 
 test("probe page contains the codec and browser-observable streaming gates", async t => {
@@ -68,8 +98,12 @@ test("probe page contains the codec and browser-observable streaming gates", asy
   t.after(() => fixture.close());
   const page = await fetch(`${fixture.origin}/probe`).then(response => response.text());
   assert.match(page, /avc1\.42E01E, mp4a\.40\.2/);
+  assert.match(page, /avc1\.640028, mp4a\.40\.2/);
   assert.match(page, /vp09\.00\.10\.08, opus/);
+  assert.match(page, /av01\.0\.04M\.08, opus/);
+  assert.match(page, /application\/vnd\.apple\.mpegurl/);
   assert.match(page, /MediaSource\.isTypeSupported/);
+  assert.match(page, /new DOMParser/);
   assert.match(page, /mediaCapabilities\.decodingInfo/);
   assert.match(page, /requestMediaKeySystemAccess/);
   assert.match(page, /com\.widevine\.alpha/);
@@ -78,6 +112,8 @@ test("probe page contains the codec and browser-observable streaming gates", asy
   assert.match(page, /interaction_ticks/);
   assert.match(page, /new EventSource/);
   assert.match(page, /response\.body\.getReader/);
+  assert.match(page, /visibilitychange/);
+  assert.match(page, /connectionchange/);
   assert.match(page, /__heliumMediaResult/);
   const embeddedScript = page.match(/<script>([\s\S]*)<\/script>/)?.[1];
   assert.ok(embeddedScript);
@@ -103,6 +139,7 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     schema_version: 1,
     expected_chunks: 4,
     finished_at: "2026-07-21T00:00:00Z",
+    required_transport_protocols: [],
     fetch_identity: stream,
     fetch_gzip: stream,
     fetch_br: stream,
@@ -113,8 +150,15 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     },
     capabilities: {
       mp4_h264_aac: "probably",
+      mp4_h264_high_aac: "",
       webm_vp9_opus: "probably",
+      webm_av1_opus: "",
+      hls: "probably",
       mse_mp4_h264_aac: true,
+    },
+    media_capabilities: {
+      mp4_high_file: { supported: false },
+      av1_file: { supported: false },
     },
     drm: {
       widevine: {
@@ -132,14 +176,32 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     },
     media_manifest: { files: {
       mp4: { name: "h264-aac.mp4", bytes: 10, sha256: "a".repeat(64) },
+      mp4_high: { name: "h264-high-aac.mp4", bytes: 10, sha256: "b".repeat(64) },
       webm: { name: "vp9-opus.webm", bytes: 10, sha256: "b".repeat(64) },
+      av1: { name: "av1-opus.webm", bytes: 10, sha256: "c".repeat(64) },
       mse: { name: "h264-aac-fragmented.mp4", bytes: 10, sha256: "c".repeat(64) },
+      hls_manifest: { name: "hls/stream.m3u8", bytes: 10, sha256: "d".repeat(64) },
+      hls_init: { name: "hls/init.mp4", bytes: 10, sha256: "e".repeat(64) },
+      hls_segment_0: { name: "hls/segment-000.m4s", bytes: 10, sha256: "f".repeat(64) },
+      hls_segment_1: { name: "hls/segment-001.m4s", bytes: 10, sha256: "0".repeat(64) },
+      dash_manifest: { name: "dash/stream.mpd", bytes: 10, sha256: "1".repeat(64) },
+      dash_media: { name: "dash/h264-aac-fragmented.mp4", bytes: 10, sha256: "2".repeat(64) },
     } },
     playback: [
-      { name: "mp4", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10 },
-      { name: "webm", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10 },
-      { name: "mse", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10 },
+      { name: "mp4", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10, total_frames: 60, dropped_frames: 0 },
+      { name: "mp4_high", ok: false, error: "synthetic unsupported" },
+      { name: "webm", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10, total_frames: 60, dropped_frames: 0 },
+      { name: "av1", ok: false, error: "synthetic unsupported" },
+      { name: "mse", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10, total_frames: 60, dropped_frames: 0 },
+      { name: "hls", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10, total_frames: 60, dropped_frames: 0 },
+      { name: "dash", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10, total_frames: 60, dropped_frames: 0 },
     ],
+    lifecycle: {
+      events: [
+        { event: "started", at_ms: 1, visibility: "visible", online: true },
+        { event: "completed", at_ms: 1000, visibility: "visible", online: true },
+      ],
+    },
   };
   assert.equal(validateProbeResult(result), result);
   assert.throws(() => validateProbeResult({
@@ -156,7 +218,7 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
   }), /did not play/);
   assert.throws(() => validateProbeResult({
     ...result,
-    media_manifest: { files: { mp4: result.media_manifest.files.mp4 } },
+    media_manifest: { files: { ...result.media_manifest.files, webm: undefined } },
   }), /webm media fixture was absent/);
   assert.throws(() => validateProbeResult({
     ...result,
@@ -172,6 +234,16 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
       ],
     },
   }), /milestone timing evidence was invalid/);
+  assert.equal(validateProbeResult({
+    ...result,
+    required_transport_protocols: ["h2"],
+    fetch_h2: { ...stream, protocol: "h2" },
+  }).fetch_h2.protocol, "h2");
+  assert.throws(() => validateProbeResult({
+    ...result,
+    required_transport_protocols: ["h3"],
+    fetch_h3: { ...stream, protocol: "h2" },
+  }), /expected h3/);
 });
 
 test("CDP runner refuses non-loopback origins and existing evidence", async t => {
@@ -192,4 +264,46 @@ test("CDP runner refuses non-loopback origins and existing evidence", async t =>
     fixture: "http://127.0.0.1:44721/probe",
     output: path.join(outputDir, "bad.json"),
   }), /CDP URL must use loopback HTTP/);
+  await assert.rejects(() => runProbe({
+    cdp: "http://127.0.0.1:9222",
+    fixture: "http://127.0.0.1:44721/probe",
+    h2: "https://example.com/private?token=secret",
+    output: path.join(outputDir, "bad-h2.json"),
+  }), /fixed identity Fetch endpoint/);
+});
+
+test("ChatGPT timing evidence is artifact-bound and cannot contain content", () => {
+  const options = {
+    status: "completed",
+    startedAt: "2026-07-22T18:00:00.000Z",
+    firstUpdateMs: "850",
+    observationMs: "4200",
+    visibleUpdateCount: "4",
+    package: "computer.helium.sync.test",
+    artifactSha256: "a".repeat(64),
+    heliumSyncCommit: "b".repeat(40),
+    chromiumCommit: "c".repeat(40),
+  };
+  const timing = createContentFreeChatGPTTiming(options);
+  assert.deepEqual(Object.keys(timing).sort(), [
+    "artifact_sha256", "chromium_commit", "first_update_ms", "helium_sync_commit",
+    "observation_ms", "package", "scenario", "schema_version", "started_at", "status",
+    "visible_update_count_lower_bound",
+  ]);
+  assert.throws(() => createContentFreeChatGPTTiming({
+    status: "completed",
+    startedAt: "2026-07-22T18:00:00.000Z",
+    firstUpdateMs: 850,
+    observationMs: 4200,
+    visibleUpdateCount: 4,
+    package: "computer.helium.sync.test",
+    artifactSha256: "a".repeat(64),
+    heliumSyncCommit: "b".repeat(40),
+    chromiumCommit: "c".repeat(40),
+    content: "must never be accepted",
+  }), /rejects unexpected fields: content/);
+  assert.throws(() => createContentFreeChatGPTTiming({
+    ...options,
+    visibleUpdateCount: 2,
+  }), /at least three visible updates/);
 });

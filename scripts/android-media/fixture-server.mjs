@@ -13,8 +13,16 @@ const DEFAULT_CHUNKS = 4;
 const DEFAULT_DELAY_MS = 100;
 const MEDIA_FILES = {
   mp4: "h264-aac.mp4",
+  mp4_high: "h264-high-aac.mp4",
   mse: "h264-aac-fragmented.mp4",
   webm: "vp9-opus.webm",
+  av1: "av1-opus.webm",
+  hls_manifest: "hls/stream.m3u8",
+  hls_init: "hls/init.mp4",
+  hls_segment_0: "hls/segment-000.m4s",
+  hls_segment_1: "hls/segment-001.m4s",
+  dash_manifest: "dash/stream.mpd",
+  dash_media: "dash/h264-aac-fragmented.mp4",
 };
 
 export async function createFixtureServer(options = {}) {
@@ -82,8 +90,10 @@ async function sendNumberedStream(response, encoding, chunks, delayMs) {
     return;
   }
   const headers = {
+    "access-control-allow-origin": "*",
     "cache-control": "no-store, no-transform",
     "content-type": "text/plain; charset=utf-8",
+    "timing-allow-origin": "*",
     "x-content-type-options": "nosniff",
   };
   if (encoding !== "identity") headers["content-encoding"] = encoding;
@@ -143,7 +153,7 @@ async function sendMedia(request, response, mediaDir, requestedName) {
     response.end();
     return;
   }
-  const type = requestedName.endsWith(".webm") ? "video/webm" : "video/mp4";
+  const type = mediaType(requestedName);
   const headers = {
     "accept-ranges": "bytes",
     "cache-control": "no-store",
@@ -193,6 +203,14 @@ async function mediaManifest(mediaDir) {
   return manifest;
 }
 
+function mediaType(name) {
+  if (name.endsWith(".webm")) return "video/webm";
+  if (name.endsWith(".m3u8")) return "application/vnd.apple.mpegurl";
+  if (name.endsWith(".mpd")) return "application/dash+xml";
+  if (name.endsWith(".m4s")) return "video/iso.segment";
+  return "video/mp4";
+}
+
 function probePage(expectedChunks) {
   return `<!doctype html>
 <meta charset="utf-8">
@@ -206,10 +224,35 @@ function probePage(expectedChunks) {
 const resultNode = document.querySelector('#result');
 const results = {schema_version: 1, expected_chunks: ${expectedChunks}, user_agent: navigator.userAgent, started_at: new Date().toISOString()};
 const mp4Mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
+const mp4HighMime = 'video/mp4; codecs="avc1.640028, mp4a.40.2"';
 const webmMime = 'video/webm; codecs="vp09.00.10.08, opus"';
+const av1Mime = 'video/webm; codecs="av01.0.04M.08, opus"';
+const hlsMime = 'application/vnd.apple.mpegurl';
 let interactionTicks = 0;
 setInterval(() => { interactionTicks += 1; }, 25);
 function show(){ resultNode.textContent = JSON.stringify(results, null, 2); }
+function connectionSnapshot(event) {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  return {
+    event,
+    at_ms: Math.round(performance.now()),
+    visibility: document.visibilityState,
+    online: navigator.onLine,
+    effective_type: connection?.effectiveType || '',
+    type: connection?.type || '',
+    downlink_mbps: Number.isFinite(connection?.downlink) ? connection.downlink : null,
+    rtt_ms: Number.isFinite(connection?.rtt) ? connection.rtt : null,
+  };
+}
+results.lifecycle = {events:[connectionSnapshot('started')]};
+document.addEventListener('visibilitychange', () => {
+  results.lifecycle.events.push(connectionSnapshot('visibilitychange')); show();
+});
+for (const event of ['online','offline','pageshow','pagehide']) {
+  addEventListener(event, () => { results.lifecycle.events.push(connectionSnapshot(event)); show(); });
+}
+const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+connection?.addEventListener?.('change', () => { results.lifecycle.events.push(connectionSnapshot('connectionchange')); show(); });
 async function stream(path) {
   const started = performance.now(), ticksBefore = interactionTicks;
   const response = await fetch(path, {cache:'no-store'});
@@ -275,8 +318,8 @@ function play(name, src) {
     video.play().catch(error => { clearTimeout(timer); resolve({name, ok:false, error:String(error)}); });
   });
 }
-async function playMse(src) {
-  if (!window.MediaSource || !MediaSource.isTypeSupported(mp4Mime)) return {name:'mse', ok:false, error:'unsupported'};
+async function playMse(src, name = 'mse') {
+  if (!window.MediaSource || !MediaSource.isTypeSupported(mp4Mime)) return {name, ok:false, error:'unsupported'};
   const video = document.createElement('video'); video.controls=true; video.muted=true; video.playsInline=true;
   document.querySelector('#videos').append(video);
   const mediaSource = new MediaSource(); video.src = URL.createObjectURL(mediaSource);
@@ -286,19 +329,34 @@ async function playMse(src) {
   await new Promise((resolve,reject) => { sourceBuffer.onupdateend=resolve; sourceBuffer.onerror=reject; sourceBuffer.appendBuffer(bytes); });
   mediaSource.endOfStream();
   return new Promise(resolve => {
-    const timer=setTimeout(() => resolve({name:'mse',ok:false,error:'timeout'}),12000);
+    const timer=setTimeout(() => resolve({name,ok:false,error:'timeout'}),12000);
     video.onended=()=>{
       clearTimeout(timer);
       const quality=video.getVideoPlaybackQuality?.();
       resolve({
-        name:'mse',ok:true,duration:video.duration,width:video.videoWidth,height:video.videoHeight,
+        name,ok:true,duration:video.duration,width:video.videoWidth,height:video.videoHeight,
         total_frames:quality?.totalVideoFrames??null,dropped_frames:quality?.droppedVideoFrames??null,
         audio_decoded_bytes:video.webkitAudioDecodedByteCount??null,
       });
     };
-    video.onerror=()=>{clearTimeout(timer);resolve({name:'mse',ok:false,error:String(video.error?.code||'media error')});};
-    video.play().catch(error=>{clearTimeout(timer);resolve({name:'mse',ok:false,error:String(error)});});
+    video.onerror=()=>{clearTimeout(timer);resolve({name,ok:false,error:String(video.error?.code||'media error')});};
+    video.play().catch(error=>{clearTimeout(timer);resolve({name,ok:false,error:String(error)});});
   });
+}
+async function playDash(manifestPath) {
+  try {
+    const response = await fetch(manifestPath, {cache:'no-store'});
+    if (!response.ok) throw new Error('DASH manifest HTTP ' + response.status);
+    const documentNode = new DOMParser().parseFromString(await response.text(), 'application/xml');
+    if (documentNode.querySelector('parsererror')) throw new Error('DASH manifest XML was invalid');
+    const base = documentNode.querySelector('BaseURL')?.textContent?.trim() || '';
+    if (!/^[a-zA-Z0-9._-]+$/.test(base)) throw new Error('DASH BaseURL was absent or unsafe');
+    const mediaURL = new URL(base, response.url);
+    if (mediaURL.origin !== location.origin) throw new Error('DASH media escaped the fixture origin');
+    return await playMse(mediaURL.pathname, 'dash');
+  } catch (error) {
+    return {name:'dash',ok:false,error:String(error)};
+  }
 }
 async function decodingInfo(type, videoContentType, audioContentType) {
   if (!navigator.mediaCapabilities?.decodingInfo) return {supported:false, error:'MediaCapabilities unavailable'};
@@ -338,13 +396,19 @@ async function widevineSupport() {
   const probeVideo = document.createElement('video');
   results.capabilities = {
     mp4_h264_aac: probeVideo.canPlayType(mp4Mime),
+    mp4_h264_high_aac: probeVideo.canPlayType(mp4HighMime),
     webm_vp9_opus: probeVideo.canPlayType(webmMime),
+    webm_av1_opus: probeVideo.canPlayType(av1Mime),
+    hls: probeVideo.canPlayType(hlsMime),
     mse_mp4_h264_aac: Boolean(window.MediaSource && MediaSource.isTypeSupported(mp4Mime)),
     mse_webm_vp9_opus: Boolean(window.MediaSource && MediaSource.isTypeSupported(webmMime)),
+    mse_webm_av1_opus: Boolean(window.MediaSource && MediaSource.isTypeSupported(av1Mime)),
   };
   results.media_capabilities = {
     mp4_file: await decodingInfo('file','video/mp4; codecs="avc1.42E01E"','audio/mp4; codecs="mp4a.40.2"'),
+    mp4_high_file: await decodingInfo('file','video/mp4; codecs="avc1.640028"','audio/mp4; codecs="mp4a.40.2"'),
     webm_file: await decodingInfo('file','video/webm; codecs="vp09.00.10.08"','audio/webm; codecs="opus"'),
+    av1_file: await decodingInfo('file','video/webm; codecs="av01.0.04M.08"','audio/webm; codecs="opus"'),
     mp4_mse: await decodingInfo('media-source','video/mp4; codecs="avc1.42E01E"','audio/mp4; codecs="mp4a.40.2"'),
   };
   results.drm = {widevine:await widevineSupport()};
@@ -353,13 +417,25 @@ async function widevineSupport() {
     catch (error) { results['fetch_' + encoding] = {error:String(error)}; }
     show();
   }
+  for (const protocol of ['h2','h3']) {
+    const endpoint = new URLSearchParams(location.search).get(protocol);
+    if (!endpoint) continue;
+    try { results['fetch_' + protocol] = await stream(endpoint); }
+    catch (error) { results['fetch_' + protocol] = {error:String(error)}; }
+    show();
+  }
   try { results.sse = await sse(); } catch (error) { results.sse = {error:String(error)}; }
   const manifest = await fetch('/manifest.json', {cache:'no-store'}).then(response=>response.json());
   results.media_manifest = manifest;
   results.playback = [];
   if (manifest.files.mp4) results.playback.push(await play('mp4','/media/' + manifest.files.mp4.name));
+  if (manifest.files.mp4_high) results.playback.push(await play('mp4_high','/media/' + manifest.files.mp4_high.name));
   if (manifest.files.webm) results.playback.push(await play('webm','/media/' + manifest.files.webm.name));
+  if (manifest.files.av1) results.playback.push(await play('av1','/media/' + manifest.files.av1.name));
   if (manifest.files.mse) results.playback.push(await playMse('/media/' + manifest.files.mse.name));
+  if (manifest.files.hls_manifest) results.playback.push(await play('hls','/media/' + manifest.files.hls_manifest.name));
+  if (manifest.files.dash_manifest) results.playback.push(await playDash('/media/' + manifest.files.dash_manifest.name));
+  results.lifecycle.events.push(connectionSnapshot('completed'));
   results.finished_at = new Date().toISOString();
   window.__heliumMediaResult = results;
   show();
