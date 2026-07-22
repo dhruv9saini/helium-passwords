@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -74,10 +75,8 @@ func (server server) push(w http.ResponseWriter, r *http.Request, principal Devi
 		return
 	}
 	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
-	decoder.DisallowUnknownFields()
 	var request PushRequest
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeRequestBody(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Errorf("decode request: %w", err))
 		return
 	}
@@ -136,10 +135,8 @@ func (server server) stageKey(w http.ResponseWriter, r *http.Request, principal 
 		return
 	}
 	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
-	decoder.DisallowUnknownFields()
 	var request KeyTransitionRequest
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeRequestBody(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
@@ -260,9 +257,7 @@ func decodePost(w http.ResponseWriter, r *http.Request, value any) bool {
 		return false
 	}
 	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(value); err != nil {
+	if err := decodeRequestBody(w, r, value); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err)
 		return false
 	}
@@ -279,10 +274,8 @@ func (server server) completeEnrollment(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer r.Body.Close()
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
-	decoder.DisallowUnknownFields()
 	var request EnrollmentCompleteRequest
-	if err := decoder.Decode(&request); err != nil {
+	if err := decodeRequestBody(w, r, &request); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
@@ -297,6 +290,22 @@ func (server server) completeEnrollment(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	writeJSON(w, http.StatusOK, EnrollmentCompleteResponse{Phase: PhaseActive})
+}
+
+func decodeRequestBody(w http.ResponseWriter, r *http.Request, value any) error {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("unexpected trailing JSON value")
+		}
+		return err
+	}
+	return nil
 }
 
 func parseQuery(r *http.Request) (Counter, map[Kind]struct{}, error) {

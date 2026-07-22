@@ -590,3 +590,23 @@ func TestServerRejectsClientAssertedDeviceField(t *testing.T) {
 		t.Fatalf("caller-supplied device field was not rejected: %d", response.StatusCode)
 	}
 }
+
+func TestServerRejectsTrailingJSON(t *testing.T) {
+	seed, _ := CreateSeedState(filepath.Join(t.TempDir(), "seed.json"))
+	store, _ := OpenStore(t.TempDir())
+	registry, _ := CreateDeviceRegistry(filepath.Join(t.TempDir(), "devices.json"), seedToken, seed.ActiveKeyID)
+	server := httptest.NewServer(NewHandler(store, registry))
+	defer server.Close()
+	request, _ := http.NewRequest(http.MethodPost, server.URL+"/v2/records/push",
+		strings.NewReader(`{"mutations":[]} {"mutations":[]}`))
+	request.Header.Set("Authorization", "Bearer "+seedToken)
+	request.Header.Set("Content-Type", "application/json")
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusBadRequest {
+		t.Fatalf("trailing JSON was not rejected: %d", response.StatusCode)
+	}
+}

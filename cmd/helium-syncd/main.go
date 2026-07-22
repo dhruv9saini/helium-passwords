@@ -37,6 +37,10 @@ func main() {
 		Addr:              *listen,
 		Handler:           syncstore.NewHandler(store, registry),
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    16 * 1024,
 	}
 	go func() {
 		slog.Info("helium-syncd listening", "addr", *listen, "data_dir", *dataDir)
