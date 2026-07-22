@@ -247,8 +247,9 @@ func (client *Client) ActivateStagedKey(ctx context.Context) error {
 }
 
 // AdoptServerKeyStatus lets an active join atomically switch only after d has
-// activated a key it already installed. During this step the server accepts
-// both epochs, so a local save failure cannot brick writes.
+// activated a key it already installed. The server keeps the retiring epoch
+// readable but rejects writes under it, so a failed local save is recovered by
+// rerunning this adoption before browser publication resumes.
 func (client *Client) AdoptServerKeyStatus(ctx context.Context) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()

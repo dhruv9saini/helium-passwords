@@ -163,23 +163,9 @@ func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mut
 		encoded = append(encoded, '\n')
 		pending = append(pending, record)
 	}
-	file, err := os.OpenFile(store.recordsPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
-	if err != nil {
-		return PushResponse{}, fmt.Errorf("open records for append: %w", err)
-	}
-	if written, err := file.Write(encoded); err != nil {
-		file.Close()
-		return PushResponse{}, fmt.Errorf("append records: %w", err)
-	} else if written != len(encoded) {
-		file.Close()
-		return PushResponse{}, fmt.Errorf("append records: %w", io.ErrShortWrite)
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		return PushResponse{}, fmt.Errorf("sync records: %w", err)
-	}
-	if err := file.Close(); err != nil {
-		return PushResponse{}, fmt.Errorf("close records: %w", err)
+	committed, err := store.replaceJournal(encoded)
+	if !committed {
+		return PushResponse{}, err
 	}
 	store.records = append(store.records, pending...)
 	lastSeq := pending[len(pending)-1].Seq
@@ -189,10 +175,63 @@ func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mut
 	} else {
 		store.nextSeq = lastSeq + 1
 	}
+	if err != nil {
+		return PushResponse{}, err
+	}
 	if err := store.createSnapshot(); err != nil {
 		return PushResponse{}, fmt.Errorf("checkpoint records: %w", err)
 	}
 	return PushResponse{Records: pending, NextSeq: store.cursorLocked()}, nil
+}
+
+// replaceJournal installs the old journal plus one complete batch through a
+// same-directory temporary file. A short write, ENOSPC, failed fsync, or failed
+// close before rename leaves the old journal byte-for-byte intact. Once rename
+// succeeds the batch is committed even if the subsequent directory fsync
+// reports an error, so the caller can keep its in-memory sequence aligned with
+// the visible journal and fail closed without ever reusing those counters.
+func (store *Store) replaceJournal(encoded []byte) (bool, error) {
+	current, err := os.Open(store.recordsPath)
+	if err != nil {
+		return false, fmt.Errorf("open current records: %w", err)
+	}
+	defer current.Close()
+
+	temp, err := os.CreateTemp(store.dataDir, ".records-committing-")
+	if err != nil {
+		return false, fmt.Errorf("create records transaction: %w", err)
+	}
+	tempPath := temp.Name()
+	defer os.Remove(tempPath)
+	if err := temp.Chmod(0600); err != nil {
+		temp.Close()
+		return false, fmt.Errorf("secure records transaction: %w", err)
+	}
+	if _, err := io.Copy(temp, current); err != nil {
+		temp.Close()
+		return false, fmt.Errorf("copy current records: %w", err)
+	}
+	if written, err := temp.Write(encoded); err != nil {
+		temp.Close()
+		return false, fmt.Errorf("append records transaction: %w", err)
+	} else if written != len(encoded) {
+		temp.Close()
+		return false, fmt.Errorf("append records transaction: %w", io.ErrShortWrite)
+	}
+	if err := temp.Sync(); err != nil {
+		temp.Close()
+		return false, fmt.Errorf("sync records transaction: %w", err)
+	}
+	if err := temp.Close(); err != nil {
+		return false, fmt.Errorf("close records transaction: %w", err)
+	}
+	if err := os.Rename(tempPath, store.recordsPath); err != nil {
+		return false, fmt.Errorf("commit records transaction: %w", err)
+	}
+	if err := syncDirectory(store.dataDir); err != nil {
+		return true, fmt.Errorf("sync committed records directory: %w", err)
+	}
+	return true, nil
 }
 
 func (store *Store) Pull(since Counter, kinds map[Kind]struct{}) PullResponse {

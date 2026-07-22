@@ -539,10 +539,13 @@ Content-key rotation order is fixed. Every remote command also receives
    on that join, run `key-update-install --pending-file NEW_PENDING
    --wrapped-file WRAPPED --required-key-id OLD --required-key-id STAGED`, then
    run `key-ack-install`.
-3. On d, run `key-activate`. On every join, run `key-adopt`. The server accepts
-   both epochs during this interval.
-4. Quiesce browser publication and let d's native bridges reach one current
-   verified cursor. On d run:
+3. Let every native bridge reach one current verified cursor, then stop every
+   enrolled browser; changing `client.json` does not alter a keyring already in
+   browser memory. On d, run `key-activate`, then immediately run `key-adopt` on
+   every join while the browsers remain stopped. The server keeps both epochs
+   readable during this interval, but accepts writes only under the new active
+   epoch so a retiring-key write cannot land after the rekey inventory.
+4. With browser publication still stopped, on d run:
 
    ```sh
    helium-sync key-rekey \

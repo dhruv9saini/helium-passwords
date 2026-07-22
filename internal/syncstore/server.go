@@ -12,6 +12,8 @@ import (
 
 const maxRequestBytes = 16 * 1024 * 1024
 
+var errDeviceAuthorizationChanged = errors.New("device authorization changed before commit")
+
 func NewHandler(store *Store, registry *DeviceRegistry) http.Handler {
 	mux := http.NewServeMux()
 	server := server{store: store, registry: registry}
@@ -80,8 +82,12 @@ func (server server) push(w http.ResponseWriter, r *http.Request, principal Devi
 		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Errorf("decode request: %w", err))
 		return
 	}
-	response, err := server.store.Put(principal.ID, server.registry.AcceptedWriteKeyIDs(), request.Mutations)
+	response, err := server.registry.PutAuthorized(server.store, principal, request.Mutations)
 	if err != nil {
+		if errors.Is(err, errDeviceAuthorizationChanged) {
+			writeError(w, http.StatusUnauthorized, "unauthorized", err)
+			return
+		}
 		var conflict *ConflictError
 		if errors.As(err, &conflict) {
 			writeJSON(w, http.StatusConflict, struct {
