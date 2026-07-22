@@ -15,13 +15,16 @@ chmod 600 "$test_root/recipients.txt" "$test_root/identity.txt"
 
 make_backup_receipt() {
   local source_path=$1 config=$2 generation=$3 profile_id=$4
-  local cipher=$test_root/cipher-$profile_id cipher_sha cipher_size recipients_sha path_sha dest ns receipt
+  local cipher=$test_root/cipher-$profile_id cipher_sha cipher_size recipients_sha path_sha archive_root dest ns receipt
   printf 'synthetic encrypted profile %s\n' "$profile_id" >"$cipher"
   cipher_sha=$(sha256sum "$cipher" | awk '{print $1}')
   cipher_size=$(stat -c %s "$cipher")
   recipients_sha=$(sort -u "$test_root/recipients.txt" | sha256sum | awk '{print $1}')
   path_sha=$(printf %s "$source_path" | sha256sum | awk '{print $1}')
-  if [[ -d "$source_path" ]]; then
+  archive_root=${source_path##*/}
+  if [[ "$profile_id" == android && -f "$test_root/android-profile.tar" ]]; then
+    tree_sha=$(sha256sum "$test_root/android-profile.tar" | awk '{print $1}')
+  elif [[ -d "$source_path" ]]; then
     tree_sha=$(tar --sort=name --format=posix \
       --pax-option=delete=atime,delete=ctime --mtime=@0 \
       --owner=0 --group=0 --numeric-owner -C "$source_path" -cf - . | \
@@ -53,7 +56,7 @@ source_device=fixture
 profile_id=$profile_id
 profile_path_sha256=$path_sha
 source_tree_sha256=$tree_sha
-archive_root=profile
+archive_root=$archive_root
 generation=$generation
 cipher_sha256=$cipher_sha
 cipher_size=$cipher_size
@@ -97,9 +100,40 @@ if [[ \${1:-} == shell ]]; then
     *'pidof computer.helium.sync'*) exit 1 ;;
     *'uname -m'*) echo x86_64 ;;
   esac
+elif [[ \${1:-} == exec-out ]]; then
+  if [[ -n \${ADB_STREAM_COUNTER:-} ]]; then
+    count=0
+    [[ ! -f \$ADB_STREAM_COUNTER ]] || count=\$(cat \$ADB_STREAM_COUNTER)
+    count=\$((count + 1))
+    printf '%s\n' \$count >\$ADB_STREAM_COUNTER
+    if [[ \$count -ge 2 && -n \${ADB_STREAM_SECOND:-} ]]; then
+      cat \$ADB_STREAM_SECOND
+      exit 0
+    fi
+  fi
+  cat '$test_root/android-profile.tar'
 fi
 EOF
-chmod 700 "$test_root/bin/git" "$test_root/bin/go" "$test_root/bin/adb"
+cat >"$test_root/bin/age" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+mode= output= input=
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --encrypt) mode=encrypt; shift ;;
+    --decrypt) mode=decrypt; shift ;;
+    --recipients-file|--identity) shift 2 ;;
+    --output) output=$2; shift 2 ;;
+    *) input=$1; shift ;;
+  esac
+done
+case "$mode" in
+  encrypt) openssl enc -aes-256-cbc -pbkdf2 -pass pass:synthetic-deploy-test -out "$output" ;;
+  decrypt) openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:synthetic-deploy-test -in "$input" ;;
+  *) exit 64 ;;
+esac
+EOF
+chmod 700 "$test_root/bin/git" "$test_root/bin/go" "$test_root/bin/adb" "$test_root/bin/age"
 PATH="$test_root/bin:$PATH"
 export PATH
 
@@ -152,6 +186,9 @@ HOME="$test_root/home" HELIUM_LAPTOP_RELEASE_ROOT="$test_root/releases" \
   | grep -qx 'rollback=activated'
 
 mkdir -p "$test_root/enrollment"
+mkdir -p "$test_root/android-live/app_chrome/Default"
+printf 'synthetic Android profile\n' >"$test_root/android-live/app_chrome/Default/Preferences"
+tar -C "$test_root/android-live" -cf "$test_root/android-profile.tar" app_chrome
 printf 'https://lm.tailnet.test:44719\n' >"$test_root/enrollment/base_url"
 printf fixture-token >"$test_root/enrollment/token"
 cat >"$test_root/enrollment/client.json" <<'EOF'
@@ -168,6 +205,22 @@ ADB="$test_root/bin/adb" "$repo_root/scripts/android-local/configure-android-chr
 grep -qx 'android_enrollment=installed' "$test_root/android-config.out"
 grep -q 'app_chrome/Default/helium-sync' "$test_root/adb.log"
 ! grep -Eq 'first_run|EulaAccepted|ARCH_CHROOT|chroot' "$test_root/adb.log"
+
+android_stream_generation=20260722T120200Z-cccccccccccccccc
+ADB="$test_root/bin/adb" "$repo_root/scripts/android-local/backup-android-chromium-profile.sh" \
+  "$android_config" "$android_stream_generation" >"$test_root/android-backup.out"
+grep -qx 'backup=committed' "$test_root/android-backup.out"
+"$repo_root/scripts/profile-backup/helium-profile-backup.sh" status \
+  "$android_config" "$android_stream_generation" | grep -qx 'status=healthy'
+printf 'different archive stream\n' >"$test_root/android-profile-changed.tar"
+if ADB="$test_root/bin/adb" ADB_STREAM_COUNTER="$test_root/adb-stream-count" \
+  ADB_STREAM_SECOND="$test_root/android-profile-changed.tar" \
+  "$repo_root/scripts/android-local/backup-android-chromium-profile.sh" \
+    "$android_config" 20260722T120300Z-dddddddddddddddd >/dev/null 2>&1; then
+  echo 'changing Android profile stream committed a backup' >&2
+  exit 1
+fi
+test ! -e "$tmp_destination/helium-profile-backups/fixture/android/generations/20260722T120300Z-dddddddddddddddd.receipt.env"
 
 sed -i 's#https://lm.tailnet.test:44719#http://127.0.0.1:44719#' "$test_root/enrollment/base_url"
 if ADB="$test_root/bin/adb" "$repo_root/scripts/android-local/configure-android-chromium-sync.sh" \

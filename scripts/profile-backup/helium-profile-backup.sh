@@ -3,9 +3,10 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: helium-profile-backup.sh <preflight|backup|status|verify-receipt|retention-apply|quarantine|restore-to-disposable> CONFIG [arguments]
+usage: helium-profile-backup.sh <preflight|backup|backup-stream|status|verify-receipt|retention-apply|quarantine|restore-to-disposable> CONFIG [arguments]
 
   backup CONFIG [GENERATION]
+  backup-stream CONFIG GENERATION EXPECTED-TREE-SHA256 SOURCE-BYTES ARCHIVE-ROOT
   status CONFIG GENERATION
   verify-receipt CONFIG RECEIPT
   retention-apply CONFIG
@@ -154,6 +155,27 @@ preflight() {
     "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" "$needed" "$recipients"
 }
 
+remote_preflight() {
+  local source_bytes=$1 dest_real dest_fs available index
+  [[ "$source_bytes" =~ ^[1-9][0-9]*$ ]] || die "stream source size must be positive"
+  command -v age >/dev/null || die "age is required"
+  command -v zstd >/dev/null || die "zstd is required"
+  command -v findmnt >/dev/null || die "findmnt is required"
+  recipients_fingerprint >/dev/null
+  PROFILE_DEST_FILESYSTEMS=()
+  for index in 0 1; do
+    [[ -d "${PROFILE_DEST_ROOTS[$index]}" && ! -L "${PROFILE_DEST_ROOTS[$index]}" ]] || die "destination root must be an existing non-symlink directory"
+    [[ -w "${PROFILE_DEST_ROOTS[$index]}" ]] || die "destination root is not writable"
+    dest_real=$(realpath -e -- "${PROFILE_DEST_ROOTS[$index]}")
+    dest_fs=$(filesystem_id "$dest_real")
+    [[ -n "$dest_fs" ]] || die "could not identify destination filesystem"
+    PROFILE_DEST_FILESYSTEMS+=("$dest_fs")
+    available=$(df --output=avail -B1 "$dest_real" | awk 'NR==2 {print $1}')
+    (( available >= source_bytes + PROFILE_DESTINATION_RESERVE_BYTES )) || die "destination lacks stream-size budget plus reserve"
+  done
+  [[ "${PROFILE_DEST_FILESYSTEMS[0]}" != "${PROFILE_DEST_FILESYSTEMS[1]}" ]] || die "the two destinations must use different filesystems"
+}
+
 read_receipt() {
   local file=$1 line key value allowed
   [[ -f "$file" && ! -L "$file" ]] || die "receipt is unavailable: $file"
@@ -251,6 +273,68 @@ backup() {
     "$generation" "$cipher_hash" "$(receipt_path 0 "$generation")"
 }
 
+backup_stream() {
+  local generation=$1 expected_tree_hash=$2 source_bytes=$3 archive_root=$4
+  local index ns first_cipher first_receipt second_cipher second_receipt
+  local hash_file hash_pipe hash_pid cipher_hash cipher_size recipients profile_hash actual_tree_hash
+  valid_generation "$generation" || die "invalid generation"
+  [[ "$expected_tree_hash" =~ ^[a-f0-9]{64}$ ]] || die "invalid expected stream fingerprint"
+  [[ "$archive_root" == "$(basename -- "$PROFILE_SOURCE_PATH")" && "$archive_root" != . && "$archive_root" != .. && "$archive_root" != */* ]] || die "stream archive root does not match configured source path"
+  remote_preflight "$source_bytes"
+  recipients=$(recipients_fingerprint)
+  profile_hash=$(printf '%s' "$PROFILE_SOURCE_PATH" | sha256sum | awk '{print $1}')
+
+  for index in 0 1; do
+    ns=$(namespace "$index")
+    mkdir -p -- "$ns/generations" "$ns/incoming" "$ns/quarantine" "$ns/retired"
+    chmod 700 "$ns" "$ns/generations" "$ns/incoming" "$ns/quarantine" "$ns/retired"
+    [[ ! -e "$(cipher_path "$index" "$generation")" && ! -e "$(receipt_path "$index" "$generation")" ]] || die "generation already exists"
+  done
+
+  first_cipher="$(namespace 0)/incoming/$generation.tar.zst.age.partial"
+  first_receipt="$(namespace 0)/incoming/$generation.receipt.env.partial"
+  hash_file="$(namespace 0)/incoming/$generation.source-tree.sha256.partial"
+  hash_pipe="$(namespace 0)/incoming/$generation.source-tree.pipe.partial"
+  trap '[[ -z "${hash_pid:-}" ]] || kill "$hash_pid" 2>/dev/null || true; rm -f -- "${first_cipher:-}" "${first_receipt:-}" "${second_cipher:-}" "${second_receipt:-}" "${hash_file:-}" "${hash_pipe:-}"' EXIT
+  mkfifo -m 600 "$hash_pipe"
+  sha256sum <"$hash_pipe" | awk '{print $1}' >"$hash_file" &
+  hash_pid=$!
+  tee "$hash_pipe" | \
+    zstd -q -T1 -3 | age --encrypt --recipients-file "$PROFILE_AGE_RECIPIENTS" --output "$first_cipher"
+  wait "$hash_pid"
+  hash_pid=
+  rm -f "$hash_pipe"
+  [[ -s "$hash_file" ]] || die "stream fingerprint was not produced"
+  actual_tree_hash=$(tr -d '\r\n' <"$hash_file")
+  [[ "$actual_tree_hash" == "$expected_tree_hash" ]] || die "source profile changed between fingerprint and backup stream"
+  rm -f "$hash_file"
+  chmod 600 "$first_cipher"
+  cipher_hash=$(sha256sum -- "$first_cipher" | awk '{print $1}')
+  cipher_size=$(stat -c %s -- "$first_cipher")
+  {
+    printf 'schema_version=1\nsource_device=%s\nprofile_id=%s\n' "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
+    printf 'profile_path_sha256=%s\nsource_tree_sha256=%s\narchive_root=%s\ngeneration=%s\n' "$profile_hash" "$actual_tree_hash" "$archive_root" "$generation"
+    printf 'cipher_sha256=%s\ncipher_size=%s\nsource_bytes=%s\n' "$cipher_hash" "$cipher_size" "$source_bytes"
+    printf 'recipients_sha256=%s\ncreated_at=%s\n' "$recipients" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$first_receipt"
+  chmod 600 "$first_receipt"
+
+  second_cipher="$(namespace 1)/incoming/$generation.tar.zst.age.partial"
+  second_receipt="$(namespace 1)/incoming/$generation.receipt.env.partial"
+  cp --reflink=never -- "$first_cipher" "$second_cipher"
+  cp --reflink=never -- "$first_receipt" "$second_receipt"
+  chmod 600 "$second_cipher" "$second_receipt"
+  [[ "$(sha256sum -- "$second_cipher" | awk '{print $1}')" == "$cipher_hash" ]] || die "second destination copy checksum mismatch"
+  mv -- "$first_cipher" "$(cipher_path 0 "$generation")"
+  mv -- "$first_receipt" "$(receipt_path 0 "$generation")"
+  mv -- "$second_cipher" "$(cipher_path 1 "$generation")"
+  mv -- "$second_receipt" "$(receipt_path 1 "$generation")"
+  trap - EXIT
+  verify_generation "$generation"
+  printf 'backup=committed\ngeneration=%s\nsource_tree_sha256=%s\ncipher_sha256=%s\nreceipt=%s\n' \
+    "$generation" "$actual_tree_hash" "$cipher_hash" "$(receipt_path 0 "$generation")"
+}
+
 verify_receipt_command() {
   local supplied=$1 expected_path=${2:-} generation canonical supplied_hash expected_hash
   read_receipt "$supplied"
@@ -270,8 +354,8 @@ verify_receipt_command() {
   if [[ -z "$expected_path" ]]; then
     [[ "${RECEIPT[source_tree_sha256]}" == "$(profile_tree_fingerprint)" ]] || die "profile changed after the admitted backup"
   fi
-  printf 'profile_backup_admission=verified\ngeneration=%s\nsource_device=%s\nprofile_id=%s\nprofile_path_sha256=%s\n' \
-    "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" "${RECEIPT[profile_path_sha256]}"
+  printf 'profile_backup_admission=verified\ngeneration=%s\nsource_device=%s\nprofile_id=%s\nprofile_path_sha256=%s\nsource_tree_sha256=%s\n' \
+    "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" "${RECEIPT[profile_path_sha256]}" "${RECEIPT[source_tree_sha256]}"
 }
 
 retention_apply() {
@@ -354,6 +438,7 @@ load_config "$config"
 case "$command" in
   preflight) [[ $# -eq 2 ]] || { usage; exit 64; }; preflight ;;
   backup) [[ $# -le 3 ]] || { usage; exit 64; }; backup "${3:-}" ;;
+  backup-stream) [[ $# -eq 6 ]] || { usage; exit 64; }; backup_stream "$3" "$4" "$5" "$6" ;;
   status) [[ $# -eq 3 ]] || { usage; exit 64; }; verify_generation "$3"; printf 'status=healthy\ngeneration=%s\n' "$3" ;;
   verify-receipt) [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 64; }; verify_receipt_command "$3" "${4:-}" ;;
   retention-apply) [[ $# -eq 2 ]] || { usage; exit 64; }; retention_apply ;;

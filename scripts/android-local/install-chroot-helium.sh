@@ -48,7 +48,7 @@ RELEASE='"'"$release_id"'"'
 test ! -e \"\$ROOT/opt/helium-sync\" -o -L \"\$ROOT/opt/helium-sync\"
 test -x \"\$ROOT/opt/helium-sync-releases/\$RELEASE/helium\"
 test -f \"\$ROOT/opt/helium-sync-releases/\$RELEASE/.helium-artifact-receipt.env\"
-! /system/bin/chroot \"\$ROOT\" /usr/bin/pgrep -f \"^/opt/helium-sync(/|$)\" >/dev/null
+! /system/bin/chroot \"\$ROOT\" /usr/bin/pgrep -f \"(/opt/helium-sync|/opt/helium-sync-releases|/usr/local/bin/helium)\" >/dev/null
 ln -s /opt/helium-sync-releases/\$RELEASE \"\$ROOT/opt/helium-sync.new.\$\$\"
 mv -T \"\$ROOT/opt/helium-sync.new.\$\$\" \"\$ROOT/opt/helium-sync\"
 /system/bin/chroot \"\$ROOT\" /usr/local/bin/helium --version
@@ -58,7 +58,7 @@ mv -T \"\$ROOT/opt/helium-sync.new.\$\$\" \"\$ROOT/opt/helium-sync\"
 
 install_release() {
   local artifact=$1 artifact_receipt=$2 backup_config=$3 backup_receipt=$4
-  local admission backup_admission artifact_sha sync_commit work_dir helium_member
+  local admission backup_admission artifact_sha sync_commit expected_tree_sha work_dir helium_member
   local normalized_member strip_components artifact_machine artifact_arch chroot_machine chroot_arch
   local tmp_name receipt_name
 
@@ -78,6 +78,8 @@ install_release() {
   backup_admission=$("$repo_root/scripts/profile-backup/helium-profile-backup.sh" \
     verify-receipt "$backup_config" "$backup_receipt" "$profile")
   [[ "$(awk -F= '$1 == "profile_backup_admission" {print $2}' <<<"$backup_admission")" == verified ]] || exit 1
+  expected_tree_sha=$(awk -F= '$1 == "source_tree_sha256" {print $2}' <<<"$backup_admission")
+  [[ "$expected_tree_sha" =~ ^[a-f0-9]{64}$ ]] || { echo "backup admission omitted the source fingerprint" >&2; exit 1; }
 
   work_dir=$(mktemp -d)
   trap 'rm -rf -- "$work_dir"; "$adb_bin" shell "rm -f /data/local/tmp/${tmp_name:-missing} /data/local/tmp/${receipt_name:-missing}" >/dev/null 2>&1 || true' EXIT
@@ -107,12 +109,16 @@ SHA='"'"$artifact_sha"'"'
 STRIP='"'"$strip_components"'"'
 ARCHIVE=/data/local/tmp/'"'"$tmp_name"'"'
 RECEIPT=/data/local/tmp/'"'"$receipt_name"'"'
+PROFILE='"'"$profile"'"'
+EXPECTED_TREE='"'"$expected_tree_sha"'"'
 RELEASES=\"\$ROOT/opt/helium-sync-releases\"
 RELEASE=\"\$RELEASES/\$SHA\"
 STAGING=\"\$RELEASES/.incoming-\$SHA.\$\$\"
 PRESERVED=\"\$RELEASES/preserved\"
 mkdir -p \"\$RELEASES\" \"\$PRESERVED\" \"\$ROOT/tmp\" \"\$ROOT/usr/local/bin\"
-! /system/bin/chroot \"\$ROOT\" /usr/bin/pgrep -f \"^/opt/helium-sync(/|$)\" >/dev/null
+! /system/bin/chroot \"\$ROOT\" /usr/bin/pgrep -f \"(/opt/helium-sync|/opt/helium-sync-releases|/usr/local/bin/helium)\" >/dev/null
+ACTUAL_TREE=\$(/system/bin/chroot \"\$ROOT\" /usr/bin/tar --sort=name --format=posix --pax-option=delete=atime,delete=ctime --mtime=@0 --owner=0 --group=0 --numeric-owner -C \"\$PROFILE\" -cf - . | /system/bin/chroot \"\$ROOT\" /usr/bin/sha256sum | /system/bin/chroot \"\$ROOT\" /usr/bin/awk \"{print \\\$1}\")
+test \"\$ACTUAL_TREE\" = \"\$EXPECTED_TREE\"
 if [ ! -d \"\$RELEASE\" ]; then
   test ! -e \"\$STAGING\"
   mkdir \"\$STAGING\"

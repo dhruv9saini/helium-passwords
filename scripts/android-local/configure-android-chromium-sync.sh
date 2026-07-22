@@ -64,12 +64,20 @@ uid=$("$adb_bin" shell "cmd package list packages -U '$package'" | tr -d '\r' | 
 backup_admission=$("$repo_root/scripts/profile-backup/helium-profile-backup.sh" \
   verify-receipt "$backup_config" "$backup_receipt" "$data_dir/app_chrome")
 [[ "$(awk -F= '$1 == "profile_backup_admission" {print $2}' <<<"$backup_admission")" == verified ]] || exit 1
+expected_tree_sha=$(awk -F= '$1 == "source_tree_sha256" {print $2}' <<<"$backup_admission")
+[[ "$expected_tree_sha" =~ ^[a-f0-9]{64}$ ]] || { echo "backup admission omitted the source fingerprint" >&2; exit 1; }
 
 "$adb_bin" shell "am force-stop '$package'"
 if "$adb_bin" shell "pidof '$package'" | grep -q '[0-9]'; then
   echo "Android package is still running after force-stop" >&2
   exit 1
 fi
+current_tree_sha=$("$adb_bin" exec-out /debug_ramdisk/su -c \
+  "cd '$data_dir' && /system/bin/tar -cf - app_chrome" | sha256sum | awk '{print $1}')
+[[ "$current_tree_sha" == "$expected_tree_sha" ]] || {
+  echo "Android app_chrome changed after its admitted backup" >&2
+  exit 1
+}
 
 work_dir=$(mktemp -d)
 bundle_name="helium-enrollment-$package-$$.tar"

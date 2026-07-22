@@ -141,6 +141,21 @@ release.
 
 ## Android app enrollment boundary
 
+Create the full app profile generation first:
+
+```sh
+scripts/android-local/backup-android-chromium-profile.sh \
+  /secure/oneplus-app-profile.conf
+```
+
+The config's `source_path` must exactly match the installed package's resolved
+`<dataDir>/app_chrome`. The producer force-stops the app, streams root tar over
+`adb exec-out`, fingerprints one preflight stream, and accepts the encrypted
+stream only when its SHA-256 is identical. The plaintext tar is never written
+on lm; it flows directly through zstd and age into the first destination's
+incoming generation, then the identical ciphertext is copied and verified on
+the second filesystem before either receipt becomes active.
+
 `configure-android-chromium-sync.sh` accepts one explicit oneplus join
 directory containing exactly `base_url`, `client.json`, and `token`. It
 requires direct HTTPS, a pending or active oneplus join state, a path-bound
@@ -150,9 +165,10 @@ force-stops the app, installs only
 under `helium-sync-rollbacks/`. It does not guess config paths, copy anything
 from the phone chroot, create an HTTP loopback URL, or rewrite first-run state.
 
-The current full-profile producer handles locally visible profile paths. A
-streaming, root-mediated Android `app_chrome` producer that creates the same
-content-bound receipt without staging plaintext on lm is still required before
-this Android enrollment command can be used on personal data. Until that
-producer and its disposable restore drill exist, OnePlus personal enrollment
-is intentionally blocked.
+Immediately before changing enrollment, the configurator streams and hashes
+the stopped `app_chrome` tree again and requires it to match the admitted
+backup. A stale or path-only receipt therefore cannot authorize a mutation.
+The source and synthetic gates are complete; personal OnePlus use remains
+blocked until this exact producer, two real off-device destinations, age
+identities held outside lm, and restore into a disposable Android test profile
+pass on the actual device.

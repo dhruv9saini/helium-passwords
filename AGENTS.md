@@ -87,6 +87,12 @@ restores Chromium's native password manager.
   `<dataDir>/app_chrome/Default/helium-sync`; it never edits first-run state or
   copies credentials from the chroot. It requires a verified full-profile
   backup receipt, stops the app, and preserves the replaced enrollment. The
+  `backup-android-chromium-profile.sh` producer force-stops the app and streams
+  `app_chrome` from root tar through age directly into two independent
+  destination filesystems; no plaintext archive is staged on lm. The producer
+  requires its preflight stream and encrypted stream to have the same SHA-256,
+  and the configurator recomputes that fingerprint before changing enrollment.
+  A mismatch is a hard stop.
   chroot launcher requires `/usr/local/bin/helium` backed by the installed
   `/opt/helium-sync/helium`; it must never fall back to stock Chromium. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium

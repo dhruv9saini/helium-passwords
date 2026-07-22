@@ -67,6 +67,7 @@ grep -qx 'preflight=ok' <<<"$preflight"
 generation1=20260722T120000Z-1111111111111111
 generation2=20260722T120100Z-2222222222222222
 generation3=20260722T120200Z-3333333333333333
+generation4=20260722T120300Z-4444444444444444
 backup1=$($tool backup "$config" "$generation1")
 receipt=$(awk -F= '$1 == "receipt" {print substr($0,9)}' <<<"$backup1")
 test -f "$receipt"
@@ -98,6 +99,20 @@ fi
 $tool quarantine "$config" copy-a "$generation2" checksum-failed | \
   grep -qx "quarantined=$generation2"
 test ! -e "$cipher"
+
+stream_hash=$(tar -C "$source_root" -cf - profile | sha256sum | awk '{print $1}')
+stream_bytes=$(tar -C "$source_root" -cf - profile | wc -c)
+tar -C "$source_root" -cf - profile | \
+  $tool backup-stream "$config" "$generation4" "$stream_hash" "$stream_bytes" profile \
+  | grep -qx 'backup=committed'
+$tool status "$config" "$generation4" | grep -qx 'status=healthy'
+if tar -C "$source_root" -cf - profile | \
+  $tool backup-stream "$config" 20260722T120400Z-5555555555555555 \
+    "$(printf wrong | sha256sum | awk '{print $1}')" "$stream_bytes" profile \
+    >/dev/null 2>&1; then
+  echo 'changed backup stream passed its expected fingerprint' >&2
+  exit 1
+fi
 
 ( exec 9<"$source_root/profile/Default/Preferences"; sleep 30 ) &
 holder_pid=$!
