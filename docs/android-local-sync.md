@@ -20,9 +20,12 @@ only in:
 ```
 
 The directory contains the oneplus-specific token, oneplus `client.json`, and
-the lm Tailscale HTTPS URL. da or d credentials/state must never be copied
-there. The app must be force-stopped and its full app profile backed up before
-this directory or APK is changed.
+the lm direct-TLS tailnet URL. Before any of those are installed, Android must
+explicitly enroll the independently authenticated, endpoint-constrained Helium
+Sync CA as a user VPN/apps root and its DER SHA-256 must match d/da. The CA
+private key and lm leaf key never go to oneplus. da or d credentials/state must
+never be copied there. The app must be force-stopped and its full app profile
+backed up before this directory or APK is changed.
 
 A pending oneplus profile starts the native bridges, pulls passwords and
 cookies, applies and verifies them, but cannot publish. Promotion is performed

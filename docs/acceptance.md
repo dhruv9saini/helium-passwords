@@ -13,8 +13,9 @@ go test ./...
 
 It currently proves the HS-001 reconcile state machine, cookie partition and
 source/replica semantics, independent tab generation/retention/restore
-invariants, and authenticated sync-store journal recovery. It does not replace
-the browser gates below.
+invariants, authenticated sync-store journal recovery, constrained TLS
+issuance, wrong-identity rejection, and a TLS 1.3 handshake. It does not
+replace the browser gates below.
 
 ## Gate 0: Provenance and Source Preparation
 
@@ -39,6 +40,16 @@ the browser gates below.
   kit bound to the same Helium Sync commit, Chromium commit, package, arm64 CPU,
   and `chrome_public_apk` target. A prepared disposable directory must pass its
   complete `PACKAGE_SHA256SUMS` inventory before installation or execution.
+- Tailscale Serve and Funnel are empty on lm. The installed TLS generation
+  verifies against lm's current `.ts.net` name and `100.64.0.0/10` IPv4
+  address, has at least 30 days remaining, and the offline CA private key is
+  absent from lm, NAS backups, source, and build hosts.
+- Each disposable client independently authenticates and enrolls the exact CA
+  DER SHA-256 before receiving its URL or bearer token. The correct root
+  reaches `https://lm.<tailnet>.ts.net:44719/v2/health` with TLS 1.3; missing,
+  substituted, unconstrained, expired, and wrong-host roots/leaves fail before
+  an Authorization header is sent. Port 44719 is unreachable outside the
+  tailnet and no cleartext response exists on that address.
 
 ## Gate 1: Helium Passwords
 

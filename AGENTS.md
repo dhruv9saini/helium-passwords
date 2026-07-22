@@ -66,7 +66,10 @@ restores Chromium's native password manager.
   background and must not navigate an existing user tab to
   `chrome://password-manager/passwords`; otherwise the daemon steals focus on
   every sync interval.
-- `cmd/helium-syncd` runs the localhost encrypted record daemon.
+- `cmd/helium-syncd` runs the encrypted record daemon. Production binds only
+  lm's exact Tailscale IPv4 address and terminates TLS 1.3 itself with a leaf
+  signed by the offline, endpoint-constrained Helium Sync CA. The CA private
+  key never belongs on lm; clients explicitly enroll only `ca-cert.pem`.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.
 - `cmd/helium-local-syncd` runs the phone-local CookieCloud-compatible API.

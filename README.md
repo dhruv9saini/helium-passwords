@@ -44,10 +44,12 @@ canonical private issue ledger.
   disposable restore.
 - `scripts/chromium/`: pinned Android composition, codec/streaming provenance,
   and remote compile entry points.
-- `systemd/helium-syncd.service`: least-privilege loopback service for lm.
+- `systemd/helium-syncd.service`: least-privilege direct TLS service bound only
+  to lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
-  it does not enable the service unless an HTTPS-only, no-Funnel Tailscale
-  Serve route targets the loopback daemon exactly.
+  it keeps Tailscale Serve/Funnel empty and does not enable the service unless
+  an offline-CA-signed, endpoint-constrained TLS generation matches lm's live
+  tailnet identity and the opaque restore drill passed.
 - `docs/deployment.md`: exact seed, join, rotation, backup, and rollback
   sequence.
 

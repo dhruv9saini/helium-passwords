@@ -164,23 +164,98 @@ scripts/install-lm-sync-service.sh install-source
 ```
 
 This installs `helium-syncd.service` but does not initialize, enable, or start
-it. The service listens only on `127.0.0.1:44719`.
-
-Tailscale HTTPS must first be enabled for the tailnet. That admin-console action
-publishes lm's certificate name to Certificate Transparency and is therefore a
-real external gate. After it is enabled:
+it. Production has no cleartext listener and does not use Tailscale Serve.
+Record lm's current identity without changing Tailscale state:
 
 ```sh
-scripts/install-lm-sync-service.sh configure-endpoint
+tailscale status --json \
+  | jq -r '.Self.DNSName, (.Self.TailscaleIPs[] | select(test("^[0-9]+\\.")))'
+```
+
+The current expected values are `lm.tail0168aa.ts.net.` and
+`100.100.105.47`; re-read them before issuance rather than assuming they have
+not changed. On an independently held offline recovery device, create the
+dedicated endpoint-constrained CA once and issue lm's one-year leaf:
+
+```sh
+umask 077
+helium-sync tls-ca-init \
+  --hostname lm.tail0168aa.ts.net \
+  --ip 100.100.105.47 \
+  --output-dir /MOUNTED/OFFLINE/helium-sync-tls-ca
+
+helium-sync tls-server-issue \
+  --ca-cert /MOUNTED/OFFLINE/helium-sync-tls-ca/ca-cert.pem \
+  --ca-key /MOUNTED/OFFLINE/helium-sync-tls-ca/ca-key.pem \
+  --hostname lm.tail0168aa.ts.net \
+  --ip 100.100.105.47 \
+  --output-dir /secure/export/lm-tls-GENERATION
+```
+
+The root is ECDSA P-256, path length zero, and has critical name constraints
+for exactly that `.ts.net` name and Tailscale IPv4 address. The leaf is
+server-auth-only, covers exactly the same DNS/IP pair, and lasts 365 days.
+Keep `ca-key.pem` offline. Transfer only `ca-cert.pem`, `server-cert.pem`, and
+`server-key.pem` to lm through an authenticated route, then install while the
+service is inactive:
+
+```sh
+scripts/install-lm-sync-service.sh install-endpoint \
+  /secure/incoming/ca-cert.pem \
+  /secure/incoming/server-cert.pem \
+  /secure/incoming/server-key.pem
 scripts/install-lm-sync-service.sh verify-endpoint
 ```
 
-`configure-endpoint` refuses to replace any existing Serve configuration.
-`verify-endpoint` requires exactly one HTTPS `:443` proxy to
-`http://127.0.0.1:44719`, rejects HTTP or raw-TCP forwarding, and rejects any
-Funnel-enabled listener. Verify the resulting `https://lm.<tailnet>.ts.net`
-name from disposable d, da, and oneplus clients and confirm the backend port is
-not reachable from non-loopback lm interfaces.
+Installation verifies the exact live Tailscale identity, CA constraints,
+signature, certificate/key match, SANs, purpose, permissions, and at least 30
+days of remaining lifetime. It writes a new immutable generation below
+`/etc/helium-sync/tls/generations/`, atomically switches `current`, and keeps
+older generations for rollback. It neither starts the service nor changes
+Tailscale. Verification requires both Tailscale Serve and Funnel to remain
+empty. The hardened unit re-verifies the generation at every start, binds only
+`100.100.105.47:44719`, permits only tailnet IPv4 peers, and requires TLS 1.3.
+No `:443` capability is needed.
+
+Before a client receives a URL or credential, authenticate the printed
+`ca_sha256` through a route independent of lm and explicitly enroll that exact
+`ca-cert.pem` in its platform trust store. On Arch Linux d/da:
+
+```sh
+openssl x509 -in /secure/incoming/ca-cert.pem -outform DER \
+  | sha256sum
+sudo trust anchor --store /secure/incoming/ca-cert.pem
+sudo update-ca-trust extract
+```
+
+On oneplus, copy the public certificate to a disposable location, verify the
+same DER SHA-256, and import it as a user VPN/apps CA through Android's
+credential installer. Chromium's Android verifier reads user-added roots; do
+not install the CA private key or the server leaf key. Record the user-root
+fingerprint and remove only the disposable public-file copy after enrollment.
+The base URL is `https://lm.tail0168aa.ts.net:44719`. A disposable client must
+show a valid chain to this private root; a missing, substituted, unconstrained,
+wrong-IP, or expired root/leaf must fail before any bearer credential is sent.
+
+Issue a replacement leaf from the same offline CA before 30 days remain. Use a
+new output directory, authenticate its printed fingerprints, and transfer only
+the new server certificate/key plus the unchanged public root. Then:
+
+```sh
+sudo systemctl stop helium-syncd.service
+scripts/install-lm-sync-service.sh install-endpoint \
+  /secure/incoming/ca-cert.pem \
+  /secure/incoming/server-cert.pem \
+  /secure/incoming/server-key.pem
+sudo systemctl start helium-syncd.service
+scripts/install-lm-sync-service.sh verify-live-endpoint
+```
+
+The installer retains every prior immutable generation. Do not remove the
+previous generation until all three disposable clients have completed a new
+TLS connection and the prior leaf has expired. Leaf renewal does not change the
+enrolled root; a changed root is a separate, explicitly coordinated client
+trust rotation.
 
 ## 4. Create d seed and recovery material
 
@@ -263,9 +338,12 @@ scripts/install-lm-sync-service.sh enable
 scripts/install-lm-sync-service.sh status
 ```
 
-Activation refuses unless Tailscale Serve already forwards to the loopback
-service. Delete neither the bootstrap nor any recovery copy until the recorded
-restore drill passes; move them to their documented secure locations.
+Activation refuses unless the direct TLS generation matches lm's live
+Tailscale identity, Serve and Funnel are empty, and the backup drill passed.
+After start it makes an authenticated health request through the tailnet
+address; a failure stops and disables the service. Delete neither the
+bootstrap nor any recovery copy until the recorded restore drill passes; move
+them to their documented secure locations.
 
 ## 5. Join da, then oneplus
 
@@ -311,7 +389,7 @@ helium-sync join-install \
   --required-key-id ACTIVE_KEY_ID
 install -m0600 /secure/device/helium-sync/token \
   PROFILE/Default/helium-sync/token
-printf '%s\n' 'https://lm.TAILNET.ts.net' \
+printf '%s\n' 'https://lm.TAILNET.ts.net:44719' \
   > PROFILE/Default/helium-sync/base_url
 ```
 
@@ -327,7 +405,7 @@ same joint schema/cursor/server gate, not a bypass:
 
 ```sh
 helium-sync enrollment-complete \
-  --url https://lm.TAILNET.ts.net \
+  --url https://lm.TAILNET.ts.net:44719 \
   --profile-dir /ABSOLUTE/PROFILE \
   --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
   --password-state /ABSOLUTE/PROFILE/Default/helium-sync/password-state.json \
@@ -342,7 +420,7 @@ Only then repeat the sequence for oneplus.
 ## 6. Rotation and revocation
 
 Content-key rotation order is fixed. Every remote command also receives
-`--url https://lm.TAILNET.ts.net`, its device's `--state-file`, and its current
+`--url https://lm.TAILNET.ts.net:44719`, its device's `--state-file`, and its current
 `--token-file`.
 
 1. On d, run `key-stage` and record `staged_key_id`. Then run
@@ -360,7 +438,7 @@ Content-key rotation order is fixed. Every remote command also receives
 
    ```sh
    helium-sync key-rekey \
-     --url https://lm.TAILNET.ts.net \
+     --url https://lm.TAILNET.ts.net:44719 \
      --state-file /ABSOLUTE/D-PROFILE/Default/helium-sync/client.json \
      --password-state /ABSOLUTE/D-PROFILE/Default/helium-sync/password-state.json \
      --cookie-state /ABSOLUTE/D-PROFILE/Default/helium-sync/cookie-state.json \
@@ -381,13 +459,13 @@ must be absolute paths on that device:
 
 ```sh
 helium-sync credential-stage \
-  --url https://lm.TAILNET.ts.net \
+  --url https://lm.TAILNET.ts.net:44719 \
   --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
   --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token \
   --new-token-file /secure/device/helium-sync/token.new
 # Stop the browser before the cutover.
 helium-sync credential-activate \
-  --url https://lm.TAILNET.ts.net \
+  --url https://lm.TAILNET.ts.net:44719 \
   --profile-dir /ABSOLUTE/PROFILE \
   --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
   --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token \

@@ -258,7 +258,7 @@ func installNewDirectory(path string, populate func(string) error) error {
 	}
 	if err := os.Mkdir(path, 0700); err != nil {
 		if errors.Is(err, os.ErrExist) {
-			return fmt.Errorf("refusing to replace existing recovery directory: %s", path)
+			return fmt.Errorf("refusing to replace existing directory: %s", path)
 		}
 		return err
 	}

@@ -26,12 +26,10 @@ d / da / oneplus browser
   profile-local Helium bridge
   AES-256-GCM, metadata-bound ciphertext
        |
-       | HTTPS over Tailscale; per-device bearer credential
+       | TLS 1.3 over Tailscale; per-device bearer credential
        v
-  lm Tailscale Serve :443
-       |
-       v
-  helium-syncd 127.0.0.1:44719
+  helium-syncd lm-tailnet-ip:44719
+  offline-CA-signed, endpoint-constrained leaf
        |
        +-- /var/lib/helium-sync/devices.json
        |     device IDs, roles, scopes, revocation, credential hashes
@@ -41,9 +39,14 @@ d / da / oneplus browser
              atomic opaque journal generations
 ```
 
-lm sees record identity metadata and ciphertext. It has no content key and
+lm terminates transport TLS and therefore sees device bearer credentials,
+record identity metadata, and ciphertext. It has no E2EE content key and
 cannot decrypt passwords or cookies. All enrolled browser profiles with a live
-content key can decrypt the shared records. d recovery uses an age-encrypted
+content key can decrypt the shared records. The TLS CA private key remains on
+independently held offline media; lm receives only its endpoint leaf key. The
+root has critical name constraints for lm's exact `.ts.net` name and Tailscale
+IPv4 address, and every client explicitly enrolls the authenticated public root
+before receiving a URL or bearer credential. d recovery uses an age-encrypted
 generation containing d's complete validated client state and credential. One
 generation is encrypted to at least two dedicated recovery identities and
 copied to two off-d locations; no recipient identity is stored with the
@@ -179,15 +182,25 @@ stores except while explicitly attached for a disposable restore drill.
 
 ## Runtime and build boundaries
 
-lm is the control plane and hosts only the loopback opaque service. Tailscale
-Serve terminates TLS and applies tailnet access control. The service unit is
-`helium-syncd.service`, runs as the dedicated `helium-sync` account, and is
-hardened by systemd. `scripts/install-lm-sync-service.sh` installs and
-initializes it but refuses activation until the Serve status describes exactly
-one HTTPS `:443` proxy to `http://127.0.0.1:44719`, no HTTP/raw-TCP listener,
-and no Funnel exposure. The service cgroup denies non-loopback IP traffic,
-capabilities, writable system/home paths, host process visibility, and device
-access; only `/var/lib/helium-sync` is writable.
+lm is the control plane and hosts only the opaque service. `helium-syncd`
+terminates TLS 1.3 directly and binds the exact Tailscale IPv4 address on the
+unprivileged port 44719; it never listens on a wildcard, LAN/public address, or
+cleartext non-loopback socket. Tailscale access control still limits network
+reachability. Tailscale Serve and Funnel remain empty, so endpoint activation
+does not require the tailnet HTTPS feature, publish lm's name to Certificate
+Transparency, give the service access to the Tailscale LocalAPI, or grant a
+low-port capability.
+
+The service unit is `helium-syncd.service`, runs as the dedicated
+`helium-sync` account, and is hardened by systemd. A start-time verifier
+requires the exact offline root, leaf signature, key match, SANs, purpose,
+live Tailscale identity, and 30-day lifetime floor. The cgroup denies every IP
+outside `100.64.0.0/10`, capabilities, writable system/home paths, host process
+visibility, and device access; only `/var/lib/helium-sync` is writable. The
+versioned TLS identity under `/etc/helium-sync/tls` is read-only to the service
+and excluded from opaque server backups. lm's leaf key can authenticate lm and
+decrypt the outer TLS channel, but it cannot issue another endpoint certificate
+or decrypt an E2EE record.
 
 Every Chromium compile runs on chromiumer through
 `scripts/chromiumer-job.sh` and the pinned Nix environment. The wrapper
@@ -200,13 +213,13 @@ receipts, and exactly-once completion notification to
 
 | Area | Implemented and source-tested | Still required before personal data |
 | --- | --- | --- |
-| Transport | Opaque v2 E2EE, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery | Native Chromium compile, configure the verified Tailscale HTTPS endpoint, supervised live recovery drill |
+| Transport | Opaque v2 E2EE, direct TLS 1.3 server, offline constrained CA issuance/verification, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery | Enroll the public root on disposable clients, start the supervised endpoint, native Chromium compile, live recovery drill |
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations | Execute on disposable profiles, then provision d/da/oneplus |
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop | Built-browser prompts, save/update/delete/autofill and three-device restart tests |
 | Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
 | Origin state | Explicitly absent | Per-origin storage audit and safe adapters where observed necessary |
 | Tabs | Local exporter/store, atomic generations, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; deploy independent schedules/routes; disposable browser restore on every device |
 | Media/streaming | Reproducible fixtures and strict codec GN provenance checks | Control/Sync APK A/B on oneplus, HTTP/2+HTTP/3, video/audio/ChatGPT timing |
-| Deployment | Executable d recovery export/import, credential cutover, strict endpoint verification, source unit/install gate, and rollback-preserving installers | Create off-device recovery identities/copies, Tailscale HTTPS enablement, d SSH/auth route, artifacts, profile backups, sequential enrollment |
+| Deployment | Executable d recovery export/import, credential cutover, direct-TLS generation install/start gates, source unit/install gate, and rollback-preserving installers | Create off-device recovery identities/copies and offline TLS CA, enroll its public root, prove live tailnet TLS, d SSH/auth route, artifacts, profile backups, sequential enrollment |
 
 No personal profile, credential, cookie, or tab content is read by source tests.

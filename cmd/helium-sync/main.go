@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dhruv9saini/helium-sync/internal/syncstore"
 )
@@ -48,6 +49,12 @@ func main() {
 		err = cmdRecoveryExport(os.Args[2:])
 	case "recovery-import":
 		err = cmdRecoveryImport(os.Args[2:])
+	case "tls-ca-init":
+		err = cmdTLSCAInit(os.Args[2:])
+	case "tls-server-issue":
+		err = cmdTLSServerIssue(os.Args[2:])
+	case "tls-server-verify":
+		err = cmdTLSServerVerify(os.Args[2:])
 	case "server-enroll":
 		err = cmdServerEnroll(os.Args[2:])
 	case "server-revoke":
@@ -397,6 +404,81 @@ func cmdRecoveryImport(args []string) error {
 	fmt.Printf("recovery_import=%s\ndevice_id=%s\nactive_key_id=%s\n",
 		*outputDir, receipt.DeviceID, receipt.ActiveKeyID)
 	return nil
+}
+
+func cmdTLSCAInit(args []string) error {
+	flags := flag.NewFlagSet("tls-ca-init", flag.ExitOnError)
+	hostname := flags.String("hostname", "", "exact lm Tailscale .ts.net hostname")
+	address := flags.String("ip", "", "exact lm Tailscale IPv4 address")
+	outputDir := flags.String("output-dir", "", "new offline CA directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *hostname == "" || *address == "" || *outputDir == "" {
+		return errors.New("--hostname, --ip, and --output-dir are required")
+	}
+	receipt, err := syncstore.CreateTLSCA(*outputDir, *hostname, *address)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("ca_sha256=%s\nhostname=%s\nip=%s\nnot_after=%s\n",
+		receipt.CAFingerprint, receipt.Hostname, receipt.IP,
+		receipt.NotAfter.Format(time.RFC3339))
+	return nil
+}
+
+func cmdTLSServerIssue(args []string) error {
+	flags := flag.NewFlagSet("tls-server-issue", flag.ExitOnError)
+	caCert := flags.String("ca-cert", "", "offline CA certificate")
+	caKey := flags.String("ca-key", "", "offline CA private key")
+	hostname := flags.String("hostname", "", "exact lm Tailscale .ts.net hostname")
+	address := flags.String("ip", "", "exact lm Tailscale IPv4 address")
+	outputDir := flags.String("output-dir", "", "new server leaf directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *caCert == "" || *caKey == "" || *hostname == "" ||
+		*address == "" || *outputDir == "" {
+		return errors.New("--ca-cert, --ca-key, --hostname, --ip, and --output-dir are required")
+	}
+	receipt, err := syncstore.IssueTLSServer(
+		*caCert, *caKey, *outputDir, *hostname, *address)
+	if err != nil {
+		return err
+	}
+	printTLSReceipt(receipt)
+	return nil
+}
+
+func cmdTLSServerVerify(args []string) error {
+	flags := flag.NewFlagSet("tls-server-verify", flag.ExitOnError)
+	caCert := flags.String("ca-cert", "", "enrolled CA certificate")
+	serverCert := flags.String("server-cert", "", "lm server certificate")
+	serverKey := flags.String("server-key", "", "lm server private key")
+	hostname := flags.String("hostname", "", "exact lm Tailscale .ts.net hostname")
+	address := flags.String("ip", "", "exact lm Tailscale IPv4 address")
+	minimumValidity := flags.Duration("minimum-validity", 30*24*time.Hour,
+		"required remaining certificate validity")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *caCert == "" || *serverCert == "" || *serverKey == "" ||
+		*hostname == "" || *address == "" {
+		return errors.New("--ca-cert, --server-cert, --server-key, --hostname, and --ip are required")
+	}
+	receipt, err := syncstore.VerifyTLSServer(
+		*caCert, *serverCert, *serverKey, *hostname, *address, *minimumValidity)
+	if err != nil {
+		return err
+	}
+	printTLSReceipt(receipt)
+	return nil
+}
+
+func printTLSReceipt(receipt syncstore.TLSIdentityReceipt) {
+	fmt.Printf("ca_sha256=%s\nserver_sha256=%s\nhostname=%s\nip=%s\nnot_after=%s\n",
+		receipt.CAFingerprint, receipt.ServerFingerprint,
+		receipt.Hostname, receipt.IP, receipt.NotAfter.Format(time.RFC3339))
 }
 
 func cmdServerEnroll(args []string) error {
@@ -1032,7 +1114,7 @@ func writePretty(value any) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: helium-sync <seed-init|server-init|server-verify|seed-public|join-request|seed-wrap|join-install|key-update-request|key-update-install|recovery-keygen|recovery-export|recovery-import|server-enroll|server-revoke|enrollment-complete|key-*|credential-*|push|pull|latest> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: helium-sync <seed-init|server-init|server-verify|seed-public|join-request|seed-wrap|join-install|key-update-request|key-update-install|recovery-keygen|recovery-export|recovery-import|tls-ca-init|tls-server-issue|tls-server-verify|server-enroll|server-revoke|enrollment-complete|key-*|credential-*|push|pull|latest> [flags]")
 }
 
 func defaultDataDir() string {
