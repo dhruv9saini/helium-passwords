@@ -9,3 +9,14 @@ diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
        "//chrome/browser/signin:impl",
        "//chrome/browser/sync",
        "//chrome/browser/task_manager:impl",
+diff --git a/chrome/browser/safe_browsing/BUILD.gn b/chrome/browser/safe_browsing/BUILD.gn
+--- a/chrome/browser/safe_browsing/BUILD.gn
++++ b/chrome/browser/safe_browsing/BUILD.gn
+@@ -112,7 +112,7 @@ static_library("safe_browsing") {
+   # Sources and dependencies added to this block must not depend on anything
+   # requiring safe_browsing_mode != 0.
+-  if (is_android) {
++  if (false) {
+     deps += [
+       "//chrome/browser/password_manager/android:utils",
+       "//chrome/browser/ui/android/safe_browsing",
