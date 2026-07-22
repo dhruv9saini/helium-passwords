@@ -34,6 +34,31 @@ func TestCaptureCommitsHashValidAtomicGeneration(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsFilesystemRootAndStoreSymlink(t *testing.T) {
+	if _, err := Open(string(os.PathSeparator)); err == nil {
+		t.Fatal("filesystem root was accepted as a snapshot store")
+	}
+	parent := t.TempDir()
+	target := filepath.Join(parent, "target")
+	if err := os.Mkdir(target, 0755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(parent, "store-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(link); err == nil || !strings.Contains(err.Error(), "non-symlink directory") {
+		t.Fatalf("symlinked snapshot store was accepted: %v", err)
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0755 {
+		t.Fatalf("rejected symlink target permissions changed to %o", info.Mode().Perm())
+	}
+}
+
 func TestCorruptNewestRefusesRetentionAndPreservesPrevious(t *testing.T) {
 	store := openTestStore(t)
 	first, err := store.Capture(testCapture(time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC), false))
@@ -81,6 +106,45 @@ func TestMalformedNewestManifestAlsoRefusesRetention(t *testing.T) {
 	}
 	if _, err := store.PlanRetention(); err == nil || !strings.Contains(err.Error(), "newest generation is invalid") {
 		t.Fatalf("malformed newest manifest did not stop retention: %v", err)
+	}
+}
+
+func TestValidationRejectsExtraAndSymlinkedGenerationFiles(t *testing.T) {
+	store := openTestStore(t)
+	manifest, err := store.Capture(testCapture(time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory := filepath.Join(store.generations, manifest.Generation)
+	extra := filepath.Join(directory, "unexpected")
+	if err := os.WriteFile(extra, []byte("not part of the generation\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Validate(manifest.Generation); err == nil ||
+		!strings.Contains(err.Error(), "file inventory") {
+		t.Fatalf("extra generation file was accepted: %v", err)
+	}
+	if err := os.Remove(extra); err != nil {
+		t.Fatal(err)
+	}
+	session := filepath.Join(directory, sessionFile)
+	outside := filepath.Join(t.TempDir(), "outside-session.json")
+	raw, err := os.ReadFile(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(session); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, session); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Validate(manifest.Generation); err == nil ||
+		!strings.Contains(err.Error(), "non-symlink regular file") {
+		t.Fatalf("symlinked generation file was accepted: %v", err)
 	}
 }
 
@@ -219,6 +283,15 @@ func TestRestoreTargetsNewDisposableState(t *testing.T) {
 	if err := ValidateSession(restored); err != nil {
 		t.Fatalf("restored session failed validation: %v", err)
 	}
+	receipt, err := ValidateRestore(destination)
+	if err != nil {
+		t.Fatalf("standalone restore validation failed: %v", err)
+	}
+	if receipt.SourceGeneration != manifest.Generation ||
+		receipt.SourceDevice != manifest.Device || receipt.SourceProfile != manifest.Profile ||
+		receipt.Session.SHA256 != manifest.Files[sessionFile].SHA256 {
+		t.Fatal("restore receipt does not bind the source generation and session")
+	}
 	if len(restored.Windows) != 1 || len(restored.Windows[0].Tabs) != 2 ||
 		!restored.Windows[0].Tabs[0].Pinned || restored.Windows[0].Tabs[0].Group != "work" {
 		t.Fatal("representative window/tab state was not restored")
@@ -229,6 +302,44 @@ func TestRestoreTargetsNewDisposableState(t *testing.T) {
 	insideStore := filepath.Join(store.root, "disposable-state")
 	if err := store.Restore(manifest.Generation, insideStore); err == nil {
 		t.Fatal("restore created disposable state inside the snapshot store")
+	}
+}
+
+func TestValidateRestoreRejectsCorruptionAndExtraFiles(t *testing.T) {
+	store := openTestStore(t)
+	manifest, err := store.Capture(testCapture(time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "disposable-state")
+	if err := store.Restore(manifest.Generation, destination); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "unexpected"), []byte("extra\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateRestore(destination); err == nil ||
+		!strings.Contains(err.Error(), "file inventory") {
+		t.Fatalf("extra restore file was accepted: %v", err)
+	}
+	if err := os.Remove(filepath.Join(destination, "unexpected")); err != nil {
+		t.Fatal(err)
+	}
+	sessionPath := filepath.Join(destination, sessionFile)
+	file, err := os.OpenFile(sessionPath, os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("corruption"); err != nil {
+		file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateRestore(destination); err == nil ||
+		!strings.Contains(err.Error(), "size mismatch") {
+		t.Fatalf("corrupt restored session was accepted: %v", err)
 	}
 }
 

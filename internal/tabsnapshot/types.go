@@ -3,6 +3,7 @@ package tabsnapshot
 import "time"
 
 const SchemaVersion = 1
+const RestoreSchemaVersion = 1
 
 type Session struct {
 	SchemaVersion int      `json:"schema_version"`
@@ -68,4 +69,14 @@ type Generation struct {
 type RetentionPlan struct {
 	Keep   []string
 	Delete []string
+}
+
+type RestoreManifest struct {
+	SchemaVersion    int        `json:"schema_version"`
+	SourceGeneration string     `json:"source_generation"`
+	SourceDevice     string     `json:"source_device"`
+	SourceProfile    string     `json:"source_profile"`
+	RestoredAt       time.Time  `json:"restored_at"`
+	Validation       string     `json:"validation"`
+	Session          FileRecord `json:"session"`
 }

@@ -39,11 +39,14 @@ func Open(root string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve snapshot root: %w", err)
 	}
+	if abs == filepath.Clean(string(os.PathSeparator)) {
+		return nil, errors.New("snapshot root cannot be the filesystem root")
+	}
 	generations := filepath.Join(abs, "generations")
 	quarantine := filepath.Join(abs, "quarantine")
-	for _, directory := range []string{generations, quarantine} {
-		if err := os.MkdirAll(directory, 0700); err != nil {
-			return nil, fmt.Errorf("create snapshot directory: %w", err)
+	for _, directory := range []string{abs, generations, quarantine} {
+		if err := ensurePrivateDirectory(directory); err != nil {
+			return nil, err
 		}
 	}
 	return &Store{root: abs, generations: generations, quarantine: quarantine}, nil
@@ -138,19 +141,28 @@ func (store *Store) Validate(generation string) (Manifest, error) {
 		return Manifest{}, errors.New("invalid generation id")
 	}
 	directory := filepath.Join(store.generations, generation)
+	if err := validateGenerationInventory(directory); err != nil {
+		return Manifest{}, err
+	}
 	manifestRaw, err := os.ReadFile(filepath.Join(directory, manifestFile))
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read manifest: %w", err)
 	}
 	var manifest Manifest
-	decoder := json.NewDecoder(strings.NewReader(string(manifestRaw)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifest); err != nil {
+	if err := decodeStrictJSON(manifestRaw, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
 	}
 	if manifest.SchemaVersion != SchemaVersion || manifest.Generation != generation ||
-		manifest.Validation != "valid" || manifest.CapturedAt.IsZero() {
+		manifest.Validation != "valid" || manifest.CapturedAt.IsZero() ||
+		strings.TrimSpace(manifest.Device) == "" || strings.TrimSpace(manifest.Profile) == "" ||
+		strings.TrimSpace(manifest.BrowserVersion) == "" ||
+		strings.TrimSpace(manifest.ChromiumVersion) == "" ||
+		strings.TrimSpace(manifest.Reason) == "" {
 		return Manifest{}, errors.New("invalid manifest metadata")
+	}
+	if manifest.ParentGeneration != "" &&
+		(!validGenerationID(manifest.ParentGeneration) || manifest.ParentGeneration == generation) {
+		return Manifest{}, errors.New("invalid parent generation")
 	}
 	capturedTime, err := generationTime(generation)
 	if err != nil || !capturedTime.Equal(manifest.CapturedAt) {
@@ -172,9 +184,7 @@ func (store *Store) Validate(generation string) (Manifest, error) {
 		return Manifest{}, errors.New("session hash mismatch")
 	}
 	var session Session
-	decoder = json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&session); err != nil {
+	if err := decodeStrictJSON(raw, &session); err != nil {
 		return Manifest{}, fmt.Errorf("decode session: %w", err)
 	}
 	if err := ValidateSession(session); err != nil {
@@ -261,18 +271,23 @@ func (store *Store) Restore(generation string, destination string) error {
 	if err := writeSynced(filepath.Join(temporary, sessionFile), session, 0600); err != nil {
 		return err
 	}
-	restoreManifest, err := json.MarshalIndent(map[string]any{
-		"schema_version":    SchemaVersion,
-		"source_generation": generation,
-		"source_device":     manifest.Device,
-		"source_profile":    manifest.Profile,
-		"restored_at":       time.Now().UTC(),
+	restoreManifest, err := json.MarshalIndent(RestoreManifest{
+		SchemaVersion:    RestoreSchemaVersion,
+		SourceGeneration: generation,
+		SourceDevice:     manifest.Device,
+		SourceProfile:    manifest.Profile,
+		RestoredAt:       time.Now().UTC(),
+		Validation:       "valid",
+		Session:          manifest.Files[sessionFile],
 	}, "", "  ")
 	if err != nil {
 		return err
 	}
 	if err := writeSynced(filepath.Join(temporary, "restore-manifest.json"), append(restoreManifest, '\n'), 0600); err != nil {
 		return err
+	}
+	if _, err := ValidateRestore(temporary); err != nil {
+		return fmt.Errorf("validate staged disposable restore: %w", err)
 	}
 	if err := syncDirectory(temporary); err != nil {
 		return err
@@ -284,7 +299,74 @@ func (store *Store) Restore(generation string, destination string) error {
 		return err
 	}
 	committed = true
+	if _, err := ValidateRestore(destination); err != nil {
+		return fmt.Errorf("validate committed disposable restore: %w", err)
+	}
 	return nil
+}
+
+// ValidateRestore authenticates the neutral disposable-state receipt and
+// session without opening a browser or accepting a profile path.
+func ValidateRestore(destination string) (RestoreManifest, error) {
+	if strings.TrimSpace(destination) == "" {
+		return RestoreManifest{}, errors.New("restore destination is required")
+	}
+	destination, err := filepath.Abs(destination)
+	if err != nil {
+		return RestoreManifest{}, fmt.Errorf("resolve restore destination: %w", err)
+	}
+	if err := requirePrivateDirectory(destination); err != nil {
+		return RestoreManifest{}, err
+	}
+	entries, err := os.ReadDir(destination)
+	if err != nil {
+		return RestoreManifest{}, fmt.Errorf("list restore inventory: %w", err)
+	}
+	if len(entries) != 2 || entries[0].Name() != "restore-manifest.json" ||
+		entries[1].Name() != sessionFile {
+		return RestoreManifest{}, errors.New("invalid restore file inventory")
+	}
+	for _, name := range []string{"restore-manifest.json", sessionFile} {
+		if err := requirePrivateRegularFile(filepath.Join(destination, name)); err != nil {
+			return RestoreManifest{}, err
+		}
+	}
+	rawManifest, err := os.ReadFile(filepath.Join(destination, "restore-manifest.json"))
+	if err != nil {
+		return RestoreManifest{}, fmt.Errorf("read restore manifest: %w", err)
+	}
+	var manifest RestoreManifest
+	if err := decodeStrictJSON(rawManifest, &manifest); err != nil {
+		return RestoreManifest{}, fmt.Errorf("decode restore manifest: %w", err)
+	}
+	if manifest.SchemaVersion != RestoreSchemaVersion ||
+		!validGenerationID(manifest.SourceGeneration) ||
+		strings.TrimSpace(manifest.SourceDevice) == "" ||
+		strings.TrimSpace(manifest.SourceProfile) == "" ||
+		manifest.RestoredAt.IsZero() || manifest.Validation != "valid" ||
+		manifest.Session.Size <= 0 || manifest.Session.Size > maxSessionBytes ||
+		len(manifest.Session.SHA256) != sha256.Size*2 {
+		return RestoreManifest{}, errors.New("invalid restore manifest metadata")
+	}
+	rawSession, err := os.ReadFile(filepath.Join(destination, sessionFile))
+	if err != nil {
+		return RestoreManifest{}, fmt.Errorf("read restored session: %w", err)
+	}
+	if int64(len(rawSession)) != manifest.Session.Size {
+		return RestoreManifest{}, errors.New("restored session size mismatch")
+	}
+	sum := sha256.Sum256(rawSession)
+	if hex.EncodeToString(sum[:]) != manifest.Session.SHA256 {
+		return RestoreManifest{}, errors.New("restored session hash mismatch")
+	}
+	var session Session
+	if err := decodeStrictJSON(rawSession, &session); err != nil {
+		return RestoreManifest{}, fmt.Errorf("decode restored session: %w", err)
+	}
+	if err := ValidateSession(session); err != nil {
+		return RestoreManifest{}, err
+	}
+	return manifest, nil
 }
 
 // Quarantine atomically removes a suspect generation from retention and
@@ -468,6 +550,87 @@ func writeSynced(path string, data []byte, mode os.FileMode) error {
 	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close %s: %w", filepath.Base(path), err)
+	}
+	return nil
+}
+
+func validateGenerationInventory(directory string) error {
+	if err := requirePrivateDirectory(directory); err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return fmt.Errorf("list generation inventory: %w", err)
+	}
+	if len(entries) != 2 || entries[0].Name() != manifestFile ||
+		entries[1].Name() != sessionFile {
+		return errors.New("invalid generation file inventory")
+	}
+	for _, name := range []string{manifestFile, sessionFile} {
+		if err := requirePrivateRegularFile(filepath.Join(directory, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func requirePrivateDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect private directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("private path is not a non-symlink directory: %s", filepath.Base(path))
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return fmt.Errorf("private directory is accessible by group or world: %s", filepath.Base(path))
+	}
+	return nil
+}
+
+func ensurePrivateDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("private path is not a non-symlink directory: %s", filepath.Base(path))
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect private directory: %w", err)
+	} else if err := os.MkdirAll(path, 0700); err != nil {
+		return fmt.Errorf("create snapshot directory: %w", err)
+	}
+	if err := os.Chmod(path, 0700); err != nil {
+		return fmt.Errorf("secure snapshot directory: %w", err)
+	}
+	return requirePrivateDirectory(path)
+}
+
+func requirePrivateRegularFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspect private file: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("private path is not a non-symlink regular file: %s", filepath.Base(path))
+	}
+	if info.Mode().Perm()&0077 != 0 {
+		return fmt.Errorf("private file is accessible by group or world: %s", filepath.Base(path))
+	}
+	return nil
+}
+
+func decodeStrictJSON(raw []byte, destination any) error {
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("unexpected trailing JSON value")
+		}
+		return fmt.Errorf("decode trailing JSON: %w", err)
 	}
 	return nil
 }

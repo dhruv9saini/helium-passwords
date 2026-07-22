@@ -30,6 +30,8 @@ func run(args []string) error {
 		return list(args[1:])
 	case "restore":
 		return restore(args[1:])
+	case "validate-restore":
+		return validateRestore(args[1:])
 	case "quarantine":
 		return quarantine(args[1:])
 	case "retention-plan":
@@ -138,6 +140,19 @@ func restore(args []string) error {
 	return writeJSON(map[string]string{"generation": *generation, "destination": *destination})
 }
 
+func validateRestore(args []string) error {
+	flags := flag.NewFlagSet("validate-restore", flag.ContinueOnError)
+	destination := flags.String("destination", "", "disposable-state directory")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	manifest, err := tabsnapshot.ValidateRestore(*destination)
+	if err != nil {
+		return err
+	}
+	return writeJSON(manifest)
+}
+
 func quarantine(args []string) error {
 	flags := flag.NewFlagSet("quarantine", flag.ContinueOnError)
 	root := flags.String("store", "", "independent snapshot store")
@@ -200,5 +215,5 @@ func writeJSON(value any) error {
 }
 
 func usageError() error {
-	return errors.New("usage: helium-tabs <capture|validate|list|restore|quarantine|retention-plan|retention-apply> [flags]")
+	return errors.New("usage: helium-tabs <capture|validate|list|restore|validate-restore|quarantine|retention-plan|retention-apply> [flags]")
 }

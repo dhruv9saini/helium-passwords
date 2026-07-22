@@ -459,7 +459,7 @@ restore_disposable() {
     temporary=$(mktemp -d /tmp/helium-tab-restore.XXXXXX)
     cleanup_restore() {
         local result=$?
-        find "${temporary}" -depth -delete 2>/dev/null || true
+		[ -z "${temporary:-}" ] || find "${temporary}" -depth -delete 2>/dev/null || true
         return "${result}"
     }
     trap cleanup_restore EXIT
@@ -495,7 +495,11 @@ restore_disposable() {
     [ "$(wc -l <"${listing}")" -eq 3 ] || { echo "backup archive inventory is incomplete" >&2; return 1; }
     temp_store="${temporary}/store"
     mkdir -p "${temp_store}/generations"
+    chmod 700 "${temp_store}" "${temp_store}/generations"
     tar --no-same-owner --no-same-permissions -xf "${archive}" -C "${temp_store}/generations"
+	chmod 700 "${temp_store}/generations/${generation}"
+	chmod 600 "${temp_store}/generations/${generation}/manifest.json" \
+		"${temp_store}/generations/${generation}/session.json"
     restored_manifest="${temporary}/restored-manifest.json"
     "${TAB_HELIUM_TABS}" validate --store "${temp_store}" --generation "${generation}" >"${restored_manifest}"
     [ "$(jq -r '.device' "${restored_manifest}")" = "${TAB_SOURCE_DEVICE}" ] && \
@@ -505,6 +509,14 @@ restore_disposable() {
     }
     "${TAB_HELIUM_TABS}" restore --store "${temp_store}" --generation "${generation}" \
         --destination "${restore_destination}"
+	"${TAB_HELIUM_TABS}" validate-restore --destination "${restore_destination}" \
+		>"${temporary}/restore-validation.json"
+	[ "$(jq -r '.source_generation' "${temporary}/restore-validation.json")" = "${generation}" ] && \
+		[ "$(jq -r '.source_device' "${temporary}/restore-validation.json")" = "${TAB_SOURCE_DEVICE}" ] && \
+		[ "$(jq -r '.source_profile' "${temporary}/restore-validation.json")" = "${TAB_PROFILE}" ] || {
+		echo "disposable restore receipt mismatch" >&2
+		return 1
+	}
     find "${temporary}" -depth -delete
     trap - EXIT
 }

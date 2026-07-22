@@ -97,7 +97,7 @@ capture_once() {
     temporary=$(mktemp -d "${namespace}/tmp/capture.XXXXXX")
     cleanup_capture() {
         local result=$?
-        find "${temporary}" -depth -delete 2>/dev/null || true
+		[ -z "${temporary:-}" ] || find "${temporary}" -depth -delete 2>/dev/null || true
         return "${result}"
     }
     trap cleanup_capture EXIT
