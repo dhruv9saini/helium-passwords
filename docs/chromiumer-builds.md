@@ -58,6 +58,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | Job tree | explicit per-job allocated-block budget; `80 GiB` is the bounded-proof recommendation and `100 GiB` is the full-build recommendation |
 | Root free space | `2 GiB` unprivileged floor, independent of the job budget and checked on `/` |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
+| Watchdog | independent unit: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, `0` swap, idle I/O, nice `15`, `TasksMax=16` |
 | Wall time | hard `8h` systemd deadline |
 | Concurrency | one active `helium-job-*` service on chromiumer |
 
@@ -102,8 +103,13 @@ cannot consume. At the audit, the journal used 16 MiB, Helium state used
 to ext4's root-only reserve.
 
 The worker measures allocated filesystem blocks rather than apparent file
-sizes. Its watchdog ceiling is polled, not an ext4 project quota, so a job can
-briefly cross the budget between samples before its cgroup is stopped.
+sizes. It streams [GNU `find`'s `%b` size directive][gnu-find-blocks] into a
+constant-size sum; `%b` is the allocated space for each entry in
+512-byte blocks. The stream does not retain a path or inode table. Multiple
+directory entries for one hard-linked file are therefore counted more than
+once, which is a conservative early stop rather than an undercount. The ceiling
+is polled, not an ext4 project quota, so a job can briefly cross the budget
+between samples before its cgroup is stopped.
 
 Admission requires cgroup v2 CPU, memory, I/O, and PID controllers, a running
 user systemd manager, the standard supervision tools, the job's remaining disk
@@ -115,10 +121,15 @@ the build. Any failed infrastructure check refuses startup.
 
 The watchdog writes `health.env` every 30 seconds with job-filesystem free
 space, root-filesystem free space, allocated job-tree size and budget,
-available memory, and load. A job-budget, root-floor, or memory violation stops
-the entire build cgroup. `MemoryMax`, `CPUQuota`, `TasksMax`, idle I/O priority,
-and the systemd runtime deadline remain enforced even if the watchdog itself
-fails.
+available memory, and load. It writes `watchdog-ready.env` only after the first
+complete healthy sample. The build command cannot start before that marker
+exists and the watchdog unit is active. While the command runs, the build
+wrapper checks the independent watchdog unit once per second. A job-budget,
+root-floor, or memory violation stops the entire build cgroup. A watchdog crash,
+OOM kill, unavailable unit, or failed status check also stops the build and
+records terminal `failure` with exit code `125` when no more specific watchdog
+reason exists. The ordinary CPU, memory, task, I/O, and wall-time controls remain
+defense in depth; they are not treated as a substitute for a working watchdog.
 
 ## Immutable Source Transfer
 
@@ -159,11 +170,12 @@ remains under:
 
 ## Starting a Build
 
-Start only after `preflight` and staging succeed. The commands return
-immediately after creating the isolated job and watchdog. `--summary` records
-what the job tests or produces; `--next` is the useful action included in a
-success notification. Both are mandatory and must describe the particular
-job, not a generic build class.
+Start only after `preflight` and staging succeed. The command returns
+immediately after creating the isolated job and watchdog. The detached build
+wrapper then waits for the watchdog's first healthy sample before launching the
+requested build command. `--summary` records what the job tests or produces;
+`--next` is the useful action included in a success notification. Both are
+mandatory and must describe the particular job, not a generic build class.
 
 For public Linux x86_64, the prepared platform wrapper forwards the enforced
 two-job limit into its Dockerized Ninja invocation:
@@ -217,7 +229,9 @@ at:
 
 ```text
 /home/d/.local/state/helium-builds/<job>/policy.env
+/home/d/.local/state/helium-builds/<job>/watchdog-ready.env
 /home/d/.local/state/helium-builds/<job>/health.env
+/home/d/.local/state/helium-builds/<job>/watchdog-stop.env
 /home/d/.local/state/helium-builds/<job>/result.env
 /home/d/.local/state/helium-builds/<job>/terminal.env
 ```
@@ -340,8 +354,31 @@ The arithmetic test proves both mount cases for an 80 GiB job: on root,
 80 GiB, 70 GiB, and zero build-filesystem bytes while `/` retains its
 independent 2 GiB floor.
 
+Job `hs-android-148-disposable-apk-04` exposed the former watchdog's fail-open
+behavior on 2026-07-22. Its repeated `du -sx` scan grew to the watchdog's exact
+64 MiB hard limit; systemd recorded `Result=oom-kill`, exit `137`, and a 64 MiB
+peak at 06:50:39Z. The build remained active until its explicit cancellation at
+06:51:18Z, which correctly retained terminal `cancellation`, exit `130`. The
+replacement streaming counter was measured against that retained
+17,232,089,088-byte job tree: 2.08 seconds, 18,820 KiB peak RSS, and no build or
+workspace mutation. The 128 MiB watchdog hard maximum is more than six times
+that observed peak while remaining small compared with the host and build
+cgroups.
+
+`scripts/tests/chromiumer-watchdog.test.sh` grows a synthetic 16,000-file tree,
+runs the counter under a 64 MiB virtual-memory ceiling, and simulates the
+watchdog disappearing after readiness. It proves that the command is stopped
+and the one terminal record is `failure`, exit `125`, with the watchdog reason;
+it separately proves that an explicit cancellation race remains
+`cancellation`, exit `130`. This is a source-level regression and starts no
+Chromium or remote job. Run the harmless detached remote proof again before the
+next Chromium job so the newly installed worker's live unit properties and
+readiness handshake are also retained.
+
 Re-run the same proof without starting Chromium:
 
 ```sh
 scripts/chromiumer-job.sh test
 ```
+
+[gnu-find-blocks]: https://www.gnu.org/software/findutils/manual/html_node/find_html/Size-Directives.html

@@ -39,6 +39,10 @@ profile() {
             watchdog_mem_floor_bytes=$(gib 1)
             wall_seconds=28800
             watchdog_interval=30
+            watchdog_memory_high=64M
+            watchdog_memory_max=128M
+            watchdog_ready_seconds=30
+            supervisor_interval=1
             ;;
         test)
             build_jobs=1
@@ -52,6 +56,10 @@ profile() {
             watchdog_mem_floor_bytes=$((64 * 1024 * 1024))
             wall_seconds=120
             watchdog_interval=1
+            watchdog_memory_high=64M
+            watchdog_memory_max=128M
+            watchdog_ready_seconds=10
+            supervisor_interval=1
             ;;
         *)
             echo "unknown isolation profile: $1" >&2
@@ -66,7 +74,8 @@ meminfo_bytes() {
 }
 
 disk_usage_bytes() {
-    du -sx -B1 "$1" | awk '{ print $1 }'
+    find "$1" -xdev -printf '%b\n' | \
+        awk '{ blocks += $1 } END { printf "%.0f\n", blocks * 512 }'
 }
 
 required_build_available_bytes() {
@@ -114,7 +123,7 @@ preflight() {
     profile "${profile_name}"
     require_worker_host
 
-    local required=(awk df du find flock install ionice journalctl nice realpath sha256sum stat systemctl systemd-run tar timeout)
+    local required=(awk df find flock install ionice journalctl ln nice realpath sha256sum stat systemctl systemd-run tar timeout)
     local tool
     for tool in "${required[@]}"; do
         command -v "${tool}" >/dev/null 2>&1 || {
@@ -308,6 +317,10 @@ write_policy() {
         printf 'disk_budget_bytes=%s\n' "${disk_budget_bytes}"
         printf 'root_floor_bytes=%s\n' "${root_floor_bytes}"
         printf 'watchdog_mem_floor_bytes=%s\n' "${watchdog_mem_floor_bytes}"
+        printf 'watchdog_memory_high=%s\n' "${watchdog_memory_high}"
+        printf 'watchdog_memory_max=%s\n' "${watchdog_memory_max}"
+        printf 'watchdog_ready_seconds=%s\n' "${watchdog_ready_seconds}"
+        printf 'supervisor_interval=%s\n' "${supervisor_interval}"
         printf 'wall_seconds=%s\n' "${wall_seconds}"
         printf 'command=%s\n' "${command_text}"
         printf 'started_at_epoch=%s\n' "$(date +%s)"
@@ -404,7 +417,8 @@ start_job() {
         --setenv="CCACHE_DIR=${job_root}/cache/ccache" \
         --setenv="GIT_CACHE_PATH=${job_root}/cache/git" \
         --setenv="TMPDIR=${job_root}/tmp" \
-        "${worker}" run "${state_dir}" -- "$@"; then
+        "${worker}" run "${state_dir}" "${watch_unit}" \
+        "${watchdog_ready_seconds}" "${supervisor_interval}" -- "$@"; then
         echo "failed to create isolated build unit" >&2
         exit 1
     fi
@@ -412,12 +426,21 @@ start_job() {
     if ! systemd-run --user --unit="${watch_unit%.service}" --collect \
         --property="Description=Helium build health watchdog ${job}" \
         --property=CPUQuota=10% \
-        --property=MemoryMax=64M \
+        --property=CPUWeight=10 \
+        --property="MemoryHigh=${watchdog_memory_high}" \
+        --property="MemoryMax=${watchdog_memory_max}" \
+        --property=MemorySwapMax=0 \
+        --property=IOWeight=10 \
+        --property=IOSchedulingClass=idle \
+        --property=Nice=15 \
         --property=TasksMax=16 \
+        --property=KillMode=control-group \
+        --property=OOMPolicy=stop \
         --property="RuntimeMaxSec=$((wall_seconds + 300))" \
         "${worker}" watch "${state_dir}" "${job_root}" "${unit}" \
         "${disk_budget_bytes}" "${root_floor_bytes}" \
         "${watchdog_mem_floor_bytes}" "${watchdog_interval}"; then
+        record_watchdog_stop "${state_dir}" "health watchdog failed to start"
         systemctl --user stop "${unit}" >/dev/null 2>&1 || true
         echo "failed to create health watchdog; build stopped" >&2
         exit 1
@@ -429,7 +452,10 @@ start_job() {
 
 run_job() {
     local state_dir=$1
-    shift
+    local watch_unit=$2
+    local ready_seconds=$3
+    local check_interval=$4
+    shift 4
     [ "${1:-}" = -- ] || exit 2
     shift
     terminal_from_signal() {
@@ -456,8 +482,40 @@ run_job() {
 
     printf 'job_started_at=%s\n' "$(date --iso-8601=seconds)"
     printf 'job_pid=%s\n' "$$"
+
+    local ready_deadline=$((SECONDS + ready_seconds))
+    while [ "${SECONDS}" -lt "${ready_deadline}" ]; do
+        if [ -f "${state_dir}/cancel.env" ]; then
+            stop_for_watchdog_loss "${state_dir}" "" \
+                "health watchdog failed before readiness"
+        fi
+        if [ -f "${state_dir}/watchdog-ready.env" ] && \
+            systemctl --user --quiet is-active "${watch_unit}"; then
+            break
+        fi
+        sleep "${check_interval}"
+    done
+    if [ ! -f "${state_dir}/watchdog-ready.env" ] || \
+        ! systemctl --user --quiet is-active "${watch_unit}"; then
+        stop_for_watchdog_loss "${state_dir}" "" \
+            "health watchdog failed before readiness"
+    fi
+
     set +e
-    ionice -c 3 nice -n 15 "$@"
+    ionice -c 3 nice -n 15 "$@" &
+    local command_pid=$!
+    set -e
+
+    while kill -0 "${command_pid}" 2>/dev/null; do
+        if ! systemctl --user --quiet is-active "${watch_unit}"; then
+            stop_for_watchdog_loss "${state_dir}" "${command_pid}" \
+                "health watchdog exited unexpectedly"
+        fi
+        sleep "${check_interval}"
+    done
+
+    set +e
+    wait "${command_pid}"
     local result=$?
     set -e
     trap - TERM INT
@@ -468,6 +526,43 @@ run_job() {
     fi
     printf 'job_finished_at=%s\nexit_code=%s\n' "$(date --iso-8601=seconds)" "${result}"
     exit "${result}"
+}
+
+stop_for_watchdog_loss() {
+    local state_dir=$1
+    local command_pid=$2
+    local default_reason=$3
+    [ -z "${command_pid}" ] || kill -TERM "${command_pid}" 2>/dev/null || true
+
+    if [ -f "${state_dir}/cancel.env" ]; then
+        write_terminal "${state_dir}" cancellation 130 \
+            "cancelled through chromiumer-job.sh"
+        exit 130
+    fi
+    if [ -f "${state_dir}/watchdog-stop.env" ]; then
+        local reason
+        reason=$(awk -F= '$1 == "reason" { print substr($0, 8); exit }' \
+            "${state_dir}/watchdog-stop.env")
+        write_terminal "${state_dir}" failure 1 "${reason}"
+        exit 1
+    fi
+
+    record_watchdog_stop "${state_dir}" "${default_reason}"
+    write_terminal "${state_dir}" failure 125 "${default_reason}"
+    exit 125
+}
+
+record_watchdog_stop() {
+    local state_dir=$1
+    local reason=$2
+    local target="${state_dir}/watchdog-stop.env"
+    [ ! -e "${target}" ] || return 0
+
+    local temp="${target}.tmp.$$"
+    printf 'watchdog_stopped_at=%s\nreason=%s\n' \
+        "$(date --iso-8601=seconds)" "${reason}" >"${temp}"
+    ln "${temp}" "${target}" 2>/dev/null || true
+    find "${temp}" -delete
 }
 
 write_terminal() {
@@ -551,11 +646,15 @@ watch_job() {
         mv "${temp}" "${state_dir}/health.env"
 
         if [ -n "${failure}" ]; then
-            printf 'watchdog_stopped_at=%s\nreason=%s\n' \
-                "$(date --iso-8601=seconds)" "${failure}" \
-                >"${state_dir}/watchdog-stop.env"
+            record_watchdog_stop "${state_dir}" "${failure}"
             systemctl --user stop "${unit}"
             exit 1
+        fi
+        if [ ! -e "${state_dir}/watchdog-ready.env" ]; then
+            printf 'watchdog_ready_at=%s\n' "$(date --iso-8601=seconds)" \
+                >"${state_dir}/watchdog-ready.env.tmp"
+            mv "${state_dir}/watchdog-ready.env.tmp" \
+                "${state_dir}/watchdog-ready.env"
         fi
         sleep "${interval}"
     done
@@ -570,10 +669,12 @@ status_job() {
         echo "unknown job: ${job}" >&2
         exit 1
     }
-    printf 'job=%s\nunit_state=%s\nstate_dir=%s\nlogs=journalctl --user --unit=%s\n' \
+    local watch_unit="helium-watch-${job}.service"
+    printf 'job=%s\nunit_state=%s\nwatch_unit_state=%s\nstate_dir=%s\nlogs=journalctl --user --unit=%s\n' \
         "${job}" "$(systemctl --user is-active "${unit}" 2>/dev/null || true)" \
+        "$(systemctl --user is-active "${watch_unit}" 2>/dev/null || true)" \
         "${state_dir}" "${unit}"
-    for file in policy.env health.env result.env terminal.env watchdog-stop.env cancel.env; do
+    for file in policy.env watchdog-ready.env health.env result.env terminal.env watchdog-stop.env cancel.env; do
         if [ -f "${state_dir}/${file}" ]; then
             printf -- '--- %s ---\n' "${file}"
             cat "${state_dir}/${file}"
@@ -584,7 +685,13 @@ status_job() {
 limits_job() {
     local job=$1
     validate_job "${job}"
+    printf '%s\n' '--- build unit ---'
     systemctl --user show "helium-job-${job}.service" \
+        -p ActiveState -p CPUQuotaPerSecUSec -p CPUWeight \
+        -p MemoryHigh -p MemoryMax -p MemorySwapMax -p IOWeight \
+        -p IOSchedulingClass -p Nice -p TasksMax -p RuntimeMaxUSec
+    printf '%s\n' '--- watchdog unit ---'
+    systemctl --user show "helium-watch-${job}.service" \
         -p ActiveState -p CPUQuotaPerSecUSec -p CPUWeight \
         -p MemoryHigh -p MemoryMax -p MemorySwapMax -p IOWeight \
         -p IOSchedulingClass -p Nice -p TasksMax -p RuntimeMaxUSec
