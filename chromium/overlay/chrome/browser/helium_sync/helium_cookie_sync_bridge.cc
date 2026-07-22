@@ -580,12 +580,14 @@ class HeliumCookieSyncBridge::Impl {
        std::unique_ptr<HeliumSyncClient> client,
        base::FilePath state_path,
        base::FilePath rollback_path,
-       base::FilePath reauth_signal_path)
+       base::FilePath reauth_signal_path,
+       base::RepeatingCallback<void(int64_t)> verified_baseline_callback)
       : profile_(profile),
         client_(std::move(client)),
         state_path_(std::move(state_path)),
         rollback_path_(std::move(rollback_path)),
-        reauth_signal_path_(std::move(reauth_signal_path)) {}
+        reauth_signal_path_(std::move(reauth_signal_path)),
+        verified_baseline_callback_(std::move(verified_baseline_callback)) {}
 
   ~Impl() { Stop(); }
 
@@ -614,6 +616,22 @@ class HeliumCookieSyncBridge::Impl {
     weak_factory_.InvalidateWeakPtrs();
     reconcile_in_flight_ = false;
     operation_queue_.clear();
+  }
+
+  void PullAndApply() { Reconcile(); }
+
+  bool EnrollmentActivated(std::string* error) {
+    if (!client_ || !client_->ReloadEnrollmentState(error)) {
+      return false;
+    }
+    if (client_->enrollment_phase() != "active") {
+      if (error) {
+        *error = "cookie client enrollment is not active";
+      }
+      return false;
+    }
+    verified_baseline_callback_.Reset();
+    return true;
   }
 
  private:
@@ -1019,6 +1037,9 @@ class HeliumCookieSyncBridge::Impl {
     }
     if (client_->enrollment_phase() == "pending") {
       reconcile_in_flight_ = false;
+      if (verified_baseline_callback_) {
+        verified_baseline_callback_.Run(state_.verified_sequence);
+      }
     }
     return true;
   }
@@ -1477,6 +1498,7 @@ class HeliumCookieSyncBridge::Impl {
   bool restoring_ = false;
   bool reconcile_in_flight_ = false;
   int64_t pending_next_seq_ = 0;
+  base::RepeatingCallback<void(int64_t)> verified_baseline_callback_;
   base::RepeatingTimer reconcile_timer_;
   base::WeakPtrFactory<Impl> weak_factory_{this};
 };
@@ -1486,12 +1508,14 @@ HeliumCookieSyncBridge::HeliumCookieSyncBridge(
     std::unique_ptr<HeliumSyncClient> client,
     base::FilePath state_path,
     base::FilePath rollback_path,
-    base::FilePath reauth_signal_path)
+    base::FilePath reauth_signal_path,
+    base::RepeatingCallback<void(int64_t)> verified_baseline_callback)
     : impl_(std::make_unique<Impl>(profile,
                                    std::move(client),
                                    std::move(state_path),
                                    std::move(rollback_path),
-                                   std::move(reauth_signal_path))) {}
+                                   std::move(reauth_signal_path),
+                                   std::move(verified_baseline_callback))) {}
 
 HeliumCookieSyncBridge::~HeliumCookieSyncBridge() = default;
 
@@ -1501,6 +1525,14 @@ void HeliumCookieSyncBridge::Start() {
 
 void HeliumCookieSyncBridge::Stop() {
   impl_->Stop();
+}
+
+void HeliumCookieSyncBridge::PullAndApply() {
+  impl_->PullAndApply();
+}
+
+bool HeliumCookieSyncBridge::EnrollmentActivated(std::string* error) {
+  return impl_->EnrollmentActivated(error);
 }
 
 }  // namespace helium_sync

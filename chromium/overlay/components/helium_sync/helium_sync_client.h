@@ -71,6 +71,7 @@ public:
   std::string_view device_id() const { return state_.device_id; }
   std::string_view enrollment_phase() const { return state_.phase; }
   bool AcknowledgeApplied(int64_t next_seq, std::string *error);
+  bool ReloadEnrollmentState(std::string *error);
   void CompleteEnrollment(int64_t acknowledged_seq, StatusCallback callback);
 
   // Cookie rollback and other local durable data use the content keyring with a

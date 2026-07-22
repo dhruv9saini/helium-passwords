@@ -179,10 +179,11 @@ std::string ContentFingerprint(std::string_view payload_json) {
 HeliumPasswordSyncBridge::HeliumPasswordSyncBridge(
     scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
     std::unique_ptr<HeliumSyncClient> client, std::string device_name,
-    base::FilePath state_path)
+    base::FilePath state_path,
+    base::RepeatingCallback<void(int64_t)> verified_baseline_callback)
     : profile_store_(std::move(profile_store)), client_(std::move(client)),
-      device_name_(std::move(device_name)), state_path_(std::move(state_path)) {
-}
+      device_name_(std::move(device_name)), state_path_(std::move(state_path)),
+      verified_baseline_callback_(std::move(verified_baseline_callback)) {}
 
 HeliumPasswordSyncBridge::~HeliumPasswordSyncBridge() { Stop(); }
 
@@ -224,6 +225,20 @@ void HeliumPasswordSyncBridge::PullAndApply() {
   client_->Latest({kPasswordKind},
                   base::BindOnce(&HeliumPasswordSyncBridge::OnPullComplete,
                                  weak_factory_.GetWeakPtr()));
+}
+
+bool HeliumPasswordSyncBridge::EnrollmentActivated(std::string *error) {
+  if (!client_ || !client_->ReloadEnrollmentState(error)) {
+    return false;
+  }
+  if (client_->enrollment_phase() != "active") {
+    if (error) {
+      *error = "password client enrollment is not active";
+    }
+    return false;
+  }
+  verified_baseline_callback_.Reset();
+  return true;
 }
 
 void HeliumPasswordSyncBridge::RequestReconcileRead() {
@@ -700,6 +715,10 @@ void HeliumPasswordSyncBridge::FinishReconcile() {
     return;
   }
   reconciling_ = false;
+  if (client_->enrollment_phase() == "pending" &&
+      verified_baseline_callback_) {
+    verified_baseline_callback_.Run(verified_sequence_);
+  }
   if (!observing_ && profile_store_) {
     observing_ = true;
     profile_store_->AddObserver(this);

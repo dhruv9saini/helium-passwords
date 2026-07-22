@@ -3,8 +3,12 @@
 #ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
 #define CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
 
+#include <cstdint>
 #include <memory>
+#include <optional>
+#include <string>
 
+#include "base/memory/weak_ptr.h"
 #include "components/keyed_service/core/keyed_service.h"
 
 class Profile;
@@ -12,6 +16,7 @@ class Profile;
 namespace helium_sync {
 class HeliumCookieSyncBridge;
 class HeliumPasswordSyncBridge;
+class HeliumSyncClient;
 class HeliumTabSnapshotBridge;
 }  // namespace helium_sync
 
@@ -26,9 +31,20 @@ class HeliumSyncService : public KeyedService {
   void Shutdown() override;
 
  private:
+  void OnCookieBaselineVerified(int64_t sequence);
+  void OnPasswordBaselineVerified(int64_t sequence);
+  void MaybeCompleteEnrollment();
+  void OnEnrollmentComplete(bool ok, std::string error);
+
   std::unique_ptr<helium_sync::HeliumCookieSyncBridge> cookie_bridge_;
   std::unique_ptr<helium_sync::HeliumPasswordSyncBridge> password_bridge_;
+  std::unique_ptr<helium_sync::HeliumSyncClient> enrollment_client_;
   std::unique_ptr<helium_sync::HeliumTabSnapshotBridge> tab_snapshot_bridge_;
+  std::optional<int64_t> cookie_verified_sequence_;
+  std::optional<int64_t> password_verified_sequence_;
+  bool enrollment_completion_in_flight_ = false;
+  bool enrollment_complete_ = false;
+  base::WeakPtrFactory<HeliumSyncService> weak_factory_{this};
 };
 
 #endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_

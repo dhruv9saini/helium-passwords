@@ -285,6 +285,31 @@ bool HeliumSyncClient::AcknowledgeApplied(int64_t next_seq,
   return true;
 }
 
+bool HeliumSyncClient::ReloadEnrollmentState(std::string *error) {
+  if (!error) {
+    return false;
+  }
+  ClientState previous = state_;
+  state_error_.clear();
+  if (!LoadClientState(client_state_path_)) {
+    *error = state_error_;
+    state_ = std::move(previous);
+    return false;
+  }
+  if (state_.device_id != previous.device_id || state_.role != previous.role ||
+      state_.active_key_id != previous.active_key_id ||
+      state_.keys != previous.keys ||
+      state_.local_seal_key != previous.local_seal_key ||
+      state_.sequence < previous.sequence ||
+      (previous.phase == "active" && state_.phase != "active")) {
+    state_ = std::move(previous);
+    state_error_ = "client enrollment state changed unexpectedly";
+    *error = state_error_;
+    return false;
+  }
+  return true;
+}
+
 void HeliumSyncClient::CompleteEnrollment(int64_t acknowledged_seq,
                                           StatusCallback callback) {
   if (!state_error_.empty()) {

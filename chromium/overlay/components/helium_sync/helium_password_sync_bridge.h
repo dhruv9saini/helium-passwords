@@ -27,7 +27,8 @@ public:
   HeliumPasswordSyncBridge(
       scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
       std::unique_ptr<HeliumSyncClient> client, std::string device_name,
-      base::FilePath state_path);
+      base::FilePath state_path,
+      base::RepeatingCallback<void(int64_t)> verified_baseline_callback);
   HeliumPasswordSyncBridge(const HeliumPasswordSyncBridge &) = delete;
   HeliumPasswordSyncBridge &
   operator=(const HeliumPasswordSyncBridge &) = delete;
@@ -36,6 +37,7 @@ public:
   void Start();
   void Stop();
   void PullAndApply();
+  bool EnrollmentActivated(std::string *error);
 
 private:
   void RequestReconcileRead();
@@ -109,6 +111,7 @@ private:
   int post_apply_empty_read_retries_ = 0;
   int64_t pending_next_seq_ = 0;
   int64_t verified_sequence_ = 0;
+  base::RepeatingCallback<void(int64_t)> verified_baseline_callback_;
   base::RepeatingTimer pull_timer_;
   base::WeakPtrFactory<HeliumPasswordSyncBridge> weak_factory_{this};
 };
