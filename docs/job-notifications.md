@@ -123,3 +123,18 @@ job ID unless the first attempt fails before SMTP delivery.
 No Codex `Stop` hook is installed. Official Codex project lifecycle hooks run
 at turn scope and require project trust, so a Stop hook would be a second path
 and would create the per-turn notifications this design excludes.
+
+## Recorded Acceptance
+
+On 2026-07-21, job `hp-notify-accept-20260721-1829` staged public commit
+`3c3e6bcc96732ef16c19fa1ae8f30534473918ea` with a 1 GiB job budget and ran a
+three-second harmless command under the production systemd profile. Chromiumer
+wrote `result=success`, `exit_code=0`, and `duration_seconds=3`. The persistent
+lm timer observed it, and Mailbridge notification key
+`helium-job:hp-notify-accept-20260721-1829:terminal` reached `sent` with one
+SMTP attempt and zero reconciliation attempts. A read-only Zoho Sent search
+found exactly one message with its stable RFC Message-ID. Re-enqueueing the
+same key and content returned the existing sent row; the attempt count and
+single Sent match did not change. The disposable remote workspace and returned
+fixture copy were removed through the normal verified-artifact cleanup path;
+the remote job state, journal, manifest, hash, and receipt remain as evidence.

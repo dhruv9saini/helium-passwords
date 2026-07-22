@@ -124,7 +124,7 @@ stage() {
         fi
         printf 'archive_sha256=%s\n' "${archive_sha}"
         printf 'transferred_at=%s\n' "$(date --iso-8601=seconds)"
-        printf 'transferred_from=%s\n' "$(hostname -s)"
+        printf 'transferred_from=%s\n' "$(uname -n)"
     } >"${manifest}"
 
     rsync --archive --checksum "${archive}" "${manifest}" \
@@ -269,7 +269,7 @@ fetch_artifact() {
         printf 'artifact=%s\n' "${local_path}"
         printf 'sha256=%s\n' "${local_sha}"
         printf 'received_at=%s\n' "$(date --iso-8601=seconds)"
-        printf 'received_on=%s\n' "$(hostname -s)"
+        printf 'received_on=%s\n' "$(uname -n)"
     } >"${destination}/artifact-receipt.env"
     remote_exec "${remote_worker}" mark-returned "${job}" "${local_sha}"
     printf 'artifact=%s\nsha256=%s\n' "${local_path}" "${local_sha}"
