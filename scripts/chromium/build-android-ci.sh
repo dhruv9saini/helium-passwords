@@ -39,6 +39,7 @@ official_build=${CHROMIUM_ANDROID_OFFICIAL_BUILD:-false}
 use_siso=${CHROMIUM_ANDROID_USE_SISO:-auto}
 siso_gomemlimit=${CHROMIUM_ANDROID_SISO_GOMEMLIMIT:-1536MiB}
 siso_flags=${CHROMIUM_ANDROID_SISO_FLAGS:-}
+manifest_package=${CHROMIUM_ANDROID_MANIFEST_PACKAGE:-computer.helium.sync}
 
 # Chromium bindgen treats TARGET as a Rust target triple env var and fails if the
 # workflow-level target-name variable leaks into the build environment.
@@ -70,6 +71,14 @@ case "$use_siso" in
   auto|true|false) ;;
   *)
     echo "CHROMIUM_ANDROID_USE_SISO must be auto, true, or false" >&2
+    exit 64
+    ;;
+esac
+
+case "$manifest_package" in
+  computer.helium.sync|computer.helium.sync.test) ;;
+  *)
+    echo "CHROMIUM_ANDROID_MANIFEST_PACKAGE must be computer.helium.sync or computer.helium.sync.test" >&2
     exit 64
     ;;
 esac
@@ -200,6 +209,7 @@ symbol_level = 0
 blink_symbol_level = 0
 ffmpeg_branding = "$android_ffmpeg_branding"
 proprietary_codecs = $android_proprietary_codecs
+chrome_public_manifest_package = "$manifest_package"
 root_extra_deps = ["//components/helium_sync", "//chrome/browser/helium_sync"]
 EOF
   if [[ "$use_ccache" == true ]]; then

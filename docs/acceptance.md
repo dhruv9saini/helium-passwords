@@ -32,6 +32,9 @@ the browser gates below.
   cgroup limits and a healthy watchdog.
 - The returned artifact hash matches chromiumer's hash and an artifact receipt
   exists before its build workspace is eligible for cleanup.
+- Android disposable evidence uses `computer.helium.sync.test`; manifest and GN
+  provenance must agree. It must coexist with, and never upgrade or read, the
+  existing `computer.helium.sync` app data.
 
 ## Gate 1: Helium Passwords
 

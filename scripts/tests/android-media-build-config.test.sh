@@ -24,6 +24,7 @@ cat <<'ARGS'
 ffmpeg_branding = "Chrome"
 media_use_ffmpeg = true
 proprietary_codecs = true
+chrome_public_manifest_package = "computer.helium.sync.test"
 target_cpu = "arm64"
 target_os = "android"
 ARGS
@@ -47,6 +48,8 @@ PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT"
 
 grep -qx 'proprietary_codecs = true' "$test_root/provenance/gn-args-resolved.txt"
+grep -qx 'chrome_public_manifest_package = "computer.helium.sync.test"' \
+  "$test_root/provenance/gn-args-resolved.txt"
 grep -Eq '^[0-9a-f]{40}$' "$test_root/provenance/chromium-source-commit.txt"
 grep -q 'chromium/patches/0001-helium-sync-overlay-files.patch' \
   "$test_root/provenance/sync-inputs.sha256"
@@ -77,5 +80,20 @@ grep -Fq 'status --short --untracked-files=no' \
   "$repo_root/scripts/chromium/verify-android-media-config.sh"
 ! grep -Fq 'status --short --untracked-files=all' \
   "$repo_root/scripts/chromium/verify-android-media-config.sh"
+
+if GITHUB_WORKSPACE="$test_root" HELIUM_SYNC_REPO="$repo_root" \
+  CHROMIUM_ANDROID_MANIFEST_PACKAGE=arbitrary.example \
+  "$repo_root/scripts/chromium/build-android-ci.sh" \
+  >"$test_root/arbitrary-package.out" 2>&1; then
+  echo 'arbitrary Android package unexpectedly passed' >&2
+  exit 1
+fi
+grep -q 'must be computer.helium.sync or computer.helium.sync.test' \
+  "$test_root/arbitrary-package.out"
+
+grep -Fq 'CHROMIUM_ANDROID_MANIFEST_PACKAGE:-computer.helium.sync' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'computer.helium.sync|computer.helium.sync.test' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
 
 echo 'Android media build configuration contract passed'

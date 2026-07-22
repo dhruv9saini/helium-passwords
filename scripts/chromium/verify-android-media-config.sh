@@ -50,6 +50,8 @@ require_arg '^target_cpu = "(arm|arm64|x86|x64)"$' 'target_cpu is missing or uns
 require_arg '^proprietary_codecs = true$' 'proprietary_codecs must be true for H.264/AAC recognition'
 require_arg '^ffmpeg_branding = "Chrome"$' 'ffmpeg_branding must be Chrome for the proprietary FFmpeg configuration'
 require_arg '^media_use_ffmpeg = true$' 'media_use_ffmpeg must remain enabled'
+require_arg '^chrome_public_manifest_package = "computer\.helium\.sync(\.test)?"$' \
+  'manifest package must be the fixed production or disposable Helium Sync identity'
 
 cp "$chromium_src/$out_dir/args.gn" "$provenance_dir/args.gn"
 cp "$repo_root/chromium/android-build.lock" "$provenance_dir/android-build.lock"

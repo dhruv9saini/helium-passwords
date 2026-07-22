@@ -52,6 +52,19 @@ da, and oneplus. Record:
 - local tab capture, both off-source hashes, corruption quarantine, retention,
   and restore into a new disposable browser state.
 
+The oneplus disposable APK must use the parallel package identity; it may not
+replace the installed personal package:
+
+```sh
+CHROMIUM_ANDROID_MANIFEST_PACKAGE=computer.helium.sync.test
+```
+
+Confirm the returned APK manifest and `build-provenance/gn-args-resolved.txt`
+both name `computer.helium.sync.test` before installation. Android then gives
+the fixture browser an independent app-data directory. The later production
+artifact is a separate clean build with the default `computer.helium.sync`;
+back up that app's complete existing data before installing it.
+
 A copied backup never opens a browser.
 
 ## 3. Prepare lm without activating it
