@@ -8,6 +8,8 @@ usage: run-device-probe.sh ACCEPTANCE_DIRECTORY ADB_SERIAL NEW_EVIDENCE_DIRECTOR
 Options:
   --h2 URL                         Require the exact HTTPS HTTP/2 fixture endpoint.
   --h3 URL                         Require the exact HTTPS HTTP/3 fixture endpoint.
+  --fixture-receipt FILE           Require the private fixture's exact leaf-SPKI
+                                   receipt and effective disposable browser switch.
   --background-foreground true    Exercise and require one background/resume cycle.
   --network-handoff none          Do not change device networking (default).
   --network-handoff wifi-to-cellular
@@ -24,6 +26,7 @@ shift 3
 
 h2=
 h3=
+fixture_receipt=
 background_foreground=false
 network_handoff=none
 while [[ $# -gt 0 ]]; do
@@ -31,6 +34,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --h2) h2=$2 ;;
     --h3) h3=$2 ;;
+    --fixture-receipt) fixture_receipt=$2 ;;
     --background-foreground) background_foreground=$2 ;;
     --network-handoff) network_handoff=$2 ;;
     *) echo "unknown device probe option: $1" >&2; exit 64 ;;
@@ -46,6 +50,7 @@ case "$network_handoff" in none|wifi-to-cellular) ;; *) echo 'unsupported networ
 }
 [[ ! -e "$evidence" ]] || { echo "evidence directory already exists" >&2; exit 1; }
 command -v adb >/dev/null
+command -v jq >/dev/null
 command -v node >/dev/null
 command -v sha256sum >/dev/null
 
@@ -76,6 +81,46 @@ version_name=$(metadata version_name "$acceptance/acceptance.env")
 [[ "$artifact_sha256" =~ ^[0-9a-f]{64}$ && "$apk_sha256" =~ ^[0-9a-f]{64}$ ]]
 [[ "$chromium_commit" =~ ^[0-9a-f]{40}$ && "$helium_sync_commit" =~ ^[0-9a-f]{40}$ ]]
 [[ "$version_code" =~ ^[1-9][0-9]*$ && "$version_name" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+
+fixture_spki=
+fixture_cert_sha256=
+if [[ -n "$h2" || -n "$h3" ]]; then
+  [[ -n "$fixture_receipt" ]] || {
+    echo "private protocol fixtures require --fixture-receipt" >&2
+    exit 1
+  }
+  [[ -f "$fixture_receipt" && ! -L "$fixture_receipt" ]] || {
+    echo "fixture receipt must be a regular non-symlink file" >&2
+    exit 1
+  }
+  fixture_receipt=$(realpath "$fixture_receipt")
+  [[ -f "$fixture_receipt" && ! -L "$fixture_receipt" ]] || {
+    echo "fixture receipt must be a regular non-symlink file" >&2
+    exit 1
+  }
+  fixture_spki=$(jq -er '.leaf_spki_sha256_base64' "$fixture_receipt")
+  fixture_cert_sha256=$(jq -er '.leaf_cert_sha256' "$fixture_receipt")
+  fixture_receipt_sha256=$(sha256sum "$fixture_receipt" | cut -d' ' -f1)
+  fixture_host=$(jq -er '.hostname' "$fixture_receipt")
+  fixture_h2_port=$(jq -er '.h2_port' "$fixture_receipt")
+  fixture_h3_port=$(jq -er '.h3_port' "$fixture_receipt")
+  jq -e --arg spki "$fixture_spki" '
+    .schema_version == 1 and .disposable_only == true and
+    .tls_mode == "private-ca-spki" and
+    .required_chromium_switch == ("--ignore-certificate-errors-spki-list=" + $spki)
+  ' "$fixture_receipt" >/dev/null
+  [[ "$fixture_host" == lm.tail0168aa.ts.net && "$fixture_h2_port" == 44723 &&
+      "$fixture_h3_port" == 44724 && "$fixture_spki" =~ ^[A-Za-z0-9+/]{43}=$ &&
+      "$fixture_cert_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "fixture receipt identity, ports, or fingerprints are invalid" >&2
+    exit 1
+  }
+  [[ -z "$h2" || "$h2" == "https://$fixture_host:$fixture_h2_port/stream/fetch?encoding=identity" ]]
+  [[ -z "$h3" || "$h3" == "https://$fixture_host:$fixture_h3_port/stream/fetch?encoding=identity" ]]
+elif [[ -n "$fixture_receipt" ]]; then
+  echo "fixture receipt is allowed only with a private protocol fixture URL" >&2
+  exit 1
+fi
 
 if [[ "$network_handoff" == wifi-to-cellular && "$serial" == *:* ]]; then
   echo "wifi-to-cellular requires a non-network ADB transport" >&2
@@ -168,6 +213,7 @@ probe_args=(
 )
 [[ -z "$h2" ]] || probe_args+=(--h2 "$h2")
 [[ -z "$h3" ]] || probe_args+=(--h3 "$h3")
+[[ -z "$fixture_spki" ]] || probe_args+=(--fixture-spki "$fixture_spki")
 node "$acceptance/runtime-acceptance/run-cdp-probe.mjs" "${probe_args[@]}" &
 probe_pid=$!
 for _ in $(seq 1 200); do
@@ -184,6 +230,11 @@ done
   printf 'network_handoff=%s\n' "$network_handoff"
   printf 'version_code=%s\n' "$installed_version_code"
   printf 'version_name=%s\n' "$installed_version_name"
+  if [[ -n "$fixture_spki" ]]; then
+    printf 'fixture_spki_sha256_base64=%s\n' "$fixture_spki"
+    printf 'fixture_cert_sha256=%s\n' "$fixture_cert_sha256"
+    printf 'fixture_receipt_sha256=%s\n' "$fixture_receipt_sha256"
+  fi
   printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
 } > "$action_log"
 
@@ -214,9 +265,16 @@ if [[ "$wifi_changed" == true ]]; then
 fi
 printf 'completed_at=%s\n' "$(date --iso-8601=seconds)" >> "$action_log"
 cp "$acceptance/acceptance.env" "$staged/acceptance.env"
+if [[ -n "$fixture_receipt" ]]; then
+  echo "$fixture_receipt_sha256  $fixture_receipt" | sha256sum -c - >/dev/null
+  cp "$fixture_receipt" "$staged/fixture-provenance.json"
+  [[ "$(sha256sum "$staged/fixture-provenance.json" | cut -d' ' -f1)" == \
+      "$fixture_receipt_sha256" ]]
+fi
 (
   cd "$staged"
-  sha256sum result.json actions.env acceptance.env > EVIDENCE_SHA256SUMS
+  find . -maxdepth 1 -type f ! -name EVIDENCE_SHA256SUMS -printf '%f\0' \
+    | sort -z | xargs -0 sha256sum > EVIDENCE_SHA256SUMS
 )
 mv "$staged" "$evidence"
 cleanup

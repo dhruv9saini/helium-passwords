@@ -1,0 +1,51 @@
+{
+	admin off
+	auto_https off
+	servers {$HELIUM_MEDIA_TLS_IP}:{$HELIUM_MEDIA_H2_PORT} {
+		protocols h2
+	}
+	servers {$HELIUM_MEDIA_TLS_IP}:{$HELIUM_MEDIA_H3_PORT} {
+		protocols h2 h3
+	}
+}
+
+https://{$HELIUM_MEDIA_TLS_HOST}:{$HELIUM_MEDIA_H2_PORT} {
+	bind {$HELIUM_MEDIA_TLS_IP}
+	tls {$HELIUM_MEDIA_TLS_CERT} {$HELIUM_MEDIA_TLS_KEY} {
+		protocols tls1.3
+	}
+	header {
+		Cache-Control "no-store, no-transform"
+		-Server
+	}
+	handle /fixture-provenance.json {
+		root * {$HELIUM_MEDIA_RECEIPT_ROOT}
+		file_server
+	}
+	handle {
+		reverse_proxy 127.0.0.1:{$HELIUM_MEDIA_BACKEND_PORT} {
+			flush_interval -1
+		}
+	}
+}
+
+https://{$HELIUM_MEDIA_TLS_HOST}:{$HELIUM_MEDIA_H3_PORT} {
+	bind {$HELIUM_MEDIA_TLS_IP}
+	tls {$HELIUM_MEDIA_TLS_CERT} {$HELIUM_MEDIA_TLS_KEY} {
+		protocols tls1.3
+	}
+	header {
+		Alt-Svc "h3=\":{$HELIUM_MEDIA_H3_PORT}\"; ma=86400"
+		Cache-Control "no-store, no-transform"
+		-Server
+	}
+	handle /fixture-provenance.json {
+		root * {$HELIUM_MEDIA_RECEIPT_ROOT}
+		file_server
+	}
+	handle {
+		reverse_proxy 127.0.0.1:{$HELIUM_MEDIA_BACKEND_PORT} {
+			flush_interval -1
+		}
+	}
+}

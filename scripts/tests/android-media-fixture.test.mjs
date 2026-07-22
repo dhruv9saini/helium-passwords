@@ -9,8 +9,24 @@ import {
   atomicWriteJSON,
   createContentFreeChatGPTTiming,
   runProbe,
+  validateFixtureBrowserCommandLine,
   validateProbeResult,
 } from "../android-media/run-cdp-probe.mjs";
+
+test("private fixture certificate override admits only one exact leaf SPKI", () => {
+  const spki = `${"A".repeat(43)}=`;
+  assert.equal(validateFixtureBrowserCommandLine([
+    "chrome", "--enable-automation", `--ignore-certificate-errors-spki-list=${spki}`,
+  ], spki), `--ignore-certificate-errors-spki-list=${spki}`);
+  assert.throws(() => validateFixtureBrowserCommandLine([
+    "chrome", "--ignore-certificate-errors",
+    `--ignore-certificate-errors-spki-list=${spki}`,
+  ], spki), /only the admitted/);
+  assert.throws(() => validateFixtureBrowserCommandLine([
+    "chrome", `--ignore-certificate-errors-spki-list=${"B".repeat(43)}=`,
+  ], spki), /only the admitted/);
+  assert.throws(() => validateFixtureBrowserCommandLine([], "not-base64"), /fixture SPKI/);
+});
 
 test("streams numbered Fetch chunks progressively for identity, gzip, and Brotli", async t => {
   const fixture = await createFixtureServer({ port: 0, chunks: 4, delayMs: 40 });

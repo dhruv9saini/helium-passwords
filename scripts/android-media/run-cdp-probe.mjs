@@ -7,6 +7,24 @@ import { pathToFileURL } from "node:url";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
+const SPKI_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
+const SPKI_SWITCH = "--ignore-certificate-errors-spki-list=";
+
+export function validateFixtureBrowserCommandLine(argumentsList, expectedSPKI) {
+  if (!SPKI_PATTERN.test(expectedSPKI || "")) {
+    throw new Error("fixture SPKI must be one Base64-encoded SHA-256 fingerprint");
+  }
+  if (!Array.isArray(argumentsList) || argumentsList.some(value => typeof value !== "string")) {
+    throw new Error("browser command line evidence was unavailable");
+  }
+  const admitted = `${SPKI_SWITCH}${expectedSPKI}`;
+  const certificateOverrides = argumentsList.filter(value =>
+    value === "--ignore-certificate-errors" || value.startsWith(SPKI_SWITCH));
+  if (certificateOverrides.length !== 1 || certificateOverrides[0] !== admitted) {
+    throw new Error("browser must use only the admitted disposable fixture SPKI override");
+  }
+  return admitted;
+}
 
 export function createContentFreeChatGPTTiming(options) {
   const allowedFields = new Set([
@@ -251,6 +269,9 @@ export async function runProbe(options) {
     requiredTransportProtocols.push(protocol);
     transportFixtureOrigins[protocol] = endpoint.origin;
   }
+  if (requiredTransportProtocols.length && !SPKI_PATTERN.test(options.fixtureSpki || "")) {
+    throw new Error("private protocol fixtures require their exact leaf SPKI fingerprint");
+  }
   const cdpBase = options.cdp.replace(/\/$/, "");
   const browserInfo = await checkedJSON(`${cdpBase}/json/version`);
   if (!browserInfo.webSocketDebuggerUrl) throw new Error(`no browser CDP target at ${options.cdp}`);
@@ -261,6 +282,13 @@ export async function runProbe(options) {
   let browserContextID = "";
   let page;
   try {
+    let admittedFixtureSwitch = "";
+    if (requiredTransportProtocols.length) {
+      const commandLine = await browser.call("Browser.getBrowserCommandLine", {}, 10000);
+      admittedFixtureSwitch = validateFixtureBrowserCommandLine(
+        commandLine.arguments, options.fixtureSpki,
+      );
+    }
     ({ browserContextId: browserContextID } = await browser.call(
       "Target.createBrowserContext", { disposeOnDetach: true }, 10000,
     ));
@@ -311,6 +339,8 @@ export async function runProbe(options) {
       cdp_origin: cdpURL.origin,
       fixture_origin: fixtureURL.origin,
       transport_fixture_origins: transportFixtureOrigins,
+      fixture_spki_sha256_base64: options.fixtureSpki || "",
+      fixture_certificate_override: admittedFixtureSwitch,
     };
     const result = validateProbeResult(rawResult);
     await atomicWriteJSON(path.resolve(options.output), result);
@@ -480,7 +510,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     } else {
       const allowedArgs = new Set([
         "cdp", "fixture", "output", "h2", "h3", "ready-file",
-        "require-lifecycle", "require-network-handoff",
+        "fixture-spki", "require-lifecycle", "require-network-handoff",
       ]);
       const unexpected = Object.keys(args).filter(name => !allowedArgs.has(name));
       if (unexpected.length) {
@@ -492,6 +522,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         }
       }
       args.readyFile = args["ready-file"];
+      args.fixtureSpki = args["fixture-spki"];
       args.requireLifecycle = args["require-lifecycle"] || "false";
       args.requireNetworkHandoff = args["require-network-handoff"] || "false";
       const result = await runProbe(args);

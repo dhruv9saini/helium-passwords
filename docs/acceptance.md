@@ -245,6 +245,19 @@ warm-up response so the browser can learn the origin's authenticated Alt-Svc
 advertisement; the measured request still must report `h3`. A script action
 alone is not acceptance evidence.
 
+On lm, `scripts/android-media/install-protocol-fixtures.sh verify-live` is a
+mandatory precondition. It requires the explicitly supplied disposable
+private CA, TLS 1.3, exact tailnet-IP binding, no Alt-Svc or UDP listener on the
+HTTP/2-only origin, the
+explicit pinned Alt-Svc port on the HTTP/3 origin, actual curl HTTP versions 2
+and 3, absent `Set-Cookie`, and exact fixture bodies. The admitted endpoints
+are `https://lm.tail0168aa.ts.net:44723/stream/fetch?encoding=identity` and
+`https://lm.tail0168aa.ts.net:44724/stream/fetch?encoding=identity`. The
+fixture receipt's exact SPKI override must be the running `.test` browser's
+only certificate override; the broad ignore-certificate-errors switch and any
+normal package fail before evidence capture. The temporary self-signed runtime
+test proves source behavior only and cannot satisfy this device gate.
+
 After deterministic gates pass, run ChatGPT as a manual end-to-end scenario and
 record only timing/status observations, never conversation content or tokens.
 

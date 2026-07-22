@@ -90,6 +90,15 @@ The carried probe records EME and `com.widevine.alpha` availability separately;
 ordinary codec playback never proves DRM, and protected playback remains
 outside the passing gate until a CDM is deliberately provisioned.
 
+The rootless lm protocol fixture service is enabled with a repository-external
+private CA/leaf and its credential-free HTTP/2-only/HTTP/3 behavior passes lm
+runtime and restart tests. Its non-secret receipt binds the exact leaf SPKI
+override admitted only for a disposable `.test` browser; the device runner
+verifies the effective command line and rejects broad certificate bypasses.
+da passes HTTP/2 and the HTTP/3-origin warm-up but direct HTTP/3 currently
+times out, so device HTTP/3 remains open. `deployment.md` owns the exact health,
+endpoint, receipt, and rollback commands.
+
 ## Tabs
 
 Android tabs remain local. The native tab bridge exports a neutral snapshot for

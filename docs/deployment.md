@@ -136,6 +136,107 @@ that package and a different nonexistent acceptance directory. Both prepared
 directories name the admitted file `Browser-test.apk`; their package identity,
 archive hash, source commit, and composition remain explicit in provenance.
 
+### lm HTTP/2 and HTTP/3 fixture origins
+
+The disposable protocol origins are a separate rootless user service. They
+carry no authentication, cookies, writable application state, request log, or
+personal profile data. The Node backend listens only on loopback. Caddy binds
+only lm's current Tailscale IPv4 on fixed high ports: `44723/tcp` is HTTP/2
+only, while `44724/tcp` and `44724/udp` provide the HTTP/3 origin and its
+explicit Alt-Svc advertisement. Both origins require TLS 1.3 and proxy the
+same delayed deterministic fixture response.
+
+lm does not have Nix installed, so the source installer uses the simpler
+equivalent: the official Caddy `2.11.3` Linux amd64 release pinned by the exact
+archive SHA-256 in `scripts/android-media/protocol-fixture.conf`. It rejects a
+changed three-file archive inventory, records Caddy, Node, fixture-source, and
+asset hashes, and installs inactive under
+`~/.local/share/helium-media-fixtures`. Private endpoint state is mode 0600
+under `~/.local/state/helium-media-fixtures`; no certificate or key enters the
+repository.
+
+Install and verify source without opening a listener:
+
+```sh
+scripts/android-media/install-protocol-fixtures.sh install-source
+scripts/android-media/install-protocol-fixtures.sh verify-source
+CADDY_BIN="$HOME/.local/share/helium-media-fixtures/bin/caddy" \
+  scripts/tests/android-protocol-fixture-runtime.test.sh
+```
+
+The runtime test uses a one-day synthetic certificate in a temporary
+directory, proves HTTP/2, HTTP/3 warm-up/Alt-Svc, direct HTTP/3, TLS 1.3, exact
+chunks, and absent `Server`/`Set-Cookie` headers, then stops both temporary
+processes and removes the certificate. It is source proof, not an
+Android-trusted endpoint.
+
+The live disposable origins use a local, fixture-only P-256 CA and leaf. This
+avoids making tailnet-wide HTTPS administration a prerequisite and does not
+add the CA to any system trust store. Generate both outside the repository,
+verify, and activate with:
+
+```sh
+scripts/android-media/install-protocol-fixtures.sh issue-private-tls
+scripts/android-media/install-protocol-fixtures.sh verify-endpoint
+scripts/android-media/install-protocol-fixtures.sh enable
+scripts/android-media/install-protocol-fixtures.sh verify-live
+```
+
+`issue-private-tls` retains the CA and leaf keys only in a mode-0600 immutable
+generation under `~/.local/state/helium-media-fixtures/tls`. It refuses the
+wrong host, chain, key, SPKI, or less than 24 hours remaining. It also writes a
+non-secret mode-0600 `config/fixture-provenance.json`, served at that path on
+both origins. The receipt binds the leaf certificate SHA-256 and Base64 SPKI
+SHA-256 to the hostname and ports. `enable` refuses occupied TCP and UDP ports
+and disables both units if the ten-second HTTP/2/HTTP/3 health gate fails. The
+gateway waits for the loopback backend before binding. The fixed URLs after
+`verify-live` passes are:
+
+```text
+https://lm.tail0168aa.ts.net:44723/stream/fetch?encoding=identity
+https://lm.tail0168aa.ts.net:44724/stream/fetch?encoding=identity
+```
+
+Inspect or stop the service with one command. Stop preserves every immutable
+source, asset, provenance, and TLS generation:
+
+```sh
+scripts/android-media/install-protocol-fixtures.sh status
+scripts/android-media/install-protocol-fixtures.sh disable
+```
+
+For host probes, supply only the public CA certificate explicitly with
+`--cacert`; never install it as a host root and never copy either private key:
+
+```sh
+ca="$HOME/.local/state/helium-media-fixtures/tls/current/ca-cert.pem"
+curl --http2 --cacert "$ca" \
+  'https://lm.tail0168aa.ts.net:44723/stream/fetch?encoding=identity'
+curl --http3-only --cacert "$ca" \
+  'https://lm.tail0168aa.ts.net:44724/stream/fetch?encoding=identity'
+```
+
+The disposable Android test browser must be launched with the receipt's exact
+`required_chromium_switch`, never the broad `--ignore-certificate-errors`, and
+with its existing test-only automation/CDP switch so the runner can inspect
+the effective browser command line. Pass the same receipt to the runner with
+`--fixture-receipt`. The runner already rejects every normal package, rejects
+a missing/different/multiple certificate override, and stores the receipt and
+hash in evidence. Never put this override into a normal launcher or a global
+Android flag file.
+
+Tailscale's publicly trusted certificate remains an optional later
+simplification. It requires enabling HTTPS for the tailnet and acknowledging
+public Certificate Transparency publication of lm's DNS name; it is not a
+fixture availability requirement.
+
+As of 2026-07-22, the rootless service is enabled and survived restart. lm
+passes HTTP/2, Alt-Svc warm-up, direct HTTP/3, exact-body, receipt, and
+HTTP/2-port direct-QUIC-refusal checks. da passes the private-CA HTTP/2 and
+HTTP/3-origin warm-up checks, but direct HTTP/3 currently times out even though
+lm receives its UDP Initial and sends QUIC replies. Do not claim the da or
+Android HTTP/3 gate until that return-path/device-client issue is resolved.
+
 After the test package is explicitly installed and launched on disposable
 oneplus state with its test-only CDP socket enabled, run the artifact-carried
 device orchestrator from the host connected to that device. Use a new evidence
@@ -150,8 +251,10 @@ serial=ONEPLUS_ADB_SERIAL
 evidence=/srv/nas/helium-acceptance-evidence/JOB/oneplus-sync-N
 "$acceptance/runtime-acceptance/run-device-probe.sh" \
   "$acceptance" "$serial" "$evidence" \
-  --h2 'https://H2_FIXTURE_HOST/stream/fetch?encoding=identity' \
-  --h3 'https://H3_FIXTURE_HOST/stream/fetch?encoding=identity' \
+  --h2 'https://lm.tail0168aa.ts.net:44723/stream/fetch?encoding=identity' \
+  --h3 'https://lm.tail0168aa.ts.net:44724/stream/fetch?encoding=identity' \
+  --fixture-receipt \
+    "$HOME/.local/state/helium-media-fixtures/config/fixture-provenance.json" \
   --background-foreground true \
   --network-handoff wifi-to-cellular
 (cd "$evidence" && sha256sum -c EVIDENCE_SHA256SUMS)

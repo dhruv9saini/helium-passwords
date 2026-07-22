@@ -28,6 +28,9 @@ EOF
   find . -type f ! -name PACKAGE_SHA256SUMS -print0 \
     | sort -z | xargs -0 sha256sum > PACKAGE_SHA256SUMS
 )
+spki=$(printf 'A%.0s' {1..43})=
+printf '{"schema_version":1,"disposable_only":true,"tls_mode":"private-ca-spki","hostname":"lm.tail0168aa.ts.net","h2_port":44723,"h3_port":44724,"leaf_spki_sha256_base64":"%s","leaf_cert_sha256":"%s","required_chromium_switch":"--ignore-certificate-errors-spki-list=%s"}\n' \
+  "$spki" "$(printf 'a%.0s' {1..64})" "$spki" >"$test_root/fixture-provenance.json"
 
 cat > "$test_root/bin/adb" <<'EOF'
 #!/usr/bin/env bash
@@ -74,6 +77,9 @@ export HELIUM_TEST_ADB_LOG="$test_root/adb.log"
 PATH="$test_root/bin:$PATH" \
   "$repo_root/scripts/android-media/run-device-probe.sh" \
   "$acceptance" USB-SERIAL "$test_root/evidence" \
+  --h2 'https://lm.tail0168aa.ts.net:44723/stream/fetch?encoding=identity' \
+  --h3 'https://lm.tail0168aa.ts.net:44724/stream/fetch?encoding=identity' \
+  --fixture-receipt "$test_root/fixture-provenance.json" \
   --background-foreground true --network-handoff wifi-to-cellular \
   > "$test_root/result"
 
@@ -83,6 +89,9 @@ grep -qx 'background_foreground=true' "$test_root/evidence/actions.env"
 grep -qx 'network_handoff=wifi-to-cellular' "$test_root/evidence/actions.env"
 grep -qx 'version_code=787500005' "$test_root/evidence/actions.env"
 grep -qx 'version_name=150.0.7871.181' "$test_root/evidence/actions.env"
+grep -qx "fixture_spki_sha256_base64=$spki" "$test_root/evidence/actions.env"
+grep -Eq '^fixture_receipt_sha256=[0-9a-f]{64}$' "$test_root/evidence/actions.env"
+cmp "$test_root/fixture-provenance.json" "$test_root/evidence/fixture-provenance.json"
 (
   cd "$test_root/evidence"
   sha256sum -c EVIDENCE_SHA256SUMS
@@ -94,6 +103,16 @@ grep -q 'shell svc wifi enable' "$test_root/adb.log"
 grep -q 'shell dumpsys package computer.helium.sync.test' "$test_root/adb.log"
 grep -q 'forward --remove tcp:9222' "$test_root/adb.log"
 grep -q 'reverse --remove tcp:44721' "$test_root/adb.log"
+
+if PATH="$test_root/bin:$PATH" \
+  "$repo_root/scripts/android-media/run-device-probe.sh" \
+  "$acceptance" USB-SERIAL "$test_root/missing-receipt-evidence" \
+  --h2 'https://lm.tail0168aa.ts.net:44723/stream/fetch?encoding=identity' \
+  >"$test_root/missing-receipt.out" 2>&1; then
+  echo 'private fixture without its receipt unexpectedly passed' >&2
+  exit 1
+fi
+grep -q 'require --fixture-receipt' "$test_root/missing-receipt.out"
 
 if PATH="$test_root/bin:$PATH" \
   "$repo_root/scripts/android-media/run-device-probe.sh" \

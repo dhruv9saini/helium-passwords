@@ -1,0 +1,68 @@
+[Unit]
+Description=Helium credential-free HTTP/2 and HTTP/3 fixture origins
+After=network-online.target helium-media-fixture-backend.service
+Wants=network-online.target
+Requires=helium-media-fixture-backend.service
+ConditionPathExists=%h/.local/state/helium-media-fixtures/SYNTHETIC_ONLY
+ConditionPathExists=%h/.local/state/helium-media-fixtures/config/endpoint.env
+ConditionPathExists=%h/.local/state/helium-media-fixtures/tls/current/cert.pem
+ConditionPathExists=%h/.local/state/helium-media-fixtures/tls/current/key.pem
+ConditionPathExists=%h/.local/state/helium-media-fixtures/tls/current/ca-cert.pem
+ConditionPathExists=%h/.local/state/helium-media-fixtures/config/fixture-provenance.json
+ConditionPathExists=%h/.local/share/helium-media-fixtures/bin/caddy
+ConditionPathExists=%h/.local/share/helium-media-fixtures/config/Caddyfile
+ConditionPathExists=%h/.local/share/helium-media-fixtures/runtime/wait-fixture-backend.sh
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.local/state/helium-media-fixtures/config/endpoint.env
+Environment=XDG_DATA_HOME=%t/helium-media-fixtures/caddy-data
+Environment=XDG_CONFIG_HOME=%t/helium-media-fixtures/caddy-config
+RuntimeDirectory=helium-media-fixtures
+RuntimeDirectoryMode=0700
+ExecStartPre=%h/.local/share/helium-media-fixtures/runtime/wait-fixture-backend.sh
+ExecStartPre=%h/.local/share/helium-media-fixtures/bin/caddy validate --config %h/.local/share/helium-media-fixtures/config/Caddyfile --adapter caddyfile
+ExecStart=%h/.local/share/helium-media-fixtures/bin/caddy run --config %h/.local/share/helium-media-fixtures/config/Caddyfile --adapter caddyfile
+ExecReload=%h/.local/share/helium-media-fixtures/bin/caddy reload --config %h/.local/share/helium-media-fixtures/config/Caddyfile --adapter caddyfile --force
+TimeoutStopSec=10s
+Restart=on-failure
+RestartSec=2s
+UMask=0077
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=tmpfs
+BindReadOnlyPaths=%h/.local/share/helium-media-fixtures/bin
+BindReadOnlyPaths=%h/.local/share/helium-media-fixtures/config
+BindReadOnlyPaths=%h/.local/share/helium-media-fixtures/runtime
+BindReadOnlyPaths=%h/.local/state/helium-media-fixtures/config
+BindReadOnlyPaths=%h/.local/state/helium-media-fixtures/tls/current/cert.pem
+BindReadOnlyPaths=%h/.local/state/helium-media-fixtures/tls/current/key.pem
+ProtectHostname=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectProc=invisible
+ProcSubset=pid
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictRealtime=yes
+RestrictAddressFamilies=AF_UNIX AF_INET
+IPAddressDeny=any
+IPAddressAllow=localhost
+IPAddressAllow=100.64.0.0/10
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+MemoryMax=256M
+MemorySwapMax=0
+TasksMax=64
+
+[Install]
+WantedBy=default.target
