@@ -339,11 +339,15 @@ scripts/install-lm-sync-service.sh status
 ```
 
 Activation refuses unless the direct TLS generation matches lm's live
-Tailscale identity, Serve and Funnel are empty, and the backup drill passed.
-After start it makes an authenticated health request through the tailnet
-address; a failure stops and disables the service. Delete neither the
-bootstrap nor any recovery copy until the recorded restore drill passes; move
-them to their documented secure locations.
+Tailscale identity and Serve and Funnel are empty. `enable` does not trust the
+presence of an older receipt: immediately before activation it creates a fresh
+backup generation from the current `/var/lib/helium-sync`, restores that exact
+generation into disposable state, validates the restored registry and opaque
+store, and atomically records the receipt. After start it makes an
+authenticated health request through the tailnet address; a failure stops and
+disables the service. Delete neither the bootstrap nor any recovery copy until
+the recorded restore drill passes; move them to their documented secure
+locations.
 
 ## 5. Join da, then oneplus
 

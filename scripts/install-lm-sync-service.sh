@@ -98,6 +98,32 @@ verify_live_endpoint() {
   }
 }
 
+perform_backup_drill() (
+  [ -s /var/lib/helium-sync/devices.json ] || {
+    echo "server registry is not initialized" >&2
+    exit 1
+  }
+  backup_output=$(sudo /usr/local/libexec/helium-sync-server-backup \
+    backup /srv/nas/helium-sync-server)
+  archive=$(awk -F= '$1 == "archive" {print $2}' <<<"$backup_output")
+  archive_sha=$(awk -F= '$1 == "sha256" {print $2}' <<<"$backup_output")
+  target="/tmp/helium-sync-restore.$(date +%s).$$"
+  cleanup_restore() {
+    case "$target" in
+      /tmp/helium-sync-restore.*) [ ! -e "$target" ] || sudo find "$target" -depth -delete ;;
+    esac
+  }
+  trap cleanup_restore EXIT
+  sudo /usr/local/libexec/helium-sync-server-backup restore-drill \
+    "$archive" "$target" >/dev/null
+  receipt=/srv/nas/helium-sync-server/last-restore-drill.env
+  sudo sh -c 'umask 077; printf "archive=%s\narchive_sha256=%s\nverified_at=%s\n" "$1" "$2" "$3" >"$4.incoming"; sync "$4.incoming"; mv "$4.incoming" "$4"' \
+    sh "$archive" "$archive_sha" "$(date --iso-8601=seconds)" "$receipt"
+  cleanup_restore
+  trap - EXIT
+  echo "backup_restore_drill=passed"
+)
+
 case "$action" in
   install-source)
     temp_dir=$(mktemp -d /tmp/helium-syncd-install.XXXXXX)
@@ -196,29 +222,7 @@ case "$action" in
     echo "initialized=inactive"
     ;;
   backup-drill)
-    [ -s /var/lib/helium-sync/devices.json ] || {
-      echo "server registry is not initialized" >&2
-      exit 1
-    }
-    backup_output=$(sudo /usr/local/libexec/helium-sync-server-backup \
-      backup /srv/nas/helium-sync-server)
-    archive=$(awk -F= '$1 == "archive" {print $2}' <<<"$backup_output")
-    archive_sha=$(awk -F= '$1 == "sha256" {print $2}' <<<"$backup_output")
-    target="/tmp/helium-sync-restore.$(date +%s).$$"
-    cleanup_restore() {
-      case "$target" in
-        /tmp/helium-sync-restore.*) [ ! -e "$target" ] || sudo find "$target" -depth -delete ;;
-      esac
-    }
-    trap cleanup_restore EXIT
-    sudo /usr/local/libexec/helium-sync-server-backup restore-drill \
-      "$archive" "$target" >/dev/null
-    receipt=/srv/nas/helium-sync-server/last-restore-drill.env
-    sudo sh -c 'umask 077; printf "archive=%s\narchive_sha256=%s\nverified_at=%s\n" "$1" "$2" "$3" >"$4.incoming"; sync "$4.incoming"; mv "$4.incoming" "$4"' \
-      sh "$archive" "$archive_sha" "$(date --iso-8601=seconds)" "$receipt"
-    cleanup_restore
-    trap - EXIT
-    echo "backup_restore_drill=passed"
+    perform_backup_drill
     ;;
   verify-endpoint)
     verify_endpoint
@@ -234,11 +238,8 @@ case "$action" in
       echo "server registry is not initialized" >&2
       exit 1
     }
-    [ -s /srv/nas/helium-sync-server/last-restore-drill.env ] || {
-      echo "server backup restore drill has not passed" >&2
-      exit 1
-    }
     verify_endpoint >/dev/null
+    perform_backup_drill >/dev/null
     sudo systemctl enable --now helium-syncd.service
     if ! verify_live_endpoint; then
       sudo systemctl disable --now helium-syncd.service

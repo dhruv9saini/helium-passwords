@@ -118,5 +118,12 @@ if grep -Fq 'tailscale serve --bg' "$repo_root/scripts/install-lm-sync-service.s
   echo "operator still attempts external Tailscale Serve configuration" >&2
   exit 1
 fi
+grep -Fq 'perform_backup_drill >/dev/null' \
+  "$repo_root/scripts/install-lm-sync-service.sh"
+if grep -Fq '[ -s /srv/nas/helium-sync-server/last-restore-drill.env ]' \
+  "$repo_root/scripts/install-lm-sync-service.sh"; then
+  echo "activation still trusts a stale or unrelated restore receipt" >&2
+  exit 1
+fi
 
 echo "lm_sync_operator=passed"
