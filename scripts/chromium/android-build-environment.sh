@@ -43,9 +43,10 @@ verify_environment() {
 
   local expected_keys actual_keys
   expected_keys=$(printf '%s\n' \
-    chromium_commit closure_bytes closure_sha256 nix_environment nix_version \
-    nixpkgs_commit post_realise_floor_bytes realise_budget_bytes \
-    realise_consumed_bytes realise_start_gate_bytes root_end_available_bytes \
+    chromium_commit closure_bytes closure_sha256 environment_source_sha256 \
+    nix_derivation nix_environment nix_version nixpkgs_commit \
+    post_realise_floor_bytes realise_budget_bytes realise_consumed_bytes \
+    realise_start_gate_bytes root_end_available_bytes \
     root_start_available_bytes | sort)
   actual_keys=$(cut -d= -f1 "$nix_file" | sort)
   [[ "$actual_keys" == "$expected_keys" ]] || {
@@ -55,22 +56,42 @@ verify_environment() {
 
   local nix_environment closure_sha256 closure_bytes chromium_commit
   local nixpkgs_commit nix_version start_available end_available consumed
-  local budget post_floor start_gate
+  local budget post_floor start_gate environment_source_sha256 nix_derivation
+  local expected_environment_source_sha256
   nix_environment=$(metadata nix_environment "$nix_file")
   closure_sha256=$(metadata closure_sha256 "$nix_file")
   closure_bytes=$(metadata closure_bytes "$nix_file")
   chromium_commit=$(metadata chromium_commit "$nix_file")
   nixpkgs_commit=$(metadata nixpkgs_commit "$nix_file")
   nix_version=$(metadata nix_version "$nix_file")
+  environment_source_sha256=$(metadata environment_source_sha256 "$nix_file")
+  nix_derivation=$(metadata nix_derivation "$nix_file")
   start_available=$(metadata root_start_available_bytes "$nix_file")
   end_available=$(metadata root_end_available_bytes "$nix_file")
   consumed=$(metadata realise_consumed_bytes "$nix_file")
   budget=$(metadata realise_budget_bytes "$nix_file")
   post_floor=$(metadata post_realise_floor_bytes "$nix_file")
   start_gate=$(metadata realise_start_gate_bytes "$nix_file")
+  expected_environment_source_sha256=$(
+    sha256sum "$repo_root/chromium/nix/chromiumer-shell.nix" | awk '{ print $1 }'
+  )
 
-  [[ "$nix_environment" =~ ^/nix/store/[a-z0-9]{32}-helium-chromium-150-env$ ]]
-  [[ "$closure_sha256" =~ ^[0-9a-f]{64}$ ]]
+  [[ "$nix_environment" =~ ^/nix/store/[a-z0-9]{32}-helium-chromium-150-env$ ]] || {
+    echo "Chromiumer Nix environment path is invalid" >&2
+    exit 1
+  }
+  [[ "$nix_derivation" =~ ^/nix/store/[a-z0-9]{32}-helium-chromium-150-env\.drv$ ]] || {
+    echo "Chromiumer Nix derivation path is invalid" >&2
+    exit 1
+  }
+  [[ "$closure_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "Chromiumer Nix closure hash is invalid" >&2
+    exit 1
+  }
+  [[ "$environment_source_sha256" == "$expected_environment_source_sha256" ]] || {
+    echo "Chromiumer Nix expression hash does not match this source tree" >&2
+    exit 1
+  }
   [[ "$chromium_commit" == "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]]
   [[ "$nixpkgs_commit" == "$HELIUM_ANDROID_NIXPKGS_COMMIT" ]]
   [[ "$nix_version" == nix\ \(Nix\)\ * && "$nix_version" != *$'\n'* ]]

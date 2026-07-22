@@ -7,6 +7,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 test_root=$(mktemp -d /tmp/helium-android-environment-test.XXXXXX)
 cleanup() { find "$test_root" -depth -delete; }
 trap cleanup EXIT
+nix_source_sha256=$(sha256sum "$repo_root/chromium/nix/chromiumer-shell.nix" | awk '{ print $1 }')
 
 cat > "$test_root/chromiumer-nix.env" <<EOF
 nix_environment=/nix/store/00000000000000000000000000000000-helium-chromium-150-env
@@ -15,6 +16,8 @@ closure_bytes=10737418240
 chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT
 nixpkgs_commit=$HELIUM_ANDROID_NIXPKGS_COMMIT
 nix_version=nix (Nix) 2.33.0
+environment_source_sha256=$nix_source_sha256
+nix_derivation=/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-helium-chromium-150-env.drv
 root_start_available_bytes=139586437120
 root_end_available_bytes=118111600640
 realise_consumed_bytes=21474836480
@@ -34,5 +37,27 @@ if "$repo_root/scripts/chromium/android-build-environment.sh" verify "$test_root
   exit 1
 fi
 grep -q 'capacity arithmetic' "$test_root/rejected.out"
+sed -i 's/realise_start_gate_bytes=128849018879/realise_start_gate_bytes=128849018880/' \
+  "$test_root/chromiumer-nix.env"
+
+sed -i "s/environment_source_sha256=$nix_source_sha256/environment_source_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/" \
+  "$test_root/chromiumer-nix.env"
+if "$repo_root/scripts/chromium/android-build-environment.sh" verify "$test_root" \
+  > "$test_root/rejected-source.out" 2>&1; then
+  echo "foreign Chromiumer Nix expression hash unexpectedly passed" >&2
+  exit 1
+fi
+grep -q 'expression hash does not match' "$test_root/rejected-source.out"
+sed -i "s/environment_source_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/environment_source_sha256=$nix_source_sha256/" \
+  "$test_root/chromiumer-nix.env"
+
+sed -i 's#nix_derivation=/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-helium-chromium-150-env.drv#nix_derivation=/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-foreign-env.drv#' \
+  "$test_root/chromiumer-nix.env"
+if "$repo_root/scripts/chromium/android-build-environment.sh" verify "$test_root" \
+  > "$test_root/rejected-derivation.out" 2>&1; then
+  echo "foreign Chromiumer Nix derivation unexpectedly passed" >&2
+  exit 1
+fi
+grep -q 'derivation path is invalid' "$test_root/rejected-derivation.out"
 
 echo 'Android build environment provenance passed'
