@@ -104,46 +104,11 @@ setup_depot_tools() {
     git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$workspace/depot_tools"
   fi
   export PATH="$workspace/depot_tools:$PATH"
-  configure_git_cache_pack_memory
-}
-
-configure_git_cache_pack_memory() {
-  # Chromium's local depot_tools cache serves clones through upload-pack. Bound
-  # its pack working sets well below chromiumer's 4 GiB MemoryHigh; the values
-  # are command-scoped for newly-created mirrors and persisted in every
-  # existing bare cache repository before gclient can serve from it.
-  export GIT_CONFIG_COUNT=4
-  export GIT_CONFIG_KEY_0=pack.threads
-  export GIT_CONFIG_VALUE_0=1
-  export GIT_CONFIG_KEY_1=pack.windowMemory
-  export GIT_CONFIG_VALUE_1=128m
-  export GIT_CONFIG_KEY_2=core.deltaBaseCacheLimit
-  export GIT_CONFIG_VALUE_2=64m
-  export GIT_CONFIG_KEY_3=pack.deltaCacheSize
-  export GIT_CONFIG_VALUE_3=64m
-
-  if [[ -z "${GIT_CACHE_PATH:-}" || ! -d "$GIT_CACHE_PATH" ]]; then
-    return
-  fi
-
-  local config
-  while IFS= read -r -d '' config; do
-    if [[ "$(git config --file "$config" --get core.bare || true)" != true ]]; then
-      continue
-    fi
-    git config --file "$config" pack.threads 1
-    git config --file "$config" pack.windowMemory 128m
-    git config --file "$config" core.deltaBaseCacheLimit 64m
-    git config --file "$config" pack.deltaCacheSize 64m
-  done < <(find "$GIT_CACHE_PATH" -mindepth 2 -maxdepth 2 -type f -name config -print0)
 }
 
 gclient_sync() {
-  if [[ -n "$gclient_jobs" ]]; then
-    gclient sync --jobs "$gclient_jobs" "$@"
-  else
-    gclient sync "$@"
-  fi
+  GCLIENT_JOBS="$gclient_jobs" \
+    "$repo_root/scripts/chromium/gclient-sync-direct.sh" "$@"
 }
 
 prepare_helium_dependencies() {

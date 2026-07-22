@@ -80,29 +80,11 @@ grep -Fq 'package_runtime_acceptance "$staging/runtime-acceptance"' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'probe_schema_version=1' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'configure_git_cache_pack_memory' \
+grep -Fq 'gclient-sync-direct.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'GIT_CONFIG_KEY_0=pack.threads' \
+! grep -Fq 'configure_git_cache_pack_memory' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'GIT_CONFIG_VALUE_1=128m' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'GIT_CONFIG_KEY_2=core.deltaBaseCacheLimit' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'GIT_CONFIG_VALUE_2=64m' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'GIT_CONFIG_KEY_3=pack.deltaCacheSize' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'GIT_CONFIG_VALUE_3=64m' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'git config --file "$config" pack.threads 1' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'git config --file "$config" pack.windowMemory 128m' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'git config --file "$config" core.deltaBaseCacheLimit 64m' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'git config --file "$config" pack.deltaCacheSize 64m' \
-  "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'find "$GIT_CACHE_PATH" -mindepth 2 -maxdepth 2' \
+! grep -Fq 'GIT_CONFIG_COUNT' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'show "$sync_commit:scripts/android-media/$source"' \
   "$repo_root/scripts/chromium/build-android-ci.sh"

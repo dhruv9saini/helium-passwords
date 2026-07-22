@@ -273,25 +273,29 @@ passes disk admission with 23.74 GiB of headroom. An empty 100 GiB job requires
 existing SSD therefore supports the bounded proof without repartitioning or an
 OS replacement. A full build remains tight after provisioning the toolchain.
 
-Android source preparation must also leave memory for Git object enumeration,
-not only its configurable delta caches. `build-android-ci.sh` applies the
-following command-scope configuration to gclient and every local-cache
-`upload-pack`, and persists it in existing bare cache repositories:
+Android source preparation does not use depot_tools' local Git mirror.
+`gclient-sync-direct.sh` removes `GIT_CACHE_PATH` and indexed or legacy
+command-scope Git config, then always invokes:
 
 ```text
-pack.threads=1
-pack.windowMemory=128m
-core.deltaBaseCacheLimit=64m
-pack.deltaCacheSize=64m
+gclient sync --cache-dir None [--jobs 2] ...
 ```
 
-Command scope is required because depot_tools rewrites the repository-local
-delta-base value during cache population. These settings bound the explicit
-per-thread and total pack caches to 256 MiB. They do not bound all
-`pack-objects` RSS, so the production cgroup's 4 GiB `MemoryHigh` and 5 GiB
-`MemoryMax` remain mandatory. If `memory.events:high` rises continuously during
-the local clone, record RSS, CPU, I/O progress, and SSH responsiveness; do not
-raise the cgroup limits or job count to hide source-preparation pressure.
+Current depot_tools defines `--cache-dir None` as the explicit override for
+both `GIT_CACHE_PATH` and Git's `cache.cachepath`. Combined with the existing
+`--no-history`, gclient initializes each checkout and performs a shallow fetch
+from its origin. This eliminates the local mirror's
+`upload-pack -> pack-objects` source-preparation path. If an installed gclient
+does not support that contract it rejects the option and the job fails closed.
+
+Do not replace this with `GIT_CONFIG_COUNT` pack settings. Git only processes
+the key/value pairs while the matching count is present, while depot_tools
+also invokes fetch with an explicit `-c core.deltaBaseCacheLimit=2g`, which has
+higher precedence. Live process inspection showed the local `pack-objects`
+child without the count, nine threads, and near-4-GiB RSS; that approach did
+not establish the claimed limits. Direct fetch can still run a receive-side
+`index-pack`, so the production cgroup's 4 GiB `MemoryHigh`, 5 GiB `MemoryMax`,
+two-job ceiling, disk budget, watchdog, and wall deadline all remain mandatory.
 
 Git, Python 3, Docker, and Chromium tools were absent from the normal login
 `PATH`; `nix` is installed. Chromium's current Linux instructions require at
