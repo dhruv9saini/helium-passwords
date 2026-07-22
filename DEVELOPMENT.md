@@ -185,9 +185,15 @@ Dedicated, non-interactive SSH from lm to chromiumer is working. The enforced
 wrapper, health watchdog, immutable source transfer, artifact return, and
 cleanup contract are documented in
 [`docs/chromiumer-builds.md`](docs/chromiumer-builds.md). Every job declares a
-disk budget: use 80 GiB for the bounded compile proof and 100 GiB for a full
-build. The existing SSD passes the bounded-proof disk gate while keeping a
-2 GiB unprivileged root floor in addition to ext4's 5.91 GiB root-only reserve.
+disk budget; that budget is a storage ceiling, not a build-target selector. The
+first public run invokes the complete Linux `chrome` and `chromedriver` targets
+under an 80 GiB ceiling so it either returns the real browser artifact or stops
+before exhausting the host. A 100 GiB ceiling would run the same targets and is
+only a possible larger retry after measured disk evidence and a fresh capacity
+decision. After the Nix realization, the SSD had 20.16 GiB of admission
+headroom at the 80 GiB gate but only 0.16 GiB at the 100 GiB gate. The queued
+run therefore remains at 80 GiB while keeping the independent 2 GiB
+unprivileged root floor in addition to ext4's 5.91 GiB root-only reserve.
 The exact public Linux expression is realized at the expression-hash-named GC
 root `chromium-150-a0820646387c653b`. Its returned provenance binds the current
 expression, Chromium/nixpkgs pins, derivation, output, and complete closure; a

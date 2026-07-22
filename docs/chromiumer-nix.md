@@ -114,9 +114,11 @@ Chromium's current Linux instructions require NixOS users to enter the
 source-provided Nix shell and call for at least 100 GB free space, with more
 than 16 GB RAM highly recommended. Chromiumer has less RAM and only narrowly
 admits the repository's declared build budgets, so successful shell
-realization is not evidence that a full compile will fit. The first validation
-must remain the bounded source/patch and small-target sequence documented in
-`docs/chromiumer-builds.md`.
+realization is not evidence that a full compile will fit. The first public
+validation invokes the complete Linux `chrome` and `chromedriver` targets with
+an 80 GiB job-tree ceiling. That ceiling makes it a capacity measurement; it
+does not turn the command into a small-target build. The exact sequence is
+documented in `docs/chromiumer-builds.md`.
 
 The current realization, provenance return, cleanup, and fresh 80 GiB preflight
 are complete. The serialized Android validation train retains chromiumer until

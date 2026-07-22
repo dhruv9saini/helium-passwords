@@ -57,7 +57,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | Memory | `4G` high, `5G` hard max, `0` swap inside the unit |
 | I/O | weight `10`, Linux idle I/O scheduling class |
 | Processes/threads | `TasksMax=256` |
-| Job tree | explicit per-job allocated-block budget; `80 GiB` is the bounded-proof recommendation and `100 GiB` is the full-build recommendation |
+| Job tree | explicit per-job allocated-block budget; the current full-target measurement uses `80 GiB`, while `100 GiB` is an optional larger ceiling only after a new capacity decision |
 | Root free space | `2 GiB` unprivileged floor, independent of the job budget and checked on `/` |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
 | Watchdog | separate cgroup: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, no swap, idle I/O, nice `15`, and `TasksMax=16` |
@@ -67,9 +67,13 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.
 The budget covers its source, output, temporary files, and redirected caches.
-Use `80` for the first bounded source/compile proof and `100` for a full build;
-these are command choices, not hidden defaults. The harmless wrapper test uses
-`1 GiB`.
+It does not select a Ninja target. The queued public 80 GiB run still invokes
+the platform's complete `chrome` and `chromedriver` targets; if it succeeds,
+the result is the full Linux runtime artifact. It is a capacity-bounded
+full-target attempt, not a small-target compile. `100` permits the identical
+command to allocate 20 GiB more and is appropriate only after an 80 GiB disk
+stop establishes the need and live capacity is reviewed. The harmless wrapper
+test uses `1 GiB`.
 
 The old worker coupled a fixed 100 GiB job ceiling to a fixed 20 GiB free-space
 reserve and consequently required 120 GiB for every production job. The
@@ -165,8 +169,8 @@ scripts/dev.sh check
 git status --short --branch
 
 job=hp-linux-150-passwords-01
-scripts/chromiumer-job.sh preflight 100
-scripts/chromiumer-job.sh stage "$job" 100
+scripts/chromiumer-job.sh preflight 80
+scripts/chromiumer-job.sh stage "$job" 80
 ```
 
 For the private repository, invoke the same inherited wrapper from Sync:
@@ -353,11 +357,16 @@ SSD whose 116 GiB ext4 root filesystem exposed 113,542,557,696 bytes
 there is no separate build mount. The filesystem has 6,347,919,360 additional
 bytes reserved for root.
 
-An empty 80 GiB bounded proof requires 82 GiB on the current shared root and
-passes disk admission with 23.74 GiB of headroom. An empty 100 GiB job requires
-102 GiB and passes current disk admission with only 3.74 GiB of headroom. The
-existing SSD therefore supports the bounded proof without repartitioning or an
-OS replacement. A full build remains tight after provisioning the toolchain.
+At the initial audit, an empty 80 GiB job required 82 GiB on the current shared
+root and passed disk admission with 23.74 GiB of headroom. An empty 100 GiB job
+required 102 GiB and then had only 3.74 GiB of headroom. The later pinned Nix
+realization changed the relevant measured availability to 109,691,019,264
+bytes (102.1577 GiB): 20.1577 GiB above the 80 GiB job's 82 GiB gate, but only
+0.1577 GiB above the 100 GiB job's 102 GiB gate. Both gates retain the same
+independent 2 GiB root floor, but the larger one is operationally brittle on
+this disk. The current full-target attempt therefore uses the 80 GiB ceiling;
+crossing that ceiling is evidence for a new capacity decision, not permission
+to relabel the run or silently retry at 100 GiB.
 
 Git, Python 3, Docker, Podman, and Chromium tools were absent from the normal
 login `PATH`; `nix` is installed. A read-only check on 2026-07-22 reconfirmed
@@ -390,7 +399,8 @@ The remaining build gates are:
    clean its final workspace, and explicitly hand off chromiumer admission.
 2. Re-run `connection` and `preflight 80`; unrelated disk growth can still
    correctly refuse the public job.
-3. Measure the public compile under the existing 5 GiB hard memory cap. Host
+3. Run the complete `chrome` plus `chromedriver` target under that 80 GiB
+   storage ceiling and the existing 5 GiB hard memory cap. Host
    swap cannot help the build because its cgroup has `MemorySwapMax=0`, and
    extra RAM does not raise `MemoryMax=5G`. If the proof hits that cap, record
    the failure before making a separate hardware and cgroup-policy decision.
