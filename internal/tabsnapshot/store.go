@@ -28,6 +28,7 @@ const (
 type Store struct {
 	root        string
 	generations string
+	quarantine  string
 }
 
 func Open(root string) (*Store, error) {
@@ -39,10 +40,13 @@ func Open(root string) (*Store, error) {
 		return nil, fmt.Errorf("resolve snapshot root: %w", err)
 	}
 	generations := filepath.Join(abs, "generations")
-	if err := os.MkdirAll(generations, 0700); err != nil {
-		return nil, fmt.Errorf("create generations directory: %w", err)
+	quarantine := filepath.Join(abs, "quarantine")
+	for _, directory := range []string{generations, quarantine} {
+		if err := os.MkdirAll(directory, 0700); err != nil {
+			return nil, fmt.Errorf("create snapshot directory: %w", err)
+		}
 	}
-	return &Store{root: abs, generations: generations}, nil
+	return &Store{root: abs, generations: generations, quarantine: quarantine}, nil
 }
 
 func (store *Store) Capture(request CaptureRequest) (Manifest, error) {
@@ -283,6 +287,44 @@ func (store *Store) Restore(generation string, destination string) error {
 	return nil
 }
 
+// Quarantine atomically removes a suspect generation from retention and
+// restore consideration without deleting any bytes. It is intentionally
+// explicit: validation failures stop retention until an operator preserves
+// the suspect generation here or repairs the underlying storage.
+func (store *Store) Quarantine(generation string, reason string) (string, error) {
+	if !validGenerationID(generation) {
+		return "", errors.New("invalid generation id")
+	}
+	if !validSlug(reason) {
+		return "", errors.New("quarantine reason must be a short slug")
+	}
+	source := filepath.Join(store.generations, generation)
+	info, err := os.Stat(source)
+	if err != nil {
+		return "", fmt.Errorf("inspect quarantine source: %w", err)
+	}
+	if !info.IsDir() {
+		return "", errors.New("quarantine source is not a generation directory")
+	}
+	random := make([]byte, 8)
+	if _, err := io.ReadFull(rand.Reader, random); err != nil {
+		return "", fmt.Errorf("generate quarantine id: %w", err)
+	}
+	name := time.Now().UTC().Format("20060102T150405.000000000Z") + "-" +
+		generation + "-" + reason + "-" + hex.EncodeToString(random)
+	destination := filepath.Join(store.quarantine, name)
+	if err := os.Rename(source, destination); err != nil {
+		return "", fmt.Errorf("quarantine generation: %w", err)
+	}
+	if err := syncDirectory(store.generations); err != nil {
+		return "", err
+	}
+	if err := syncDirectory(store.quarantine); err != nil {
+		return "", err
+	}
+	return destination, nil
+}
+
 func ValidateSession(session Session) error {
 	if session.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("unsupported session schema %d", session.SchemaVersion)
@@ -371,6 +413,20 @@ func validGenerationID(value string) bool {
 	}
 	_, err := generationTime(value)
 	return err == nil
+}
+
+func validSlug(value string) bool {
+	if len(value) == 0 || len(value) > 64 {
+		return false
+	}
+	for index, character := range value {
+		if character >= 'a' && character <= 'z' || character >= '0' && character <= '9' ||
+			index > 0 && (character == '.' || character == '_' || character == '-') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func generationTime(value string) (time.Time, error) {

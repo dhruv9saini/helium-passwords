@@ -2,6 +2,7 @@ package tabsnapshot
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,6 +84,41 @@ func TestMalformedNewestManifestAlsoRefusesRetention(t *testing.T) {
 	}
 }
 
+func TestQuarantinePreservesCorruptGenerationAndUnblocksRetention(t *testing.T) {
+	store := openTestStore(t)
+	previous, err := store.Capture(testCapture(time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	suspect, err := store.Capture(testCapture(time.Date(2026, 7, 21, 13, 0, 0, 0, time.UTC), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	suspectSession := filepath.Join(store.generations, suspect.Generation, sessionFile)
+	if err := os.WriteFile(suspectSession, []byte("corrupt but preserved\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	quarantined, err := store.Quarantine(suspect.Generation, "checksum-mismatch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(quarantined, sessionFile)); err != nil {
+		t.Fatalf("quarantined bytes were not preserved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(store.generations, suspect.Generation)); !os.IsNotExist(err) {
+		t.Fatalf("suspect generation remained active: %v", err)
+	}
+	if _, err := store.Validate(previous.Generation); err != nil {
+		t.Fatalf("previous known-good generation was damaged: %v", err)
+	}
+	if _, err := store.PlanRetention(); err != nil {
+		t.Fatalf("explicit quarantine did not unblock retention: %v", err)
+	}
+	if _, err := store.Quarantine(previous.Generation, "Bad Reason"); err == nil {
+		t.Fatal("unsafe quarantine reason was accepted")
+	}
+}
+
 func TestRetentionKeepsProtectedAndNeverDeletesLastValidGeneration(t *testing.T) {
 	store := openTestStore(t)
 	capturedAt := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
@@ -123,6 +159,42 @@ func TestRetentionKeepsProtectedAndNeverDeletesLastValidGeneration(t *testing.T)
 	}
 	if _, err := store.Validate(protected.Generation); err != nil {
 		t.Fatalf("protected generation was not retained: %v", err)
+	}
+}
+
+func TestRetentionBucketLimitsAreExact(t *testing.T) {
+	newest := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
+	items := make([]Generation, 0, 120*24)
+	for hoursAgo := 0; hoursAgo < 120*24; hoursAgo++ {
+		captured := newest.Add(-time.Duration(hoursAgo) * time.Hour)
+		items = append(items, Generation{
+			Manifest: Manifest{
+				Generation: fmt.Sprintf("generation-%04d", hoursAgo),
+				CapturedAt: captured,
+			},
+			Valid: true,
+		})
+	}
+	tests := []struct {
+		name   string
+		limit  int
+		bucket func(time.Time) string
+	}{
+		{"hourly", 24, func(value time.Time) string { return value.UTC().Format("2006-01-02T15") }},
+		{"daily", 14, func(value time.Time) string { return value.UTC().Format("2006-01-02") }},
+		{"weekly", 12, func(value time.Time) string {
+			year, week := value.UTC().ISOWeek()
+			return fmt.Sprintf("%04d-W%02d", year, week)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			keep := make(map[string]struct{})
+			selectBuckets(items, keep, test.limit, test.bucket)
+			if len(keep) != test.limit {
+				t.Fatalf("selected %d buckets, want %d", len(keep), test.limit)
+			}
+		})
 	}
 }
 

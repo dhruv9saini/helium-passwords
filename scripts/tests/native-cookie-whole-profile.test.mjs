@@ -69,6 +69,23 @@ test("fresh profiles never merge unknown local and remote sessions", () => {
   }), { action: "apply" });
 });
 
+test("pending cookie enrollment records a verified baseline and publishes zero mutations", () => {
+  const pendingStart = cookie.indexOf('if (client_->enrollment_phase() == "pending")');
+  const pendingEnd = cookie.indexOf("if (!FinishVerifiedInventory())", pendingStart);
+  const pendingBranch = cookie.slice(pendingStart, pendingEnd);
+  assert.ok(pendingStart >= 0 && pendingEnd > pendingStart);
+  assert.match(pendingBranch, /baseline_cookie_fingerprint/);
+  assert.match(pendingBranch, /FinishVerifiedInventory\(\)/);
+  assert.doesNotMatch(pendingBranch, /client_->Push/);
+
+  const finishStart = cookie.indexOf("bool FinishVerifiedInventory()");
+  const finishEnd = cookie.indexOf("void BeginRemoteApply", finishStart);
+  const finish = cookie.slice(finishStart, finishEnd);
+  assert.match(finish, /AcknowledgeApplied\(pending_next_seq_/);
+  assert.match(finish, /verified_baseline_callback_\.Run\(state_\.verified_sequence\)/);
+  assert.doesNotMatch(finish, /CompleteEnrollment/);
+});
+
 test("ambiguous and confirmed publications cannot create an echo loop", () => {
   const state = {
     ...baseline,

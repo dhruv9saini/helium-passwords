@@ -147,18 +147,23 @@ adapter; arbitrary application databases will never be live-merged.
 
 The browser tab bridge exports a bounded neutral snapshot outside the profile
 using create-new, fsync, and atomic rename. `helium-tabs` validates checksums,
-commits immutable generations, quarantines corruption, applies retention
-without deleting the last known-good copy, and restores only to a nonexistent
-disposable state directory.
+commits immutable generations, explicitly quarantines corruption without
+deletion, applies 24-hourly/14-daily/12-weekly retention without deleting the
+last known-good copy, and restores only to a nonexistent disposable state
+directory.
 
-Every source device runs its own scheduler. One validated generation is age
-encrypted to at least two distinct recipients and copied to exactly two
-off-source hosts with incoming-file verification and atomic promotion.
-Repositories are namespaced by source device and profile and are never merged.
-For d and oneplus the planned destinations are lm NAS and da. For da they are
-lm NAS and d. Local Chromium recovery and local generations are extra layers,
-not either off-device copy. Recovery identities stay outside all source and
-destination stores.
+Every source device runs its own hostname-bound scheduler and device-specific
+age key namespace. One validated generation is encrypted to at least two
+distinct recovery recipients and copied to exactly two off-source hosts with
+incoming-file verification and atomic promotion. The enforced topology is lm's
+separately mounted NAS plus da for d and oneplus, and lm's NAS plus d for da.
+A durable health proof binds the current generation, configuration, key
+namespace, topology, and both verified remote hashes. A fleet audit rejects
+recipient reuse across device configs. Repositories are namespaced by source
+device and profile and are never opened or merged on a different device. Local
+Chromium recovery and local generations are extra layers, not either
+off-device copy. Recovery identities stay outside all source and destination
+stores except while explicitly attached for a disposable restore drill.
 
 ## Runtime and build boundaries
 

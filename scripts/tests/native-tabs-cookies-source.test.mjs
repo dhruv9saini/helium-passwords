@@ -81,4 +81,6 @@ test("tab snapshots stay independent of remote-sync credentials and profile file
   assert.ok(tabStart >= 0 && tokenRead > tabStart);
   assert.match(tabs, /profile_->GetPath\(\)\.IsParent\(export_path_\)/);
   assert.doesNotMatch(tabs, /Session_|Tabs_|Login Data|Network\/Cookies/);
+  assert.doesNotMatch(tabs, /HeliumSyncClient|Latest\(|Push\(|AcknowledgeApplied/);
+  assert.doesNotMatch(tabs, /base_url|token|client\.json|syncstore/i);
 });

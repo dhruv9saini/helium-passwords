@@ -25,35 +25,7 @@ valid_generation() {
 }
 
 validate_recipients() {
-    [ -s "${TAB_AGE_RECIPIENTS}" ] || {
-        echo "age recipient file is missing or empty" >&2
-        return 1
-    }
-    local recipient_count
-    recipient_count=$(awk '
-      /^[[:space:]]*($|#)/ { next }
-      /^age1[023456789acdefghjklmnpqrstuvwxyz]{20,}$/ {
-        seen[$1] = 1
-        next
-      }
-      /^ssh-(ed25519|rsa)[[:space:]][A-Za-z0-9+\/=]+([[:space:]].*)?$/ {
-        seen[$1 " " $2] = 1
-        next
-      }
-      { invalid = 1 }
-      END {
-        if (invalid) exit 1
-        for (value in seen) count++
-        print count + 0
-      }
-    ' "${TAB_AGE_RECIPIENTS}") || {
-        echo "age recipient file contains an invalid recipient" >&2
-        return 1
-    }
-    [ "${recipient_count}" -ge 2 ] || {
-        echo "at least two distinct age recipients are required" >&2
-        return 1
-    }
+	tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}" >/dev/null
 }
 
 manifest_value() {
@@ -77,13 +49,9 @@ destination_index() {
 destination_run() {
     local index=$1 command_text
     shift
-    if [ "${TAB_DEST_KINDS[index]}" = local ]; then
-        "$@"
-    else
-        printf -v command_text '%q ' "$@"
-        ssh -o BatchMode=yes -o ConnectTimeout=10 \
-            "${TAB_DEST_SSH[index]}" "${command_text}"
-    fi
+	printf -v command_text '%q ' "$@"
+	ssh -o BatchMode=yes -o ConnectTimeout=10 \
+		"${TAB_DEST_SSH[index]}" "${command_text}"
 }
 
 verify_destination_host() {
@@ -94,6 +62,17 @@ verify_destination_host() {
         echo "destination host identity mismatch for ${TAB_DEST_IDS[index]}" >&2
         return 1
     }
+}
+
+verify_destination_storage() {
+	local index=$1 probe=$2 mount_target
+	[ "${TAB_DEST_ROLES[index]}" = nas ] || return 0
+	mount_target=$(destination_run "${index}" findmnt --target "${probe}" \
+		--noheadings --output TARGET | awk 'NF { print $1; exit }')
+	[ -n "${mount_target}" ] && [ "${mount_target}" != / ] || {
+		echo "destination nas-on-lm is not backed by a separately mounted filesystem" >&2
+		return 1
+	}
 }
 
 destination_namespace() {
@@ -139,8 +118,9 @@ write_backup_manifest() {
     local generation=$1 cipher=$2 snapshot_json=$3 output=$4 temporary
     temporary="${output}.tmp"
     {
-        printf 'schema_version=1\nsource_device=%s\nprofile=%s\n' \
-            "${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}"
+		printf 'schema_version=2\nsource_device=%s\nprofile=%s\nkey_id=%s\n' \
+			"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${TAB_KEY_ID}"
+		printf 'recipients_sha256=%s\n' "$(tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}")"
         printf 'generation=%s\n' "${generation}"
         printf 'cipher_sha256=%s\n' "$(sha256sum "${cipher}" | awk '{ print $1 }')"
         printf 'cipher_size=%s\n' "$(stat -c %s "${cipher}")"
@@ -154,9 +134,12 @@ write_backup_manifest() {
 verify_local_pair() {
     local cipher=$1 backup_manifest=$2 generation=$3 expected_hash
     [ -f "${cipher}" ] && [ -f "${backup_manifest}" ] || return 1
-    [ "$(manifest_value "${backup_manifest}" schema_version)" = 1 ] && \
+	[ "$(manifest_value "${backup_manifest}" schema_version)" = 2 ] && \
         [ "$(manifest_value "${backup_manifest}" source_device)" = "${TAB_SOURCE_DEVICE}" ] && \
         [ "$(manifest_value "${backup_manifest}" profile)" = "${TAB_PROFILE}" ] && \
+		[ "$(manifest_value "${backup_manifest}" key_id)" = "${TAB_KEY_ID}" ] && \
+		[ "$(manifest_value "${backup_manifest}" recipients_sha256)" = \
+			"$(tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}")" ] && \
         [ "$(manifest_value "${backup_manifest}" generation)" = "${generation}" ] || return 1
     expected_hash=$(manifest_value "${backup_manifest}" cipher_sha256)
     [[ "${expected_hash}" =~ ^[a-f0-9]{64}$ ]] && \
@@ -182,7 +165,7 @@ backup_preflight() {
     command -v jq >/dev/null || { echo "jq is unavailable" >&2; return 1; }
     validate_recipients
     local index
-    for index in 0 1; do
+	for index in 0 1; do
         verify_destination_host "${index}"
         local destination_probe=${TAB_DEST_ROOTS[index]}
         if ! destination_run "${index}" test -d "${destination_probe}"; then
@@ -190,18 +173,16 @@ backup_preflight() {
         fi
         destination_run "${index}" test -d "${destination_probe}"
         destination_run "${index}" test -w "${destination_probe}"
+		verify_destination_storage "${index}" "${destination_probe}"
     done
-    printf 'preflight=ok\nsource_device=%s\nprofile=%s\n' "${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}"
+	printf 'preflight=ok\nsource_device=%s\nprofile=%s\nkey_id=%s\n' \
+		"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${TAB_KEY_ID}"
 }
 
 copy_file_to_destination() {
     local index=$1 source_file=$2 incoming=$3
-    if [ "${TAB_DEST_KINDS[index]}" = local ]; then
-        install -m 600 "${source_file}" "${incoming}"
-    else
-        rsync -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' \
-            --archive --chmod=F600 "${source_file}" "${TAB_DEST_SSH[index]}:${incoming}"
-    fi
+	rsync -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' \
+		--archive --chmod=F600 "${source_file}" "${TAB_DEST_SSH[index]}:${incoming}"
 }
 
 copy_to_destination() {
@@ -216,6 +197,7 @@ copy_to_destination() {
     cipher_size=$(manifest_value "${backup_manifest}" cipher_size)
     destination_run "${index}" mkdir -p \
         "${namespace}/generations" "${namespace}/incoming" "${namespace}/quarantine"
+	verify_destination_storage "${index}" "${namespace}"
     available=$(destination_run "${index}" df -PB1 "${namespace}" | awk 'NR == 2 { print $4 }')
     [[ "${available}" =~ ^[0-9]+$ ]] && \
         [ "${available}" -ge "$((cipher_size + TAB_DESTINATION_RESERVE_BYTES))" ] || {
@@ -443,13 +425,9 @@ retention_apply() {
 
 fetch_destination_file() {
     local index=$1 remote_file=$2 local_file=$3
-    if [ "${TAB_DEST_KINDS[index]}" = local ]; then
-        install -m 600 "${remote_file}" "${local_file}"
-    else
-        rsync -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' --archive \
-            "${TAB_DEST_SSH[index]}:${remote_file}" "${local_file}"
-        chmod 600 "${local_file}"
-    fi
+	rsync -e 'ssh -o BatchMode=yes -o ConnectTimeout=10' --archive \
+		"${TAB_DEST_SSH[index]}:${remote_file}" "${local_file}"
+	chmod 600 "${local_file}"
 }
 
 restore_disposable() {
@@ -478,9 +456,12 @@ restore_disposable() {
         "${temporary}/generation.tar.age"
     fetch_destination_file "${index}" "$(destination_manifest "${index}" "${generation}")" \
         "${temporary}/generation.backup.env"
-    [ "$(manifest_value "${temporary}/generation.backup.env" schema_version)" = 1 ] && \
+	[ "$(manifest_value "${temporary}/generation.backup.env" schema_version)" = 2 ] && \
         [ "$(manifest_value "${temporary}/generation.backup.env" source_device)" = "${TAB_SOURCE_DEVICE}" ] && \
         [ "$(manifest_value "${temporary}/generation.backup.env" profile)" = "${TAB_PROFILE}" ] && \
+		[ "$(manifest_value "${temporary}/generation.backup.env" key_id)" = "${TAB_KEY_ID}" ] && \
+		[ "$(manifest_value "${temporary}/generation.backup.env" recipients_sha256)" = \
+			"$(tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}")" ] && \
         [ "$(manifest_value "${temporary}/generation.backup.env" generation)" = "${generation}" ] || {
         echo "backup manifest namespace mismatch" >&2
         return 1
@@ -523,6 +504,7 @@ config_file=$2
 shift 2
 tab_ops_load_config "${config_file}"
 tab_ops_validate_destinations
+tab_ops_require_source_host
 tab_ops_require_absolute age_recipients "${TAB_AGE_RECIPIENTS}"
 tab_ops_require_absolute age_identity "${TAB_AGE_IDENTITY}"
 

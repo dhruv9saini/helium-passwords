@@ -24,6 +24,57 @@ write_status() {
     mv "${temporary}" "${status_file}"
 }
 
+proof_value() {
+	local proof_file=$1 proof_key=$2
+	awk -F= -v key="${proof_key}" \
+		'$1 == key { print substr($0, length(key) + 2); exit }' "${proof_file}"
+}
+
+write_health_proof() {
+	local generation=$1 backup_output=$2 namespace proof_file temporary
+	namespace=$(tab_ops_namespace "${TAB_STATE_ROOT}")
+	proof_file="${namespace}/health-proof.env"
+	temporary="${proof_file}.tmp"
+	{
+		printf 'schema_version=1\nsource_device=%s\nprofile=%s\nkey_id=%s\n' \
+			"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${TAB_KEY_ID}"
+		printf 'generation=%s\nconfig_sha256=%s\nbackup_status_sha256=%s\n' \
+			"${generation}" "$(sha256sum "${config_file}" | awk '{ print $1 }')" \
+			"$(printf '%s\n' "${backup_output}" | sha256sum | awk '{ print $1 }')"
+		printf 'destination_0=%s@%s\ndestination_1=%s@%s\n' \
+			"${TAB_DEST_IDS[0]}" "${TAB_DEST_HOSTS[0]}" \
+			"${TAB_DEST_IDS[1]}" "${TAB_DEST_HOSTS[1]}"
+		printf 'checked_at_epoch=%s\nchecked_at=%s\n' "$(date +%s)" "$(date --iso-8601=seconds)"
+	} >"${temporary}"
+	chmod 600 "${temporary}"
+	mv "${temporary}" "${proof_file}"
+}
+
+verify_health_proof() {
+	local generation=$1 backup_output=$2 namespace proof_file expected_status_hash
+	namespace=$(tab_ops_namespace "${TAB_STATE_ROOT}")
+	proof_file="${namespace}/health-proof.env"
+	[ -f "${proof_file}" ] || { echo 'health_proof=missing'; return 1; }
+	expected_status_hash=$(printf '%s\n' "${backup_output}" | sha256sum | awk '{ print $1 }')
+	[ "$(proof_value "${proof_file}" schema_version)" = 1 ] && \
+		[ "$(proof_value "${proof_file}" source_device)" = "${TAB_SOURCE_DEVICE}" ] && \
+		[ "$(proof_value "${proof_file}" profile)" = "${TAB_PROFILE}" ] && \
+		[ "$(proof_value "${proof_file}" key_id)" = "${TAB_KEY_ID}" ] && \
+		[ "$(proof_value "${proof_file}" generation)" = "${generation}" ] && \
+		[ "$(proof_value "${proof_file}" config_sha256)" = \
+			"$(sha256sum "${config_file}" | awk '{ print $1 }')" ] && \
+		[ "$(proof_value "${proof_file}" backup_status_sha256)" = "${expected_status_hash}" ] && \
+		[ "$(proof_value "${proof_file}" destination_0)" = \
+			"${TAB_DEST_IDS[0]}@${TAB_DEST_HOSTS[0]}" ] && \
+		[ "$(proof_value "${proof_file}" destination_1)" = \
+			"${TAB_DEST_IDS[1]}@${TAB_DEST_HOSTS[1]}" ] || {
+		echo 'health_proof=stale_or_invalid'
+		return 1
+	}
+	cat "${proof_file}"
+	echo 'health_proof=verified'
+}
+
 capture_once() {
     [ -x "${TAB_HELIUM_TABS}" ] || {
         write_status failure helium_tabs_unavailable
@@ -106,6 +157,7 @@ show_status() {
         printf '%s\n' "${backup_output}"
         return 1
     }
+	verify_health_proof "${generation}" "${backup_output}"
     printf '%s\n' "${backup_output}"
 }
 
@@ -118,6 +170,7 @@ cycle() {
         printf '%s\n' "${backup_output}" >&2
         return 1
     fi
+	write_health_proof "${generation}" "${backup_output}"
     write_status healthy two_off_device_copies_committed "${generation}"
     namespace=$(tab_ops_namespace "${TAB_STATE_ROOT}")
     mkdir -p "${namespace}/retention-plans"
@@ -140,6 +193,8 @@ schedule() {
 command_name=$1
 config_file=$2
 tab_ops_load_config "${config_file}"
+tab_ops_validate_destinations
+tab_ops_require_source_host
 case "${command_name}" in
     run-once) capture_once ;;
     cycle) cycle ;;

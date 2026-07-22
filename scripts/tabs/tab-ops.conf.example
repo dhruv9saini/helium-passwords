@@ -1,6 +1,7 @@
 # Paths only. Keep the private age identity outside the repository.
-version=1
+version=2
 source_device=da
+key_id=da-tabs-v1
 profile=default
 snapshot_store=/home/d/.local/share/helium-sync/tab-snapshots/da-default
 state_root=/home/d/.local/state/helium-tab-ops
@@ -9,11 +10,10 @@ exporter=/home/d/.local/libexec/helium-tab-exporter
 browser_version=0.14.7
 chromium_version=148.0.7778.178
 interval_seconds=900
-age_recipients=/home/d/.config/helium-sync/tab-backup-recipients.txt
-age_identity=/run/helium-offline-recovery/tab-backup-identity.txt
+age_recipients=/home/d/.config/helium-sync/tab-backup-da.recipients
+age_identity=/run/helium-offline-recovery/tab-backup-da.identity
 destination_reserve_bytes=1073741824
 
-# Exactly two distinct off-device hosts are required. For da, the second copy
-# is d (or replace d with another genuinely independent host).
-destination=nas-on-lm|ssh|lm|lm|/srv/nas/helium-tab-backups
-destination=d-copy|ssh|d|d|/home/d/.local/share/helium-tab-backups
+# The topology is fixed: da writes ciphertext to the NAS on lm and to d.
+destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-tab-backups
+destination=d-copy|device|ssh|d|d|/home/d/.local/share/helium-tab-backups

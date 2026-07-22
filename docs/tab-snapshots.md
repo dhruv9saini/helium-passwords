@@ -50,6 +50,20 @@ validation, re-plans immediately before deletion, never selects a protected or
 invalid generation, and never removes the last valid generation. Pass
 `--protected` to `capture` only for a known-good restore-drill generation.
 
+After inspecting a suspect generation, preserve and remove it from active
+retention consideration with an explicit quarantine. This is an atomic rename
+inside the store; it never deletes or repairs the suspect bytes:
+
+```sh
+helium-tabs quarantine \
+  --store "$HOME/.local/share/helium-sync/tab-snapshots/d-default" \
+  --generation GENERATION --reason checksum-mismatch
+```
+
+Quarantine is not an automatic response to corruption. An invalid newest
+generation keeps retention blocked until this explicit preservation step or a
+storage repair.
+
 Restore cannot target an existing directory:
 
 ```sh

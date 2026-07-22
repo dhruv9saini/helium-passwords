@@ -10,9 +10,10 @@ only with synthetic exporters.
 ## Source-local scheduler
 
 Copy `scripts/tabs/tab-ops.conf.example` outside the repository, make it mode
-`0600`, and set one source device/profile namespace. One configuration owns
-one store. The store and operation state must remain outside the browser
-profile.
+`0600`, and set one source device/profile namespace. Configuration version 2
+accepts only `d`, `da`, or `oneplus`; `key_id` must be the corresponding
+`DEVICE-tabs-v1`. One configuration owns one store. The store and operation
+state must remain outside the browser profile.
 
 ```sh
 scripts/tabs/tab-snapshot-scheduler.sh run-once "$config"
@@ -33,7 +34,16 @@ generation, discards exporter output, and atomically records a status without
 URLs. `cycle` continues through encryption, both off-device transfers, health,
 and safe retention. `schedule` repeats the full cycle at `interval_seconds`.
 `status` fails unless the snapshot is fresh and both copies of its generation
-match the local ciphertext and manifest hashes.
+match the local ciphertext and manifest hashes. A successful full cycle also
+atomically writes `health-proof.env`. The proof binds the generation, source,
+profile, key namespace, exact destination topology, configuration hash, and
+the verified backup-status hash. `status` rechecks the remote copies and fails
+if this proof is missing, stale, or no longer matches configuration.
+
+Every command verifies that short `uname -n` equals `source_device`. A config
+for d cannot capture, copy, restore, or apply retention on da, oneplus, or lm.
+This is a deployment gate for oneplus: measure or set its hostname before
+enabling the service rather than weakening the check.
 
 For d and da, `scripts/tabs/install-linux-tab-scheduler.sh install CONFIG`
 installs the scripts, config, and constrained systemd user service/timer but
@@ -53,14 +63,39 @@ not create a second profile reader to work around the exporter.
 ## Two encrypted off-device copies
 
 The backup command makes one age ciphertext for the validated generation and
-copies that exact file to exactly two distinct destination hosts. It refuses
-fewer than two distinct, syntactically valid age/SSH recipients, so losing one
-recovery identity does not make every snapshot unreadable. Private identities
-are needed only for an explicit restore: hold them on separate recovery media
-or recovery workstations, not on the source device, lm/NAS destination, d
-destination, or in the repository. `age_identity` may point to a path that is
-intentionally absent during capture/backup and made available only for a
-restore drill.
+copies that exact file to exactly two distinct destination hosts. The topology
+is code-enforced, not merely documented:
+
+| Source | Copy 1 | Copy 2 |
+| --- | --- | --- |
+| d | separately mounted NAS filesystem on lm | da |
+| da | separately mounted NAS filesystem on lm | d |
+| oneplus | separately mounted NAS filesystem on lm | da |
+
+All destinations use noninteractive SSH. The lm destination fails preflight
+and backup if `findmnt` resolves its target to `/`; a directory on lm's system
+disk cannot masquerade as the NAS. No source device or chromiumer can count as
+one of its own copies.
+
+Each device has its own `key_id` and age-recipient file. The normalized
+recipient-set fingerprint is bound into every backup manifest. At least two
+distinct recovery recipients are required so losing one recovery identity does
+not make every snapshot unreadable. Do not reuse recipient sets across source
+devices. Private identities are needed only for an explicit restore: keep them
+on separate recovery media, not persistently on the source, either destination,
+or in the repository. Temporarily attach the matching source-device identity
+only for a restore drill, then remove it. Destination devices hold ciphertext
+only and cannot open or merge another device's tabs.
+
+Before installation, stage the three public-recipient configs on lm and prove
+exact topology and distinct key material without contacting a browser:
+
+```sh
+scripts/tabs/tab-fleet-audit.sh d.conf da.conf oneplus.conf
+```
+
+The audit outputs only device IDs, key IDs, recipient fingerprints, and
+destination IDs; it never prints keys or tab content.
 
 Destination data is namespaced as:
 
@@ -69,9 +104,10 @@ DESTINATION_ROOT/SOURCE_DEVICE/PROFILE/generations/GENERATION.tar.age
 DESTINATION_ROOT/SOURCE_DEVICE/PROFILE/generations/GENERATION.backup.env
 ```
 
-The clear manifest contains only source/profile IDs, generation, ciphertext
-hash/size, snapshot-manifest hash, and time. URLs and tab titles exist only in
-the age ciphertext. Each transfer keeps a configurable free-space reserve,
+The clear manifest contains only source/profile/key IDs, the normalized public
+recipient fingerprint, generation, ciphertext hash/size, snapshot-manifest
+hash, and time. URLs and tab titles exist only in the age ciphertext. Each
+transfer keeps a configurable free-space reserve,
 lands in `incoming`, verifies SHA-256, and then renames into place. Existing
 bytes are never overwritten. A collision or mismatch fails until it is moved
 to quarantine explicitly.
@@ -83,11 +119,9 @@ scripts/tabs/tab-backup.sh quarantine "$config" d-copy GENERATION bad-hash
 scripts/tabs/tab-backup.sh quarantine "$config" local-spool GENERATION bad-hash
 ```
 
-The configuration parser never evaluates shell. It requires exactly two
-different destination host IDs, and rejects either host when it equals the
-source device. Therefore a da configuration cannot count da as either backup;
-the example uses lm/NAS and d. Two directories on lm also cannot masquerade as
-two hosts.
+The configuration parser never evaluates shell. It rejects topology aliases,
+local destinations, the wrong replica device, and either host when it equals
+the source device. Two directories on lm cannot masquerade as two hosts.
 
 ## Retention and recovery
 
@@ -102,7 +136,9 @@ scripts/tabs/tab-backup.sh retention-apply "$config" /new/path/retention.plan
 
 Apply moves both independently verified destination copies into namespaced
 quarantine, then removes the now-redundant source-local ciphertext and applies
-the exact revalidated local snapshot retention plan. It refuses the entire
+the exact revalidated local snapshot retention plan (newest plus 24 hourly,
+14 daily, and 12 weekly buckets, protected snapshots, and invalid snapshots).
+It refuses the entire
 operation unless every local deletion candidate has two healthy copies. This
 bounds the source device's snapshot store and encryption spool while keeping
 two off-device quarantine copies. There is intentionally no automatic
@@ -118,7 +154,20 @@ scripts/tabs/tab-backup.sh restore-to-disposable "$config" \
 The command fetches one copy, verifies the ciphertext, decrypts to a temporary
 directory, rejects any unexpected tar member, revalidates the snapshot through
 `helium-tabs`, and uses its atomic disposable restore. Nothing in this layer
-can promote a restore into a live browser profile.
+can promote a restore into a live browser profile. The wrapper must run on the
+snapshot's source device and cannot open or merge the result into another
+device's browser.
+
+If a local generation itself is corrupt, preserve it explicitly before
+unblocking retention:
+
+```sh
+helium-tabs quarantine --store "$snapshot_store" \
+  --generation GENERATION --reason checksum-mismatch
+```
+
+This atomically moves the entire generation under the store's `quarantine/`
+directory. It never deletes bytes and it never happens automatically.
 
 ## Live readiness audit (2026-07-21)
 
