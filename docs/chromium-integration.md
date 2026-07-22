@@ -107,11 +107,11 @@ packaged provenance. A returned artifact is rejected if those records differ
 from its lock.
 `apply-android-backbone.sh` applies the ordered Helium core series while
 omitting only the mandatory password-disable patch, then applies the two public
-Passwords patches, seven private Sync patches and overlay, Helium
+Passwords patches, eight private Sync patches and overlay, Helium
 transformations/resources, and shared plus Android GN args.
-The current plan contains 310 selected patches: 301 Helium core patches after
+The current plan contains 311 selected patches: 301 Helium core patches after
 deliberately omitting its password-disable patch, two public Passwords
-restorations, and seven private Sync patches. The single-acquisition contract is
+restorations, and eight private Sync patches. The single-acquisition contract is
 source-tested, but the complete apply still needs a prepared checkout and
 compilation on chromiumer.
 

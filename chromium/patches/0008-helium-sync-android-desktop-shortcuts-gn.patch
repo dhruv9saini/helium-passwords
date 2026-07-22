@@ -1,0 +1,19 @@
+diff --git a/chrome/browser/ui/BUILD.gn b/chrome/browser/ui/BUILD.gn
+--- a/chrome/browser/ui/BUILD.gn
++++ b/chrome/browser/ui/BUILD.gn
+@@ -412,7 +412,6 @@ static_library("ui") {
+     "//chrome/browser/ui/webui/family_link_user_internals",
+     "//chrome/browser/ui/webui/net_internals",
+     "//chrome/browser/ui/webui/sanitized_image:sanitized_image_source",
+-    "//chrome/browser/ui/webui/settings:mojo_bindings",
+     "//chrome/browser/ui/webui/sync_internals",
+     "//chrome/browser/ui/webui/translate_internals",
+     "//chrome/browser/ui/webui/version",
+@@ -1480,6 +1479,7 @@ static_library("ui") {
+       "//chrome/browser/bluetooth",
+       "//chrome/browser/browsing_data:constants",
+       "//chrome/browser/custom_handlers",
++      "//chrome/browser/ui/webui/settings:mojo_bindings",
+       "//chrome/browser/device_api",
+       "//chrome/browser/first_party_sets",
+       "//chrome/browser/glic/browser_ui",
