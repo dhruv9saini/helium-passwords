@@ -91,6 +91,7 @@ git -C "$test_root/depot-tools" add mutation-marker
 git -C "$test_root/depot-tools" commit -qm mutation
 mutated_depot_commit=$(git -C "$test_root/depot-tools" rev-parse HEAD)
 git -C "$test_root/depot-tools" checkout -q --detach "$pinned_depot_commit"
+pinned_chromium_commit=d096af1c9e98c45c3596e59620622b1a049bfecb
 
 (
   cd "$test_root/work"
@@ -113,13 +114,15 @@ git -C "$test_root/depot-tools" checkout -q --detach "$pinned_depot_commit"
     GIT_CONFIG_PARAMETERS="'pack.threads'='8'" \
     "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
       "$test_root/depot-tools" "$pinned_depot_commit" \
-      --nohooks --no-history
+      --revision "src@$pinned_chromium_commit" --nohooks --no-history
 )
 
-cat > "$test_root/expected.argv" <<'EOF'
+cat > "$test_root/expected.argv" <<EOF
 sync
 --jobs
 2
+--revision
+src@$pinned_chromium_commit
 --nohooks
 --no-history
 EOF
@@ -218,6 +221,8 @@ grep -qx 'depot_tools checkout does not match android-build.lock' \
   "$test_root/post-mutation.out"
 [[ -e "$test_root/post-mutation-child.env" ]]
 
+# Preserve the private depot pin proof and its measured two-GiB admission
+# contract in addition to the shared one-sync source assertions below.
 grep -Fq 'export DEPOT_TOOLS_UPDATE=0' \
   "$repo_root/scripts/chromium/prove-depot-tools-pin.sh"
 grep -Fq '"$depot_tools/gclient" --version' \
@@ -239,5 +244,28 @@ proof_budget_bytes=$((2 * gib_bytes))
 [[ "$failed_sample_bytes" -gt "$gib_bytes" ]]
 [[ "$retained_tree_bytes" -lt "$proof_budget_bytes" ]]
 [[ "$((proof_budget_bytes - retained_tree_bytes))" -eq 663654400 ]]
+
+source_helper="$repo_root/scripts/chromium/prepare-android-source.sh"
+grep -Fq -- '--revision "src@${chromium_ref}" --nohooks --no-history' \
+  "$source_helper"
+grep -Fq 'actual_chromium_ref=$(git -C "${workspace}/src" rev-parse HEAD)' \
+  "$source_helper"
+grep -Fq '[ "${actual_chromium_ref}" = "${chromium_ref}" ]' \
+  "$source_helper"
+! grep -Fq 'git fetch origin "${chromium_ref}"' "$source_helper"
+! grep -Fq 'git checkout FETCH_HEAD' "$source_helper"
+! grep -Fq -- '--with_branch_heads' "$source_helper"
+! grep -Fq '"revision":' "$source_helper"
+
+source_calls=$(grep -Fc 'gclient-sync-direct.sh"' "$source_helper")
+[[ "$source_calls" -eq 1 ]]
+
+# The shared lock is one source of truth and all three tool/source pins are
+# immutable full hashes.
+# shellcheck source=../../chromium/android-build.lock
+. "$repo_root/chromium/android-build.lock"
+[[ "$HELIUM_ANDROID_CHROMIUM_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ "$HELIUM_ANDROID_CORE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 
 echo 'Android direct source acquisition contract passed'

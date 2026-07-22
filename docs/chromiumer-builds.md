@@ -104,12 +104,16 @@ to ext4's root-only reserve.
 
 The worker measures allocated filesystem blocks rather than apparent file
 sizes. It streams [GNU `find`'s `%b` size directive][gnu-find-blocks] into a
-constant-size sum; `%b` is the allocated space for each entry in
-512-byte blocks. The stream does not retain a path or inode table. Multiple
-directory entries for one hard-linked file are therefore counted more than
-once, which is a conservative early stop rather than an undercount. The ceiling
-is polled, not an ext4 project quota, so a job can briefly cross the budget
-between samples before its cgroup is stopped.
+constant-size sum; `%b` is the allocated space for each entry in 512-byte
+blocks. GNU
+[`-ignore_readdir_race`](https://www.gnu.org/software/findutils/manual/html_node/find_html/Directories.html)
+suppresses only entries that disappear after their parent directory was read,
+which is normal while Git or Ninja mutates a tree. A missing scan root,
+permission error, I/O error, invalid counter output, or any other scan failure
+remains fatal. The stream retains no path or inode table. Multiple directory
+entries for one hard-linked file are counted more than once, a conservative
+early stop rather than an undercount. The ceiling is polled, not an ext4
+project quota, so a job can briefly cross the budget between completed scans.
 
 Admission requires cgroup v2 CPU, memory, I/O, and PID controllers, a running
 user systemd manager, the standard supervision tools, the job's remaining disk
@@ -119,17 +123,23 @@ the pinned tool environment that provides them. Provision that environment
 before a long job so Nix store downloads do not consume the root floor during
 the build. Any failed infrastructure check refuses startup.
 
-The watchdog writes `health.env` every 30 seconds with job-filesystem free
-space, root-filesystem free space, allocated job-tree size and budget,
-available memory, and load. It writes `watchdog-ready.env` only after the first
-complete healthy sample. The build command cannot start before that marker
-exists and the watchdog unit is active. While the command runs, the build
-wrapper checks the independent watchdog unit once per second. A job-budget,
-root-floor, or memory violation stops the entire build cgroup. A watchdog crash,
-OOM kill, unavailable unit, or failed status check also stops the build and
-records terminal `failure` with exit code `125` when no more specific watchdog
-reason exists. The ordinary CPU, memory, task, I/O, and wall-time controls remain
-defense in depth; they are not treated as a substitute for a working watchdog.
+The watchdog runs allocated-block accounting asynchronously. Every supervisor
+second, including while that scan runs and during the 30-second delay before
+the next scan, it takes a fresh `/` free-space reading and a fresh
+`MemAvailable` reading. A root-floor breach stops the build on that check; two
+consecutive low-memory readings stop it on the second check. Disk-budget
+evaluation occurs only after a complete valid scan. `health.env` is then
+atomically replaced with that disk result and the latest filesystem, memory,
+and load readings. Health-file cadence is therefore scan duration plus the
+30-second inter-scan delay, not one second or exactly 30 seconds.
+
+`watchdog-ready.env` is written only after the first complete healthy disk
+scan. The build command waits for that marker and an active watchdog before it
+starts. Its independent wrapper checks the watchdog unit every second while
+the command runs. A failed or unavailable watchdog stops the build even if no
+policy reason was recorded and records terminal failure `125` when no more
+specific reason exists. CPU, memory, task, I/O, and wall-time controls remain
+additional enforced bounds rather than substitutes for the watcher.
 
 ## Immutable Source Transfer
 
@@ -187,8 +197,30 @@ scripts/chromiumer-job.sh start "$job" \
     bash scripts/build.sh linux x86_64
 ```
 
-For Sync Android, pin `CHROMIUM_REF` to an immutable Chromium commit; never use
-the script's moving `main` default for a validation artifact:
+Android source acquisition has one shared backbone entry point:
+
+```sh
+scripts/chromium/prepare-android-source.sh .build/chromium-android
+```
+
+It reads `chromium/android-build.lock`, pins and verifies depot_tools, disables
+depot_tools self-update and its local Git cache, verifies the direct launcher
+before and after execution, and makes exactly one source request:
+
+```text
+gclient sync --jobs 2 --revision src@<locked-full-sha> --nohooks --no-history
+```
+
+The helper then requires Chromium `HEAD` to equal the locked SHA. The locked
+depot_tools parser ignores a `.gclient` solution `revision` key, so the
+command-line revision is the enforced input. Do not prepend a moving-main sync,
+manually fetch and check out the commit, or run a second repair sync. The
+private patch, hooks, GN, build, and packaging phases consume this checkout;
+they do not own another acquisition path. The revision form is documented by
+the [official depot_tools gclient source](https://chromium.googlesource.com/chromium/tools/depot_tools.git/+/HEAD/gclient.py).
+
+`CHROMIUM_REF` may be omitted because the helper uses the lock; if supplied it
+must equal the same full commit:
 
 ```sh
 scripts/chromiumer-job.sh start "$job" \
@@ -197,7 +229,6 @@ scripts/chromiumer-job.sh start "$job" \
     env \
       HELIUM_SYNC_REPO=. \
       GITHUB_WORKSPACE=.build \
-      CHROMIUM_REF=<full-chromium-commit> \
       CHROMIUM_ANDROID_PHASE=all \
       bash scripts/chromium/build-android-ci.sh
 ```
@@ -426,6 +457,50 @@ it separately proves that an explicit cancellation race remains
 Chromium or remote job. Run the harmless detached remote proof again before the
 next Chromium job so the newly installed worker's live unit properties and
 readiness handshake are also retained.
+
+### Android job 06 failure evidence
+
+`hs-android-148-disposable-apk-06` is retained as negative infrastructure
+evidence. Its chromiumer state and journals remain, while its disposable
+workspace was safely cleaned after the verified evidence archive was returned.
+The authoritative copy is
+`/srv/nas/helium-builds/hs-android-148-disposable-apk-06/job06-failure-evidence-v2.tar.xz`,
+SHA-256
+`b6b41e37cca4131b2aced0e0d7a4d6b059303dc008d60430fa26ab4f02ee3062`;
+the cleaned workspace now reports `workspace_bytes=0`. The job ran from
+`2026-07-22T07:26:43Z` through `10:13:04Z` and recorded terminal failure `125`
+with the generic reason `health watchdog exited unexpectedly`. That reason is a
+symptom, not the cause.
+
+The pinned fetch completed at `10:10:21.103Z`. Checkout from moving main
+`407597e9a111c4863bf2b8055cfe20f3d19d2731` to locked
+`d096af1c9e98c45c3596e59620622b1a049bfecb` began one second later. The old
+synchronous allocated-block scan overlapped the checkout and reported four
+paths disappearing between `10:10:32Z` and `10:12:59Z`. Because the copied
+worker used `set -euo pipefail` around an unguarded `find | awk` substitution,
+that expected traversal race terminated the watchdog at `10:13:03.216Z`. The
+one-second supervisor stopped the build at `10:13:04.267Z`.
+
+This was not disk, memory, or compile pressure. The last complete health record
+used `38,281,416,704` bytes under the 80 GiB budget, had
+`72,333,332,480` root bytes available above the 2 GiB floor, and
+`3,020,472,320` memory bytes available above the 1 GiB stop floor. Systemd
+reported watchdog `exit-code`, not `oom-kill`; its 64.3 MiB peak was below the
+128 MiB maximum. Compilation never started, `.build/android-artifacts` was
+empty, `src/out` did not exist, and neither expected archive was present.
+
+Active checkout scans had grown from roughly 128 seconds to 231 seconds and
+later four to five minutes. The old code read root space and memory before each
+blocking scan, evaluated those stale readings afterward, and then slept another
+30 seconds. The asynchronous watcher preserves the independent one-second
+safety checks regardless of scan duration.
+
+Do not resume, reuse, or restage the job 06 ID. The next Chromium attempt must
+use a unique job and the single locked source helper. The recovery worker passed
+constrained job `wrapper-test-20260722-090001`: watchdog ready and health were
+valid, the live cgroup bounds matched policy, and the five-second command
+finished with terminal success and exit `0` after eight seconds. Only that test
+workspace was cleaned; no Chromium command ran.
 
 Re-run the same proof without starting Chromium:
 

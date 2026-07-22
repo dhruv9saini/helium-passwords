@@ -74,7 +74,7 @@ meminfo_bytes() {
 }
 
 disk_usage_bytes() {
-    find "$1" -xdev -printf '%b\n' | \
+    LC_ALL=C find "$1" -xdev -ignore_readdir_race -printf '%b\n' | \
         awk '{ blocks += $1 } END { printf "%.0f\n", blocks * 512 }'
 }
 
@@ -123,7 +123,7 @@ preflight() {
     profile "${profile_name}"
     require_worker_host
 
-    local required=(awk df find flock install ionice journalctl ln nice realpath sha256sum stat systemctl systemd-run tar timeout)
+    local required=(awk df find flock grep install ionice journalctl ln nice realpath sed sha256sum stat systemctl systemd-run tar timeout)
     local tool
     for tool in "${required[@]}"; do
         command -v "${tool}" >/dev/null 2>&1 || {
@@ -131,6 +131,10 @@ preflight() {
             return 1
         }
     done
+    find --version 2>/dev/null | grep -q 'GNU findutils' || {
+        echo "preflight failed: GNU findutils is required" >&2
+        return 1
+    }
 
     [ "$(systemctl --user is-system-running)" = running ] || {
         echo "preflight failed: user systemd manager is not running" >&2
@@ -438,8 +442,9 @@ start_job() {
         --property=OOMPolicy=stop \
         --property="RuntimeMaxSec=$((wall_seconds + 300))" \
         "${worker}" watch "${state_dir}" "${job_root}" "${unit}" \
-        "${disk_budget_bytes}" "${root_floor_bytes}" \
-        "${watchdog_mem_floor_bytes}" "${watchdog_interval}"; then
+            "${disk_budget_bytes}" "${root_floor_bytes}" \
+            "${watchdog_mem_floor_bytes}" "${watchdog_interval}" \
+            "${supervisor_interval}"; then
         record_watchdog_stop "${state_dir}" "health watchdog failed to start"
         systemctl --user stop "${unit}" >/dev/null 2>&1 || true
         echo "failed to create health watchdog; build stopped" >&2
@@ -606,58 +611,139 @@ watch_job() {
     local root_floor=$5
     local mem_floor=$6
     local interval=$7
+    local check_interval=$8
     local low_memory_count=0
+    [[ "${interval}" =~ ^[1-9][0-9]*$ ]] && \
+        [[ "${check_interval}" =~ ^[1-9][0-9]*$ ]] || exit 2
+
+    local scan_result="${state_dir}/disk-usage.result.$$"
+    local scan_error="${state_dir}/disk-usage.error.$$"
+    local scan_status="${state_dir}/disk-usage.status.$$"
+    local scan_status_temp="${scan_status}.tmp"
+    local scan_pid= next_scan_at=0
+
+    cleanup_scan() {
+        trap - EXIT TERM INT
+        if [ -n "${scan_pid}" ] && kill -0 "${scan_pid}" 2>/dev/null; then
+            kill -TERM "${scan_pid}" 2>/dev/null || true
+            wait "${scan_pid}" 2>/dev/null || true
+        fi
+        find "${scan_result}" "${scan_error}" "${scan_status}" \
+            "${scan_status_temp}" -delete 2>/dev/null || true
+    }
+    trap cleanup_scan EXIT
+    trap 'exit 143' TERM INT
+
+    start_scan() {
+        find "${scan_result}" "${scan_error}" "${scan_status}" \
+            "${scan_status_temp}" -delete 2>/dev/null || true
+        (
+            set +e
+            disk_usage_bytes "${work_dir}" >"${scan_result}" 2>"${scan_error}"
+            local result=$?
+            printf '%s\n' "${result}" >"${scan_status_temp}"
+            mv "${scan_status_temp}" "${scan_status}"
+            exit "${result}"
+        ) &
+        scan_pid=$!
+    }
+
+    fail_watchdog() {
+        local reason=$1
+        record_watchdog_stop "${state_dir}" "${reason}"
+        systemctl --user stop "${unit}" >/dev/null 2>&1 || true
+        exit 1
+    }
 
     while systemctl --user --quiet is-active "${unit}"; do
-        local available root_available used memory_available load failure
-        available=$(df -PB1 "${work_dir}" | awk 'NR == 2 { print $4 }')
-        root_available=$(df -PB1 / | awk 'NR == 2 { print $4 }')
-        used=$(disk_usage_bytes "${work_dir}")
-        memory_available=$(meminfo_bytes MemAvailable)
-        load=$(cut -d' ' -f1-3 /proc/loadavg)
-        failure=
+        local available root_available memory_available load used result
+        if ! available=$(df -PB1 "${work_dir}" | awk 'NR == 2 { print $4 }') || \
+            [[ ! "${available}" =~ ^[0-9]+$ ]]; then
+            fail_watchdog "build filesystem availability check failed"
+        fi
+        if ! root_available=$(df -PB1 / | awk 'NR == 2 { print $4 }') || \
+            [[ ! "${root_available}" =~ ^[0-9]+$ ]]; then
+            fail_watchdog "root filesystem availability check failed"
+        fi
+        if ! memory_available=$(meminfo_bytes MemAvailable) || \
+            [[ ! "${memory_available}" =~ ^[0-9]+$ ]]; then
+            fail_watchdog "host available-memory check failed"
+        fi
 
-        if [ "${used}" -gt "${max_bytes}" ]; then
-            failure="job disk budget breached"
-        elif [ "${root_available}" -lt "${root_floor}" ]; then
-            failure="root free-space floor breached"
-        elif [ "${memory_available}" -lt "${mem_floor}" ]; then
+        if [ "${root_available}" -lt "${root_floor}" ]; then
+            fail_watchdog "root free-space floor breached"
+        fi
+        if [ "${memory_available}" -lt "${mem_floor}" ]; then
             low_memory_count=$((low_memory_count + 1))
             if [ "${low_memory_count}" -ge 2 ]; then
-                failure="host available-memory floor breached"
+                fail_watchdog "host available-memory floor breached"
             fi
         else
             low_memory_count=0
         fi
 
-        local temp="${state_dir}/health.env.tmp"
-        {
-            printf 'checked_at=%s\n' "$(date --iso-8601=seconds)"
-            printf 'unit=%s\n' "${unit}"
-            printf 'build_available_bytes=%s\n' "${available}"
-            printf 'root_available_bytes=%s\n' "${root_available}"
-            printf 'workspace_bytes=%s\n' "${used}"
-            printf 'disk_budget_bytes=%s\n' "${max_bytes}"
-            printf 'root_floor_bytes=%s\n' "${root_floor}"
-            printf 'memory_available_bytes=%s\n' "${memory_available}"
-            printf 'load_average=%s\n' "${load}"
-            printf 'status=%s\n' "${failure:-ok}"
-        } >"${temp}"
-        mv "${temp}" "${state_dir}/health.env"
+        if [ -z "${scan_pid}" ] && [ "${SECONDS}" -ge "${next_scan_at}" ]; then
+            start_scan
+        fi
 
-        if [ -n "${failure}" ]; then
-            record_watchdog_stop "${state_dir}" "${failure}"
-            systemctl --user stop "${unit}"
-            exit 1
+        if [ -n "${scan_pid}" ] && [ ! -f "${scan_status}" ] && \
+            ! kill -0 "${scan_pid}" 2>/dev/null; then
+            wait "${scan_pid}" 2>/dev/null || true
+            if [ -s "${scan_error}" ]; then
+                sed 's/^/disk usage scan: /' "${scan_error}" >&2
+            fi
+            fail_watchdog "disk usage scan failed"
         fi
-        if [ ! -e "${state_dir}/watchdog-ready.env" ]; then
-            printf 'watchdog_ready_at=%s\n' "$(date --iso-8601=seconds)" \
-                >"${state_dir}/watchdog-ready.env.tmp"
-            mv "${state_dir}/watchdog-ready.env.tmp" \
-                "${state_dir}/watchdog-ready.env"
+        if [ -n "${scan_pid}" ] && [ -f "${scan_status}" ]; then
+            result=$(<"${scan_status}")
+            if wait "${scan_pid}"; then
+                [ "${result}" = 0 ] || fail_watchdog \
+                    "disk usage scan status was inconsistent"
+            else
+                local wait_result=$?
+                if [ -s "${scan_error}" ]; then
+                    sed 's/^/disk usage scan: /' "${scan_error}" >&2
+                fi
+                [ "${result}" = "${wait_result}" ] || fail_watchdog \
+                    "disk usage scan status was inconsistent"
+                fail_watchdog "disk usage scan failed"
+            fi
+            scan_pid=
+            used=$(<"${scan_result}")
+            [[ "${used}" =~ ^[0-9]+$ ]] || fail_watchdog \
+                "disk usage scan produced invalid output"
+            if [ "${used}" -gt "${max_bytes}" ]; then
+                fail_watchdog "job disk budget breached"
+            fi
+
+            load=$(cut -d' ' -f1-3 /proc/loadavg)
+            local temp="${state_dir}/health.env.tmp"
+            {
+                printf 'checked_at=%s\n' "$(date --iso-8601=seconds)"
+                printf 'unit=%s\n' "${unit}"
+                printf 'build_available_bytes=%s\n' "${available}"
+                printf 'root_available_bytes=%s\n' "${root_available}"
+                printf 'workspace_bytes=%s\n' "${used}"
+                printf 'disk_budget_bytes=%s\n' "${max_bytes}"
+                printf 'root_floor_bytes=%s\n' "${root_floor}"
+                printf 'memory_available_bytes=%s\n' "${memory_available}"
+                printf 'load_average=%s\n' "${load}"
+                printf 'status=ok\n'
+            } >"${temp}"
+            mv "${temp}" "${state_dir}/health.env"
+
+            if [ ! -e "${state_dir}/watchdog-ready.env" ]; then
+                printf 'watchdog_ready_at=%s\n' "$(date --iso-8601=seconds)" \
+                    >"${state_dir}/watchdog-ready.env.tmp"
+                mv "${state_dir}/watchdog-ready.env.tmp" \
+                    "${state_dir}/watchdog-ready.env"
+            fi
+            find "${scan_result}" "${scan_error}" "${scan_status}" -delete
+            next_scan_at=$((SECONDS + interval))
         fi
-        sleep "${interval}"
+        sleep "${check_interval}"
     done
+    cleanup_scan
 }
 
 status_job() {
