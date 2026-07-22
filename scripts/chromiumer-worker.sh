@@ -613,6 +613,7 @@ watch_job() {
     local interval=$7
     local check_interval=$8
     local low_memory_count=0
+    local silent_scan_retry_count=0
     [[ "${interval}" =~ ^[1-9][0-9]*$ ]] && \
         [[ "${check_interval}" =~ ^[1-9][0-9]*$ ]] || exit 2
 
@@ -703,12 +704,30 @@ watch_job() {
                 local wait_result=$?
                 if [ -s "${scan_error}" ]; then
                     sed 's/^/disk usage scan: /' "${scan_error}" >&2
+                    fail_watchdog "disk usage scan failed"
                 fi
                 [ "${result}" = "${wait_result}" ] || fail_watchdog \
                     "disk usage scan status was inconsistent"
-                fail_watchdog "disk usage scan failed"
+                scan_pid=
+                if [ "${silent_scan_retry_count}" -eq 0 ]; then
+                    silent_scan_retry_count=1
+                    local retry_temp="${state_dir}/disk-scan-retry.env.tmp"
+                    {
+                        printf 'retried_at=%s\n' "$(date --iso-8601=seconds)"
+                        printf 'exit_code=%s\n' "${result}"
+                        printf 'reason=silent disk usage scan failure\n'
+                    } >"${retry_temp}"
+                    mv "${retry_temp}" "${state_dir}/disk-scan-retry.env"
+                    find "${scan_result}" "${scan_error}" "${scan_status}" \
+                        -delete 2>/dev/null || true
+                    next_scan_at=${SECONDS}
+                    continue
+                fi
+                fail_watchdog \
+                    "disk usage scan repeatedly failed without diagnostics"
             fi
             scan_pid=
+            silent_scan_retry_count=0
             used=$(<"${scan_result}")
             [[ "${used}" =~ ^[0-9]+$ ]] || fail_watchdog \
                 "disk usage scan produced invalid output"
@@ -760,7 +779,7 @@ status_job() {
         "${job}" "$(systemctl --user is-active "${unit}" 2>/dev/null || true)" \
         "$(systemctl --user is-active "${watch_unit}" 2>/dev/null || true)" \
         "${state_dir}" "${unit}"
-    for file in policy.env watchdog-ready.env health.env result.env terminal.env watchdog-stop.env cancel.env; do
+    for file in policy.env watchdog-ready.env health.env disk-scan-retry.env result.env terminal.env watchdog-stop.env cancel.env; do
         if [ -f "${state_dir}/${file}" ]; then
             printf -- '--- %s ---\n' "${file}"
             cat "${state_dir}/${file}"

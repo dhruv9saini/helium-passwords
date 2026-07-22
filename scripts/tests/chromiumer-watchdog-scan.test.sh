@@ -228,6 +228,14 @@ run_scan_case() {
         disk_usage_bytes() {
             case "${kind}" in
                 healthy) printf '640\n' ;;
+                silent-retry)
+                    if [ ! -e "${case_root}/scan-attempted" ]; then
+                        : >"${case_root}/scan-attempted"
+                        return 7
+                    fi
+                    printf '640\n'
+                    ;;
+                silent-persistent) return 7 ;;
                 disk-budget) printf '1001\n' ;;
                 scan-error)
                     echo 'synthetic non-race find failure' >&2
@@ -249,10 +257,15 @@ run_scan_case() {
     local watcher_pid=$!
     watcher_pids+=("${watcher_pid}")
 
-    if [ "${kind}" = healthy ]; then
+    if [[ "${kind}" == healthy || "${kind}" == silent-retry ]]; then
         wait_for_file "${state_dir}/watchdog-ready.env"
         grep -Fqx 'workspace_bytes=640' "${state_dir}/health.env"
         grep -Fqx 'status=ok' "${state_dir}/health.env"
+        if [ "${kind}" = silent-retry ]; then
+            grep -Fqx 'exit_code=7' "${state_dir}/disk-scan-retry.env"
+            grep -Fqx 'reason=silent disk usage scan failure' \
+                "${state_dir}/disk-scan-retry.env"
+        fi
         find "${active}" -delete
     else
         wait_for_file "${state_dir}/watchdog-stop.env"
@@ -265,7 +278,7 @@ run_scan_case() {
     wait "${watcher_pid}"
     local result=$?
     set -e
-    if [ "${kind}" = healthy ]; then
+    if [[ "${kind}" == healthy || "${kind}" == silent-retry ]]; then
         if [ "${result}" -ne 0 ]; then
             cat "${case_root}/watch.error" >&2
             echo "healthy watcher exited ${result}" >&2
@@ -281,6 +294,9 @@ run_scan_case() {
 }
 
 run_scan_case healthy
+run_scan_case silent-retry
+run_scan_case silent-persistent \
+    'disk usage scan repeatedly failed without diagnostics'
 run_scan_case disk-budget 'job disk budget breached'
 run_scan_case scan-error 'disk usage scan failed'
 grep -Fq 'disk usage scan: synthetic non-race find failure' \
