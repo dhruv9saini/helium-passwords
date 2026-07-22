@@ -11,15 +11,18 @@ fi
 # shellcheck source=/dev/null
 . "$build_config"
 
-[[ "$HELIUM_LINUX_PLATFORM_REF" == 0.12.4.1 ]]
+[[ "$HELIUM_LINUX_PLATFORM_REF" == \
+  9fbdff55283c9275f285c49dc054a1ff38dcdc96 ]]
 [[ "$HELIUM_LINUX_PLATFORM_COMMIT" == \
-  105d2f4d32f863094eaa27789e82ddc3e42f7106 ]]
+  9fbdff55283c9275f285c49dc054a1ff38dcdc96 ]]
 [[ "$HELIUM_LINUX_PLATFORM_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 [[ -z "$HELIUM_PLATFORM_REF" ]]
 
 prepare="$repo_root/scripts/prepare-platform.sh"
 grep -Fq 'actual_platform_commit=$(git -C "${destination}" rev-parse HEAD)' \
   "$prepare"
+grep -Fq 'fetch --depth 1 origin "${platform_ref}"' "$prepare"
+grep -Fq 'checkout --quiet --detach FETCH_HEAD' "$prepare"
 grep -Fq '[ "${actual_platform_commit}" != "${expected_platform_commit}" ]' \
   "$prepare"
 grep -Fq 'platform_commit=${actual_platform_commit}' "$prepare"

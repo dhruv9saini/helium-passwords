@@ -9,15 +9,15 @@ It cannot start a build directly: `run` refuses unless it sees chromiumer,
 `helium-job-*.service` cgroup.
 
 The expression is `chromium/nix/chromiumer-shell.nix`. It uses the exact
-nixpkgs revision and hash selected by Chromium 148.0.7778.178 at commit
-`d096af1c9e98c45c3596e59620622b1a049bfecb`. It adds Helium's Python modules,
+nixpkgs revision and hash selected by Chromium 150.0.7871.181 at commit
+`24b04c927b23c39cf9c5227cc8dc6f64a744c8e9`. It adds Helium's Python modules,
 source-transfer, patch, archive, and provenance tools to Chromium's matching
 NixOS runtime libraries. It deliberately omits Chromium's Google Cloud SDK and
 downloaded clangd bundle because Helium does not use remote execution on
 chromiumer and the host's disk reserve is small.
 
 The expression returns the `buildFHSEnv` derivation, whose output contains
-`bin/helium-chromium-148-env`. It does not return that derivation's `.env`
+`bin/helium-chromium-150-env`. It does not return that derivation's `.env`
 attribute: `.env` is an interactive `nix-shell` helper and `nix-build` refuses
 to realize it.
 
@@ -45,10 +45,10 @@ separate accounting for Nix.
 cd /home/d/coding/helium/helium-passwords
 scripts/chromiumer-job.sh connection
 scripts/chromiumer-job.sh preflight 20
-job=hp-nix-env-148
+job=hp-nix-env-150
 scripts/chromiumer-job.sh stage "$job" 20
 scripts/chromiumer-job.sh start "$job" \
-  --summary "Pinned Chromium 148 Nix environment realization" \
+  --summary "Pinned Chromium 150 Nix environment realization" \
   --next "Fetch its provenance, clean the staging job, and rerun preflight 80." -- \
   bash -c 'scripts/chromiumer-nix.sh check &&
     scripts/chromiumer-nix.sh realise &&
@@ -64,7 +64,7 @@ scripts/chromiumer-job.sh preflight 80
 ```
 
 `realise` refuses direct SSH execution and creates the stable GC root
-`~/.local/state/helium-build-env/chromium-148`; it refuses to replace an
+`~/.local/state/helium-build-env/chromium-150`; it refuses to replace an
 existing root. `provenance` records its resolved store path, complete closure
 hash and size, Nix version, Chromium commit, and nixpkgs commit. Copy that
 output into the build's provenance directory. Do not run `nix-collect-garbage`

@@ -3,10 +3,10 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 environment_file="${repo_root}/chromium/nix/chromiumer-shell.nix"
-environment_root="${HELIUM_CHROMIUMER_NIX_ROOT:-${HOME}/.local/state/helium-build-env/chromium-148}"
+environment_root="${HELIUM_CHROMIUMER_NIX_ROOT:-${HOME}/.local/state/helium-build-env/chromium-150}"
 realise_state="${environment_root}.realise.env"
-expected_chromium_commit=d096af1c9e98c45c3596e59620622b1a049bfecb
-expected_nixpkgs_commit=bd85f316bebe290b96b35ddb5c0be62d1f0c9137
+expected_chromium_commit=24b04c927b23c39cf9c5227cc8dc6f64a744c8e9
+expected_nixpkgs_commit=a793ee3962cf3be3d0e9ed1022147ea9cd34eea9
 future_build_budget_bytes=$((80 * 1024 * 1024 * 1024))
 root_floor_bytes=$((2 * 1024 * 1024 * 1024))
 realise_budget_bytes=$((20 * 1024 * 1024 * 1024))
@@ -143,7 +143,7 @@ provenance() {
     }
     local realised closure_hash closure_bytes
     realised=$(readlink -f "${environment_root}")
-    [ -x "${realised}/bin/helium-chromium-148-env" ] || {
+    [ -x "${realised}/bin/helium-chromium-150-env" ] || {
         echo "realised environment entry point is missing" >&2
         exit 1
     }
@@ -173,7 +173,7 @@ run_environment() {
     realised=$(readlink -f "${environment_root}")
     printf -v command_text '%q ' "$@"
     export HELIUM_NIX_RUN_COMMAND="${command_text}"
-    exec "${realised}/bin/helium-chromium-148-env"
+    exec "${realised}/bin/helium-chromium-150-env"
 }
 
 command_name=${1:-}

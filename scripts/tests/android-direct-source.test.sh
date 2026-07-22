@@ -91,7 +91,7 @@ git -C "$test_root/depot-tools" add mutation-marker
 git -C "$test_root/depot-tools" commit -qm mutation
 mutated_depot_commit=$(git -C "$test_root/depot-tools" rev-parse HEAD)
 git -C "$test_root/depot-tools" checkout -q --detach "$pinned_depot_commit"
-pinned_chromium_commit=d096af1c9e98c45c3596e59620622b1a049bfecb
+pinned_chromium_commit=24b04c927b23c39cf9c5227cc8dc6f64a744c8e9
 
 (
   cd "$test_root/work"
