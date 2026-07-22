@@ -1,0 +1,21 @@
+# Source-only template. The installer names it tab-ops.conf.template; review it
+# and provision public recipients/routes before creating an active config.
+version=2
+source_device=oneplus
+key_id=oneplus-tabs-v1
+profile=default
+snapshot_store=/root/.local/share/helium-sync/tab-snapshots/oneplus-default
+state_root=/root/.local/state/helium-tab-ops
+helium_tabs=/root/.local/bin/helium-tabs
+exporter=/root/.local/libexec/helium-tab-exporter
+browser_export=/root/.local/state/helium-tab-export/latest.json
+browser_export_max_age_seconds=420
+browser_version=0.14.7
+chromium_version=148.0.7778.178
+interval_seconds=900
+age_recipients=/root/.config/helium-sync/tab-backup-oneplus.recipients
+age_identity=/run/helium-offline-recovery/tab-backup-oneplus.identity
+destination_reserve_bytes=1073741824
+
+destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-tab-backups
+destination=da-copy|device|ssh|da|da|/home/d/.local/share/helium-tab-backups

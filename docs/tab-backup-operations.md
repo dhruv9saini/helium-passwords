@@ -66,13 +66,37 @@ preflight and only then enables it. The timer runs one full cycle every 15
 minutes; failed conditions skip the service rather than running a partial
 backup.
 
-Oneplus/Android has no running systemd manager: the current Arch chroot has a
-`systemctl` binary but reports `offline`. `scripts/tabs/oneplus-tab-cycle-service.sh`
-is therefore the disabled source template for the existing Magisk `service.d`
-mechanism. If it is eventually deployed, it exits without starting unless the
-config, `helium-tabs`, exporter, age, and jq already exist inside the chroot.
-No installer or service was deployed or enabled by this repository change. Do
-not create a second profile reader to work around the exporter.
+Oneplus/Android has no running systemd manager and the Arch chroot may have no
+mounted `/proc`. Neither is a scheduler dependency. The source installer places
+only non-overwriting tools, a config template, and a mode-0600 disabled runner
+under the chroot root user's home:
+
+```sh
+HOME=/root scripts/tabs/install-oneplus-tab-scheduler.sh install \
+  scripts/tabs/tab-ops.oneplus.conf.example
+```
+
+It does not install `helium-tabs`, `age`, keys, recipients, an active
+`tab-ops.conf`, an Android `service.d` file, or an enable marker. Re-running it
+against any existing target fails instead of overwriting device work.
+
+`scripts/tabs/oneplus-tab-cycle-service.sh` is the eventual Magisk runner. Even
+if it is copied into `service.d`, its default service command exits without
+doing work unless `/data/adb/helium-tab-ops/enabled-v1` is a root-owned mode-0600
+regular file containing exactly `enabled-v1`. The source installer never
+creates that file.
+
+Each preflight and cycle uses Android's `unshare -u`, sets the isolated UTS
+hostname to exactly `oneplus`, verifies it, and only then enters the chroot.
+Android's global `localhost` hostname is unchanged. `preflight` deliberately
+uses the Magisk path rather than `systemctl`; it reports whether `/proc` happens
+to be mounted but does not require or mount it. The nested backup preflight
+still requires `age`, `jq`, `helium-tabs`, a fresh native export, and both
+authenticated outbound SSH destinations. A future operator must run this
+preflight successfully before separately installing the runner into
+`service.d` and creating the enable marker. No installer or service was
+deployed or enabled by this repository change. Do not create a second profile
+reader to work around the exporter.
 
 ## Two encrypted off-device copies
 
@@ -200,6 +224,11 @@ directory. It never deletes bytes and it never happens automatically.
   `age` and has no running systemd manager. No scheduler or backup service
   should be deployed until age and two noninteractive destination routes are
   present.
+- Its Android and chroot hostname is currently `localhost`. The disabled
+  Magisk runner's isolated UTS namespace supplies `oneplus` only to the backup
+  process, avoiding any global hostname change. Both lm and da resolve and
+  answer TCP/22 from the chroot, but host trust and public-key authorization
+  are not provisioned.
 - The source adapter and native five-minute refresh contract are implemented
   and synthetic-tested. The native bridge still requires a chromiumer compile
   and disposable-profile run before any scheduler is installed or enabled.

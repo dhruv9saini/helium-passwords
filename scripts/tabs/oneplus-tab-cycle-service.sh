@@ -1,20 +1,104 @@
 #!/system/bin/sh
 set -eu
 
-# Source template for /data/adb/service.d. Merely checking this file into the
-# repository does not deploy or start it.
-chroot_root=/data/local/chroots/arch
+# Source template for Magisk service.d. The source installer keeps this file
+# outside service.d and never creates the enable marker.
+android_root=${HELIUM_TAB_ANDROID_ROOT:-}
+system_bin=${android_root}/system/bin
+chroot_root=${android_root}/data/local/chroots/arch
+state_root=${android_root}/data/adb/helium-tab-ops
+enabled_marker=${state_root}/enabled-v1
 config=/root/.config/helium-sync/tab-ops.conf
+backup=/root/.local/libexec/helium-tab-ops/tab-backup.sh
 scheduler=/root/.local/libexec/helium-tab-ops/tab-snapshot-scheduler.sh
 interval_seconds=900
 
-[ -x "${chroot_root}${scheduler}" ] || exit 0
-[ -f "${chroot_root}${config}" ] || exit 0
-chroot "${chroot_root}" /bin/sh -c \
-    'command -v age >/dev/null && command -v jq >/dev/null && test -x /root/.local/bin/helium-tabs && test -x /root/.local/libexec/helium-tab-exporter' \
-    || exit 0
+log_failure() {
+    if [ -x "${system_bin}/log" ]; then
+        "${system_bin}/log" -t helium-tab-cycle "$1"
+    fi
+    printf '%s\n' "$1" >&2
+}
 
-while true; do
-    chroot "${chroot_root}" "${scheduler}" cycle "${config}" >/dev/null 2>&1 || true
-    sleep "${interval_seconds}"
-done
+require_android_boundary() {
+    for binary in unshare sh hostname uname chroot sleep id stat cat; do
+        [ -x "${system_bin}/${binary}" ] || {
+            log_failure "missing Android boundary tool: ${binary}"
+            return 1
+        }
+    done
+    [ "$("${system_bin}/id" -u)" -eq 0 ] || { log_failure 'Helium tabs require Magisk root'; return 1; }
+    [ -d "${chroot_root}" ] || { log_failure 'Arch chroot is missing'; return 1; }
+}
+
+run_in_oneplus_uts() {
+    operation=$1
+    target=$2
+    "${system_bin}/unshare" -u "${system_bin}/sh" -c '
+        system_bin=$1
+        chroot_root=$2
+        target=$3
+        operation=$4
+        config=$5
+        "$system_bin/hostname" oneplus
+        [ "$("$system_bin/uname" -n)" = oneplus ] || exit 1
+        exec "$system_bin/chroot" "$chroot_root" /usr/bin/env -i \
+            HOME=/root USER=root \
+            PATH=/root/.local/bin:/root/.local/libexec:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin \
+            "$target" "$operation" "$config"
+    ' helium-tab-uts "${system_bin}" "${chroot_root}" "${target}" \
+        "${operation}" "${config}"
+}
+
+preflight() {
+    require_android_boundary
+    [ -f "${chroot_root}${config}" ] || {
+        log_failure 'active oneplus tab config is missing'
+        return 1
+    }
+    [ -x "${chroot_root}${backup}" ] && [ -x "${chroot_root}${scheduler}" ] || {
+        log_failure 'oneplus tab operation scripts are missing'
+        return 1
+    }
+
+    # This path is deliberately independent of systemd and /proc. The chroot
+    # may report systemctl=offline and /proc may be absent; neither is invoked
+    # by this Magisk runner. The actual backup preflight checks age, jq,
+    # helium-tabs, the fresh native export, and both outbound SSH destinations.
+    if [ -r "${chroot_root}/proc/self/mountinfo" ]; then
+        printf 'proc=mounted\n'
+    else
+        printf 'proc=not-required\n'
+    fi
+    printf 'scheduler=magisk-service.d\nsystemd=not-used\n'
+    run_in_oneplus_uts preflight "${backup}"
+}
+
+marker_enabled() {
+    [ -f "${enabled_marker}" ] && [ ! -L "${enabled_marker}" ] && \
+        [ "$("${system_bin}/stat" -c %u "${enabled_marker}")" -eq 0 ] && \
+        [ "$("${system_bin}/stat" -c %a "${enabled_marker}")" = 600 ] && \
+        [ "$("${system_bin}/cat" "${enabled_marker}")" = 'enabled-v1' ]
+}
+
+command_name=${1:-service}
+case "${command_name}" in
+    preflight)
+        [ "$#" -eq 1 ] || exit 2
+        preflight
+        ;;
+    service)
+        [ "$#" -eq 0 ] || exit 2
+        marker_enabled || exit 0
+        preflight || exit 1
+        while marker_enabled; do
+            run_in_oneplus_uts cycle "${scheduler}" || \
+                log_failure 'Helium tab cycle failed; previous copies were preserved'
+            "${system_bin}/sleep" "${interval_seconds}"
+        done
+        ;;
+    *)
+        echo 'usage: oneplus-tab-cycle-service.sh [preflight]' >&2
+        exit 2
+        ;;
+esac
