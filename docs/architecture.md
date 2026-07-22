@@ -86,7 +86,11 @@ A join is explicit:
    authorization request.
 2. d verifies the device ID and wraps the current content-key bundle to that
    public key, then signs the envelope with d's Ed25519 seed identity.
-3. lm registers only the device ID and credential hash with `pull` scope.
+3. lm's supervised operator stops the daemon, registers only the device ID and
+   credential hash with `pull` scope, validates the complete registry, restarts
+   the daemon, and waits for direct-TLS health. Offline registry commands are
+   never run against the active daemon because it keeps a validated in-memory
+   registry.
 4. The joining device authenticates d's signature, unwraps locally, and writes
    `client.json` in `pending` phase.
 5. The native password and cookie bridges pull, validate, apply, read back, and
@@ -137,6 +141,17 @@ the CAS-rekeyed tombstone. It also proves that fixture plaintext never reaches
 the server journal. This is protocol and service proof; native prompts,
 settings, suggestions, and autofill still require the returned browser
 artifact and disposable profiles.
+
+The same flow has also run through lm's supervised synthetic TLS endpoint with
+the seed hosted on da and an isolated CLI on the real oneplus Android shell.
+It proved seed create/tombstone, stale create/resurrection rejection, identical
+no-op restart reads with an unchanged journal, pending pull-only joins, exact
+per-device revocation isolation, TLS root enforcement, and a post-mutation NAS
+backup/restore drill. The phone run additionally exposed and verified the
+Android enrollment file-publish requirement: Android uses atomic
+`renameat2(RENAME_NOREPLACE)` because its shell SELinux domain rejects hard
+links in `/data/local/tmp`. This is transport/protocol/CLI evidence, not native
+password UI evidence.
 
 ## Cookie and login-session convergence
 

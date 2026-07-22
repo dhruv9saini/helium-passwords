@@ -499,7 +499,11 @@ func cmdServerEnroll(args []string) error {
 	if err != nil {
 		return err
 	}
-	return registry.EnrollPullOnlyRequest(request)
+	if err := registry.EnrollPullOnlyRequest(request); err != nil {
+		return err
+	}
+	fmt.Printf("registry_updated=enroll:%s\ndaemon_restart_required=true\n", request.DeviceID)
+	return nil
 }
 
 func cmdServerRevoke(args []string) error {
@@ -516,7 +520,11 @@ func cmdServerRevoke(args []string) error {
 	if err != nil {
 		return err
 	}
-	return registry.Revoke(*device)
+	if err := registry.Revoke(*device); err != nil {
+		return err
+	}
+	fmt.Printf("registry_updated=revoke:%s\ndaemon_restart_required=true\n", *device)
+	return nil
 }
 
 func cmdEnrollmentComplete(args []string) error {

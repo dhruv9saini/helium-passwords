@@ -456,13 +456,20 @@ helium-sync seed-wrap \
   --wrapped-file /secure/export/da-wrapped-enrollment.json
 ```
 
-On lm, register only the hash request:
+On lm, register only the hash request through the supervised operator:
 
 ```sh
-sudo -u helium-sync /usr/local/libexec/helium-sync server-enroll \
-  --devices-file /var/lib/helium-sync/devices.json \
-  --auth-request-file /secure/incoming/da-auth-request.json
+scripts/install-lm-sync-service.sh enroll-device \
+  /secure/incoming/da-auth-request.json
 ```
+
+The operator stops the daemon if it is active, changes and validates the
+registry, restarts the daemon, and waits for direct-TLS health. This boundary
+is required: `helium-syncd` holds the validated registry in memory, so running
+the low-level `server-enroll` command against its file while it is active does
+not authorize the device until a restart and can race a server-side registry
+write. Use the corresponding disposable installer action only for the
+synthetic rootless endpoint.
 
 On the join device, use the active key ID recorded in the server bootstrap:
 
@@ -566,11 +573,10 @@ then run `credential-retire` with the newly installed token. Preserve the old
 rollback file until the old credential is proven rejected and the new one has
 survived a restart.
 
-Revoke a lost join on lm with:
+Revoke a lost join on lm through the same stop/change/validate/restart gate:
 
 ```sh
-sudo -u helium-sync /usr/local/libexec/helium-sync server-revoke \
-  --devices-file /var/lib/helium-sync/devices.json --device DEVICE
+scripts/install-lm-sync-service.sh revoke-device DEVICE
 ```
 
 Rekey content after revocation so the revoked device cannot decrypt future

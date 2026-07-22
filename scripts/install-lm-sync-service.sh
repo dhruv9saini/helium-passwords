@@ -135,6 +135,37 @@ perform_backup_drill() (
   echo "backup_restore_drill=passed"
 )
 
+perform_registry_update() (
+  [ -s /var/lib/helium-sync/devices.json ] || {
+    echo "server registry is not initialized" >&2
+    exit 1
+  }
+  was_active=false
+  if systemctl is-active --quiet helium-syncd.service; then
+    sudo systemctl stop helium-syncd.service
+    was_active=true
+  fi
+  restart_service() {
+    if [ "$was_active" = true ]; then
+      sudo systemctl start helium-syncd.service || true
+    fi
+  }
+  trap restart_service EXIT INT TERM
+  sudo -u helium-sync "$sync_cli" "$@"
+  sudo -u helium-sync "$sync_cli" server-verify \
+    --data-dir /var/lib/helium-sync \
+    --devices-file /var/lib/helium-sync/devices.json >/dev/null
+  trap - EXIT INT TERM
+  if [ "$was_active" = true ]; then
+    sudo systemctl start helium-syncd.service
+    if ! wait_live_endpoint; then
+      sudo systemctl stop helium-syncd.service
+      echo "helium-syncd was stopped because the registry reload health gate failed" >&2
+      exit 1
+    fi
+  fi
+)
+
 case "$action" in
   install-source)
     temp_dir=$(mktemp -d /tmp/helium-syncd-install.XXXXXX)
@@ -235,6 +266,25 @@ case "$action" in
   backup-drill)
     perform_backup_drill
     ;;
+  enroll-device)
+    [ "$#" -eq 2 ] && [ -f "$2" ] || {
+      echo "usage: $0 enroll-device /path/to/HASHED_AUTH_REQUEST" >&2
+      exit 2
+    }
+    perform_registry_update server-enroll \
+      --devices-file /var/lib/helium-sync/devices.json \
+      --auth-request-file "$(realpath -e "$2")"
+    echo "device_enrolled=service_reloaded"
+    ;;
+  revoke-device)
+    [ "$#" -eq 2 ] && [ -n "$2" ] || {
+      echo "usage: $0 revoke-device DEVICE" >&2
+      exit 2
+    }
+    perform_registry_update server-revoke \
+      --devices-file /var/lib/helium-sync/devices.json --device "$2"
+    echo "device_revoked=service_reloaded"
+    ;;
   verify-endpoint)
     verify_endpoint
     echo "direct_tls_endpoint=verified"
@@ -265,7 +315,7 @@ case "$action" in
     verify_live_endpoint
     ;;
   *)
-    echo "usage: $0 <install-source|install-endpoint CA CERT KEY|initialize BOOTSTRAP|backup-drill|verify-endpoint|verify-live-endpoint|enable|status>" >&2
+    echo "usage: $0 <install-source|install-endpoint CA CERT KEY|initialize BOOTSTRAP|backup-drill|enroll-device AUTH_REQUEST|revoke-device DEVICE|verify-endpoint|verify-live-endpoint|enable|status>" >&2
     exit 2
     ;;
 esac

@@ -191,6 +191,37 @@ perform_backup_drill() (
   echo "disposable_backup_restore_drill=passed"
 )
 
+perform_registry_update() (
+  require_synthetic_marker
+  [[ -s "$server_root/devices.json" ]] || {
+    echo "synthetic server registry is not initialized" >&2
+    exit 1
+  }
+  was_active=false
+  if systemctl --user is-active --quiet "$service"; then
+    systemctl --user stop "$service"
+    was_active=true
+  fi
+  restart_service() {
+    if [[ "$was_active" == true ]]; then
+      systemctl --user start "$service" || true
+    fi
+  }
+  trap restart_service EXIT INT TERM
+  "$sync_cli" "$@"
+  "$sync_cli" server-verify --data-dir "$server_root" \
+    --devices-file "$server_root/devices.json" >/dev/null
+  trap - EXIT INT TERM
+  if [[ "$was_active" == true ]]; then
+    systemctl --user start "$service"
+    if ! wait_live_endpoint; then
+      systemctl --user stop "$service"
+      echo "disposable service stopped because the registry reload health gate failed" >&2
+      exit 1
+    fi
+  fi
+)
+
 case "$action" in
   install-source)
     verify_user_manager
@@ -297,6 +328,25 @@ case "$action" in
   backup-drill)
     perform_backup_drill
     ;;
+  enroll-device)
+    [[ $# -eq 2 && -f "$2" ]] || {
+      echo "usage: $0 enroll-device HASHED_AUTH_REQUEST" >&2
+      exit 2
+    }
+    perform_registry_update server-enroll \
+      --devices-file "$server_root/devices.json" \
+      --auth-request-file "$(realpath -e "$2")"
+    echo "disposable_device_enrolled=service_reloaded"
+    ;;
+  revoke-device)
+    [[ $# -eq 2 && -n "$2" ]] || {
+      echo "usage: $0 revoke-device DEVICE" >&2
+      exit 2
+    }
+    perform_registry_update server-revoke \
+      --devices-file "$server_root/devices.json" --device "$2"
+    echo "disposable_device_revoked=service_reloaded"
+    ;;
   verify-endpoint)
     verify_endpoint
     echo "disposable_direct_tls_endpoint=verified"
@@ -342,7 +392,7 @@ case "$action" in
     verify_live_endpoint
     ;;
   *)
-    echo "usage: $0 <install-source|install-endpoint CA CERT KEY|initialize BOOTSTRAP|backup-drill|verify-endpoint|verify-live-endpoint|enable|disable|status>" >&2
+    echo "usage: $0 <install-source|install-endpoint CA CERT KEY|initialize BOOTSTRAP|backup-drill|enroll-device AUTH_REQUEST|revoke-device DEVICE|verify-endpoint|verify-live-endpoint|enable|disable|status>" >&2
     exit 2
     ;;
 esac

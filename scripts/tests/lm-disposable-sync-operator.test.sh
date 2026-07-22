@@ -32,6 +32,8 @@ grep -Fqx 'BindPaths=/srv/nas/helium-sync-server-disposable' "$backup_service"
 grep -Fq 'synthetic-only-v1' "$installer"
 grep -Fq 'wait_live_endpoint' "$installer"
 grep -Fq 'perform_backup_drill >/dev/null' "$installer"
+grep -Fq 'perform_registry_update server-enroll' "$installer"
+grep -Fq 'perform_registry_update server-revoke' "$installer"
 grep -Fq 'systemctl --user enable --now "$service"' "$installer"
 grep -Fq 'systemctl --user disable --now "$backup_timer" "$service"' "$installer"
 grep -Fq 'service_scope=${HELIUM_SERVER_SERVICE_SCOPE:-system}' \

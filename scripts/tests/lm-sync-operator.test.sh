@@ -120,6 +120,10 @@ if grep -Fq 'tailscale serve --bg' "$repo_root/scripts/install-lm-sync-service.s
 fi
 grep -Fq 'perform_backup_drill >/dev/null' \
   "$repo_root/scripts/install-lm-sync-service.sh"
+grep -Fq 'perform_registry_update server-enroll' \
+  "$repo_root/scripts/install-lm-sync-service.sh"
+grep -Fq 'perform_registry_update server-revoke' \
+  "$repo_root/scripts/install-lm-sync-service.sh"
 if grep -Fq '[ -s /srv/nas/helium-sync-server/last-restore-drill.env ]' \
   "$repo_root/scripts/install-lm-sync-service.sh"; then
   echo "activation still trusts a stale or unrelated restore receipt" >&2
