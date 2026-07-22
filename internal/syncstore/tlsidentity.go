@@ -40,11 +40,11 @@ type TLSIdentityReceipt struct {
 	NotAfter          time.Time
 }
 
-// CreateTLSCA creates a name-constrained private CA in a new directory. The
+// CreateTLSCA creates a DNS-constrained private CA in a new directory. The
 // private key is intended to remain on independently held offline media; lm
 // receives only the public certificate and a separately issued leaf key.
-func CreateTLSCA(outputDir, hostname, address string) (TLSIdentityReceipt, error) {
-	hostname, ip, err := validateTLSEndpoint(outputDir, hostname, address)
+func CreateTLSCA(outputDir, hostname string) (TLSIdentityReceipt, error) {
+	hostname, err := validateTLSHostname(outputDir, hostname)
 	if err != nil {
 		return TLSIdentityReceipt{}, err
 	}
@@ -72,9 +72,6 @@ func CreateTLSCA(outputDir, hostname, address string) (TLSIdentityReceipt, error
 		PermittedDNSDomainsCritical: true,
 		PermittedDNSDomains:         []string{hostname},
 		ExcludedDNSDomains:          []string{"." + hostname},
-		PermittedIPRanges: []*net.IPNet{{
-			IP: ip.AsSlice(), Mask: net.CIDRMask(32, 32),
-		}},
 	}
 	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template,
 		&privateKey.PublicKey, privateKey)
@@ -99,7 +96,7 @@ func CreateTLSCA(outputDir, hostname, address string) (TLSIdentityReceipt, error
 	}
 	return TLSIdentityReceipt{
 		CAFingerprint: certificateFingerprint(certificateDER),
-		Hostname:      hostname, IP: ip.String(), NotAfter: template.NotAfter,
+		Hostname:      hostname, NotAfter: template.NotAfter,
 	}, nil
 }
 
@@ -125,7 +122,7 @@ func IssueTLSServer(caCertPath, caKeyPath, outputDir, hostname, address string) 
 		return TLSIdentityReceipt{}, err
 	}
 	now := time.Now().UTC().Truncate(time.Second)
-	if err := validateTLSCA(ca, caKey, hostname, ip, now, tlsServerValidity); err != nil {
+	if err := validateTLSCA(ca, caKey, hostname, now, tlsServerValidity); err != nil {
 		return TLSIdentityReceipt{}, err
 	}
 	serverKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -203,7 +200,7 @@ func VerifyTLSServer(caCertPath, serverCertPath, serverKeyPath, hostname, addres
 		return TLSIdentityReceipt{}, err
 	}
 	now := time.Now().UTC()
-	if err := validateTLSCA(ca, nil, hostname, ip, now, minimumValidity); err != nil {
+	if err := validateTLSCA(ca, nil, hostname, now, minimumValidity); err != nil {
 		return TLSIdentityReceipt{}, err
 	}
 	if server.IsCA || !server.BasicConstraintsValid ||
@@ -251,14 +248,22 @@ func VerifyTLSServer(caCertPath, serverCertPath, serverKeyPath, hostname, addres
 	}, nil
 }
 
-func validateTLSEndpoint(outputDir, hostname, address string) (string, netip.Addr, error) {
+func validateTLSHostname(outputDir, hostname string) (string, error) {
 	if err := requireTLSAbsolutePath(outputDir); err != nil {
-		return "", netip.Addr{}, err
+		return "", err
 	}
 	hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(hostname), "."))
 	if len(hostname) > 253 || !strings.HasSuffix(hostname, ".ts.net") ||
 		!tlsHostnamePattern.MatchString(hostname) {
-		return "", netip.Addr{}, errors.New("TLS hostname must be a canonical Tailscale .ts.net name")
+		return "", errors.New("TLS hostname must be a canonical Tailscale .ts.net name")
+	}
+	return hostname, nil
+}
+
+func validateTLSEndpoint(outputDir, hostname, address string) (string, netip.Addr, error) {
+	hostname, err := validateTLSHostname(outputDir, hostname)
+	if err != nil {
+		return "", netip.Addr{}, err
 	}
 	ip, err := netip.ParseAddr(strings.TrimSpace(address))
 	if err != nil || !ip.Is4() || !netip.MustParsePrefix("100.64.0.0/10").Contains(ip) {
@@ -268,17 +273,21 @@ func validateTLSEndpoint(outputDir, hostname, address string) (string, netip.Add
 }
 
 func validateTLSCA(certificate *x509.Certificate, privateKey *ecdsa.PrivateKey,
-	hostname string, ip netip.Addr, now time.Time, minimumValidity time.Duration) error {
+	hostname string, now time.Time, minimumValidity time.Duration) error {
 	if !certificate.IsCA || !certificate.BasicConstraintsValid ||
 		certificate.KeyUsage != x509.KeyUsageCertSign|x509.KeyUsageCRLSign ||
 		!certificate.MaxPathLenZero || certificate.MaxPathLen != 0 ||
 		!certificate.PermittedDNSDomainsCritical ||
 		!reflect.DeepEqual(certificate.PermittedDNSDomains, []string{hostname}) ||
 		!reflect.DeepEqual(certificate.ExcludedDNSDomains, []string{"." + hostname}) ||
-		len(certificate.PermittedIPRanges) != 1 ||
-		!certificate.PermittedIPRanges[0].IP.Equal(ip.AsSlice()) ||
-		!bytes.Equal(certificate.PermittedIPRanges[0].Mask, net.CIDRMask(32, 32)) {
-		return errors.New("TLS CA is not an exact path-zero endpoint-constrained root")
+		len(certificate.PermittedIPRanges) != 0 ||
+		len(certificate.ExcludedIPRanges) != 0 ||
+		len(certificate.PermittedEmailAddresses) != 0 ||
+		len(certificate.ExcludedEmailAddresses) != 0 ||
+		len(certificate.PermittedURIDomains) != 0 ||
+		len(certificate.ExcludedURIDomains) != 0 ||
+		len(certificate.UnhandledCriticalExtensions) != 0 {
+		return errors.New("TLS CA is not an Android-compatible path-zero DNS-constrained root")
 	}
 	if now.Before(certificate.NotBefore) || !certificate.NotAfter.After(now.Add(minimumValidity)) {
 		return errors.New("TLS CA is not currently valid for the required minimum lifetime")

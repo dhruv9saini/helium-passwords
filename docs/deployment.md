@@ -418,7 +418,6 @@ dedicated endpoint-constrained CA once and issue lm's one-year leaf:
 umask 077
 helium-sync tls-ca-init \
   --hostname lm.tail0168aa.ts.net \
-  --ip 100.100.105.47 \
   --output-dir /MOUNTED/OFFLINE/helium-sync-tls-ca
 
 helium-sync tls-server-issue \
@@ -429,9 +428,15 @@ helium-sync tls-server-issue \
   --output-dir /secure/export/lm-tls-GENERATION
 ```
 
-The root is ECDSA P-256, path length zero, and has critical name constraints
-for exactly that `.ts.net` name and Tailscale IPv4 address. The leaf is
-server-auth-only, covers exactly the same DNS/IP pair, and lasts 365 days.
+The root is ECDSA P-256, path length zero, and has critical DNS-only name
+constraints for exactly that `.ts.net` name: the permitted exact name plus an
+excluded subdomain subtree. `tls-ca-init` deliberately has no IP argument.
+Adding an IP, URI, email, or unknown critical GeneralSubtree makes the root
+fail source and install verification because Android's BoringSSL X.509 path
+rejects the previously used IP-constrained profile. The server-auth-only leaf
+still covers the exact DNS/IP pair and lasts 365 days. Issuance, installation,
+every daemon start, and live health independently require that leaf's IPv4 SAN
+and the bound address to equal lm's one current `100.64.0.0/10` identity.
 Keep `ca-key.pem` offline. Transfer only `ca-cert.pem`, `server-cert.pem`, and
 `server-key.pem` to lm through an authenticated route, then install while the
 service is inactive:
@@ -479,8 +484,10 @@ credential installer. Chromium's Android verifier reads user-added roots; do
 not install the CA private key or the server leaf key. Record the user-root
 fingerprint and remove only the disposable public-file copy after enrollment.
 The base URL is `https://lm.tail0168aa.ts.net:44719`. A disposable client must
-show a valid chain to this private root; a missing, substituted, unconstrained,
-wrong-IP, or expired root/leaf must fail before any bearer credential is sent.
+show a valid chain to this private root; a missing, substituted, DNS-
+unconstrained, expired, wrong-host, or wrong-IP leaf must fail before any
+bearer credential is sent. A root containing an IP GeneralSubtree is obsolete
+and must fail `tls-server-verify` rather than being installed or enrolled.
 
 Issue a replacement leaf from the same offline CA before 30 days remain. Use a
 new output directory, authenticate its printed fingerprints, and transfer only

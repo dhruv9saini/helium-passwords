@@ -72,8 +72,13 @@ restores Chromium's native password manager.
   instrumentation and must never gain password/cookie mutation behavior.
 - `cmd/helium-syncd` runs the encrypted record daemon. Production binds only
   lm's exact Tailscale IPv4 address and terminates TLS 1.3 itself with a leaf
-  signed by the offline, endpoint-constrained Helium Sync CA. The CA private
-  key never belongs on lm; clients explicitly enroll only `ca-cert.pem`.
+  signed by the offline Helium Sync CA. The path-zero root has an
+  Android-compatible critical DNS-only constraint for lm's exact `.ts.net`
+  name; the leaf and every install/start gate separately require the exact
+  current Tailscale IPv4 SAN and bind address. Do not add IP, URI, or email
+  GeneralSubtrees to the root: Android's BoringSSL X.509 verifier rejects that
+  critical constraint profile. The CA private key never belongs on lm;
+  clients explicitly enroll only `ca-cert.pem`.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.
 - `internal/syncstore` stores append-only encrypted records.

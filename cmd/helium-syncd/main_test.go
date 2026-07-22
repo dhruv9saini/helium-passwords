@@ -32,7 +32,7 @@ func TestServerTLSConfigLoadsExactTailnetIdentity(t *testing.T) {
 	serverDir := filepath.Join(root, "server")
 	hostname := "lm.tail0168aa.ts.net"
 	address := "100.100.105.47"
-	if _, err := syncstore.CreateTLSCA(caDir, hostname, address); err != nil {
+	if _, err := syncstore.CreateTLSCA(caDir, hostname); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := syncstore.IssueTLSServer(

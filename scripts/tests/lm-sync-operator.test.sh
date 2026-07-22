@@ -50,8 +50,14 @@ JSON
 printf '{}\n' >"$test_root/serve-empty.json"
 printf '{}\n' >"$test_root/funnel-empty.json"
 
-"$test_root/bin/helium-sync" tls-ca-init \
+if "$test_root/bin/helium-sync" tls-ca-init \
   --hostname lm.tail0168aa.ts.net --ip 100.100.105.47 \
+  --output-dir "$test_root/legacy-ip-ca" >/dev/null 2>&1; then
+  echo "tls-ca-init retained the Android-incompatible IP-constraint interface" >&2
+  exit 1
+fi
+"$test_root/bin/helium-sync" tls-ca-init \
+  --hostname lm.tail0168aa.ts.net \
   --output-dir "$test_root/offline-ca" >/dev/null
 "$test_root/bin/helium-sync" tls-server-issue \
   --ca-cert "$test_root/offline-ca/ca-cert.pem" \

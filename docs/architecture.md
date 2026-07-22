@@ -45,14 +45,29 @@ record identity metadata, and ciphertext. It has no E2EE content key and
 cannot decrypt passwords or cookies. All enrolled browser profiles with a live
 content key can decrypt the shared records. The TLS CA private key remains on
 independently held offline media; lm receives only its endpoint leaf key. The
-root has critical name constraints for lm's exact `.ts.net` name and Tailscale
-IPv4 address, and every client explicitly enrolls the authenticated public root
-before receiving a URL or bearer credential. d recovery uses an age-encrypted
+path-zero root has Android-compatible critical DNS-only name constraints for
+lm's exact `.ts.net` name. The server-auth leaf and every issuance, install,
+start, and live-health gate separately require lm's exact current Tailscale
+IPv4 SAN and bind address. Keeping IP GeneralSubtrees out of the root avoids a
+known Android BoringSSL rejection without weakening the exact leaf admission
+gate. Every client explicitly enrolls the authenticated public root before
+receiving a URL or bearer credential. d recovery uses an age-encrypted
 generation containing d's complete validated client state and credential. One
 generation is encrypted to at least two dedicated recovery identities and
 copied to two off-d locations; no recipient identity is stored with the
 ciphertext. None of this recovery material belongs in the server data
 directory, its NAS backup, a repository, or chromiumer.
+
+Certificate compatibility is independently proven without trusting or
+deploying a test root. A temporary source-built DNS-constrained CA and exact
+DNS/IP leaf served TLS 1.3 on an unused lm tailnet port; OnePlus's Android
+BoringSSL curl accepted the explicit public root with verification result zero
+and rejected a substituted root. The temporary listener, CA/private key, leaf
+key, and phone public-certificate copy were removed after the probe. Permanent
+tests reject the formerly emitted IP GeneralSubtree and any email, URI, or
+unhandled critical constraint before a leaf can be issued or installed. This
+is certificate-profile evidence, not production service deployment or client
+root enrollment.
 
 The browser reads exactly one enrollment directory:
 
@@ -418,7 +433,7 @@ evidence.
 
 | Area | Implemented and source-tested | Still required before personal data |
 | --- | --- | --- |
-| Transport | Opaque v2 E2EE, direct TLS 1.3 server, offline constrained CA issuance/verification, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; synthetic rootless endpoint and scheduled NAS restore proof live on lm | Restore root authorization, install the dedicated-account service, and enroll the public root on disposable browser clients |
+| Transport | Opaque v2 E2EE, direct TLS 1.3 server, Android-compatible DNS-constrained offline CA issuance/verification, exact DNS/IP leaf admission, OnePlus BoringSSL chain/wrong-root proof, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; synthetic rootless endpoint and scheduled NAS restore proof live on lm | Replace the pre-fix synthetic root/leaf, restore root authorization, install the dedicated-account service, and enroll the new public root on disposable browser clients |
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations; consolidated TLS-backed three-device protocol lifecycle passes | Execute native bridge promotion on disposable profiles, then provision personal d/da/oneplus only after backups |
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; complete `PasswordForm` unique-key identity; schema-3 preservation/collision stop; durable one-at-a-time publication and pull-verified ambiguous outcomes; artifact-bound native fixture/capture/receipt gate | Compile the bridge, then run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete, rapid observer events, ambiguous-success restarts, and three-device stale conflicts |
 | Cookies | Whole-profile canonical identity, E2EE, active-epoch CAS rekey, authoritative pull-only join replacement under sealed rollback, bounded publication batches, preview/apply/readback/rollback, exact revision-scoped rejection evidence and retry model | Compile the bridge; prove colliding join replacement, multi-batch publication, destination rejection/readback/rollback, later-revision retry, local reauthentication publication, DBSC evidence scope, and authenticated-site behavior in disposable browsers; automatic password reauth remains open |

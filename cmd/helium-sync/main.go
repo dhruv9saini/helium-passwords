@@ -412,20 +412,19 @@ func cmdRecoveryImport(args []string) error {
 func cmdTLSCAInit(args []string) error {
 	flags := flag.NewFlagSet("tls-ca-init", flag.ExitOnError)
 	hostname := flags.String("hostname", "", "exact lm Tailscale .ts.net hostname")
-	address := flags.String("ip", "", "exact lm Tailscale IPv4 address")
 	outputDir := flags.String("output-dir", "", "new offline CA directory")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	if *hostname == "" || *address == "" || *outputDir == "" {
-		return errors.New("--hostname, --ip, and --output-dir are required")
+	if *hostname == "" || *outputDir == "" {
+		return errors.New("--hostname and --output-dir are required")
 	}
-	receipt, err := syncstore.CreateTLSCA(*outputDir, *hostname, *address)
+	receipt, err := syncstore.CreateTLSCA(*outputDir, *hostname)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("ca_sha256=%s\nhostname=%s\nip=%s\nnot_after=%s\n",
-		receipt.CAFingerprint, receipt.Hostname, receipt.IP,
+	fmt.Printf("ca_sha256=%s\nhostname=%s\nnot_after=%s\n",
+		receipt.CAFingerprint, receipt.Hostname,
 		receipt.NotAfter.Format(time.RFC3339))
 	return nil
 }
