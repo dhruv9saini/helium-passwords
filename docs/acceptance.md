@@ -52,10 +52,13 @@ replace the browser gates below.
   address, has at least 30 days remaining, and the offline CA private key is
   absent from lm, NAS backups, source, and build hosts.
 - Each disposable client independently authenticates and enrolls the exact CA
-  DER SHA-256 before receiving its URL or bearer token. The correct root
+  DER SHA-256 before receiving its URL or bearer token. The path-zero root has
+  only the exact critical DNS constraint profile accepted by Android
+  BoringSSL; IP, URI, email, and unknown critical GeneralSubtrees are absent.
+  The leaf still has the exact current Tailscale IPv4 SAN. The correct root
   reaches `https://lm.<tailnet>.ts.net:44719/v2/health` with TLS 1.3; missing,
-  substituted, unconstrained, expired, and wrong-host roots/leaves fail before
-  an Authorization header is sent. Port 44719 is unreachable outside the
+  substituted, DNS-unconstrained, expired, wrong-host, and wrong-IP leaves fail
+  before an Authorization header is sent. Port 44719 is unreachable outside the
   tailnet and no cleartext response exists on that address.
 
 ## Gate 1: Helium Passwords

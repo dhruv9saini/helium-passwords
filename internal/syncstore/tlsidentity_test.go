@@ -8,6 +8,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/pem"
 	"io"
 	"net"
 	"net/http"
@@ -26,15 +27,17 @@ func TestTLSIdentityLifecycleAndHandshake(t *testing.T) {
 	caDir := filepath.Join(root, "offline-ca")
 	serverDir := filepath.Join(root, "lm-generation")
 
-	caReceipt, err := CreateTLSCA(caDir, hostname, address)
+	caReceipt, err := CreateTLSCA(caDir, hostname)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(caReceipt.CAFingerprint) != 64 || caReceipt.ServerFingerprint != "" {
+	if len(caReceipt.CAFingerprint) != 64 || caReceipt.ServerFingerprint != "" ||
+		caReceipt.IP != "" {
 		t.Fatalf("unexpected CA receipt: %+v", caReceipt)
 	}
 	assertMode(t, filepath.Join(caDir, "ca-key.pem"), 0600)
 	assertMode(t, filepath.Join(caDir, "ca-cert.pem"), 0644)
+	assertAndroidCompatibleCAConstraints(t, caDir, hostname)
 	assertCARejectsSubdomain(t, caDir, hostname)
 
 	issued, err := IssueTLSServer(
@@ -106,10 +109,10 @@ func TestTLSIdentityFailsClosed(t *testing.T) {
 	address := "100.100.105.47"
 	caDir := filepath.Join(root, "ca")
 	serverDir := filepath.Join(root, "server")
-	if _, err := CreateTLSCA(caDir, hostname, address); err != nil {
+	if _, err := CreateTLSCA(caDir, hostname); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CreateTLSCA(caDir, hostname, address); err == nil {
+	if _, err := CreateTLSCA(caDir, hostname); err == nil {
 		t.Fatal("CA creation replaced an existing directory")
 	}
 	if _, err := IssueTLSServer(filepath.Join(caDir, "ca-cert.pem"),
@@ -143,7 +146,7 @@ func TestTLSIdentityFailsClosed(t *testing.T) {
 		}
 	}
 	otherCADir := filepath.Join(root, "other-ca")
-	if _, err := CreateTLSCA(otherCADir, hostname, address); err != nil {
+	if _, err := CreateTLSCA(otherCADir, hostname); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := VerifyTLSServer(filepath.Join(otherCADir, "ca-cert.pem"),
@@ -166,13 +169,45 @@ func TestTLSIdentityFailsClosed(t *testing.T) {
 		t.Fatalf("weak key permissions were not rejected: %v", err)
 	}
 
-	if _, err := CreateTLSCA(filepath.Join(root, "public-address"), hostname,
-		"192.0.2.1"); err == nil {
+	if _, err := IssueTLSServer(filepath.Join(caDir, "ca-cert.pem"),
+		filepath.Join(caDir, "ca-key.pem"), filepath.Join(root, "public-address"),
+		hostname, "192.0.2.1"); err == nil {
 		t.Fatal("non-Tailscale address was accepted")
 	}
 	if _, err := CreateTLSCA(filepath.Join(root, "public-host"),
-		"example.com", address); err == nil {
+		"example.com"); err == nil {
 		t.Fatal("non-Tailscale hostname was accepted")
+	}
+}
+
+func TestTLSIdentityRejectsAndroidIncompatibleNameConstraints(t *testing.T) {
+	root := t.TempDir()
+	hostname := "lm.tail0168aa.ts.net"
+	address := "100.100.105.47"
+	tests := map[string]func(*x509.Certificate){
+		"IP address": func(certificate *x509.Certificate) {
+			certificate.PermittedIPRanges = []*net.IPNet{{
+				IP: net.ParseIP(address).To4(), Mask: net.CIDRMask(32, 32),
+			}}
+		},
+		"email": func(certificate *x509.Certificate) {
+			certificate.PermittedEmailAddresses = []string{"operator@" + hostname}
+		},
+		"URI": func(certificate *x509.Certificate) {
+			certificate.PermittedURIDomains = []string{hostname}
+		},
+	}
+	for name, addConstraint := range tests {
+		t.Run(name, func(t *testing.T) {
+			caDir := filepath.Join(root, strings.ReplaceAll(name, " ", "-"))
+			writeIncompatibleTLSCA(t, caDir, hostname, addConstraint)
+			_, err := IssueTLSServer(
+				filepath.Join(caDir, "ca-cert.pem"), filepath.Join(caDir, "ca-key.pem"),
+				filepath.Join(caDir, "server"), hostname, address)
+			if err == nil || !strings.Contains(err.Error(), "Android-compatible") {
+				t.Fatalf("incompatible %s constraint was accepted: %v", name, err)
+			}
+		})
 	}
 }
 
@@ -184,6 +219,74 @@ func assertMode(t *testing.T, path string, expected os.FileMode) {
 	}
 	if info.Mode().Perm() != expected {
 		t.Fatalf("%s mode = %04o, want %04o", path, info.Mode().Perm(), expected)
+	}
+}
+
+func assertAndroidCompatibleCAConstraints(t *testing.T, caDir, hostname string) {
+	t.Helper()
+	ca, err := readPEMCertificate(filepath.Join(caDir, "ca-cert.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ca.PermittedDNSDomainsCritical ||
+		len(ca.PermittedDNSDomains) != 1 || ca.PermittedDNSDomains[0] != hostname ||
+		len(ca.ExcludedDNSDomains) != 1 || ca.ExcludedDNSDomains[0] != "."+hostname ||
+		len(ca.PermittedIPRanges) != 0 || len(ca.ExcludedIPRanges) != 0 ||
+		len(ca.PermittedEmailAddresses) != 0 || len(ca.ExcludedEmailAddresses) != 0 ||
+		len(ca.PermittedURIDomains) != 0 || len(ca.ExcludedURIDomains) != 0 ||
+		len(ca.UnhandledCriticalExtensions) != 0 {
+		t.Fatalf("generated CA has an Android-incompatible constraint profile: %+v", ca)
+	}
+}
+
+func writeIncompatibleTLSCA(t *testing.T, outputDir, hostname string,
+	addConstraint func(*x509.Certificate)) {
+	t.Helper()
+	privateKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	serial, err := randomSerial()
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	template := &x509.Certificate{
+		SerialNumber:                serial,
+		Subject:                     pkix.Name{CommonName: "incompatible test CA"},
+		NotBefore:                   now.Add(-time.Minute),
+		NotAfter:                    now.Add(tlsCAValidity),
+		KeyUsage:                    x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
+		BasicConstraintsValid:       true,
+		IsCA:                        true,
+		MaxPathLen:                  0,
+		MaxPathLenZero:              true,
+		PermittedDNSDomainsCritical: true,
+		PermittedDNSDomains:         []string{hostname},
+		ExcludedDNSDomains:          []string{"." + hostname},
+	}
+	addConstraint(template)
+	certificateDER, err := x509.CreateCertificate(rand.Reader, template, template,
+		&privateKey.PublicKey, privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(privateKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(outputDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "ca-key.pem"), pem.EncodeToMemory(&pem.Block{
+		Type: "PRIVATE KEY", Bytes: privateDER,
+	}), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "ca-cert.pem"), pem.EncodeToMemory(&pem.Block{
+		Type: "CERTIFICATE", Bytes: certificateDER,
+	}), 0644); err != nil {
+		t.Fatal(err)
 	}
 }
 
