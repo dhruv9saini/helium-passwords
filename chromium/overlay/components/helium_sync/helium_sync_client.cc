@@ -36,6 +36,10 @@ namespace {
 
 constexpr char kContentType[] = "application/json";
 constexpr int kMaxSyncResponseBytes = 5 * 1024 * 1024;
+constexpr size_t kRecordsPageSize = 128;
+constexpr size_t kMaxRecordsPages = 512;
+constexpr size_t kMaxRecordsPerSync = kRecordsPageSize * kMaxRecordsPages;
+constexpr size_t kMaxAggregateResponseBytes = 128 * 1024 * 1024;
 constexpr size_t kKeySize = 32;
 constexpr size_t kNonceSize = 12;
 constexpr char kPayloadAADMagic[] = "helium-sync-e2ee-v2\0";
@@ -145,7 +149,8 @@ bool ParseCounter(const base::DictValue &dict, std::string_view name,
          (positive ? *out > 0 : *out >= 0);
 }
 
-std::string RecordsPath(std::string_view path, int64_t since,
+std::string RecordsPath(std::string_view path, std::optional<int64_t> since,
+                        std::string_view cursor,
                         const std::vector<std::string> &kinds) {
   std::string out(path);
   bool first = true;
@@ -156,8 +161,12 @@ std::string RecordsPath(std::string_view path, int64_t since,
     out += "=";
     out += base::EscapeQueryParamValue(value, true);
   };
-  if (since > 0) {
-    append_param("since", base::NumberToString(since));
+  append_param("limit", base::NumberToString(kRecordsPageSize));
+  if (since) {
+    append_param("since", base::NumberToString(*since));
+  }
+  if (!cursor.empty()) {
+    append_param("cursor", cursor);
   }
   for (const auto &kind : kinds) {
     if (!kind.empty()) {
@@ -168,6 +177,18 @@ std::string RecordsPath(std::string_view path, int64_t since,
 }
 
 } // namespace
+
+struct HeliumSyncClient::PaginationState {
+  std::string path;
+  std::optional<int64_t> since;
+  std::vector<std::string> kinds;
+  std::string cursor;
+  std::optional<int64_t> next_seq;
+  std::vector<Record> records;
+  std::vector<std::string> seen_cursors;
+  size_t pages = 0;
+  size_t aggregate_response_bytes = 0;
+};
 
 HeliumSyncClient::HeliumSyncClient(
     scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
@@ -219,12 +240,12 @@ void HeliumSyncClient::Push(std::vector<Record> records,
                                 std::move(body_json));
   auto *loader_ptr = loader.get();
   loaders_.push_back(std::move(loader));
-  loader_ptr->DownloadToString(
-      url_loader_factory_.get(),
-      base::BindOnce(&HeliumSyncClient::OnRecordsComplete,
-                     weak_factory_.GetWeakPtr(), loader_ptr, std::move(records),
-                     std::move(callback)),
-      kMaxSyncResponseBytes);
+  loader_ptr->DownloadToString(url_loader_factory_.get(),
+                               base::BindOnce(&HeliumSyncClient::OnPushComplete,
+                                              weak_factory_.GetWeakPtr(),
+                                              loader_ptr, std::move(records),
+                                              std::move(callback)),
+                               kMaxSyncResponseBytes);
 }
 
 void HeliumSyncClient::Pull(int64_t since, std::vector<std::string> kinds,
@@ -238,17 +259,11 @@ void HeliumSyncClient::Pull(int64_t since, std::vector<std::string> kinds,
     std::move(callback).Run(false, RecordsResult(), state_error_);
     return;
   }
-  auto loader = MakeJSONRequest(
-      base_url_.Resolve(RecordsPath("/v2/records/pull", since, kinds)), "GET",
-      std::string());
-  auto *loader_ptr = loader.get();
-  loaders_.push_back(std::move(loader));
-  loader_ptr->DownloadToString(
-      url_loader_factory_.get(),
-      base::BindOnce(&HeliumSyncClient::OnRecordsComplete,
-                     weak_factory_.GetWeakPtr(), loader_ptr,
-                     std::vector<Record>(), std::move(callback)),
-      kMaxSyncResponseBytes);
+  auto pagination = std::make_unique<PaginationState>();
+  pagination->path = "/v2/records/pull";
+  pagination->since = since;
+  pagination->kinds = std::move(kinds);
+  FetchRecordsPage(std::move(pagination), std::move(callback));
 }
 
 void HeliumSyncClient::Latest(std::vector<std::string> kinds,
@@ -257,17 +272,10 @@ void HeliumSyncClient::Latest(std::vector<std::string> kinds,
     std::move(callback).Run(false, RecordsResult(), state_error_);
     return;
   }
-  auto loader = MakeJSONRequest(
-      base_url_.Resolve(RecordsPath("/v2/records/latest", 0, kinds)), "GET",
-      std::string());
-  auto *loader_ptr = loader.get();
-  loaders_.push_back(std::move(loader));
-  loader_ptr->DownloadToString(
-      url_loader_factory_.get(),
-      base::BindOnce(&HeliumSyncClient::OnRecordsComplete,
-                     weak_factory_.GetWeakPtr(), loader_ptr,
-                     std::vector<Record>(), std::move(callback)),
-      kMaxSyncResponseBytes);
+  auto pagination = std::make_unique<PaginationState>();
+  pagination->path = "/v2/records/latest";
+  pagination->kinds = std::move(kinds);
+  FetchRecordsPage(std::move(pagination), std::move(callback));
 }
 
 bool HeliumSyncClient::AcknowledgeApplied(int64_t next_seq,
@@ -568,15 +576,8 @@ bool HeliumSyncClient::EncryptRecord(const Record &plain,
 }
 
 std::optional<RecordsResult>
-HeliumSyncClient::ParseRecordsResponse(std::string_view body,
-                                       std::string *error) const {
-  std::optional<base::Value> parsed =
-      base::JSONReader::Read(body, base::JSON_PARSE_RFC);
-  if (!parsed || !parsed->is_dict()) {
-    *error = "sync response is not a JSON object";
-    return std::nullopt;
-  }
-  const base::DictValue &root = parsed->GetDict();
+HeliumSyncClient::ParseRecordsObject(const base::DictValue &root,
+                                     std::string *error) const {
   const base::ListValue *values = root.FindList("records");
   RecordsResult result;
   if (!values || !ParseCounter(root, "next_seq", false, &result.next_seq)) {
@@ -601,8 +602,7 @@ HeliumSyncClient::ParseRecordsResponse(std::string_view body,
         device_id->empty() || !key_id || key_id->empty() || !encoded_nonce ||
         !encoded_ciphertext || !deleted ||
         !ParseCounter(opaque, "seq", true, &record.seq) ||
-        !ParseCounter(opaque, "revision", true, &record.revision) ||
-        record.seq > result.next_seq) {
+        !ParseCounter(opaque, "revision", true, &record.revision)) {
       *error = "sync response record metadata is invalid";
       return std::nullopt;
     }
@@ -647,10 +647,148 @@ HeliumSyncClient::ParseRecordsResponse(std::string_view body,
   return result;
 }
 
-void HeliumSyncClient::OnRecordsComplete(network::SimpleURLLoader *loader,
-                                         std::vector<Record> expected,
-                                         RecordsCallback callback,
-                                         std::optional<std::string> body) {
+std::optional<RecordsResult>
+HeliumSyncClient::ParseRecordsResponse(std::string_view body,
+                                       std::string *error) const {
+  std::optional<base::Value> parsed =
+      base::JSONReader::Read(body, base::JSON_PARSE_RFC);
+  if (!parsed || !parsed->is_dict()) {
+    *error = "sync response is not a JSON object";
+    return std::nullopt;
+  }
+  return ParseRecordsObject(parsed->GetDict(), error);
+}
+
+std::optional<RecordsResult> HeliumSyncClient::ParseRecordsPageResponse(
+    std::string_view body, std::string *page_cursor, std::string *error) const {
+  std::optional<base::Value> parsed =
+      base::JSONReader::Read(body, base::JSON_PARSE_RFC);
+  if (!parsed || !parsed->is_dict()) {
+    *error = "sync page response is not a JSON object";
+    return std::nullopt;
+  }
+  const base::DictValue &root = parsed->GetDict();
+  const std::string *cursor = root.FindString("page_cursor");
+  if (root.FindInt("page_version").value_or(0) != 1 || !cursor) {
+    *error = "sync page response has invalid pagination metadata";
+    return std::nullopt;
+  }
+  *page_cursor = *cursor;
+  return ParseRecordsObject(root, error);
+}
+
+void HeliumSyncClient::FetchRecordsPage(
+    std::unique_ptr<PaginationState> pagination, RecordsCallback callback) {
+  if (pagination->pages >= kMaxRecordsPages) {
+    std::move(callback).Run(false, RecordsResult(),
+                            "sync response exceeded the page limit");
+    return;
+  }
+  const std::optional<int64_t> since =
+      pagination->cursor.empty() ? pagination->since : std::nullopt;
+  auto loader = MakeJSONRequest(
+      base_url_.Resolve(RecordsPath(pagination->path, since, pagination->cursor,
+                                    pagination->kinds)),
+      "GET", std::string());
+  ++pagination->pages;
+  auto *loader_ptr = loader.get();
+  loaders_.push_back(std::move(loader));
+  loader_ptr->DownloadToString(
+      url_loader_factory_.get(),
+      base::BindOnce(&HeliumSyncClient::OnRecordsPageComplete,
+                     weak_factory_.GetWeakPtr(), loader_ptr,
+                     std::move(pagination), std::move(callback)),
+      kMaxSyncResponseBytes);
+}
+
+void HeliumSyncClient::OnRecordsPageComplete(
+    network::SimpleURLLoader *loader,
+    std::unique_ptr<PaginationState> pagination, RecordsCallback callback,
+    std::optional<std::string> body) {
+  const int net_error = loader->NetError();
+  int response_code = 0;
+  if (loader->ResponseInfo() && loader->ResponseInfo()->headers) {
+    response_code = loader->ResponseInfo()->headers->response_code();
+  }
+  if (net_error != net::OK || !body || response_code < 200 ||
+      response_code >= 300) {
+    std::string error =
+        "sync HTTP request failed: net=" + base::NumberToString(net_error) +
+        " status=" + base::NumberToString(response_code);
+    RemoveLoader(loader);
+    std::move(callback).Run(false, RecordsResult(), std::move(error));
+    return;
+  }
+  if (body->size() >
+      kMaxAggregateResponseBytes - pagination->aggregate_response_bytes) {
+    RemoveLoader(loader);
+    std::move(callback).Run(false, RecordsResult(),
+                            "sync response exceeded the aggregate byte limit");
+    return;
+  }
+  pagination->aggregate_response_bytes += body->size();
+  std::string error;
+  std::string page_cursor;
+  std::optional<RecordsResult> page =
+      ParseRecordsPageResponse(*body, &page_cursor, &error);
+  RemoveLoader(loader);
+  if (!page) {
+    std::move(callback).Run(false, RecordsResult(), std::move(error));
+    return;
+  }
+  if (page->records.size() > kRecordsPageSize ||
+      page->records.size() > kMaxRecordsPerSync - pagination->records.size()) {
+    std::move(callback).Run(false, RecordsResult(),
+                            "sync response exceeded the record limit");
+    return;
+  }
+  if (!pagination->next_seq) {
+    if (pagination->since && page->next_seq < *pagination->since) {
+      std::move(callback).Run(false, RecordsResult(),
+                              "sync snapshot cursor precedes pull cursor");
+      return;
+    }
+    pagination->next_seq = page->next_seq;
+  } else if (page->next_seq != *pagination->next_seq) {
+    std::move(callback).Run(false, RecordsResult(),
+                            "sync snapshot cursor changed between pages");
+    return;
+  }
+  int64_t previous_seq =
+      pagination->records.empty() ? 0 : pagination->records.back().seq;
+  for (Record &record : page->records) {
+    if (record.seq <= previous_seq || record.seq > *pagination->next_seq ||
+        (pagination->since && record.seq <= *pagination->since)) {
+      std::move(callback).Run(false, RecordsResult(),
+                              "sync page records are not strictly ordered");
+      return;
+    }
+    previous_seq = record.seq;
+    pagination->records.push_back(std::move(record));
+  }
+  if (page_cursor.empty()) {
+    RecordsResult result;
+    result.records = std::move(pagination->records);
+    result.next_seq = *pagination->next_seq;
+    std::move(callback).Run(true, std::move(result), std::string());
+    return;
+  }
+  if (std::find(pagination->seen_cursors.begin(),
+                pagination->seen_cursors.end(),
+                page_cursor) != pagination->seen_cursors.end()) {
+    std::move(callback).Run(false, RecordsResult(),
+                            "sync page cursor did not progress");
+    return;
+  }
+  pagination->seen_cursors.push_back(page_cursor);
+  pagination->cursor = std::move(page_cursor);
+  FetchRecordsPage(std::move(pagination), std::move(callback));
+}
+
+void HeliumSyncClient::OnPushComplete(network::SimpleURLLoader *loader,
+                                      std::vector<Record> expected,
+                                      RecordsCallback callback,
+                                      std::optional<std::string> body) {
   const int net_error = loader->NetError();
   int response_code = 0;
   if (loader->ResponseInfo() && loader->ResponseInfo()->headers) {
@@ -672,27 +810,26 @@ void HeliumSyncClient::OnRecordsComplete(network::SimpleURLLoader *loader,
     std::move(callback).Run(false, RecordsResult(), std::move(error));
     return;
   }
-  if (!expected.empty()) {
-    if (expected.size() != result->records.size()) {
+  if (expected.size() != result->records.size()) {
+    RemoveLoader(loader);
+    std::move(callback).Run(false, RecordsResult(),
+                            "push result record count mismatch");
+    return;
+  }
+  for (size_t i = 0; i < expected.size(); ++i) {
+    const Record &request = expected[i];
+    const Record &accepted = result->records[i];
+    if (accepted.kind != request.kind || accepted.key != request.key ||
+        accepted.deleted != request.deleted ||
+        accepted.revision != request.expected_revision + 1 ||
+        accepted.seq > result->next_seq ||
+        accepted.device_id != state_.device_id ||
+        accepted.key_id != state_.active_key_id ||
+        accepted.payload_json != request.payload_json) {
       RemoveLoader(loader);
       std::move(callback).Run(false, RecordsResult(),
-                              "push result record count mismatch");
+                              "push result failed authenticated comparison");
       return;
-    }
-    for (size_t i = 0; i < expected.size(); ++i) {
-      const Record &request = expected[i];
-      const Record &accepted = result->records[i];
-      if (accepted.kind != request.kind || accepted.key != request.key ||
-          accepted.deleted != request.deleted ||
-          accepted.revision != request.expected_revision + 1 ||
-          accepted.device_id != state_.device_id ||
-          accepted.key_id != state_.active_key_id ||
-          accepted.payload_json != request.payload_json) {
-        RemoveLoader(loader);
-        std::move(callback).Run(false, RecordsResult(),
-                                "push result failed authenticated comparison");
-        return;
-      }
     }
   }
   RemoveLoader(loader);

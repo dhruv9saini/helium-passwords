@@ -83,6 +83,8 @@ public:
                         std::string *plaintext, std::string *error) const;
 
 private:
+  struct PaginationState;
+
   struct ClientState {
     std::string device_id;
     std::string role;
@@ -99,11 +101,22 @@ private:
                             std::string *error);
   bool EncryptRecord(const Record &plain, base::DictValue *opaque,
                      std::string *error) const;
+  std::optional<RecordsResult> ParseRecordsObject(const base::DictValue &root,
+                                                  std::string *error) const;
   std::optional<RecordsResult> ParseRecordsResponse(std::string_view body,
                                                     std::string *error) const;
-  void OnRecordsComplete(network::SimpleURLLoader *loader,
-                         std::vector<Record> expected, RecordsCallback callback,
-                         std::optional<std::string> body);
+  std::optional<RecordsResult>
+  ParseRecordsPageResponse(std::string_view body, std::string *page_cursor,
+                           std::string *error) const;
+  void FetchRecordsPage(std::unique_ptr<PaginationState> state,
+                        RecordsCallback callback);
+  void OnRecordsPageComplete(network::SimpleURLLoader *loader,
+                             std::unique_ptr<PaginationState> state,
+                             RecordsCallback callback,
+                             std::optional<std::string> body);
+  void OnPushComplete(network::SimpleURLLoader *loader,
+                      std::vector<Record> expected, RecordsCallback callback,
+                      std::optional<std::string> body);
   void OnEnrollmentComplete(network::SimpleURLLoader *loader,
                             int64_t acknowledged_seq, StatusCallback callback,
                             std::optional<std::string> body);
