@@ -119,7 +119,7 @@ stage() {
         printf 'chromium_version=%s\n' \
             "$(tr -d '\r\n' <"${repository}/helium-chromium/chromium_version.txt")"
         if [ -f "${repository}/chromium/android-build.lock" ]; then
-            awk -F= '/^HELIUM_ANDROID_(CHROMIUM_COMMIT|CORE_COMMIT)=/ { print }' \
+            awk -F= '/^HELIUM_ANDROID_(CHROMIUM_COMMIT|CORE_COMMIT|DEPOT_TOOLS_COMMIT)=/ { print }' \
                 "${repository}/chromium/android-build.lock"
         fi
         printf 'archive_sha256=%s\n' "${archive_sha}"

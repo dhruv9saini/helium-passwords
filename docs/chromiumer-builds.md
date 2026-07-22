@@ -58,6 +58,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | Job tree | explicit per-job allocated-block budget; `80 GiB` is the bounded-proof recommendation and `100 GiB` is the full-build recommendation |
 | Root free space | `2 GiB` unprivileged floor, independent of the job budget and checked on `/` |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
+| Watchdog | separate cgroup: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, no swap, idle I/O, nice `15`, and `TasksMax=16` |
 | Wall time | hard `8h` systemd deadline |
 | Concurrency | one active `helium-job-*` service on chromiumer |
 
@@ -102,8 +103,15 @@ cannot consume. At the audit, the journal used 16 MiB, Helium state used
 to ext4's root-only reserve.
 
 The worker measures allocated filesystem blocks rather than apparent file
-sizes. Its watchdog ceiling is polled, not an ext4 project quota, so a job can
-briefly cross the budget between samples before its cgroup is stopped.
+sizes. It streams GNU `find`'s `%b` values into a constant-size sum. GNU
+[`-ignore_readdir_race`](https://www.gnu.org/software/findutils/manual/html_node/find_html/Directories.html)
+suppresses only entries that disappear after their parent directory was read,
+which is normal while Git or Ninja mutates a tree.
+A missing scan root, permission error, I/O error, invalid counter output, or
+any other scan failure remains fatal and stops the job. Multiple directory
+entries for one hard-linked file are counted more than once, a conservative
+early stop rather than an undercount. The ceiling is polled, not an ext4
+project quota, so a job can briefly cross the budget between completed scans.
 
 Admission requires cgroup v2 CPU, memory, I/O, and PID controllers, a running
 user systemd manager, the standard supervision tools, the job's remaining disk
@@ -113,12 +121,23 @@ the pinned tool environment that provides them. Provision that environment
 before a long job so Nix store downloads do not consume the root floor during
 the build. Any failed infrastructure check refuses startup.
 
-The watchdog writes `health.env` every 30 seconds with job-filesystem free
-space, root-filesystem free space, allocated job-tree size and budget,
-available memory, and load. A job-budget, root-floor, or memory violation stops
-the entire build cgroup. `MemoryMax`, `CPUQuota`, `TasksMax`, idle I/O priority,
-and the systemd runtime deadline remain enforced even if the watchdog itself
-fails.
+The watchdog runs allocated-block accounting asynchronously. Every supervisor
+second, including while that scan is running and during the 30-second delay
+before the next scan, it takes a fresh `/` free-space reading and a fresh
+`MemAvailable` reading. A root-floor breach stops the build on that check; two
+consecutive low-memory readings stop it on the second check. Disk-budget
+evaluation occurs only after one complete valid scan. `health.env` is then
+atomically replaced with that disk result and the latest fresh filesystem,
+memory, and load readings. Consequently health-file cadence is scan duration
+plus the 30-second inter-scan delay, not one second or exactly 30 seconds.
+
+`watchdog-ready.env` is written only after the first complete healthy disk
+scan. The build command waits for that marker and an active watchdog before it
+starts. Its independent wrapper checks the watchdog unit every second while
+the command runs. A failed or unavailable watchdog therefore stops the build
+even if no policy reason was recorded. `MemoryMax`, `CPUQuota`, `TasksMax`,
+idle I/O priority, and the systemd runtime deadline remain additional enforced
+bounds rather than substitutes for the watcher.
 
 ## Immutable Source Transfer
 
@@ -175,8 +194,33 @@ scripts/chromiumer-job.sh start "$job" \
     bash scripts/build.sh linux x86_64
 ```
 
-For Sync Android, pin `CHROMIUM_REF` to an immutable Chromium commit; never use
-the script's moving `main` default for a validation artifact:
+Android source acquisition has one public backbone entry point:
+
+```sh
+scripts/chromium/prepare-android-source.sh .build/chromium-android
+```
+
+It reads `chromium/android-build.lock`, pins and verifies depot_tools, disables
+depot_tools self-update and its local Git cache, verifies the direct launcher
+before and after execution, and makes exactly one source request:
+
+```text
+gclient sync --jobs 2 --revision src@<locked-full-sha> --nohooks --no-history
+```
+
+The helper then requires Chromium `HEAD` to equal that locked SHA. The
+`.gclient` solution `revision` key is deliberately not used: the locked
+depot_tools parser ignores that key, while the command-line revision is
+enforced before its shallow clone. Do not prepend a moving-main sync, manually
+fetch and check out the commit, or run a second repair sync. Downstream Sync
+build code must call this shared helper before its private patch and build
+phases rather than owning another source-acquisition implementation.
+
+The revision form is the one documented by the
+[official depot_tools gclient source](https://chromium.googlesource.com/chromium/tools/depot_tools.git/+/HEAD/gclient.py).
+
+For a Sync Android job, `CHROMIUM_REF` may be omitted because the helper uses
+the lock; if supplied, it must equal the same full commit:
 
 ```sh
 scripts/chromiumer-job.sh start "$job" \
@@ -185,7 +229,6 @@ scripts/chromiumer-job.sh start "$job" \
     env \
       HELIUM_SYNC_REPO=. \
       GITHUB_WORKSPACE=.build \
-      CHROMIUM_REF=<full-chromium-commit> \
       CHROMIUM_ANDROID_PHASE=all \
       bash scripts/chromium/build-android-ci.sh
 ```
@@ -311,6 +354,63 @@ The arithmetic test proves both mount cases for an 80 GiB job: on root,
 `80 GiB used -> 2 GiB`; on a separate build mount the same cases require
 80 GiB, 70 GiB, and zero build-filesystem bytes while `/` retains its
 independent 2 GiB floor.
+
+### Retained Android job 06 failure
+
+`hs-android-148-disposable-apk-06` is retained as negative infrastructure
+evidence. Its chromiumer state and journals remain, while its disposable
+workspace was safely cleaned after the verified evidence archive was returned.
+The authoritative copy is
+`/srv/nas/helium-builds/hs-android-148-disposable-apk-06/job06-failure-evidence-v2.tar.xz`,
+SHA-256
+`b6b41e37cca4131b2aced0e0d7a4d6b059303dc008d60430fa26ab4f02ee3062`;
+the cleaned workspace now reports `workspace_bytes=0`. The job ran from
+`2026-07-22T07:26:43Z` through `10:13:04Z` and recorded terminal failure `125`
+with the generic reason `health watchdog exited unexpectedly`. The reason is a
+symptom, not the cause.
+
+The pinned Chromium fetch completed at `10:10:21.103Z`. Checkout from moving
+main `407597e9a111c4863bf2b8055cfe20f3d19d2731` to locked
+`d096af1c9e98c45c3596e59620622b1a049bfecb` began one second later. The old
+synchronous allocated-block scan overlapped that checkout. Its GNU `find`
+process reported four paths disappearing between `10:10:32Z` and
+`10:12:59Z`. Because the copied worker used `set -euo pipefail` around an
+unguarded `find | awk` command substitution, the expected traversal race
+terminated the watchdog with status `1` at `10:13:03.216Z`. The independent
+one-second supervisor then stopped the build at `10:13:04.267Z`.
+
+This was not a disk, memory, or build failure. The last complete health record
+was `status=ok`, with `38,281,416,704` bytes used under the 80 GiB budget,
+`72,333,332,480` root bytes available above the 2 GiB floor, and
+`3,020,472,320` memory bytes available above the 1 GiB stop floor. Systemd
+reported watchdog `exit-code`, not `oom-kill`; its 64.3 MiB peak was below the
+128 MiB hard limit. The job had only entered its redundant second gclient sync.
+Compilation never started, `.build/android-artifacts` was empty, `src/out` did
+not exist, and neither expected Android archive was present.
+
+The run also measured why disk-health cadence must not be described as every
+30 seconds. Active checkout scans took roughly 128 seconds, then 231 seconds,
+and later approximately four to five minutes. The old code read root space and
+memory before each blocking scan, evaluated those stale readings afterward,
+and then slept another 30 seconds. The replacement above preserves the
+independent one-second safety checks while allowing a complete disk scan to
+take as long as the bounded tree requires.
+
+Do not resume, reuse, or restage the job 06 ID. Before cleanup its Chromium HEAD
+was pinned, but dependency state was mixed because the second sync was
+interrupted. The next Chromium attempt must use a unique job after the local
+and harmless remote watchdog proofs pass, and it must use the single locked
+source helper rather than the moving-main/two-sync sequence.
+
+The recovery worker passed constrained job
+`wrapper-test-20260722-090001` on chromiumer. Its independent watchdog reached
+ready state, recorded `workspace_bytes=16,384`, `status=ok`, and current root
+and memory readings, while the live units retained the test profile's 50% CPU,
+128/256 MiB build memory, zero swap, idle I/O, 32-task, and two-minute bounds
+plus the separate 10% CPU, 64/128 MiB, 16-task watchdog bounds. The five-second
+command finished with terminal success and exit `0` after eight seconds. Only
+that generated test workspace was cleaned; its state and journal remain. No
+Chromium command ran.
 
 Re-run the same proof without starting Chromium:
 
