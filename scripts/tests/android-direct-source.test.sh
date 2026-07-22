@@ -225,4 +225,19 @@ grep -Fq '"$depot_tools/gclient" --version' \
 grep -Fq '[[ "$head_after" == "$head_before" ]]' \
   "$repo_root/scripts/chromium/prove-depot-tools-pin.sh"
 
+runbook="$repo_root/docs/chromiumer-builds.md"
+grep -Fxq 'scripts/chromiumer-job.sh preflight 2' "$runbook"
+grep -Fxq 'scripts/chromiumer-job.sh stage "$job" 2' "$runbook"
+! grep -Fxq 'scripts/chromiumer-job.sh preflight 1' "$runbook"
+! grep -Fxq 'scripts/chromiumer-job.sh stage "$job" 1' "$runbook"
+grep -Fq '`workspace_bytes=1,293,221,888`' "$runbook"
+
+gib_bytes=$((1024 * 1024 * 1024))
+failed_sample_bytes=1293221888
+retained_tree_bytes=1483829248
+proof_budget_bytes=$((2 * gib_bytes))
+[[ "$failed_sample_bytes" -gt "$gib_bytes" ]]
+[[ "$retained_tree_bytes" -lt "$proof_budget_bytes" ]]
+[[ "$((proof_budget_bytes - retained_tree_bytes))" -eq 663654400 ]]
+
 echo 'Android direct source acquisition contract passed'

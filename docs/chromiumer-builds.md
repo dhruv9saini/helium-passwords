@@ -361,10 +361,25 @@ detached proof before another Chromium job. It clones only depot_tools, invokes
 `gclient --version` through the real pinned launcher with auto-update disabled,
 re-verifies unchanged HEAD and tracked blobs, and returns a proof record:
 
+The first live attempt, `hs-depot-pin-proof-01`, disproved the original 1 GiB
+estimate. The watchdog stopped it correctly after 64 seconds with terminal
+`failure`, exit `1`, reason `job disk budget breached`; its failing sample was
+`workspace_bytes=1,293,221,888` against a 1,073,741,824-byte budget. The
+retained stopped tree stabilized at 1,483,829,248 allocated bytes: 923,947,008
+bytes in the staged source and proof checkout and 559,845,376 bytes in the
+redirected vpython cache. No proof record was produced, so that job is only
+fail-closed disk-accounting evidence.
+
+Use an explicit 2 GiB budget for this proof. It leaves 663,654,400 bytes above
+the retained measured tree for bootstrap transients and the small verifier and
+proof record; the helper does not fetch Chromium or compile anything. Keep the
+same explicit value in `preflight` and `stage`. This is a per-job choice, not a
+worker default.
+
 ```sh
 job=hs-depot-pin-proof-$(date +%Y%m%d-%H%M%S)
-scripts/chromiumer-job.sh preflight 1
-scripts/chromiumer-job.sh stage "$job" 1
+scripts/chromiumer-job.sh preflight 2
+scripts/chromiumer-job.sh stage "$job" 2
 scripts/chromiumer-job.sh start "$job" \
   --summary "Pinned depot_tools no-self-update proof" \
   --next "Fetch depot-tools-pin-proof.env and verify the terminal state." -- \
