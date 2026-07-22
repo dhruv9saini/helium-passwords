@@ -1,5 +1,5 @@
 [Unit]
-Description=Poll chromiumer for terminal Helium jobs
+Description=Poll chromiumer for terminal Helium jobs requiring Codex analysis
 
 [Timer]
 OnBootSec=30s

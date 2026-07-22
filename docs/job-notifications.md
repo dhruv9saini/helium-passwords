@@ -1,8 +1,9 @@
-# Helium Job Completion Notifications
+# Helium Build Completion Analysis
 
-Every production start is armed for one terminal notification to
-`dhruv.codex@gmail.com`. This path is only for Chromium and complete Helium
-jobs. It never sends mail for routine Codex turns.
+Every production Chromium or complete Helium job is armed for one real Codex
+analysis turn. A terminal build record never sends a success, failure, timeout,
+or cancellation template. The Codex final response is the only normal email,
+and Mailbridge can route it only to `dhruv.codex@gmail.com`.
 
 ## Single Flow
 
@@ -10,47 +11,77 @@ jobs. It never sends mail for routine Codex turns.
 chromiumer job cgroup
   -> atomic terminal.env
   -> lm systemd timer (30 seconds, persistent)
-  -> protected lm watch record
-  -> Mailbridge notifications.sqlite3
+  -> private immutable analysis prompt
+  -> Mailbridge queue-event in state.sqlite3
+  -> tmux + normal Codex runner in /home/d
+  -> transactional Mailbridge outbox
   -> authenticated SMTP and Sent reconciliation
 ```
 
-Chromiumer contains no mail address, mail password, or Mailbridge state. Its
-repository-owned worker atomically writes
-`~/.local/state/helium-builds/<job>/terminal.env` with one of four results:
-`success`, `failure`, `timeout`, or `cancellation`. The record also contains the
-exit code, start and finish epochs, duration, and reason.
+Chromiumer contains no mail address, mail credential, Mailbridge state, or
+Codex credential. The repository-owned worker atomically records one of
+`success`, `failure`, `timeout`, or `cancellation`, plus duration, exit code,
+and a reason. That reason is evidence for Codex and is explicitly not treated
+as a diagnosis.
 
-The lm control wrapper registers the job before starting it. Registration is
-durable under `~/.local/state/helium-job-notifier/` and includes the product,
-immutable source manifest fields, test or artifact summary, and the next useful
-success action. If remote startup fails, a newly created watch is abandoned.
+The lm wrapper registers the build before it starts. Private producer state is
+under:
 
-The system timer polls terminal state over the existing non-interactive SSH
-connection. Once terminal, it invokes Mailbridge with the stable event key
-`helium-job:<job-id>:terminal`. Repeated polls, process crashes, and lm restarts
-cannot rebind that key to different content. Mailbridge stores the protected
-body and delivery state in its independent
-`~/.local/state/codex-mailbridge/notifications.sqlite3` queue. The existing
-Mailbridge configuration and password file remain the only mail credential
-source on lm.
+```text
+/home/d/.local/state/helium-job-notifier/jobs/<job>.json
+/home/d/.local/state/helium-job-notifier/events/<job>.txt
+```
 
-The notifier does not accept, store, default, or pass a recipient. There is no
-recipient environment override and its Mailbridge invocation has no `--to`
-option. `queue-notification` always routes through Mailbridge's single
-configured user address, which must be `dhruv.codex@gmail.com`; alternate
-recipient selection therefore fails at the only component that owns routing.
+The system timer polls the remote terminal record. Once terminal, the producer
+atomically writes a mode-0600 prompt containing:
 
-SMTP acceptance marks the queue sent without affecting the already-recorded
-build result. A definite temporary SMTP failure is retried with capped
-exponential delay. If the connection fails after acceptance may have occurred,
-Mailbridge uses the stable RFC Message-ID to reconcile against Sent and never
-blindly resends an ambiguous delivery. An unresolved ambiguity becomes a
-visible failed notification for manual review rather than risking a duplicate.
+- product, job ID, terminal state, duration, exit code, and recorded reason;
+- immutable source provenance and the intended artifact/test summary;
+- public and private repository paths;
+- exact build, watchdog, artifact, and retained-workspace commands/locations;
+- the current end-to-end Helium objective; and
+- instructions to inspect evidence, validate artifacts, fix or continue the
+  next safe in-scope work, and report actual findings.
+
+It then calls exactly this Mailbridge class of interface:
+
+```sh
+/home/d/coding/codex-mailbridge/.venv/bin/codex-mailbridge \
+  --config /home/d/.config/codex-mailbridge/config.toml \
+  queue-event \
+  --key "helium-build:${job}:terminal" \
+  --conversation 'Helium build operations' \
+  --prompt-file "/home/d/.local/state/helium-job-notifier/events/${job}.txt" \
+  --json
+```
+
+There is no recipient, cwd, send-now, subject, or static-body argument. The
+literal conversation is persistent, so later terminal events resume the same
+Codex operational context. Mailbridge fixes cwd at `/home/d` and snapshots its
+single configured user address internally.
+
+`queue-event` and the producer key are idempotent. Identical process, timer,
+restart, or concurrent retries return the same event and turn. Rebinding the
+key to changed prompt bytes, conversation, or recipient fails without
+mutation. A crash after the SQLite commit but before producer-state update is
+safe: the producer retains the exact prompt and retries the same key.
+
+Mailbridge sends no receipt. Its durable status progresses through `queued`,
+`running`, `completed`, and `emailed`; `completed` means the Codex final result
+and outbox committed atomically. Normal delivery uses a stable Message-ID,
+definite-failure retry, and Sent reconciliation for uncertain SMTP acceptance.
+
+A static email is forbidden for product terminal states. Only Mailbridge may
+create one diagnostic fallback, exactly once, after the Codex execution
+infrastructure itself exhausts its bounded retries. The product build result
+is never an infrastructure failure. Even after that fallback is sent,
+`event-status` remains `failed`, preserving both facts. The lower-level
+`queue-notification` interface rejects both historical `helium-job:` and
+current `helium-build:` namespaces.
 
 ## Installation and Status
 
-Install from the public backbone checkout on lm:
+Install the reviewed public backbone on lm:
 
 ```sh
 cd /home/d/coding/helium/helium-passwords
@@ -59,7 +90,7 @@ systemctl status helium-job-notifier.timer --no-pager
 systemctl list-timers helium-job-notifier.timer --no-pager
 ```
 
-The installer places only code and unit files:
+Installed paths are:
 
 ```text
 /home/d/.local/libexec/helium-job-notifier
@@ -67,80 +98,74 @@ The installer places only code and unit files:
 /etc/systemd/system/helium-job-notifier.timer
 ```
 
-The system service runs as `d` with a 10% CPU quota, 128 MiB memory limit,
-32-task limit, low scheduling priority, a private umask, and no credential
-arguments. The persistent timer runs at boot and every 30 seconds. A detached
-shell or tmux disconnect is irrelevant; after an lm restart systemd resumes
-polling the same watch files and Mailbridge resumes its SQLite queue.
+The oneshot service runs as `d` with a 10% CPU quota, 128 MiB memory maximum,
+32-task limit, low scheduling priority, private umask, and no credential
+arguments. The persistent system timer runs at boot and every 30 seconds.
+Detached shells, tmux disconnects, and lm restarts do not lose either the local
+watch or the Mailbridge SQLite event.
 
-Inspect state without exposing message bodies:
+Content-free inspection is:
 
 ```sh
 /home/d/.local/libexec/helium-job-notifier status "$job"
 /home/d/coding/codex-mailbridge/.venv/bin/codex-mailbridge \
-    --config /home/d/.config/codex-mailbridge/config.toml \
-    notification-status --key "helium-job:${job}:terminal" --json
+  --config /home/d/.config/codex-mailbridge/config.toml \
+  event-status --key "helium-build:${job}:terminal" --json
 journalctl -u helium-job-notifier.service --since today --no-pager
 journalctl -u codex-mailbridge.service --since today --no-pager
 ```
 
-Notification polling deliberately exits successfully when chromiumer or
-Mailbridge is temporarily unavailable. It records and logs a changed error
-once, then retries on the next timer. Notification delivery can therefore
-never replace or change the terminal build result.
+Temporary Chromiumer or queue-interface failures leave the producer in
+`watching` or `terminal-pending` and retry on the next timer. After Mailbridge
+accepts the event, it is the source of truth for Codex retry, outbox, fallback,
+and delivery state. Notification failure can never change `terminal.env`.
 
 ## Starting Jobs
 
-The wrapper requires notification content as part of the start contract:
+The wrapper requires operator context before start:
 
 ```sh
 scripts/chromiumer-job.sh start "$job" \
-    --summary "What this exact run tested or the artifact it will produce" \
-    --next "The first useful action after a successful run" -- \
-    <build-command> [arguments...]
+  --summary "What this exact run tests or produces" \
+  --next "The first useful action after a verified success" -- \
+  <build-command> [arguments...]
 ```
 
-Use a new job ID for a new run. A job ID is the idempotency identity and cannot
-be reused with different source or notification content.
+Use a new job ID for each new run. Its ID is the immutable terminal-event
+identity and cannot be reused with different source or operator context.
 
-## Source and Live Acceptance
+## Offline Acceptance
 
-The offline simulation is harmless and sends no mail:
+The repository simulation performs no Chromium build, Codex invocation,
+mailbox access, or external mail:
 
 ```sh
 scripts/tests/helium-job-notifier.test.sh
 ```
 
-It synthesizes all four terminal results, proves each queues once across
-repeated polls, and proves a temporary Mailbridge queue failure remains pending
-and succeeds on the next poll. Mailbridge unit tests separately prove SQLite
-restart recovery, stable Message-ID generation, definite SMTP retry, Sent
-reconciliation after an uncertain result, and no resend after unresolved
-ambiguity.
+It synthesizes all four terminal states and proves:
 
-For a bounded live acceptance, stage one clean committed source tree with a
-1 GiB job budget and run a short command through the production wrapper. This
-exercises immutable source transfer, production cgroup policy, remote terminal
-state, lm timer, SQLite queue, authenticated SMTP, and Sent reconciliation
-without compiling Chromium. Record the unique job ID and Mailbridge status in
-the completion report. Do not send a second acceptance message with another
-job ID unless the first attempt fails before SMTP delivery.
+- every result uses the same `queue-event` path;
+- required terminal, provenance, objective, repository, log, and artifact
+  fields appear in the protected prompt;
+- repeated, concurrent, and restart-style polling queues one event;
+- a temporary queue failure retains identical prompt bytes and retries;
+- producer state mirrors Mailbridge's content-free lifecycle; and
+- no recipient option, recipient environment path, static template, or
+  `queue-notification` invocation remains.
 
-No Codex `Stop` hook is installed. Official Codex project lifecycle hooks run
-at turn scope and require project trust, so a Stop hook would be a second path
-and would create the per-turn notifications this design excludes.
+Mailbridge's own fake-transport suite separately proves the normal Codex
+runner, bounded retry, daemon/tmux restart recovery, atomic result/outbox
+commit, exactly-once fallback, SMTP retry, and Sent reconciliation. Do not
+queue a synthetic event in the live database: the supervised daemon would
+correctly run Codex and send its final response.
 
-## Recorded Acceptance
+No Codex project `Stop` hook is installed. Turn-scope hooks would be a second
+path and create routine-agent mail rather than one analysis per terminal build.
 
-On 2026-07-21, job `hp-notify-accept-20260721-1829` staged public commit
-`3c3e6bcc96732ef16c19fa1ae8f30534473918ea` with a 1 GiB job budget and ran a
-three-second harmless command under the production systemd profile. Chromiumer
-wrote `result=success`, `exit_code=0`, and `duration_seconds=3`. The persistent
-lm timer observed it, and Mailbridge notification key
-`helium-job:hp-notify-accept-20260721-1829:terminal` reached `sent` with one
-SMTP attempt and zero reconciliation attempts. A read-only Zoho Sent search
-found exactly one message with its stable RFC Message-ID. Re-enqueueing the
-same key and content returned the existing sent row; the attempt count and
-single Sent match did not change. The disposable remote workspace and returned
-fixture copy were removed through the normal verified-artifact cleanup path;
-the remote job state, journal, manifest, hash, and receipt remain as evidence.
+## Historical Static Acceptance
+
+The 2026-07-21 `hp-notify-accept-20260721-1829` proof and subsequent build
+templates established the old static-notification path. That path is now
+retired. Existing sent records remain historical evidence, but no new build
+terminal event may use them or the `helium-job:` notification namespace.

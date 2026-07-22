@@ -1,5 +1,5 @@
 [Unit]
-Description=Queue completed Helium job notifications through Codex Mailbridge
+Description=Queue terminal Helium jobs for Codex analysis through Mailbridge
 After=network-online.target codex-mailbridge.service
 Wants=network-online.target
 
