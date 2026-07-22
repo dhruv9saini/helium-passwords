@@ -85,9 +85,11 @@ grep -Fq 'package_runtime_acceptance "$staging/runtime-acceptance"' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'probe_schema_version=1' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'gclient-sync-direct.sh' \
+grep -Fq 'prepare-android-source.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'cache_dir = None' \
+! grep -Fq 'gclient-sync-direct.sh' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+! grep -Fq 'cache_dir = None' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'verify-depot-tools-cache-contract.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"

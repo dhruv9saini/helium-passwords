@@ -111,6 +111,10 @@ setup_depot_tools() {
     "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
   git -C "$workspace/depot_tools" checkout --detach \
     "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
+  activate_depot_tools
+}
+
+activate_depot_tools() {
   verify_depot_tools
   # Official depot_tools behavior is to update itself when gclient runs.
   # Builds use the immutable commit in android-build.lock instead.
@@ -121,12 +125,6 @@ setup_depot_tools() {
 verify_depot_tools() {
   "$repo_root/scripts/chromium/verify-depot-tools-cache-contract.sh" \
     "$workspace/depot_tools" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
-}
-
-gclient_sync() {
-  GCLIENT_JOBS="$gclient_jobs" \
-    "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
-      "$workspace/depot_tools" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" "$@"
 }
 
 run_pinned_gclient() {
@@ -151,46 +149,15 @@ prepare_helium_dependencies() {
 
 prepare_android_source() {
   df -h
-  setup_depot_tools
+  CHROMIUM_REF="$chromium_ref" \
+  CHROMIUM_URL="$chromium_url" \
+  GCLIENT_JOBS="$gclient_jobs" \
+    "$repo_root/scripts/chromium/prepare-android-source.sh" "$workspace"
+  activate_depot_tools
   setup_ccache
-
-  cd "$workspace"
-  if [[ ! -f .gclient ]]; then
-    cat > .gclient <<EOF
-solutions = [
-  {
-    "name": "src",
-    "url": "$chromium_url",
-    "managed": False,
-    "custom_deps": {
-      "src/android_webview/tools/cts_archive/cipd": None,
-      "src/third_party/robolectric/cipd": None,
-    },
-    "custom_vars": {
-      "checkout_android": True,
-      "checkout_configuration": "small",
-      "checkout_js_coverage_modules": False,
-      "checkout_openxr": False,
-      "skip_wpr_archives_download": True,
-    },
-  },
-]
-cache_dir = None
-target_os = ["android"]
-EOF
-  fi
-
-  gclient_sync --nohooks --no-history
-
-  cd src
-  git fetch origin "$chromium_ref" --depth=1
-  git checkout FETCH_HEAD
-  [[ "$(git rev-parse HEAD)" == "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]]
-  cd "$workspace"
-  gclient_sync --nohooks --no-history --with_branch_heads --with_tags
   df -h
 
-  cd src
+  cd "$workspace/src"
   if [[ "$skip_system_deps" == true ]]; then
     echo "Skipping Chromium system dependency installer"
   else

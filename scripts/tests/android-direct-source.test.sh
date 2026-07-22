@@ -260,6 +260,23 @@ grep -Fq '[ "${actual_chromium_ref}" = "${chromium_ref}" ]' \
 source_calls=$(grep -Fc 'gclient-sync-direct.sh"' "$source_helper")
 [[ "$source_calls" -eq 1 ]]
 
+build_script="$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'CHROMIUM_REF="$chromium_ref"' "$build_script"
+grep -Fq '"$repo_root/scripts/chromium/prepare-android-source.sh" "$workspace"' \
+  "$build_script"
+build_source_calls=$(grep -Fc 'prepare-android-source.sh" "$workspace"' \
+  "$build_script")
+[[ "$build_source_calls" -eq 1 ]]
+phase_source_calls=$(grep -Ec '^    prepare_android_source$' "$build_script")
+[[ "$phase_source_calls" -eq 2 ]]
+! grep -Fq 'gclient-sync-direct.sh' "$build_script"
+! grep -Fq 'gclient_sync' "$build_script"
+! grep -Fq 'git fetch origin "$chromium_ref"' "$build_script"
+! grep -Fq 'git checkout FETCH_HEAD' "$build_script"
+! grep -Fq -- '--with_branch_heads' "$build_script"
+! grep -Fq -- '--with_tags' "$build_script"
+! grep -Fq 'cache_dir = None' "$build_script"
+
 # The shared lock is one source of truth and all three tool/source pins are
 # immutable full hashes.
 # shellcheck source=../../chromium/android-build.lock

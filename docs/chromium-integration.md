@@ -72,17 +72,23 @@ gh workflow run chromium-android.yml
 
 `chromium/android-build.lock` is the single source for the exact Chromium tag,
 Chromium commit, Helium core commit, and depot_tools commit.
-The Android runner disables depot_tools' normal `gclient` self-update, verifies
-the exact clean depot_tools checkout immediately before and after each sync,
-and records the executing depot_tools commit plus update policy in packaged
-provenance. A returned artifact is rejected if those records differ from its
-lock.
+`scripts/chromium/prepare-android-source.sh` is the sole source-acquisition
+path for both repositories. It disables depot_tools' normal `gclient`
+self-update, makes exactly one
+`gclient sync --revision src@<locked SHA> --nohooks --no-history` request, and
+requires Chromium `HEAD` to equal the lock. The private runner does not prepend
+a moving-main sync, manually check out the commit, or run a repair sync. It
+re-verifies the exact clean depot_tools checkout around the later `runhooks`
+call and records the executing depot_tools commit plus update policy in
+packaged provenance. A returned artifact is rejected if those records differ
+from its lock.
 `apply-android-backbone.sh` applies the ordered Helium core series while
 omitting only the mandatory password-disable patch, then applies the two public
 Passwords patches, six private Sync patches and overlay, Helium
 transformations/resources, and shared plus Android GN args.
 Contract tests currently count 284 core + 2 Passwords + 6 Sync patches. The
-complete 292-patch apply still needs a prepared source checkout on chromiumer.
+single-acquisition contract is source-tested, but the complete 292-patch apply
+still needs a prepared checkout and compilation on chromiumer.
 
 After chromiumer production preflight passes, the first bounded job combines
 strict source preparation, GN generation, and the smallest media-buildflag

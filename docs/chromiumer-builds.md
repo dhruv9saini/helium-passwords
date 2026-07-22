@@ -335,10 +335,13 @@ and the config loader passes the top-level `None` value to
 `git_cache.Mirror.SetCachePath`. [depot_tools normally updates itself whenever
 `gclient` runs][depot-tools-update]. Helium exports its documented
 `DEPOT_TOOLS_UPDATE=0` control, invokes the verified launcher's absolute path,
-and re-verifies the checkout immediately before and after every sync. The
-separate `runhooks` call has the same before/after pin check. Combined with the
-existing `--no-history`, gclient initializes each checkout and performs a
-shallow fetch from its origin. This eliminates the local mirror's
+and re-verifies the checkout immediately before and after the only source
+sync. That sync receives the locked commit as
+`--revision src@<locked-full-sha>`; source preparation then requires Chromium
+`HEAD` to equal it. The separate `runhooks` call has the same before/after depot
+pin check but is not another source sync. Combined with `--no-history`, gclient
+initializes each checkout and performs a shallow fetch from its origin. This
+eliminates the local mirror's
 `upload-pack -> pack-objects` path. A moved HEAD, dirty tracked file, changed
 launcher blob, missing/duplicated cache setting, or cache-enabled configuration
 fails before gclient starts. Packaged provenance records both the executing

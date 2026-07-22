@@ -225,6 +225,16 @@ watchdog, detached journald logs, one cancel command, provenance/artifact
 receipts, and exactly-once completion notification to
 `dhruv.codex@gmail.com`. lm and the NAS are never compiler workspaces.
 
+Android source acquisition is also shared rather than privately reimplemented.
+`scripts/chromium/prepare-android-source.sh` owns the one pinned
+`gclient sync --revision src@<locked SHA> --nohooks --no-history` request and
+the exact Chromium `HEAD` postcondition. The private Android runner begins its
+own work only after that boundary: pinned hooks, the public/core and private
+patch series, GN, compilation, and packaging. Static and synthetic tests prove
+that there is no moving-main sync, manual checkout, or second repair sync; a
+fresh chromiumer source preparation and compile remain required runtime
+evidence.
+
 ## Verified source versus remaining gates
 
 | Area | Implemented and source-tested | Still required before personal data |
@@ -236,6 +246,7 @@ receipts, and exactly-once completion notification to
 | Origin state | Explicitly absent | Per-origin storage audit and safe adapters where observed necessary |
 | Tabs | Local exporter/store, atomic generations, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; deploy independent schedules/routes; disposable browser restore on every device |
 | Media/streaming | Reproducible fixtures and strict codec GN provenance checks | Control/Sync APK A/B on oneplus, HTTP/2+HTTP/3, video/audio/ChatGPT timing |
+| Android source/build | Shared one-request immutable source helper; exact-HEAD, depot pin, cache-disable, and private single-entry contracts | Fresh isolated chromiumer source preparation, 292-patch apply, GN generation, focused compile, then APK |
 | Deployment | Executable d recovery export/import, credential cutover, direct-TLS generation install/start gates, source unit/install gate, and rollback-preserving installers | Create off-device recovery identities/copies and offline TLS CA, enroll its public root, prove live tailnet TLS, d SSH/auth route, artifacts, profile backups, sequential enrollment |
 
 No personal profile, credential, cookie, or tab content is read by source tests.
