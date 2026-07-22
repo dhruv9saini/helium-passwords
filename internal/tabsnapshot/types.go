@@ -4,6 +4,7 @@ import "time"
 
 const SchemaVersion = 1
 const RestoreSchemaVersion = 1
+const BrowserRestoreSchemaVersion = 1
 
 type Session struct {
 	SchemaVersion int      `json:"schema_version"`
@@ -79,4 +80,16 @@ type RestoreManifest struct {
 	RestoredAt       time.Time  `json:"restored_at"`
 	Validation       string     `json:"validation"`
 	Session          FileRecord `json:"session"`
+}
+
+type BrowserRestoreManifest struct {
+	SchemaVersion    int        `json:"schema_version"`
+	SourceGeneration string     `json:"source_generation"`
+	SourceDevice     string     `json:"source_device"`
+	SourceProfile    string     `json:"source_profile"`
+	SourceSession    FileRecord `json:"source_session"`
+	Preferences      FileRecord `json:"preferences"`
+	StartupURLCount  int        `json:"startup_url_count"`
+	PreparedAt       time.Time  `json:"prepared_at"`
+	State            string     `json:"state"`
 }

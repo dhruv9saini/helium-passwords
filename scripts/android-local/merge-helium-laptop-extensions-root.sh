@@ -4,7 +4,7 @@ set -eu
 ROOT=${ARCH_CHROOT:-/data/local/chroots/arch}
 ARCHIVE=${1:-/data/local/tmp/helium-laptop-extensions.tar}
 STAGING=/tmp/helium-laptop-extension-migration
-BLOCKED_EXTENSION_IDS=${HELIUM_BLOCKED_EXTENSION_IDS:-eakpippijmmohmdlpgcjnipolcgciaga}
+BLOCKED_EXTENSION_IDS="${HELIUM_BLOCKED_EXTENSION_IDS:-eakpippijmmohmdlpgcjnipolcgciaga} pjmbgaakjkbhpopmakjoedenlfdmcdgm"
 
 [ -f "$ARCHIVE" ] || {
   echo "missing archive: $ARCHIVE" >&2
@@ -84,10 +84,6 @@ for dir in \
   fi
 done
 
-if [ -d "$staging/root-home/.local/share/browserpass" ]; then
-  mkdir -p /root/.local/share/browserpass
-  rsync -a "$staging/root-home/.local/share/browserpass/" /root/.local/share/browserpass/
-fi
 if [ -d "$staging/root-home/.local/share/helium-extensions" ]; then
   mkdir -p /root/.local/share/helium-extensions
   rsync -a "$staging/root-home/.local/share/helium-extensions/" /root/.local/share/helium-extensions/
@@ -95,9 +91,8 @@ fi
 
 if [ -d /home/dhruv ]; then
   mkdir -p /home/dhruv/.local/share
-  [ ! -d /root/.local/share/browserpass ] || rsync -a /root/.local/share/browserpass /home/dhruv/.local/share/
   [ ! -d /root/.local/share/helium-extensions ] || rsync -a /root/.local/share/helium-extensions /home/dhruv/.local/share/
-  chown -R 1000:1000 /home/dhruv/.local/share/browserpass /home/dhruv/.local/share/helium-extensions 2>/dev/null || true
+  chown -R 1000:1000 /home/dhruv/.local/share/helium-extensions 2>/dev/null || true
 fi
 
 prefs="$profile/Preferences"
@@ -108,7 +103,6 @@ if [ -f "$laptop" ]; then
   jq --slurpfile src "$laptop" '
     def rewrite_path:
       if type != "string" then .
-      elif startswith("/home/dhruv/.local/share/browserpass/") then sub("^/home/dhruv"; "/root")
       elif startswith("/home/dhruv/.local/share/helium-extensions/") then sub("^/home/dhruv"; "/root")
       elif startswith("/home/dhruv/.local/opt/helium-app/opt/helium/resources/") then sub("^/home/dhruv/.local/opt/helium-app/opt/helium"; "/opt/helium-sync")
       else .
@@ -126,6 +120,6 @@ fi
 
 remove_blocked_extensions
 
-chown -R 0:0 /root/.config/helium-passwords /root/.local/share/browserpass /root/.local/share/helium-extensions 2>/dev/null || true
+chown -R 0:0 /root/.config/helium-passwords /root/.local/share/helium-extensions 2>/dev/null || true
 rm -rf "$staging"
 EOF

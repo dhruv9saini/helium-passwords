@@ -2,6 +2,7 @@ package tabsnapshot
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -343,6 +344,143 @@ func TestValidateRestoreRejectsCorruptionAndExtraFiles(t *testing.T) {
 	}
 }
 
+func TestPrepareDisposableBrowserProfileConsumesValidatedNeutralRestore(t *testing.T) {
+	restoreDirectory := createTestRestore(t)
+	root := markedDisposableRoot(t)
+
+	manifest, destination, err := PrepareDisposableBrowserProfile(
+		restoreDirectory, root, "drill-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if destination != filepath.Join(root, "drill-fixture") ||
+		manifest.State != browserRestorePreparedState || manifest.StartupURLCount != 2 {
+		t.Fatalf("unexpected browser restore result: %#v %q", manifest, destination)
+	}
+	validated, err := ValidateDisposableBrowserProfile(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated != manifest {
+		t.Fatal("committed browser restore manifest changed during validation")
+	}
+	preferencesRaw, err := os.ReadFile(filepath.Join(destination, "Default", preferencesFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(preferencesRaw), "exited_cleanly") ||
+		strings.Contains(string(preferencesRaw), "exit_type") {
+		t.Fatal("disposable restore forged Chromium clean-exit state")
+	}
+	var preferences browserPreferences
+	if err := json.Unmarshal(preferencesRaw, &preferences); err != nil {
+		t.Fatal(err)
+	}
+	wantURLs := []string{"https://fixture.invalid/current", "chrome://newtab/"}
+	if fmt.Sprint(preferences.Session.StartupURLs) != fmt.Sprint(wantURLs) {
+		t.Fatalf("startup URLs = %v, want %v", preferences.Session.StartupURLs, wantURLs)
+	}
+	if _, err := ValidateRestore(restoreDirectory); err != nil {
+		t.Fatalf("neutral restore source changed: %v", err)
+	}
+}
+
+func TestDisposableBrowserProfileRequiresMarkerAndNewTarget(t *testing.T) {
+	restoreDirectory := createTestRestore(t)
+
+	unmarked := t.TempDir()
+	if _, _, err := PrepareDisposableBrowserProfile(
+		restoreDirectory, unmarked, "drill-unmarked"); err == nil {
+		t.Fatal("unmarked disposable root was accepted")
+	}
+	wrongMarker := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wrongMarker, disposableRootMarkerFile),
+		[]byte("wrong\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := PrepareDisposableBrowserProfile(
+		restoreDirectory, wrongMarker, "drill-wrong-marker"); err == nil {
+		t.Fatal("wrong disposable root marker was accepted")
+	}
+	symlinkMarker := t.TempDir()
+	markerTarget := filepath.Join(t.TempDir(), "marker")
+	if err := os.WriteFile(markerTarget, []byte(disposableRootMarkerContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(markerTarget, filepath.Join(symlinkMarker, disposableRootMarkerFile)); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := PrepareDisposableBrowserProfile(
+		restoreDirectory, symlinkMarker, "drill-symlink-marker"); err == nil {
+		t.Fatal("symlinked disposable root marker was accepted")
+	}
+	root := markedDisposableRoot(t)
+	existing := filepath.Join(root, "drill-existing")
+	if err := os.Mkdir(existing, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := PrepareDisposableBrowserProfile(
+		restoreDirectory, root, "drill-existing"); err == nil {
+		t.Fatal("existing empty browser target was accepted")
+	}
+	entries, err := os.ReadDir(existing)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("rejected existing browser target was modified")
+	}
+	if _, _, err := PrepareDisposableBrowserProfile(
+		restoreDirectory, root, "default"); err == nil {
+		t.Fatal("non-drill profile name was accepted")
+	}
+}
+
+func TestDisposableBrowserProfileRollsBackFailedStaging(t *testing.T) {
+	restoreDirectory := createTestRestore(t)
+	root := markedDisposableRoot(t)
+	injected := errors.New("injected staging failure")
+	_, _, err := prepareDisposableBrowserProfile(
+		restoreDirectory, root, "drill-rollback", func(string) error { return injected })
+	if !errors.Is(err, injected) {
+		t.Fatalf("staging failure = %v, want injected failure", err)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "drill-rollback")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("failed staging published a target: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != disposableRootMarkerFile {
+		t.Fatalf("failed staging left temporary data: %v", entries)
+	}
+}
+
+func TestDisposableBrowserProfileNeverReplacesConcurrentTarget(t *testing.T) {
+	restoreDirectory := createTestRestore(t)
+	root := markedDisposableRoot(t)
+	destination := filepath.Join(root, "drill-race")
+	_, _, err := prepareDisposableBrowserProfile(
+		restoreDirectory, root, "drill-race", func(string) error {
+			if err := os.Mkdir(destination, 0700); err != nil {
+				return err
+			}
+			return os.WriteFile(filepath.Join(destination, "sentinel"), []byte("keep\n"), 0600)
+		})
+	if err == nil {
+		t.Fatal("concurrently created browser target was replaced")
+	}
+	raw, readErr := os.ReadFile(filepath.Join(destination, "sentinel"))
+	if readErr != nil || string(raw) != "keep\n" {
+		t.Fatalf("concurrent target changed: %q %v", raw, readErr)
+	}
+	entries, readErr := os.ReadDir(root)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("failed no-replace commit left staging data: %v", entries)
+	}
+}
+
 func TestCaptureRejectsMalformedOrUnsafeSession(t *testing.T) {
 	store := openTestStore(t)
 	request := testCapture(time.Now(), false)
@@ -359,6 +497,34 @@ func openTestStore(t *testing.T) *Store {
 		t.Fatal(err)
 	}
 	return store
+}
+
+func createTestRestore(t *testing.T) string {
+	t.Helper()
+	store := openTestStore(t)
+	manifest, err := store.Capture(testCapture(
+		time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC), false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := filepath.Join(t.TempDir(), "neutral-restore")
+	if err := store.Restore(manifest.Generation, destination); err != nil {
+		t.Fatal(err)
+	}
+	return destination
+}
+
+func markedDisposableRoot(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, disposableRootMarkerFile),
+		[]byte(disposableRootMarkerContent), 0600); err != nil {
+		t.Fatal(err)
+	}
+	return root
 }
 
 func testCapture(capturedAt time.Time, protected bool) CaptureRequest {

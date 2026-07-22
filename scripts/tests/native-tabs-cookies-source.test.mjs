@@ -2,22 +2,16 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import test from "node:test";
 
-const cookie = fs.readFileSync(new URL(
-  "../../chromium/overlay/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc",
-  import.meta.url,
-), "utf8");
-const tabs = fs.readFileSync(new URL(
-  "../../chromium/overlay/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc",
-  import.meta.url,
-), "utf8");
-const service = fs.readFileSync(new URL(
-  "../../chromium/overlay/chrome/browser/helium_sync/helium_sync_service.cc",
-  import.meta.url,
-), "utf8");
-const tabExporter = fs.readFileSync(new URL(
-  "../tabs/helium-tab-exporter.sh",
-  import.meta.url,
-), "utf8");
+const repoURL = relative => new URL(`../../${relative}`, import.meta.url);
+const repoFile = relative => fs.readFileSync(repoURL(relative), "utf8");
+
+const cookie = repoFile(
+  "chromium/overlay/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc");
+const tabs = repoFile(
+  "chromium/overlay/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc");
+const service = repoFile(
+  "chromium/overlay/chrome/browser/helium_sync/helium_sync_service.cc");
+const tabExporter = repoFile("scripts/tabs/helium-tab-exporter.sh");
 
 test("native cookie identity includes partition, host/domain form, scheme, and port", () => {
   const identity = cookie.slice(
@@ -99,4 +93,31 @@ test("tab export adapter rejects stale or mutable source boundaries", () => {
   assert.match(tabExporter, /before=.*stat -c.*%d:%i:%s:%Y/s);
   assert.match(tabExporter, /\[ "\$\{before\}" = "\$\{after\}" \]/);
   assert.match(tabExporter, /\[ ! -e "\$\{output_file\}" \]/);
+});
+
+test("normal launch preserves native tab recovery and the native password path", () => {
+  const laptop = repoFile("scripts/laptop/start-helium-sync-local.sh");
+  const chroot = repoFile("scripts/android-local/chromium-helium-local-root.sh");
+  const installer = repoFile("scripts/android-local/install-phone-sync.sh");
+  const migration = repoFile(
+    "scripts/android-local/merge-helium-laptop-extensions-root.sh");
+
+  for (const source of [laptop, chroot, installer]) {
+    assert.doesNotMatch(source,
+      /browserpass|helium-prepare-profile|helium-cleanup-startup-tabs/i);
+  }
+  assert.doesNotMatch(chroot,
+    /HELIUM_CHROOT_BROWSER|command -v chromium|browser=chromium|helium-extensions\/\*/);
+  assert.match(chroot, /browser=\/usr\/local\/bin\/helium/);
+  assert.match(chroot, /-x \/opt\/helium-sync\/helium/);
+  assert.doesNotMatch(chroot, /exited_cleanly|exit_type|\/json\/close|Target\.closeTarget/);
+
+  assert.match(migration, /pjmbgaakjkbhpopmakjoedenlfdmcdgm/);
+  assert.doesNotMatch(migration, /\.local\/share\/browserpass/);
+  for (const obsolete of [
+    "scripts/android-local/helium-prepare-profile-root.py",
+    "scripts/android-local/helium-cleanup-startup-tabs-root.py",
+  ]) {
+    assert.equal(fs.existsSync(repoURL(obsolete)), false, obsolete);
+  }
 });

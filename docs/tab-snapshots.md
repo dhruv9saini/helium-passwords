@@ -82,7 +82,33 @@ then atomically renames it to the requested new disposable-state directory.
 The restore receipt binds the source generation, device/profile namespace,
 session hash and size, validation marker, and restore time. The standalone
 validator rejects symlinks, nonprivate files, extra inventory, schema drift,
-and any receipt/content mismatch without consulting the source store. The
-output is still the neutral JSON model; browser loading, second-restart
-verification, drill recording, and promotion to a real stopped profile remain
-unimplemented integration work. No automatic promotion path exists.
+and any receipt/content mismatch without consulting the source store.
+
+The only implemented browser consumer prepares a new, unopened drill profile:
+
+```sh
+disposable_root=/new/private/tab-browser-drills
+install -d -m 700 "$disposable_root"
+(umask 077; printf 'helium-tabs-disposable-root-v1\n' \
+  >"$disposable_root/.helium-tabs-disposable-root-v1")
+
+helium-tabs prepare-browser-profile \
+  --restore /path/to/new-disposable-state \
+  --disposable-root "$disposable_root" \
+  --profile drill-20260722
+
+helium-tabs validate-browser-profile \
+  --profile-dir "$disposable_root/drill-20260722"
+```
+
+The root must be a mode-0700 real directory with that exact private marker.
+The `drill-*` target must not exist, even as an empty directory. Preparation
+revalidates and copies the neutral restore, writes only each tab's current URL
+to Chromium's startup-URL preference, validates the staged inventory, and
+atomically publishes the new directory with a kernel-enforced no-replace
+rename. It does not write clean-exit state, launch a browser, merge data, or
+accept a normal profile path.
+`validate-browser-profile` is intentionally a pre-launch gate because Chromium
+adds files on first start. Exact windows, pinned/grouped state, back/forward
+history, unloaded-tab state, first launch, second restart, and drill recording
+remain browser integration work. There is no automatic promotion path.

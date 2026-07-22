@@ -40,13 +40,17 @@ The next start reloads active scope.
 The chroot browser has its own profile and therefore its own device identity if
 it is ever enrolled. It must not reuse the Android app's oneplus credential or
 client state. `scripts/android-local/chromium-helium-local-root.sh` requires
-an existing HTTPS enrollment directory and launches only the native bridge.
+an existing HTTPS enrollment directory and the built Helium Sync binary at
+`/opt/helium-sync/helium` through `/usr/local/bin/helium`. It fails instead of
+falling back to stock Chromium.
 
 `scripts/android-local/install-phone-sync.sh` installs the enrollment CLI,
 local tab tool, launcher, and unrelated desktop helpers. It does not install a
 server, CookieCloud, or CDP writers. The launcher requires the profile's native
 HTTPS enrollment and starts Helium directly; there is no sidecar or secondary
-writer to enable as a fallback.
+writer to enable as a fallback. Normal launch does not load Browserpass or
+unreviewed extension-directory globs, rewrite Chromium clean-exit state, or
+delete recovered pages through CDP.
 
 ## Cookies and origin state
 

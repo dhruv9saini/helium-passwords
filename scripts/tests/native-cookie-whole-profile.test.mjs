@@ -201,7 +201,7 @@ test("native source is whole-profile, partition-complete, rollback-first, and na
 
 test("normal composition contains only the native password and cookie path", () => {
   const forbidden =
-    /CookieCloud|cdp-cookiecloud|cdp-password-sync|helium-local-syncd|cookiecloud-extension|start-helium-local-sync|seed-chroot-profile/i;
+    /CookieCloud|cdp-cookiecloud|cdp-password-sync|helium-local-syncd|cookiecloud-extension|start-helium-local-sync|seed-chroot-profile|browserpass|helium-prepare-profile|helium-cleanup-startup-tabs/i;
   for (const script of [
     ".github/workflows/go-sync.yml",
     "scripts/laptop/install-laptop-sync.sh",
@@ -228,6 +228,8 @@ test("normal composition contains only the native password and cookie path", () 
     "scripts/android-local/fetch-cookiecloud-extension.sh",
     "scripts/android-local/start-helium-local-sync-root.sh",
     "scripts/android-local/seed-chroot-profile-root.sh",
+    "scripts/android-local/helium-prepare-profile-root.py",
+    "scripts/android-local/helium-cleanup-startup-tabs-root.py",
   ]) {
     assert.equal(fs.existsSync(new URL(`../../${obsolete}`, import.meta.url)),
       false, obsolete);

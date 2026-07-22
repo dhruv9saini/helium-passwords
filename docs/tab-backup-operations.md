@@ -220,6 +220,16 @@ promote a restore into a live browser profile. The wrapper must run on the
 snapshot's source device and cannot open or merge the result into another
 device's browser.
 
+After that neutral restore succeeds, `helium-tabs prepare-browser-profile`
+may prepare a browser-readable copy only as a new `drill-*` child of an
+operator-created mode-0700 root containing the exact
+`.helium-tabs-disposable-root-v1` marker. The command revalidates the neutral
+receipt, retains its source files, writes only current URLs as startup URLs,
+validates staging, and atomically publishes the unopened profile. It never
+launches a browser or accepts an existing target. Run
+`validate-browser-profile --profile-dir PATH` before first launch; the exact
+commands and current reconstruction limits are in `tab-snapshots.md`.
+
 If a local generation itself is corrupt, preserve it explicitly before
 unblocking retention:
 

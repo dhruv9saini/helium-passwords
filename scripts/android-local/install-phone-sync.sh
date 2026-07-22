@@ -25,8 +25,6 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$work_dir/helium-tabs" /data/local/tmp/helium-tabs >/dev/null
 "$adb_bin" push "$work_dir/android-magic-keyboard-remap" /data/local/tmp/android-magic-keyboard-remap >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/chromium-helium-local-root.sh" /data/local/tmp/chromium-helium-local-root.sh >/dev/null
-"$adb_bin" push "$repo_root/scripts/android-local/helium-prepare-profile-root.py" /data/local/tmp/helium-prepare-profile-root.py >/dev/null
-"$adb_bin" push "$repo_root/scripts/android-local/helium-cleanup-startup-tabs-root.py" /data/local/tmp/helium-cleanup-startup-tabs-root.py >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-display-mode-root.sh" /data/local/tmp/arch-desktop-display-mode-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-display-watch-root.sh" /data/local/tmp/arch-desktop-display-watch-root.sh >/dev/null
 "$adb_bin" push "$repo_root/scripts/android-local/arch-desktop-session-watch-root.sh" /data/local/tmp/arch-desktop-session-watch-root.sh >/dev/null
@@ -125,8 +123,6 @@ cp /data/local/tmp/tab-pin-helper-extension.tar \"\$ROOT/tmp/tab-pin-helper-exte
 /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/tab-pin-helper-extension.tar -C /root/.local/share/tab-pin-helper-extension
 chown -R 0:0 \"\$ROOT/root/.local/share/google-ai-overview-blocker\" \"\$ROOT/root/.local/share/blank-new-tab-extension\" \"\$ROOT/root/.local/share/tab-pin-helper-extension\"
 install -Dm755 /data/local/tmp/chromium-helium-local-root.sh \"\$ROOT/root/.config/x11/bin/chromium-helium-local\"
-install -Dm755 /data/local/tmp/helium-prepare-profile-root.py \"\$ROOT/root/.config/x11/bin/helium-prepare-profile\"
-install -Dm755 /data/local/tmp/helium-cleanup-startup-tabs-root.py \"\$ROOT/root/.config/x11/bin/helium-cleanup-startup-tabs\"
 install -Dm755 /data/local/tmp/x11-phone-trackpad-server.mjs \"\$ROOT/root/.config/x11/bin/x11-phone-trackpad-server.mjs\"
 install -Dm755 /data/local/tmp/x11-key-helper-root.sh \"\$ROOT/root/.local/bin/x11-key-helper\"
 install -Dm755 /data/local/tmp/x11-lorie-input-setup-root.sh \"\$ROOT/root/.local/bin/x11-lorie-input-setup\"
@@ -137,11 +133,9 @@ if [ -n \"\$CHROOT_UID\" ] && [ -n \"\$CHROOT_GID\" ] && [ -d \"\$ROOT/\$CHROOT_
   /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/blank-new-tab-extension.tar -C \"\$CHROOT_HOME/.local/share/blank-new-tab-extension\"
   /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/tab-pin-helper-extension.tar -C \"\$CHROOT_HOME/.local/share/tab-pin-helper-extension\"
   install -Dm755 /data/local/tmp/chromium-helium-local-root.sh \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\"
-  install -Dm755 /data/local/tmp/helium-prepare-profile-root.py \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-prepare-profile\"
-  install -Dm755 /data/local/tmp/helium-cleanup-startup-tabs-root.py \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-cleanup-startup-tabs\"
   install -Dm755 /data/local/tmp/x11-phone-trackpad-server.mjs \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\"
   install -Dm755 /data/local/tmp/x11-key-helper-root.sh \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-key-helper\"
   install -Dm755 /data/local/tmp/x11-lorie-input-setup-root.sh \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-lorie-input-setup\"
-  chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-prepare-profile\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/helium-cleanup-startup-tabs\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-key-helper\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-lorie-input-setup\"
+  chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-key-helper\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-lorie-input-setup\"
 fi
 "'

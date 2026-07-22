@@ -57,8 +57,6 @@ browser=$(find_browser) || {
 
 exts=()
 if [[ "${HELIUM_NO_EXTENSIONS:-}" != "1" ]]; then
-  [[ -d "$home_dir/.local/share/browserpass/extension-pjmbgaakjkbhpopmakjoedenlfdmcdgm" ]] &&
-    exts+=("$home_dir/.local/share/browserpass/extension-pjmbgaakjkbhpopmakjoedenlfdmcdgm")
   [[ -d "$home_dir/.local/share/helium-extensions/pitch-black-theme" ]] &&
     exts+=("$home_dir/.local/share/helium-extensions/pitch-black-theme")
 fi

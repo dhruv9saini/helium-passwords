@@ -32,6 +32,10 @@ func run(args []string) error {
 		return restore(args[1:])
 	case "validate-restore":
 		return validateRestore(args[1:])
+	case "prepare-browser-profile":
+		return prepareBrowserProfile(args[1:])
+	case "validate-browser-profile":
+		return validateBrowserProfile(args[1:])
 	case "quarantine":
 		return quarantine(args[1:])
 	case "retention-plan":
@@ -153,6 +157,35 @@ func validateRestore(args []string) error {
 	return writeJSON(manifest)
 }
 
+func prepareBrowserProfile(args []string) error {
+	flags := flag.NewFlagSet("prepare-browser-profile", flag.ContinueOnError)
+	restoreDirectory := flags.String("restore", "", "validated neutral restore directory")
+	disposableRoot := flags.String("disposable-root", "", "explicitly marked disposable root")
+	profile := flags.String("profile", "", "new drill-* profile name")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	manifest, destination, err := tabsnapshot.PrepareDisposableBrowserProfile(
+		*restoreDirectory, *disposableRoot, *profile)
+	if err != nil {
+		return err
+	}
+	return writeJSON(map[string]any{"destination": destination, "manifest": manifest})
+}
+
+func validateBrowserProfile(args []string) error {
+	flags := flag.NewFlagSet("validate-browser-profile", flag.ContinueOnError)
+	directory := flags.String("profile-dir", "", "prepared unopened disposable browser profile")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	manifest, err := tabsnapshot.ValidateDisposableBrowserProfile(*directory)
+	if err != nil {
+		return err
+	}
+	return writeJSON(manifest)
+}
+
 func quarantine(args []string) error {
 	flags := flag.NewFlagSet("quarantine", flag.ContinueOnError)
 	root := flags.String("store", "", "independent snapshot store")
@@ -215,5 +248,5 @@ func writeJSON(value any) error {
 }
 
 func usageError() error {
-	return errors.New("usage: helium-tabs <capture|validate|list|restore|validate-restore|quarantine|retention-plan|retention-apply> [flags]")
+	return errors.New("usage: helium-tabs <capture|validate|list|restore|validate-restore|prepare-browser-profile|validate-browser-profile|quarantine|retention-plan|retention-apply> [flags]")
 }

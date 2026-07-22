@@ -31,14 +31,6 @@ if [ ! -s "$sync_config_dir/token" ] ||
   exit 1
 fi
 
-profile_prepare=${HELIUM_PROFILE_PREPARE:-$home_dir/.config/x11/bin/helium-prepare-profile}
-if [ -x "$profile_prepare" ] &&
-  { [ "${HELIUM_PROFILE_PREPARE_ON_LAUNCH:-1}" = 1 ] ||
-    [ ! -f "$profile/Default/Preferences" ] ||
-    [ ! -f "$profile/Local State" ]; }; then
-  "$profile_prepare" "$profile" >>"$state_dir/profile-prepare.log" 2>&1 || true
-fi
-
 mkdir -p /dev/shm
 chmod 1777 /dev/shm 2>/dev/null || true
 mkdir -p "$home_dir/.local/share/pki/nssdb"
@@ -48,17 +40,11 @@ chmod 700 "$runtime_dir"
 export TMPDIR=/tmp
 export XDG_RUNTIME_DIR=$runtime_dir
 
-browser=${HELIUM_CHROOT_BROWSER:-}
-if [ -z "$browser" ]; then
-  if command -v helium >/dev/null 2>&1; then
-    browser=helium
-  elif command -v chromium >/dev/null 2>&1; then
-    browser=chromium
-  else
-    echo "Neither helium nor chromium is installed in the chroot" >&2
-    exit 1
-  fi
-fi
+browser=/usr/local/bin/helium
+[ -x "$browser" ] && [ -x /opt/helium-sync/helium ] || {
+  echo "The built Helium Sync browser is not installed in the chroot" >&2
+  exit 1
+}
 pids=
 cleanup() {
   for pid in $pids; do
@@ -141,19 +127,6 @@ for extension_id in \
   extension_path=$(profile_extension_path "$extension_id" || true)
   [ -z "$extension_path" ] || add_extension_path "$extension_path"
 done
-for extension_path in "$home_dir"/.local/share/browserpass/extension-* "$home_dir"/.local/share/helium-extensions/*; do
-  add_extension_path "$extension_path"
-done
-
-cleanup_startup_tabs=${HELIUM_CLEANUP_STARTUP_TABS:-$home_dir/.config/x11/bin/helium-cleanup-startup-tabs}
-if [ -x "$cleanup_startup_tabs" ]; then
-  (
-    sleep 5
-    "$cleanup_startup_tabs" >>"$state_dir/cleanup-startup-tabs.log" 2>&1 || true
-  ) &
-  pids="$pids $!"
-fi
-
 browser_args=()
 if [ -n "$extension_paths" ]; then
   browser_args+=(--load-extension="$extension_paths")

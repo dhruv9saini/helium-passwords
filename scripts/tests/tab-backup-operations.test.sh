@@ -241,6 +241,26 @@ test -f "${restore_directory}/session.json"
 test -f "${restore_directory}/restore-manifest.json"
 grep -q 'fixture.invalid' "${restore_directory}/session.json"
 
+disposable_root="${temporary}/disposable-browser-root"
+mkdir -m 700 "${disposable_root}"
+printf 'helium-tabs-disposable-root-v1\n' \
+	>"${disposable_root}/.helium-tabs-disposable-root-v1"
+chmod 600 "${disposable_root}/.helium-tabs-disposable-root-v1"
+browser_restore_output=$("${temporary}/bin/helium-tabs" prepare-browser-profile \
+	--restore "${restore_directory}" --disposable-root "${disposable_root}" \
+	--profile drill-fixture)
+browser_profile=$(jq -r '.destination' <<<"${browser_restore_output}")
+[ "${browser_profile}" = "${disposable_root}/drill-fixture" ]
+"${temporary}/bin/helium-tabs" validate-browser-profile \
+	--profile-dir "${browser_profile}" >/dev/null
+jq -e '.session.restore_on_startup == 4 and
+	(.session.startup_urls == ["https://fixture.invalid/"])' \
+	"${browser_profile}/Default/Preferences" >/dev/null
+if grep -Eq 'exited_cleanly|exit_type' "${browser_profile}/Default/Preferences"; then
+	echo "disposable browser restore forged clean-exit state" >&2
+	exit 1
+fi
+
 printf 'corrupt\n' >"${temporary}/destination-two/da/default/generations/${generation}.tar.age"
 if "${repo_root}/scripts/tabs/tab-backup.sh" status "${config}" "${generation}" >/dev/null 2>&1; then
     echo "corrupt destination unexpectedly reported healthy" >&2
