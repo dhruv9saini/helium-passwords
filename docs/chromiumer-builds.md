@@ -275,18 +275,22 @@ OS replacement. A full build remains tight after provisioning the toolchain.
 
 Android source preparation does not use depot_tools' local Git mirror.
 `gclient-sync-direct.sh` removes `GIT_CACHE_PATH` and indexed or legacy
-command-scope Git config, then always invokes:
+command-scope Git config, requires exactly one `cache_dir = None` assignment in
+`.gclient`, then invokes:
 
 ```text
-gclient sync --cache-dir None [--jobs 2] ...
+gclient sync [--jobs 2] ...
 ```
 
-Current depot_tools defines `--cache-dir None` as the explicit override for
-both `GIT_CACHE_PATH` and Git's `cache.cachepath`. Combined with the existing
-`--no-history`, gclient initializes each checkout and performs a shallow fetch
-from its origin. This eliminates the local mirror's
-`upload-pack -> pack-objects` source-preparation path. If an installed gclient
-does not support that contract it rejects the option and the job fails closed.
+The exact depot_tools commit is locked in `chromium/android-build.lock`.
+Source preparation checks out that commit and verifies its parser and config
+loader before putting it on `PATH`: the `config` command owns `--cache-dir`,
+the `sync` command has no such option, and the config loader passes the
+top-level `None` value to `git_cache.Mirror.SetCachePath`. Combined with the
+existing `--no-history`, gclient initializes each checkout and performs a
+shallow fetch from its origin. This eliminates the local mirror's
+`upload-pack -> pack-objects` path. Missing, duplicated, or cache-enabled
+configuration fails before gclient starts.
 
 Do not replace this with `GIT_CONFIG_COUNT` pack settings. Git only processes
 the key/value pairs while the matching count is present, while depot_tools

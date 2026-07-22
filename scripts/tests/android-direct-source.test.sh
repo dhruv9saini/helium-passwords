@@ -8,7 +8,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$test_root/bin"
+mkdir -p "$test_root/bin" "$test_root/work"
+printf 'cache_dir = None\n' > "$test_root/work/.gclient"
 
 cat > "$test_root/bin/git-child" <<'EOF'
 #!/usr/bin/env bash
@@ -42,28 +43,29 @@ exec git-child fetch origin pinned-commit --depth=1
 EOF
 chmod +x "$test_root/bin/gclient"
 
-PATH="$test_root/bin:$PATH" \
-  GCLIENT_CAPTURE="$test_root/gclient.argv" \
-  CHILD_CAPTURE="$test_root/git-child.env" \
-  GCLIENT_JOBS=2 \
-  GIT_CACHE_PATH="$test_root/forbidden-cache" \
-  GIT_CONFIG_COUNT=4 \
-  GIT_CONFIG_KEY_0=pack.threads \
-  GIT_CONFIG_VALUE_0=8 \
-  GIT_CONFIG_KEY_1=pack.windowMemory \
-  GIT_CONFIG_VALUE_1=2g \
-  GIT_CONFIG_KEY_2=core.deltaBaseCacheLimit \
-  GIT_CONFIG_VALUE_2=2g \
-  GIT_CONFIG_KEY_3=pack.deltaCacheSize \
-  GIT_CONFIG_VALUE_3=2g \
-  GIT_CONFIG_PARAMETERS="'pack.threads'='8'" \
-  "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
-    --nohooks --no-history
+(
+  cd "$test_root/work"
+  PATH="$test_root/bin:$PATH" \
+    GCLIENT_CAPTURE="$test_root/gclient.argv" \
+    CHILD_CAPTURE="$test_root/git-child.env" \
+    GCLIENT_JOBS=2 \
+    GIT_CACHE_PATH="$test_root/forbidden-cache" \
+    GIT_CONFIG_COUNT=4 \
+    GIT_CONFIG_KEY_0=pack.threads \
+    GIT_CONFIG_VALUE_0=8 \
+    GIT_CONFIG_KEY_1=pack.windowMemory \
+    GIT_CONFIG_VALUE_1=2g \
+    GIT_CONFIG_KEY_2=core.deltaBaseCacheLimit \
+    GIT_CONFIG_VALUE_2=2g \
+    GIT_CONFIG_KEY_3=pack.deltaCacheSize \
+    GIT_CONFIG_VALUE_3=2g \
+    GIT_CONFIG_PARAMETERS="'pack.threads'='8'" \
+    "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+      --nohooks --no-history
+)
 
 cat > "$test_root/expected.argv" <<'EOF'
 sync
---cache-dir
-None
 --jobs
 2
 --nohooks
@@ -75,17 +77,32 @@ grep -qx 'child_argv=fetch origin pinned-commit --depth=1' \
 grep -qx 'child_git_cache=disabled' "$test_root/git-child.env"
 [[ ! -e "$test_root/forbidden-cache" ]]
 
-if PATH="$test_root/bin:$PATH" \
+if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
   GCLIENT_CAPTURE="$test_root/rejected.argv" \
   CHILD_CAPTURE="$test_root/rejected-child.env" \
   GCLIENT_JOBS=0 \
   "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
-  >"$test_root/rejected.out" 2>&1; then
+  >"$test_root/rejected.out" 2>&1); then
   echo 'zero gclient job count unexpectedly passed' >&2
   exit 1
 fi
 grep -qx 'GCLIENT_JOBS must be a positive integer' "$test_root/rejected.out"
 [[ ! -e "$test_root/rejected.argv" ]]
 [[ ! -e "$test_root/rejected-child.env" ]]
+
+mkdir "$test_root/unsafe"
+printf 'cache_dir = "/tmp/not-disabled"\n' > "$test_root/unsafe/.gclient"
+if (cd "$test_root/unsafe" && PATH="$test_root/bin:$PATH" \
+  GCLIENT_CAPTURE="$test_root/unsafe.argv" \
+  CHILD_CAPTURE="$test_root/unsafe-child.env" \
+  "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+  >"$test_root/unsafe.out" 2>&1); then
+  echo 'cache-enabled gclient configuration unexpectedly passed' >&2
+  exit 1
+fi
+grep -qx 'gclient configuration must contain exactly one cache_dir = None assignment' \
+  "$test_root/unsafe.out"
+[[ ! -e "$test_root/unsafe.argv" ]]
+[[ ! -e "$test_root/unsafe-child.env" ]]
 
 echo 'Android direct source acquisition contract passed'

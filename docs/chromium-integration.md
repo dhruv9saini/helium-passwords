@@ -71,10 +71,11 @@ gh workflow run chromium-android.yml
 ```
 
 `chromium/android-build.lock` is the single source for the exact Chromium tag,
-Chromium commit, and Helium core commit. `apply-android-backbone.sh` applies the
-ordered Helium core series while omitting only the mandatory password-disable
-patch, then applies the two public Passwords patches, six private Sync patches
-and overlay, Helium transformations/resources, and shared plus Android GN args.
+Chromium commit, Helium core commit, and depot_tools commit.
+`apply-android-backbone.sh` applies the ordered Helium core series while
+omitting only the mandatory password-disable patch, then applies the two public
+Passwords patches, six private Sync patches and overlay, Helium
+transformations/resources, and shared plus Android GN args.
 Contract tests currently count 284 core + 2 Passwords + 6 Sync patches. The
 complete 292-patch apply still needs a prepared source checkout on chromiumer.
 

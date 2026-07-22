@@ -652,7 +652,8 @@ source_info() {
     awk -F= '$1 == "repository" || $1 == "commit" || $1 == "tree" ||
         $1 == "helium_submodule" || $1 == "chromium_version" ||
         $1 == "HELIUM_ANDROID_CHROMIUM_COMMIT" ||
-        $1 == "HELIUM_ANDROID_CORE_COMMIT" { print }' "${manifest}"
+        $1 == "HELIUM_ANDROID_CORE_COMMIT" ||
+        $1 == "HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" { print }' "${manifest}"
 }
 
 artifact_info() {

@@ -99,10 +99,20 @@ setup_ccache() {
 }
 
 setup_depot_tools() {
+  local depot_tools_url=https://chromium.googlesource.com/chromium/tools/depot_tools.git
   mkdir -p "$workspace" "$artifact_dir"
   if [[ ! -d "$workspace/depot_tools/.git" ]]; then
-    git clone https://chromium.googlesource.com/chromium/tools/depot_tools.git "$workspace/depot_tools"
+    mkdir -p "$workspace/depot_tools"
+    git -C "$workspace/depot_tools" init
+    git -C "$workspace/depot_tools" remote add origin "$depot_tools_url"
   fi
+  [[ "$(git -C "$workspace/depot_tools" remote get-url origin)" == "$depot_tools_url" ]]
+  git -C "$workspace/depot_tools" fetch --depth=1 origin \
+    "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
+  git -C "$workspace/depot_tools" checkout --detach \
+    "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
+  "$repo_root/scripts/chromium/verify-depot-tools-cache-contract.sh" \
+    "$workspace/depot_tools" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
   export PATH="$workspace/depot_tools:$PATH"
 }
 
@@ -146,6 +156,7 @@ solutions = [
     },
   },
 ]
+cache_dir = None
 target_os = ["android"]
 EOF
   fi

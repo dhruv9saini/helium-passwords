@@ -12,6 +12,7 @@ trap cleanup EXIT
 . "$repo_root/chromium/android-build.lock"
 [[ "$HELIUM_ANDROID_CHROMIUM_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 [[ "$HELIUM_ANDROID_CORE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+[[ "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 [[ "$HELIUM_ANDROID_CORE_COMMIT" == "$(git -C "$repo_root/helium-chromium" rev-parse HEAD)" ]]
 [[ "$HELIUM_ANDROID_CHROMIUM_VERSION" == "$(tr -d '\r\n' < "$repo_root/helium-chromium/chromium_version.txt")" ]]
 
