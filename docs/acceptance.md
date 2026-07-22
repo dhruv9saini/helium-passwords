@@ -13,7 +13,8 @@ go test ./...
 
 It currently proves the HS-001 reconcile state machine, cookie partition and
 source/replica semantics, independent tab generation/retention/restore
-invariants, authenticated sync-store journal recovery, constrained TLS
+invariants, bounded immutable multi-page record snapshots, authenticated
+sync-store journal recovery, constrained TLS
 issuance, wrong-identity rejection, and a TLS 1.3 handshake. It does not
 replace the browser gates below.
 

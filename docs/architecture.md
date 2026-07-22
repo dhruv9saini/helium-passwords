@@ -73,6 +73,36 @@ fingerprints, revisions, and a global `verified_sequence`; they do not contain
 plaintext password or cookie values. Cookie rollback plaintext is sealed with
 a device-local key that is not shared through enrollment.
 
+## Bounded record transport
+
+Record reads use one mandatory versioned pagination protocol; there is no
+unpaged compatibility path. An initial pull sends its durable `since` cursor,
+an initial latest-inventory read omits `since`, and every request asks for 128
+records. The server freezes its current journal sequence as `next_seq`, binds
+an opaque continuation cursor to the operation and kind filters, scans only
+that immutable range in ascending sequence order, and keeps the same
+`next_seq` on every page. Writes arriving during the read are therefore left
+for the next pull rather than leaking into the current snapshot.
+
+The server accepts at most 256 requested records per page, emits at most 4 MiB
+of encoded JSON, and rejects an opaque mutation larger than 1 MiB so every
+accepted record can fit in a page. Go and Chromium clients request 128 records,
+allow at most 512 pages, 65,536 aggregate records, 128 MiB aggregate encoded
+responses, and 5 MiB for any one HTTP response. They require pagination
+version 1, all response fields, one fixed snapshot cursor, globally increasing
+record sequences within that snapshot, and a never-repeated continuation
+cursor. All pages are validated and assembled before decryption reaches a
+bridge callback; browser application and durable acknowledgement therefore
+cannot occur after only a prefix of the snapshot.
+
+The rootless synthetic lm service runs this protocol through direct TLS. Its
+deployed regression crosses the page boundary, verifies ordered unique
+records at one snapshot, rejects a retiring content epoch, rejects a stale
+join promotion before accepting the current cursor, tombstones every fixture,
+revokes the fixture client, and finishes with a checksum-verified NAS restore.
+This is service/protocol evidence. The same native client still requires a
+Chromium compile and disposable browser execution before personal enrollment.
+
 ## Enrollment and authorization
 
 d is the only seed. `helium-sync seed-init` creates d's content/signing state
