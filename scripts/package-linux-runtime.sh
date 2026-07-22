@@ -52,9 +52,10 @@ core_commit=$(git -C "${root_dir}" rev-parse HEAD:helium-chromium)
     exit 1
 }
 
-# shellcheck source=../helium-passwords.conf
-# shellcheck disable=SC1091
-. "${root_dir}/helium-passwords.conf"
+build_config="${root_dir}/helium-passwords.conf"
+[ ! -f "${root_dir}/go.mod" ] || build_config="${root_dir}/helium-sync.conf"
+# shellcheck source=/dev/null
+. "${build_config}"
 platform_commit=$(git -C "${checkout}" rev-parse HEAD)
 [ "${platform_commit}" = "${HELIUM_LINUX_PLATFORM_COMMIT}" ] || {
     echo "prepared Linux checkout uses the wrong platform commit" >&2

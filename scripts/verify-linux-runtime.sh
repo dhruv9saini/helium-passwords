@@ -127,9 +127,10 @@ value() {
     awk -F= -v key="$1" '$1 == key { print substr($0, length(key) + 2); exit }' "${manifest}"
 }
 
-# shellcheck source=../helium-passwords.conf
-# shellcheck disable=SC1091
-. "${root_dir}/helium-passwords.conf"
+build_config="${root_dir}/helium-passwords.conf"
+[ ! -f "${root_dir}/go.mod" ] || build_config="${root_dir}/helium-sync.conf"
+# shellcheck source=/dev/null
+. "${build_config}"
 expected_source=$(git -C "${root_dir}" rev-parse HEAD)
 expected_tree=$(git -C "${root_dir}" rev-parse 'HEAD^{tree}')
 expected_core=$(git -C "${root_dir}" rev-parse HEAD:helium-chromium)
