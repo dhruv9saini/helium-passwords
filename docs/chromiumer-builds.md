@@ -191,10 +191,13 @@ scripts/chromiumer-job.sh start "$job" \
 ```
 
 Linux/Android jobs additionally need a reproducible chromiumer build
-environment. Helium Linux currently expects Docker. Chromium's NixOS guidance
-requires running depot tools in its Nix shell. Record the Nix system closure,
-Docker image ID when applicable, exact command, GN args, patch hashes, and
-Chromium commit alongside the source manifest before accepting an artifact.
+environment. The pinned, cgroup-gated environment and its separate Nix-store
+disk arithmetic are in [chromiumer-nix.md](chromiumer-nix.md). Helium Linux
+currently expects Docker; that daemon is not provided by the Android Nix
+environment. Chromium's NixOS guidance requires running depot tools in its Nix
+shell. Record the Nix system closure, Docker image ID when applicable, exact
+command, GN args, patch hashes, and Chromium commit alongside the source
+manifest before accepting an artifact.
 
 ## Status, Logs, Cancellation, and Artifacts
 
@@ -278,11 +281,14 @@ provided Nix shell:
 
 <https://chromium.googlesource.com/chromium/src/+/main/docs/linux/build_instructions.md>
 
-The remaining setup gate is:
+The pinned environment is implemented but deliberately not realized. The
+remaining setup gate is:
 
-1. Provision and record a pinned Nix tool environment containing Git,
-   Python 3, depot_tools, and the Chromium build dependencies. Add Docker only
-   for the public Linux wrapper that actually calls it.
+1. Follow [chromiumer-nix.md](chromiumer-nix.md): admit a 20 GiB isolated
+   realization job, require the independent 102 GiB start gate, and record the
+   resulting closure plus root-space delta. The environment provides the
+   bootstrap for source-managed depot_tools. Add Docker only for the public
+   Linux wrapper that actually calls it.
 2. Re-run `preflight 80` after the tool closure is present; if the remaining
    headroom is insufficient, add a local build disk rather than using the NAS.
 3. Measure the bounded compile under the existing 5 GiB hard memory cap. Host
