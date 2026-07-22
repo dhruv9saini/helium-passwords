@@ -117,6 +117,11 @@ The fixture server issues controlled cookies and rotating opaque tokens.
 - For each target site, audit localStorage, IndexedDB, service-worker storage,
   and other origin state in disposable profiles. Transfer only an evidenced,
   origin-scoped export; never live-merge an application database.
+- Bind the metadata-only audit to the exact disposable artifact and target:
+  `node scripts/session-state/origin-state-audit.mjs EVIDENCE.json ARTIFACT`.
+  Synthetic evidence must produce only synthetic/unknown classifications;
+  a missing, symlinked, or hash-mismatched artifact and any secret-bearing
+  evidence field must fail.
 
 ## Gate 4: Durable Tabs
 
@@ -136,6 +141,10 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   generation lacking two verified off-source copies.
 - A restore drill into a disposable profile checks counts and representative
   state, restarts a second time, and records success.
+- Before any browser import, the standalone `validate-restore` command
+  independently rechecks the receipt's source binding,
+  session hash and size, strict schemas, permissions, symlink rejection, and
+  exact two-file inventory.
 - Corrupt the newest local session, newest local snapshot, NAS copy, and second
   host copy separately; in every case a different independent recovery path
   succeeds without changing a live profile.

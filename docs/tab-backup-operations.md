@@ -200,8 +200,10 @@ scripts/tabs/tab-backup.sh restore-to-disposable "$config" \
 
 The command fetches one copy, verifies the ciphertext, decrypts to a temporary
 directory, rejects any unexpected tar member, revalidates the snapshot through
-`helium-tabs`, and uses its atomic disposable restore. Nothing in this layer
-can promote a restore into a live browser profile. The wrapper must run on the
+`helium-tabs`, and uses its atomic disposable restore. It then invokes the
+standalone `validate-restore` gate and verifies that the receipt names the
+requested source generation, device, and profile. Nothing in this layer can
+promote a restore into a live browser profile. The wrapper must run on the
 snapshot's source device and cannot open or merge the result into another
 device's browser.
 

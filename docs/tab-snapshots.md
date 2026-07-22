@@ -72,10 +72,17 @@ helium-tabs restore \
   --store "$HOME/.local/share/helium-sync/tab-snapshots/d-default" \
   --generation GENERATION \
   --destination /path/to/new-disposable-state
+
+helium-tabs validate-restore \
+  --destination /path/to/new-disposable-state
 ```
 
 It validates hashes and schema again, creates and syncs a temporary restore,
 then atomically renames it to the requested new disposable-state directory.
-The output is still the neutral JSON model; browser loading, second-restart
+The restore receipt binds the source generation, device/profile namespace,
+session hash and size, validation marker, and restore time. The standalone
+validator rejects symlinks, nonprivate files, extra inventory, schema drift,
+and any receipt/content mismatch without consulting the source store. The
+output is still the neutral JSON model; browser loading, second-restart
 verification, drill recording, and promotion to a real stopped profile remain
 unimplemented integration work. No automatic promotion path exists.

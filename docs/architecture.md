@@ -155,9 +155,13 @@ Chromium device-bound sessions are observed through its device-bound-session
 manager. A cookie proven device-bound, or a cookie rejected on the destination,
 is marked non-clonable for that exact session; the last local session is
 preserved and a reauthentication request is recorded. Automatic password-based
-reauthentication is not browser-integrated yet. localStorage, IndexedDB,
-service-worker storage, and other per-origin state are not transferred yet.
-They require site-specific disposable-profile evidence and an export/import
+reauthentication is not browser-integrated yet. The metadata-only origin-state
+audit binds controlled cookie/auth/DBSC outcomes and storage requirements to an
+exact target and synthetic or disposable artifact hash, rejects secret-bearing
+fields, and prevents synthetic evidence from creating a concrete portability
+claim. It does not collect or transfer localStorage, IndexedDB, service-worker
+storage, Cache Storage, or other per-origin state. Those stores require
+site-specific disposable-profile evidence and an origin-scoped export/import
 adapter; arbitrary application databases will never be live-merged.
 
 ## Device-local durable tabs
@@ -243,8 +247,8 @@ evidence.
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations | Execute on disposable profiles, then provision d/da/oneplus |
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop | Built-browser prompts, save/update/delete/autofill and three-device restart tests |
 | Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
-| Origin state | Explicitly absent | Per-origin storage audit and safe adapters where observed necessary |
-| Tabs | Local exporter/store, atomic generations, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; deploy independent schedules/routes; disposable browser restore on every device |
+| Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; no state values accepted | Disposable-browser evidence collector and safe origin-scoped adapters only where observed necessary |
+| Tabs | Local exporter/store, atomic checked generations, standalone content-bound disposable-restore validator, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; authorize da's dedicated key on d; provision independent recovery recipients; enable schedules only after two-route preflight; disposable browser restore on every device |
 | Media/streaming | Reproducible fixtures and strict codec GN provenance checks | Control/Sync APK A/B on oneplus, HTTP/2+HTTP/3, video/audio/ChatGPT timing |
 | Android source/build | Shared one-request immutable source helper; exact-HEAD, depot pin, cache-disable, and private single-entry contracts | Fresh isolated chromiumer source preparation, 292-patch apply, GN generation, focused compile, then APK |
 | Deployment | Executable d recovery export/import, credential cutover, direct-TLS generation install/start gates, source unit/install gate, and rollback-preserving installers | Create off-device recovery identities/copies and offline TLS CA, enroll its public root, prove live tailnet TLS, d SSH/auth route, artifacts, profile backups, sequential enrollment |
