@@ -140,6 +140,10 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     expected_chunks: 4,
     finished_at: "2026-07-21T00:00:00Z",
     required_transport_protocols: [],
+    required_lifecycle: {
+      background_foreground: false,
+      network_handoff: false,
+    },
     fetch_identity: stream,
     fetch_gzip: stream,
     fetch_br: stream,
@@ -234,6 +238,25 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
       ],
     },
   }), /milestone timing evidence was invalid/);
+  assert.equal(validateProbeResult({
+    ...result,
+    required_lifecycle: { background_foreground: true, network_handoff: true },
+    lifecycle: { events: [
+      ...result.lifecycle.events.slice(0, 1),
+      { event: "visibilitychange", at_ms: 100, visibility: "hidden", online: true },
+      { event: "connectionchange", at_ms: 200, visibility: "hidden", online: true },
+      { event: "visibilitychange", at_ms: 300, visibility: "visible", online: true },
+      ...result.lifecycle.events.slice(1),
+    ] },
+  }).required_lifecycle.network_handoff, true);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    required_lifecycle: { background_foreground: true, network_handoff: false },
+  }), /background\/foreground lifecycle was not observed/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    required_lifecycle: { background_foreground: false, network_handoff: true },
+  }), /network handoff was not observed/);
   assert.equal(validateProbeResult({
     ...result,
     required_transport_protocols: ["h2"],

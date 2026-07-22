@@ -134,63 +134,45 @@ directories name the admitted file `Browser-test.apk`; their package identity,
 archive hash, source commit, and composition remain explicit in provenance.
 
 After the test package is explicitly installed and launched on disposable
-oneplus state, run the carried probe from the host connected to that device.
-Use a new evidence filename for each APK and never use `--remove-all`, which
-could disrupt unrelated ADB work:
+oneplus state with its test-only CDP socket enabled, run the artifact-carried
+device orchestrator from the host connected to that device. Use a new evidence
+directory for every run. The two HTTPS endpoints must be credential-free
+synthetic fixtures: configure the first to allow HTTP/2 but not HTTP/3 and the
+second to advertise and serve HTTP/3. The browser records the actually
+negotiated protocols:
 
 ```sh
-set -euo pipefail
 acceptance=/srv/nas/helium-acceptance/JOB
 serial=ONEPLUS_ADB_SERIAL
-evidence_root=/srv/nas/helium-acceptance-evidence/JOB
-mkdir -p "$evidence_root"
-evidence="$evidence_root/result-oneplus.json"
-fixture_log="$evidence.fixture-server.log"
-[[ ! -e "$evidence" && ! -e "$fixture_log" && ! -e "$evidence.receipt.sha256" ]]
-fixture_pid=
-reverse_created=false
-forward_created=false
-cleanup_probe() {
-  if [[ "$forward_created" == true ]]; then
-    adb -s "$serial" forward --remove tcp:9222 || true
-  fi
-  if [[ "$reverse_created" == true ]]; then
-    adb -s "$serial" reverse --remove tcp:44721 || true
-  fi
-  if [[ -n "$fixture_pid" ]]; then
-    kill "$fixture_pid" 2>/dev/null || true
-    wait "$fixture_pid" 2>/dev/null || true
-  fi
-}
-trap cleanup_probe EXIT INT TERM
-
-(cd "$acceptance" && sha256sum -c PACKAGE_SHA256SUMS)
-node "$acceptance/runtime-acceptance/fixture-server.mjs" \
-  --host 127.0.0.1 --port 44721 --media-dir "$acceptance/media" \
-  > "$fixture_log" 2>&1 &
-fixture_pid=$!
-
-adb -s "$serial" reverse --no-rebind tcp:44721 tcp:44721
-reverse_created=true
-adb -s "$serial" forward --no-rebind tcp:9222 localabstract:chrome_devtools_remote
-forward_created=true
-node "$acceptance/runtime-acceptance/run-cdp-probe.mjs" \
-  --cdp http://127.0.0.1:9222 \
-  --fixture http://127.0.0.1:44721/probe \
-  --output "$evidence"
-
-sha256sum "$evidence" "$acceptance/acceptance.env" \
-  > "$evidence.receipt.sha256"
+evidence=/srv/nas/helium-acceptance-evidence/JOB/oneplus-sync-N
+"$acceptance/runtime-acceptance/run-device-probe.sh" \
+  "$acceptance" "$serial" "$evidence" \
+  --h2 'https://H2_FIXTURE_HOST/stream/fetch?encoding=identity' \
+  --h3 'https://H3_FIXTURE_HOST/stream/fetch?encoding=identity' \
+  --background-foreground true \
+  --network-handoff wifi-to-cellular
+(cd "$evidence" && sha256sum -c EVIDENCE_SHA256SUMS)
 ```
 
 The test app must already be the hash-verified `computer.helium.sync.test` APK;
-the fixture and CDP endpoints stay on loopback. The runner refuses non-loopback
-origins and existing evidence. A passing result requires three observable
+the local fixture and CDP endpoints stay on loopback. The runner verifies the
+complete prepared-directory inventory, requires an installed disposable
+package, refuses existing evidence, and uses only its two fixed ADB mappings.
+It never installs, clears, or uninstalls an app and never uses `--remove-all`.
+The Wi-Fi handoff is allowed only over a non-network ADB transport, requires
+mobile data and Wi-Fi to start enabled, and restores Wi-Fi on every exit. Its
+action evidence contains package/action/timestamp metadata, not SSIDs,
+addresses, page content, or profile data.
+
+A passing result requires three observable
 numbered-chunk milestones for identity, gzip, and Brotli Fetch responses,
 ordered SSE, verified MP4/WebM/MSE fixtures, completed playback, video
 dimensions, decoded-audio evidence, required codec capabilities, and browser
-product/protocol provenance. HTTP/2, HTTP/3, background/foreground, network
-handoff, upstream-control A/B, and ChatGPT timing remain separate device gates.
+product/protocol provenance. When requested, the same result must contain
+actual `h2` and `h3` `PerformanceResourceTiming.nextHopProtocol` values, an
+ordered hidden-to-visible transition, and a Network Information API change
+event. Run the identical command with a new directory for the same-commit
+upstream control; ChatGPT timing remains a separate content-free manual gate.
 
 A copied backup never opens a browser.
 

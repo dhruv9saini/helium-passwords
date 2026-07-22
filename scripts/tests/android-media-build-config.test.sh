@@ -83,6 +83,10 @@ grep -Fq 'compile-${artifact_target}-${target_cpu}.tar.xz' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'package_runtime_acceptance "$staging/runtime-acceptance"' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'run-device-probe.sh' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'schema_version=2' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'probe_schema_version=1' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'prepare-android-source.sh' \

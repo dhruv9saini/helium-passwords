@@ -89,21 +89,23 @@ grep -qx "chrome_public_manifest_package = \"$expected_package\"" \
 
 runtime_kit="$temporary/runtime-acceptance"
 [[ -d "$runtime_kit" ]] || { echo "missing Android runtime acceptance kit" >&2; exit 1; }
-for kit_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs kit.env SHA256SUMS; do
+for kit_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
+  run-device-probe.sh kit.env SHA256SUMS; do
   [[ -f "$runtime_kit/$kit_file" && ! -L "$runtime_kit/$kit_file" ]] || {
     echo "runtime acceptance kit is missing $kit_file" >&2
     exit 1
   }
 done
-[[ "$(find "$runtime_kit" -mindepth 1 -maxdepth 1 | wc -l)" -eq 5 ]] || {
+[[ "$(find "$runtime_kit" -mindepth 1 -maxdepth 1 | wc -l)" -eq 6 ]] || {
   echo "runtime acceptance kit contains an unexpected file inventory" >&2
   exit 1
 }
-[[ "$(wc -l < "$runtime_kit/SHA256SUMS")" -eq 4 ]] || {
+[[ "$(wc -l < "$runtime_kit/SHA256SUMS")" -eq 5 ]] || {
   echo "runtime acceptance kit checksum inventory is invalid" >&2
   exit 1
 }
-for checked_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs kit.env; do
+for checked_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
+  run-device-probe.sh kit.env; do
   grep -Eq "^[0-9a-f]{64}  ${checked_file}$" "$runtime_kit/SHA256SUMS" || {
     echo "runtime acceptance kit checksum inventory is missing $checked_file" >&2
     exit 1
@@ -117,7 +119,7 @@ done
   echo "runtime acceptance kit metadata inventory is invalid" >&2
   exit 1
 }
-grep -qx 'schema_version=1' "$runtime_kit/kit.env"
+grep -qx 'schema_version=2' "$runtime_kit/kit.env"
 grep -qx 'probe_schema_version=1' "$runtime_kit/kit.env"
 grep -qx "helium_sync_commit=$expected_sync_commit" "$runtime_kit/kit.env"
 grep -qx "chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT" "$runtime_kit/kit.env"

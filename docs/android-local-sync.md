@@ -79,10 +79,13 @@ on chromiumer. Its codec flags and source tests are necessary but not runtime
 proof. `scripts/android-media/prepare-disposable-acceptance.sh` verifies a
 returned Sync or upstream-control test-package archive, creates a new
 checksum-complete test directory with one `Browser-test.apk`, and never
-installs or launches it. The exact device commands are in
-`deployment.md`. Acceptance still requires same-SHA upstream-control and Sync
-APKs on oneplus for H.264/AAC, MSE, VP9/Opus, progressive Fetch, gzip/Brotli,
-SSE, HTTP/2, HTTP/3, background/foreground, and network handoff.
+installs or launches it. That directory carries `run-device-probe.sh`, which
+owns the fixed ADB mappings, background/resume cycle, optional Wi-Fi-to-cellular
+handoff with restoration, immutable evidence directory, and protocol/lifecycle
+validation. The exact device command is in `deployment.md`. Acceptance still
+requires same-SHA upstream-control and Sync APKs on oneplus for H.264/AAC, MSE,
+VP9/Opus, progressive Fetch, gzip/Brotli, SSE, actually negotiated HTTP/2 and
+HTTP/3, background/foreground, and network handoff.
 The carried probe records EME and `com.widevine.alpha` availability separately;
 ordinary codec playback never proves DRM, and protected playback remains
 outside the passing gate until a CDM is deliberately provisioned.

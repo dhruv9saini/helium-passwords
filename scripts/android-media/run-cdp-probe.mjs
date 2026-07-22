@@ -175,6 +175,24 @@ export function validateProbeResult(result) {
         typeof event?.visibility !== "string" || typeof event?.online !== "boolean")) {
     throw new Error("browser lifecycle observations were absent or invalid");
   }
+  const lifecycleRequirements = result.required_lifecycle || {};
+  if (typeof lifecycleRequirements.background_foreground !== "boolean" ||
+      typeof lifecycleRequirements.network_handoff !== "boolean") {
+    throw new Error("browser lifecycle requirements were absent or invalid");
+  }
+  if (lifecycleRequirements.background_foreground) {
+    const hiddenIndex = lifecycleEvents.findIndex(event =>
+      event.event === "visibilitychange" && event.visibility === "hidden");
+    const visibleIndex = lifecycleEvents.findIndex((event, index) =>
+      index > hiddenIndex && event.event === "visibilitychange" && event.visibility === "visible");
+    if (hiddenIndex < 0 || visibleIndex < 0) {
+      throw new Error("required background/foreground lifecycle was not observed");
+    }
+  }
+  if (lifecycleRequirements.network_handoff &&
+      !lifecycleEvents.some(event => event.event === "connectionchange")) {
+    throw new Error("required network handoff was not observed");
+  }
   return result;
 }
 
@@ -247,6 +265,12 @@ export async function runProbe(options) {
     page = new CDP(requireLoopbackWebSocket(target.webSocketDebuggerUrl, "page CDP"));
     await page.open();
     await page.call("Runtime.enable");
+    if (options.readyFile) {
+      await atomicWriteJSON(path.resolve(options.readyFile), {
+        schema_version: 1,
+        state: "probe_page_connected",
+      });
+    }
     const response = await page.call("Runtime.evaluate", {
       expression: `new Promise(resolve => {
         const started = Date.now();
@@ -268,6 +292,10 @@ export async function runProbe(options) {
       throw new Error("browser probe returned no structured result");
     }
     rawResult.required_transport_protocols = requiredTransportProtocols;
+    rawResult.required_lifecycle = {
+      background_foreground: options.requireLifecycle === "true",
+      network_handoff: options.requireNetworkHandoff === "true",
+    };
     rawResult.runtime = {
       browser_product: browserInfo.Browser || "",
       browser_protocol_version: browserInfo["Protocol-Version"] || "",
@@ -443,6 +471,22 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         event:"content_free_chatgpt_timing_recorded", output:path.resolve(args.output), status:result.status,
       })}\n`);
     } else {
+      const allowedArgs = new Set([
+        "cdp", "fixture", "output", "h2", "h3", "ready-file",
+        "require-lifecycle", "require-network-handoff",
+      ]);
+      const unexpected = Object.keys(args).filter(name => !allowedArgs.has(name));
+      if (unexpected.length) {
+        throw new Error(`probe mode rejects unexpected arguments: ${unexpected.join(", ")}`);
+      }
+      for (const name of ["require-lifecycle", "require-network-handoff"]) {
+        if (args[name] !== undefined && !new Set(["true", "false"]).has(args[name])) {
+          throw new Error(`${name} must be true or false`);
+        }
+      }
+      args.readyFile = args["ready-file"];
+      args.requireLifecycle = args["require-lifecycle"] || "false";
+      args.requireNetworkHandoff = args["require-network-handoff"] || "false";
       const result = await runProbe(args);
       process.stdout.write(`${JSON.stringify({event:"probe_passed", output:path.resolve(args.output), capabilities:result.capabilities})}\n`);
     }

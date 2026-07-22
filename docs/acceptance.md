@@ -232,6 +232,16 @@ and Brotli fixture:
 - background/foreground and network handoff have a recorded result; and
 - the upstream-control and patched-APK comparison identifies any regression.
 
+Run the artifact-carried `runtime-acceptance/run-device-probe.sh` from the
+prepared acceptance directory. For the combined lifecycle gate, use a USB or
+other non-network ADB transport, request the background/foreground cycle, and
+request `wifi-to-cellular`; the runner fails before changing networking unless
+Wi-Fi and mobile data are both enabled and restores Wi-Fi on every exit. The
+HTTP/2 and HTTP/3 URLs are separate credential-free synthetic HTTPS origins.
+Evidence passes only when the browser reports the requested `h2`/`h3`
+negotiation and the page observes the required visibility and connection
+events. A script action alone is not acceptance evidence.
+
 After deterministic gates pass, run ChatGPT as a manual end-to-end scenario and
 record only timing/status observations, never conversation content or tokens.
 
