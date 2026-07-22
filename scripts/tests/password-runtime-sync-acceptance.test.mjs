@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -25,6 +26,31 @@ const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.from("synthetic Sync screenshot bytes"),
 ]);
+
+async function writeLinuxArtifactReceipt(root, artifact) {
+  const artifactHash = crypto.createHash("sha256")
+    .update(await fsp.readFile(artifact)).digest("hex");
+  const receipt = path.join(root, "artifact-receipt.env");
+  await fsp.writeFile(receipt, [
+    "schema_version=1",
+    "product=helium-passwords",
+    "platform=linux",
+    "arch=x86_64",
+    `source_commit=${"1".repeat(40)}`,
+    `helium_core_commit=${"2".repeat(40)}`,
+    "chromium_version=150.0.7871.181",
+    `chromium_commit=${"3".repeat(40)}`,
+    `platform_commit=${"4".repeat(40)}`,
+    `bundle=${path.join(root, "bundle.tar.xz")}`,
+    `bundle_sha256=${"5".repeat(64)}`,
+    `provenance_manifest_sha256=${"6".repeat(64)}`,
+    `browser_executable=${path.relative(root, artifact)}`,
+    `browser_sha256=${artifactHash}`,
+    "verified_at=synthetic-fixture",
+    "",
+  ].join("\n"), {mode: 0o600});
+  return receipt;
+}
 
 function state(revision, fingerprint, deleted, sequence = revision) {
   return {
@@ -88,7 +114,10 @@ test("private receipt binds public UI evidence to exact revisions, tombstone, an
     const evidencePath = path.join(root, "fixture-evidence.json");
     await fsp.writeFile(artifact, "synthetic browser artifact", {mode: 0o700});
     await fsp.writeFile(screenshot, PNG, {mode: 0o600});
-    await initializeRun({artifact, output: runRoot, platform: "linux"});
+    const artifactReceipt = await writeLinuxArtifactReceipt(root, artifact);
+    await initializeRun({
+      artifact, artifactReceipt, output: runRoot, platform: "linux",
+    });
     const snapshots = {
       saved_store: {state: state(1, "1".repeat(64), false), journal: `${record(1, 1, false)}\n`},
       saved_restart_autofill: {state: state(1, "1".repeat(64), false), journal: `${record(1, 1, false)}\n`},
@@ -155,7 +184,10 @@ test("Sync metadata must be captured at its matching public UI step", async () =
     await fsp.writeFile(screenshot, PNG, {mode: 0o600});
     await fsp.writeFile(statePath, `${JSON.stringify(state(1, "1".repeat(64), false))}\n`, {mode: 0o600});
     await fsp.writeFile(journalPath, `${record(1, 1, false)}\n`, {mode: 0o600});
-    await initializeRun({artifact, output: runRoot, platform: "linux"});
+    const artifactReceipt = await writeLinuxArtifactReceipt(root, artifact);
+    await initializeRun({
+      artifact, artifactReceipt, output: runRoot, platform: "linux",
+    });
     for (const step of ["settings_entry", "save_prompt", "saved_store", "suggestions"]) {
       await captureStep({runRoot, step, screenshot});
     }

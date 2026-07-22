@@ -296,8 +296,9 @@ export async function verifySyncRun({runRoot, fixtureEvidence}) {
   const audited = await auditRun({runRoot, fixtureEvidence});
   const publicReceiptFile = await readJSON(path.join(audited.root, "receipt.json"), "public acceptance receipt");
   exactKeys(publicReceiptFile.value, [
-    "schema_version", "result", "artifact_sha256", "platform", "package",
-    "fixture_origin", "screenshots", "fixture_evidence_sha256", "verified_at",
+    "schema_version", "result", "artifact_sha256", "artifact_receipt_sha256",
+    "platform", "package", "fixture_origin", "screenshots",
+    "fixture_evidence_sha256", "verified_at",
   ], "public acceptance receipt");
   const {verified_at: publicVerifiedAt, ...publicReceipt} = publicReceiptFile.value;
   if (typeof publicVerifiedAt !== "string" || !equalJSON(publicReceipt, audited.receipt)) {
