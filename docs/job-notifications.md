@@ -63,8 +63,10 @@ single configured user address internally.
 `queue-event` and the producer key are idempotent. Identical process, timer,
 restart, or concurrent retries return the same event and turn. Rebinding the
 key to changed prompt bytes, conversation, or recipient fails without
-mutation. A crash after the SQLite commit but before producer-state update is
-safe: the producer retains the exact prompt and retries the same key.
+mutation and moves the producer to visible terminal `analysis-conflict` state;
+it never invents a replacement key or template. A crash after the SQLite
+commit but before producer-state update is safe: the producer retains the
+exact prompt and retries the same key.
 
 Mailbridge sends no receipt. Its durable status progresses through `queued`,
 `running`, `completed`, and `emailed`; `completed` means the Codex final result
