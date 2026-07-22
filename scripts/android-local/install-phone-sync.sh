@@ -18,8 +18,6 @@ tar -C "$repo_root/browser-extensions/google-ai-overview-blocker" \
   -cf "$work_dir/google-ai-overview-blocker.tar" .
 tar -C "$repo_root/browser-extensions/blank-new-tab-extension" \
   -cf "$work_dir/blank-new-tab-extension.tar" .
-tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
-  -cf "$work_dir/tab-pin-helper-extension.tar" .
 
 "$adb_bin" push "$work_dir/helium-sync" /data/local/tmp/helium-sync >/dev/null
 "$adb_bin" push "$work_dir/helium-tabs" /data/local/tmp/helium-tabs >/dev/null
@@ -60,7 +58,6 @@ tar -C "$repo_root/browser-extensions/tab-pin-helper-extension" \
 "$adb_bin" push "$repo_root/scripts/android-local/termux-x11-session-focus-root.sh" /data/local/tmp/termux-x11-session-focus-root.sh >/dev/null
 "$adb_bin" push "$work_dir/google-ai-overview-blocker.tar" /data/local/tmp/google-ai-overview-blocker.tar >/dev/null
 "$adb_bin" push "$work_dir/blank-new-tab-extension.tar" /data/local/tmp/blank-new-tab-extension.tar >/dev/null
-"$adb_bin" push "$work_dir/tab-pin-helper-extension.tar" /data/local/tmp/tab-pin-helper-extension.tar >/dev/null
 
 "$adb_bin" shell '/debug_ramdisk/su -c "
 set -eu
@@ -111,31 +108,27 @@ install -Dm755 /data/local/tmp/wire-arch-desktop-display-mode-root.sh \"\$ROOT/w
 install -Dm755 /data/local/tmp/start-arch-xmonad-root.sh \"\$ROOT/start-arch-xmonad-root.sh\"
 install -Dm755 /data/local/tmp/stop-arch-x11-root.sh \"\$ROOT/stop-arch-x11-root.sh\"
 install -Dm755 /data/local/tmp/termux-x11-session-focus-root.sh \"\$ROOT/termux-x11-session-focus-root.sh\"
-rm -rf \"\$ROOT/root/.local/share/google-ai-overview-blocker\" \"\$ROOT/root/.local/share/blank-new-tab-extension\" \"\$ROOT/root/.local/share/tab-pin-helper-extension\"
+rm -rf \"\$ROOT/root/.local/share/google-ai-overview-blocker\" \"\$ROOT/root/.local/share/blank-new-tab-extension\"
 mkdir -p \"\$ROOT/root/.local/share/google-ai-overview-blocker\"
 mkdir -p \"\$ROOT/root/.local/share/blank-new-tab-extension\"
-mkdir -p \"\$ROOT/root/.local/share/tab-pin-helper-extension\"
 cp /data/local/tmp/google-ai-overview-blocker.tar \"\$ROOT/tmp/google-ai-overview-blocker.tar\"
 /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/google-ai-overview-blocker.tar -C /root/.local/share/google-ai-overview-blocker
 cp /data/local/tmp/blank-new-tab-extension.tar \"\$ROOT/tmp/blank-new-tab-extension.tar\"
 /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/blank-new-tab-extension.tar -C /root/.local/share/blank-new-tab-extension
-cp /data/local/tmp/tab-pin-helper-extension.tar \"\$ROOT/tmp/tab-pin-helper-extension.tar\"
-/system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/tab-pin-helper-extension.tar -C /root/.local/share/tab-pin-helper-extension
-chown -R 0:0 \"\$ROOT/root/.local/share/google-ai-overview-blocker\" \"\$ROOT/root/.local/share/blank-new-tab-extension\" \"\$ROOT/root/.local/share/tab-pin-helper-extension\"
+chown -R 0:0 \"\$ROOT/root/.local/share/google-ai-overview-blocker\" \"\$ROOT/root/.local/share/blank-new-tab-extension\"
 install -Dm755 /data/local/tmp/chromium-helium-local-root.sh \"\$ROOT/root/.config/x11/bin/chromium-helium-local\"
 install -Dm755 /data/local/tmp/x11-phone-trackpad-server.mjs \"\$ROOT/root/.config/x11/bin/x11-phone-trackpad-server.mjs\"
 install -Dm755 /data/local/tmp/x11-key-helper-root.sh \"\$ROOT/root/.local/bin/x11-key-helper\"
 install -Dm755 /data/local/tmp/x11-lorie-input-setup-root.sh \"\$ROOT/root/.local/bin/x11-lorie-input-setup\"
 if [ -n \"\$CHROOT_UID\" ] && [ -n \"\$CHROOT_GID\" ] && [ -d \"\$ROOT/\$CHROOT_HOME\" ]; then
-  rm -rf \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\"
-  mkdir -p \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\"
+  rm -rf \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\"
+  mkdir -p \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\"
   /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/google-ai-overview-blocker.tar -C \"\$CHROOT_HOME/.local/share/google-ai-overview-blocker\"
   /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/blank-new-tab-extension.tar -C \"\$CHROOT_HOME/.local/share/blank-new-tab-extension\"
-  /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/bin /usr/bin/tar -xf /tmp/tab-pin-helper-extension.tar -C \"\$CHROOT_HOME/.local/share/tab-pin-helper-extension\"
   install -Dm755 /data/local/tmp/chromium-helium-local-root.sh \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\"
   install -Dm755 /data/local/tmp/x11-phone-trackpad-server.mjs \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\"
   install -Dm755 /data/local/tmp/x11-key-helper-root.sh \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-key-helper\"
   install -Dm755 /data/local/tmp/x11-lorie-input-setup-root.sh \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-lorie-input-setup\"
-  chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.local/share/tab-pin-helper-extension\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-key-helper\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-lorie-input-setup\"
+  chown -R \"\$CHROOT_UID:\$CHROOT_GID\" \"\$ROOT/\$CHROOT_HOME/.local/share/google-ai-overview-blocker\" \"\$ROOT/\$CHROOT_HOME/.local/share/blank-new-tab-extension\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/chromium-helium-local\" \"\$ROOT/\$CHROOT_HOME/.config/x11/bin/x11-phone-trackpad-server.mjs\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-key-helper\" \"\$ROOT/\$CHROOT_HOME/.local/bin/x11-lorie-input-setup\"
 fi
 "'

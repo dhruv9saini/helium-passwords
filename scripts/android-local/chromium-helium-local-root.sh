@@ -119,7 +119,6 @@ patch_dark_reader_startup_tab
 
 add_extension_path "$home_dir/.local/share/google-ai-overview-blocker"
 add_extension_path "$home_dir/.local/share/blank-new-tab-extension"
-add_extension_path "$home_dir/.local/share/tab-pin-helper-extension"
 for extension_id in \
   eimadpbcbfnmbkopoojfekhnkhdbieeh \
   mmcgnaachjapbbchcpjihhgjhpfcnoan \

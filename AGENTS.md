@@ -105,12 +105,12 @@ restores Chromium's native password manager.
   longer running. The installer places the Google AI Overview blocker under
   both `/root/.local/share` and `/home/dhruv/.local/share`; the launcher loads
   whichever copy lives under the invoking user's `$HOME`. The installer also
-  places the blank-new-tab and tab-pin helper extensions under both chroot
-  users. Normal launch must not rewrite `Preferences` or `Local State`, mark a
-  previous exit clean, close pages through CDP, or auto-load Browserpass or a
-  directory glob of unreviewed extensions. Chromium's own session recovery is
-  the first tab-durability layer. The chroot AI Overview blocker is a normal
-  desktop Chromium extension loaded by that launcher. Keep the launcher's
+  places the blank-new-tab extension under both chroot users. Normal launch
+  must not load the legacy tab-pin helper, rewrite `Preferences` or `Local
+  State`, mark a previous exit clean, close pages through CDP, or auto-load
+  Browserpass or a directory glob of unreviewed extensions. Chromium's own
+  session recovery is the first tab-durability layer. The chroot AI Overview
+  blocker is a normal desktop Chromium extension loaded by that launcher. Keep the launcher's
   `Default/Extensions` force-load list narrow:
   Dark Reader (`eimadpbcbfnmbkopoojfekhnkhdbieeh`), Open New Tab After Current
   Tab (`mmcgnaachjapbbchcpjihhgjhpfcnoan`), and Tab Position Options Fork

@@ -105,7 +105,7 @@ test("normal launch preserves native tab recovery and the native password path",
 
   for (const source of [laptop, chroot, installer]) {
     assert.doesNotMatch(source,
-      /browserpass|helium-prepare-profile|helium-cleanup-startup-tabs/i);
+      /browserpass|helium-prepare-profile|helium-cleanup-startup-tabs|tab-pin-helper/i);
   }
   assert.doesNotMatch(chroot,
     /HELIUM_CHROOT_BROWSER|command -v chromium|browser=chromium|helium-extensions\/\*/);
