@@ -273,6 +273,26 @@ passes disk admission with 23.74 GiB of headroom. An empty 100 GiB job requires
 existing SSD therefore supports the bounded proof without repartitioning or an
 OS replacement. A full build remains tight after provisioning the toolchain.
 
+Android source preparation must also leave memory for Git object enumeration,
+not only its configurable delta caches. `build-android-ci.sh` applies the
+following command-scope configuration to gclient and every local-cache
+`upload-pack`, and persists it in existing bare cache repositories:
+
+```text
+pack.threads=1
+pack.windowMemory=128m
+core.deltaBaseCacheLimit=64m
+pack.deltaCacheSize=64m
+```
+
+Command scope is required because depot_tools rewrites the repository-local
+delta-base value during cache population. These settings bound the explicit
+per-thread and total pack caches to 256 MiB. They do not bound all
+`pack-objects` RSS, so the production cgroup's 4 GiB `MemoryHigh` and 5 GiB
+`MemoryMax` remain mandatory. If `memory.events:high` rises continuously during
+the local clone, record RSS, CPU, I/O progress, and SSH responsiveness; do not
+raise the cgroup limits or job count to hide source-preparation pressure.
+
 Git, Python 3, Docker, and Chromium tools were absent from the normal login
 `PATH`; `nix` is installed. Chromium's current Linux instructions require at
 least 100 GB free, recommend more than 16 GB RAM and substantial swap on an

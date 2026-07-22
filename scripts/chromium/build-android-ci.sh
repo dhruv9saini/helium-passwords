@@ -116,11 +116,11 @@ configure_git_cache_pack_memory() {
   export GIT_CONFIG_KEY_0=pack.threads
   export GIT_CONFIG_VALUE_0=1
   export GIT_CONFIG_KEY_1=pack.windowMemory
-  export GIT_CONFIG_VALUE_1=256m
+  export GIT_CONFIG_VALUE_1=128m
   export GIT_CONFIG_KEY_2=core.deltaBaseCacheLimit
-  export GIT_CONFIG_VALUE_2=128m
+  export GIT_CONFIG_VALUE_2=64m
   export GIT_CONFIG_KEY_3=pack.deltaCacheSize
-  export GIT_CONFIG_VALUE_3=128m
+  export GIT_CONFIG_VALUE_3=64m
 
   if [[ -z "${GIT_CACHE_PATH:-}" || ! -d "$GIT_CACHE_PATH" ]]; then
     return
@@ -132,9 +132,9 @@ configure_git_cache_pack_memory() {
       continue
     fi
     git config --file "$config" pack.threads 1
-    git config --file "$config" pack.windowMemory 256m
-    git config --file "$config" core.deltaBaseCacheLimit 128m
-    git config --file "$config" pack.deltaCacheSize 128m
+    git config --file "$config" pack.windowMemory 128m
+    git config --file "$config" core.deltaBaseCacheLimit 64m
+    git config --file "$config" pack.deltaCacheSize 64m
   done < <(find "$GIT_CACHE_PATH" -mindepth 2 -maxdepth 2 -type f -name config -print0)
 }
 
