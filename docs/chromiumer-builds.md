@@ -236,6 +236,83 @@ builder applies no Helium/core, Passwords, or Sync composition and packages
 `ChromiumControl.apk` only after recording `upstream-control`. Run it as a new
 isolated job; never reuse a terminal Sync workspace as the control.
 
+After the focused compile proof passes, stage two fresh jobs from the same
+clean private commit. The Sync job must explicitly select the disposable
+package; production `computer.helium.sync` is not an acceptance input. Both
+builders record the realized Nix closure and exact command inside their
+artifact provenance, so invoke them through `chromiumer-nix.sh run`:
+
+```sh
+cd /home/d/coding/helium/helium-sync
+scripts/dev.sh check
+sync_commit=$(git rev-parse HEAD)
+
+sync_job=hs-android-150-sync-test-01
+scripts/chromiumer-job.sh preflight 100
+scripts/chromiumer-job.sh stage "$sync_job" 100
+scripts/chromiumer-job.sh start "$sync_job" \
+  --summary "Chromium 150 disposable Helium Sync arm64 APK" \
+  --next "Fetch and verify the Sync APK, then prepare disposable acceptance." -- \
+  scripts/chromiumer-nix.sh run -- \
+    env HELIUM_SYNC_REPO=. GITHUB_WORKSPACE=.build \
+      CHROMIUM_WORKSPACE=.build/chromium-android-sync-test \
+      ARTIFACT_DIR=.build/android-sync-test-artifacts \
+      CHROMIUM_ANDROID_MANIFEST_PACKAGE=computer.helium.sync.test \
+      CHROMIUM_ANDROID_PHASE=all \
+      bash scripts/chromium/build-android-ci.sh
+
+control_job=hs-android-150-control-test-01
+scripts/chromiumer-job.sh preflight 100
+scripts/chromiumer-job.sh stage "$control_job" 100
+scripts/chromiumer-job.sh start "$control_job" \
+  --summary "Same-source unmodified Chromium 150 arm64 control APK" \
+  --next "Fetch and verify the control APK, then prepare disposable acceptance." -- \
+  scripts/chromiumer-nix.sh run -- \
+    env HELIUM_SYNC_REPO=. GITHUB_WORKSPACE=.build \
+      CHROMIUM_WORKSPACE=.build/chromium-android-control \
+      ARTIFACT_DIR=.build/android-control-artifacts \
+      bash scripts/chromium/build-android-control-ci.sh
+```
+
+Do not run the two 100 GiB jobs concurrently. Before starting the second job,
+fetch the first artifact and clean its verified workspace so the shared disk
+admission is recomputed. Both artifact verifiers receive the saved
+`$sync_commit`; this is the cross-job source binding.
+
+When each job reaches terminal success, fetch and verify the exact archive on
+lm before cleanup:
+
+```sh
+scripts/chromiumer-job.sh terminal "$sync_job"
+scripts/chromiumer-job.sh fetch "$sync_job" \
+  .build/android-sync-test-artifacts/chrome_public_apk-arm64.tar.xz
+sync_archive=/srv/nas/helium-builds/$sync_job/chrome_public_apk-arm64.tar.xz
+AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
+  scripts/chromium/verify-android-artifact.sh \
+    "$sync_archive" computer.helium.sync.test "$sync_commit"
+AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
+  scripts/android-media/prepare-disposable-acceptance.sh \
+    "$sync_archive" computer.helium.sync.test "$sync_commit" \
+    /home/d/.local/state/helium-acceptance/$sync_job
+scripts/chromiumer-job.sh cleanup "$sync_job"
+
+scripts/chromiumer-job.sh terminal "$control_job"
+scripts/chromiumer-job.sh fetch "$control_job" \
+  .build/android-control-artifacts/chromium-control-apk-arm64.tar.xz
+control_archive=/srv/nas/helium-builds/$control_job/chromium-control-apk-arm64.tar.xz
+AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
+  scripts/chromium/verify-android-artifact.sh \
+    "$control_archive" computer.helium.control.test "$sync_commit"
+AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
+  scripts/android-media/prepare-disposable-acceptance.sh \
+    "$control_archive" computer.helium.control.test "$sync_commit" \
+    /home/d/.local/state/helium-acceptance/$control_job
+scripts/chromiumer-job.sh cleanup "$control_job"
+```
+
+`prepare-disposable-acceptance.sh` refuses an existing output directory. Never
+reuse or overwrite an earlier acceptance generation.
+
 `CHROMIUM_REF` may be omitted because the helper uses the lock; if supplied it
 must equal the same full commit:
 

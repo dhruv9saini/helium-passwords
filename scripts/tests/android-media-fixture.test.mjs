@@ -9,8 +9,10 @@ import {
   atomicWriteJSON,
   createContentFreeChatGPTTiming,
   runProbe,
+  validateAndroidBrowserIdentity,
   validateFixtureBrowserCommandLine,
   validateProbeResult,
+  validateRemoteDebuggingSocket,
 } from "../android-media/run-cdp-probe.mjs";
 
 test("private fixture certificate override admits only one exact leaf SPKI", () => {
@@ -26,6 +28,46 @@ test("private fixture certificate override admits only one exact leaf SPKI", () 
     "chrome", `--ignore-certificate-errors-spki-list=${"B".repeat(43)}=`,
   ], spki), /only the admitted/);
   assert.throws(() => validateFixtureBrowserCommandLine([], "not-base64"), /fixture SPKI/);
+});
+
+test("Android CDP identity is bound to the admitted package, source, and socket", () => {
+  const chromiumCommit = "c".repeat(40);
+  const artifactSha256 = "a".repeat(64);
+  const browserInfo = {
+    "Android-Package": "computer.helium.sync.test",
+    "WebKit-Version": `537.36 (@${chromiumCommit})`,
+  };
+  assert.deepEqual(validateAndroidBrowserIdentity(browserInfo, {
+    expectedPackage: "computer.helium.sync.test",
+    expectedChromiumCommit: chromiumCommit,
+    expectedArtifactSha256: artifactSha256,
+  }), {
+    package: "computer.helium.sync.test",
+    artifact_sha256: artifactSha256,
+    chromium_commit: chromiumCommit,
+  });
+  assert.throws(() => validateAndroidBrowserIdentity({
+    ...browserInfo, "Android-Package": "computer.helium.control.test",
+  }, {
+    expectedPackage: "computer.helium.sync.test",
+    expectedChromiumCommit: chromiumCommit,
+    expectedArtifactSha256: artifactSha256,
+  }), /different Android package/);
+  assert.throws(() => validateAndroidBrowserIdentity({
+    ...browserInfo, "WebKit-Version": `537.36 (@${"d".repeat(40)})`,
+  }, {
+    expectedPackage: "computer.helium.sync.test",
+    expectedChromiumCommit: chromiumCommit,
+    expectedArtifactSha256: artifactSha256,
+  }), /revision does not match/);
+
+  const socket = "helium_sync_test_devtools_remote";
+  assert.equal(validateRemoteDebuggingSocket([
+    "chrome", "--enable-automation", `--remote-debugging-socket-name=${socket}`,
+  ], socket), `--remote-debugging-socket-name=${socket}`);
+  assert.throws(() => validateRemoteDebuggingSocket([
+    "chrome", "--enable-automation", "--remote-debugging-socket-name=chrome_devtools_remote",
+  ], socket), /package-specific disposable/);
 });
 
 test("streams numbered Fetch chunks progressively for identity, gzip, and Brotli", async t => {
@@ -119,6 +161,8 @@ test("probe page contains the codec and browser-observable streaming gates", asy
   assert.match(page, /av01\.0\.04M\.08, opus/);
   assert.match(page, /application\/vnd\.apple\.mpegurl/);
   assert.match(page, /MediaSource\.isTypeSupported/);
+  assert.match(page, /playHls/);
+  assert.match(page, /#EXT-X-MAP/);
   assert.match(page, /new DOMParser/);
   assert.match(page, /mediaCapabilities\.decodingInfo/);
   assert.match(page, /requestMediaKeySystemAccess/);
@@ -178,8 +222,11 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
       mse_mp4_h264_aac: true,
     },
     media_capabilities: {
+      mp4_file: { supported: true },
       mp4_high_file: { supported: false },
+      webm_file: { supported: true },
       av1_file: { supported: false },
+      mp4_mse: { supported: true },
     },
     drm: {
       widevine: {
@@ -193,6 +240,10 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
       browser_product: "Chrome/148",
       browser_protocol_version: "1.3",
       browser_webkit_version: "537.36 (@synthetic)",
+      android_package: "computer.helium.sync.test",
+      artifact_sha256: "a".repeat(64),
+      chromium_commit: "b".repeat(40),
+      device_socket: "helium_sync_test_devtools_remote",
       fixture_origin: "http://127.0.0.1:44721",
     },
     media_manifest: { files: {
@@ -241,6 +292,13 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     ...result,
     media_manifest: { files: { ...result.media_manifest.files, webm: undefined } },
   }), /webm media fixture was absent/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    media_capabilities: {
+      ...result.media_capabilities,
+      mp4_mse: { supported: false },
+    },
+  }), /mp4_mse required codec configuration/);
   assert.throws(() => validateProbeResult({
     ...result,
     fetch_br: { ...stream, chunk_milestones: [{ count: 4, at_ms: 40 }] },

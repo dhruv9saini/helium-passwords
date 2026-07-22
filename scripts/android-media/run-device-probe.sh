@@ -5,6 +5,13 @@ usage() {
   cat >&2 <<'EOF'
 usage: run-device-probe.sh ACCEPTANCE_DIRECTORY ADB_SERIAL NEW_EVIDENCE_DIRECTORY [OPTIONS]
 
+The admitted .test APK must already be installed and running with exactly one
+--enable-automation switch and its package-specific DevTools socket:
+  computer.helium.sync.test     helium_sync_test_devtools_remote
+  computer.helium.control.test  helium_control_test_devtools_remote
+The runner verifies the installed base.apk hash, CDP Android-Package and source
+revision, and the effective --remote-debugging-socket-name before probing.
+
 Options:
   --h2 URL                         Require the exact HTTPS HTTP/2 fixture endpoint.
   --h3 URL                         Require the exact HTTPS HTTP/3 fixture endpoint.
@@ -81,6 +88,19 @@ version_name=$(metadata version_name "$acceptance/acceptance.env")
 [[ "$artifact_sha256" =~ ^[0-9a-f]{64}$ && "$apk_sha256" =~ ^[0-9a-f]{64}$ ]]
 [[ "$chromium_commit" =~ ^[0-9a-f]{40}$ && "$helium_sync_commit" =~ ^[0-9a-f]{40}$ ]]
 [[ "$version_code" =~ ^[1-9][0-9]*$ && "$version_name" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
+[[ -f "$acceptance/Browser-test.apk" && ! -L "$acceptance/Browser-test.apk" ]] || {
+  echo "prepared disposable APK is missing or unsafe" >&2
+  exit 1
+}
+[[ "$(sha256sum "$acceptance/Browser-test.apk" | cut -d' ' -f1)" == "$apk_sha256" ]] || {
+  echo "prepared disposable APK hash does not match acceptance metadata" >&2
+  exit 1
+}
+
+case "$package" in
+  computer.helium.sync.test) device_socket=helium_sync_test_devtools_remote ;;
+  computer.helium.control.test) device_socket=helium_control_test_devtools_remote ;;
+esac
 
 fixture_spki=
 fixture_cert_sha256=
@@ -128,8 +148,19 @@ if [[ "$network_handoff" == wifi-to-cellular && "$serial" == *:* ]]; then
 fi
 [[ "$(adb -s "$serial" get-state)" == device ]]
 mapfile -t package_paths < <(adb -s "$serial" shell pm path "$package" | tr -d '\r')
-[[ ${#package_paths[@]} -gt 0 && "${package_paths[0]}" == package:* ]] || {
-  echo "disposable browser package is not installed" >&2
+[[ ${#package_paths[@]} -eq 1 && "${package_paths[0]}" == package:/data/app/*/base.apk ]] || {
+  echo "disposable browser must be one installed monolithic base APK" >&2
+  exit 1
+}
+installed_apk=${package_paths[0]#package:}
+[[ "$installed_apk" != *[[:space:]]* && "$installed_apk" != *"'"* && \
+    "$installed_apk" != *'"'* ]] || {
+  echo "installed disposable APK path is unsafe" >&2
+  exit 1
+}
+installed_apk_sha256=$(adb -s "$serial" exec-out cat "$installed_apk" | sha256sum | cut -d' ' -f1)
+[[ "$installed_apk_sha256" == "$apk_sha256" ]] || {
+  echo "installed disposable base APK does not match the admitted artifact" >&2
   exit 1
 }
 package_dump=$(adb -s "$serial" shell dumpsys package "$package" | tr -d '\r')
@@ -141,6 +172,17 @@ installed_version_name=$(sed -n 's/^[[:space:]]*versionName=//p' <<<"$package_du
 }
 [[ "$installed_version_name" == "$version_name" ]] || {
   echo "installed package versionName does not match the admitted artifact" >&2
+  exit 1
+}
+browser_pid=$(adb -s "$serial" shell pidof "$package" | tr -d '\r')
+[[ "$browser_pid" =~ ^[1-9][0-9]*$ ]] || {
+  echo "exact disposable browser package is not running as one main process" >&2
+  exit 1
+}
+socket_count=$(adb -s "$serial" shell cat /proc/net/unix | tr -d '\r' | \
+  grep -Ec "[[:space:]]@${device_socket}$" || true)
+[[ "$socket_count" -eq 1 ]] || {
+  echo "exact disposable browser DevTools socket is not uniquely available" >&2
   exit 1
 }
 
@@ -200,7 +242,7 @@ grep -q '"event":"listening"' "$fixture_log" || { echo "fixture server did not b
 
 adb -s "$serial" reverse --no-rebind tcp:44721 tcp:44721 >/dev/null
 reverse_created=true
-adb -s "$serial" forward --no-rebind tcp:9222 localabstract:chrome_devtools_remote >/dev/null
+adb -s "$serial" forward --no-rebind tcp:9222 "localabstract:$device_socket" >/dev/null
 forward_created=true
 
 probe_args=(
@@ -210,6 +252,10 @@ probe_args=(
   --ready-file "$ready"
   --require-lifecycle "$background_foreground"
   --require-network-handoff "$([[ "$network_handoff" == none ]] && echo false || echo true)"
+  --expected-package "$package"
+  --expected-artifact-sha256 "$apk_sha256"
+  --expected-chromium-commit "$chromium_commit"
+  --expected-device-socket "$device_socket"
 )
 [[ -z "$h2" ]] || probe_args+=(--h2 "$h2")
 [[ -z "$h3" ]] || probe_args+=(--h3 "$h3")
@@ -230,6 +276,8 @@ done
   printf 'network_handoff=%s\n' "$network_handoff"
   printf 'version_code=%s\n' "$installed_version_code"
   printf 'version_name=%s\n' "$installed_version_name"
+  printf 'installed_apk_sha256=%s\n' "$installed_apk_sha256"
+  printf 'device_socket=%s\n' "$device_socket"
   if [[ -n "$fixture_spki" ]]; then
     printf 'fixture_spki_sha256_base64=%s\n' "$fixture_spki"
     printf 'fixture_cert_sha256=%s\n' "$fixture_cert_sha256"

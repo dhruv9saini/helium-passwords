@@ -9,6 +9,9 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const SPKI_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
 const SPKI_SWITCH = "--ignore-certificate-errors-spki-list=";
+const SOCKET_SWITCH = "--remote-debugging-socket-name=";
+const PACKAGE_PATTERN = /^computer\.helium\.(?:sync|control)\.test$/;
+const SOCKET_PATTERN = /^helium_(?:sync|control)_test_devtools_remote$/;
 
 export function validateFixtureBrowserCommandLine(argumentsList, expectedSPKI) {
   if (!SPKI_PATTERN.test(expectedSPKI || "")) {
@@ -22,6 +25,44 @@ export function validateFixtureBrowserCommandLine(argumentsList, expectedSPKI) {
     value === "--ignore-certificate-errors" || value.startsWith(SPKI_SWITCH));
   if (certificateOverrides.length !== 1 || certificateOverrides[0] !== admitted) {
     throw new Error("browser must use only the admitted disposable fixture SPKI override");
+  }
+  return admitted;
+}
+
+export function validateAndroidBrowserIdentity(browserInfo, options) {
+  if (!PACKAGE_PATTERN.test(options.expectedPackage || "") ||
+      !COMMIT_PATTERN.test(options.expectedChromiumCommit || "") ||
+      !SHA256_PATTERN.test(options.expectedArtifactSha256 || "")) {
+    throw new Error("expected Android artifact identity is invalid");
+  }
+  if (browserInfo?.["Android-Package"] !== options.expectedPackage) {
+    throw new Error("CDP endpoint belongs to a different Android package");
+  }
+  const webkitVersion = browserInfo?.["WebKit-Version"] || "";
+  if (!webkitVersion.includes(`@${options.expectedChromiumCommit}`)) {
+    throw new Error("CDP browser revision does not match the admitted Chromium commit");
+  }
+  return {
+    package: options.expectedPackage,
+    artifact_sha256: options.expectedArtifactSha256,
+    chromium_commit: options.expectedChromiumCommit,
+  };
+}
+
+export function validateRemoteDebuggingSocket(argumentsList, expectedSocket) {
+  if (!SOCKET_PATTERN.test(expectedSocket || "")) {
+    throw new Error("expected disposable DevTools socket is invalid");
+  }
+  if (!Array.isArray(argumentsList) || argumentsList.some(value => typeof value !== "string")) {
+    throw new Error("browser command line evidence was unavailable");
+  }
+  const admitted = `${SOCKET_SWITCH}${expectedSocket}`;
+  const switches = argumentsList.filter(value => value.startsWith(SOCKET_SWITCH));
+  if (switches.length !== 1 || switches[0] !== admitted) {
+    throw new Error("browser must use the package-specific disposable DevTools socket");
+  }
+  if (argumentsList.filter(value => value === "--enable-automation").length !== 1) {
+    throw new Error("browser must use one explicit enable-automation switch for command-line evidence");
   }
   return admitted;
 }
@@ -151,9 +192,14 @@ export function validateProbeResult(result) {
       throw new Error(`${capability} capability was not recorded`);
     }
   }
-  for (const capability of ["mp4_high_file", "av1_file"]) {
+  for (const capability of ["mp4_file", "mp4_high_file", "webm_file", "av1_file", "mp4_mse"]) {
     if (typeof result.media_capabilities?.[capability]?.supported !== "boolean") {
       throw new Error(`${capability} MediaCapabilities result was not recorded`);
+    }
+  }
+  for (const capability of ["mp4_file", "webm_file", "mp4_mse"]) {
+    if (!result.media_capabilities[capability].supported) {
+      throw new Error(`${capability} required codec configuration was not declared supported`);
     }
   }
   const requiredPlayback = new Set(["mp4", "webm", "mse", "hls", "dash"]);
@@ -190,7 +236,11 @@ export function validateProbeResult(result) {
     throw new Error("Widevine EME availability was not recorded separately from codec playback");
   }
   if (!result.runtime?.browser_product || !result.runtime?.browser_protocol_version ||
-      !result.runtime?.browser_webkit_version || !result.runtime?.fixture_origin) {
+      !result.runtime?.browser_webkit_version || !result.runtime?.fixture_origin ||
+      !PACKAGE_PATTERN.test(result.runtime?.android_package || "") ||
+      !SHA256_PATTERN.test(result.runtime?.artifact_sha256 || "") ||
+      !COMMIT_PATTERN.test(result.runtime?.chromium_commit || "") ||
+      !SOCKET_PATTERN.test(result.runtime?.device_socket || "")) {
     throw new Error("runtime browser and fixture provenance was not recorded");
   }
   const lifecycleEvents = result.lifecycle?.events;
@@ -275,6 +325,7 @@ export async function runProbe(options) {
   const cdpBase = options.cdp.replace(/\/$/, "");
   const browserInfo = await checkedJSON(`${cdpBase}/json/version`);
   if (!browserInfo.webSocketDebuggerUrl) throw new Error(`no browser CDP target at ${options.cdp}`);
+  const artifactIdentity = validateAndroidBrowserIdentity(browserInfo, options);
 
   const browser = new CDP(requireLoopbackWebSocket(browserInfo.webSocketDebuggerUrl, "browser CDP"));
   await browser.open();
@@ -283,8 +334,11 @@ export async function runProbe(options) {
   let page;
   try {
     let admittedFixtureSwitch = "";
+    const commandLine = await browser.call("Browser.getBrowserCommandLine", {}, 10000);
+    const admittedSocketSwitch = validateRemoteDebuggingSocket(
+      commandLine.arguments, options.expectedDeviceSocket,
+    );
     if (requiredTransportProtocols.length) {
-      const commandLine = await browser.call("Browser.getBrowserCommandLine", {}, 10000);
       admittedFixtureSwitch = validateFixtureBrowserCommandLine(
         commandLine.arguments, options.fixtureSpki,
       );
@@ -336,6 +390,11 @@ export async function runProbe(options) {
       browser_protocol_version: browserInfo["Protocol-Version"] || "",
       browser_revision: browserInfo["Revision"] || "",
       browser_webkit_version: browserInfo["WebKit-Version"] || "",
+      android_package: artifactIdentity.package,
+      artifact_sha256: artifactIdentity.artifact_sha256,
+      chromium_commit: artifactIdentity.chromium_commit,
+      device_socket: options.expectedDeviceSocket,
+      device_socket_switch: admittedSocketSwitch,
       cdp_origin: cdpURL.origin,
       fixture_origin: fixtureURL.origin,
       transport_fixture_origins: transportFixtureOrigins,
@@ -511,6 +570,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       const allowedArgs = new Set([
         "cdp", "fixture", "output", "h2", "h3", "ready-file",
         "fixture-spki", "require-lifecycle", "require-network-handoff",
+        "expected-package", "expected-artifact-sha256", "expected-chromium-commit",
+        "expected-device-socket",
       ]);
       const unexpected = Object.keys(args).filter(name => !allowedArgs.has(name));
       if (unexpected.length) {
@@ -525,6 +586,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       args.fixtureSpki = args["fixture-spki"];
       args.requireLifecycle = args["require-lifecycle"] || "false";
       args.requireNetworkHandoff = args["require-network-handoff"] || "false";
+      args.expectedPackage = args["expected-package"];
+      args.expectedArtifactSha256 = args["expected-artifact-sha256"];
+      args.expectedChromiumCommit = args["expected-chromium-commit"];
+      args.expectedDeviceSocket = args["expected-device-socket"];
       const result = await runProbe(args);
       process.stdout.write(`${JSON.stringify({event:"probe_passed", output:path.resolve(args.output), capabilities:result.capabilities})}\n`);
     }

@@ -183,6 +183,7 @@ generate_android_build_files() {
   local depot_tools_commit
   depot_tools_commit=$(git -C "$workspace/depot_tools" rev-parse HEAD)
   mkdir -p "$out_dir"
+  rm -rf "$artifact_dir/build-provenance"
   local effective_use_siso=$use_siso
   if [[ "$effective_use_siso" == auto ]]; then
     if [[ -f "$out_dir/.siso_deps" ]]; then
@@ -220,6 +221,8 @@ EOF
   "$repo_root/scripts/chromium/verify-android-media-config.sh" \
     "$workspace/src" "$out_dir" "$artifact_dir/build-provenance" \
     "$repo_root" "$chromium_ref" "$depot_tools_commit"
+  "$repo_root/scripts/chromium/android-build-environment.sh" record \
+    "$artifact_dir/build-provenance"
 }
 
 touch_out_dir() {

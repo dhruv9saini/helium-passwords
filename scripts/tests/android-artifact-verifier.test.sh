@@ -9,6 +9,14 @@ cleanup() { find "$test_root" -depth -delete; }
 trap cleanup EXIT
 
 commit=1111111111111111111111111111111111111111
+checksum_provenance() {
+  local directory=$1
+  (
+    cd "$directory"
+    find . -maxdepth 1 -type f ! -name provenance.sha256 -printf '%P\0' \
+      | sort -z | xargs -0 sha256sum > provenance.sha256
+  )
+}
 mkdir -p "$test_root/input/build-provenance" "$test_root/input/out" \
   "$test_root/input/runtime-acceptance"
 cp "$repo_root/chromium/android-build.lock" \
@@ -21,19 +29,41 @@ printf '%s\n' 'DEPOT_TOOLS_UPDATE=0' \
   > "$test_root/input/build-provenance/depot-tools-update-policy.txt"
 printf '%s\n' "$commit" > "$test_root/input/build-provenance/helium-sync-commit.txt"
 : > "$test_root/input/build-provenance/helium-sync-status.txt"
+printf '%s\n' "$HELIUM_ANDROID_CORE_COMMIT" \
+  > "$test_root/input/build-provenance/helium-core-commit.txt"
+printf 'core\tcore.patch\npasswords\tpasswords.patch\nsync\tsync.patch\n' \
+  > "$test_root/input/build-provenance/android-composition.tsv"
+printf 'synthetic composition hashes\n' \
+  > "$test_root/input/build-provenance/android-composition.sha256"
+printf 'synthetic Sync input hashes\n' \
+  > "$test_root/input/build-provenance/sync-inputs.sha256"
+cat > "$test_root/input/build-provenance/chromiumer-nix.env" <<EOF
+nix_environment=/nix/store/00000000000000000000000000000000-helium-chromium-150-env
+closure_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+closure_bytes=10737418240
+chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT
+nixpkgs_commit=$HELIUM_ANDROID_NIXPKGS_COMMIT
+nix_version=nix (Nix) 2.33.0
+root_start_available_bytes=139586437120
+root_end_available_bytes=118111600640
+realise_consumed_bytes=21474836480
+realise_budget_bytes=21474836480
+post_realise_floor_bytes=107374182400
+realise_start_gate_bytes=128849018880
+EOF
+printf 'bash scripts/chromium/build-android-ci.sh \n' \
+  > "$test_root/input/build-provenance/build-command.txt"
 {
   printf '%s\n' 'chrome_public_manifest_package = "computer.helium.sync.test"'
   printf 'android_override_version_code = "%s"\n' "$HELIUM_ANDROID_VERSION_CODE"
   printf 'android_override_version_name = "%s"\n' "$HELIUM_ANDROID_VERSION_NAME"
+  printf '%s\n' 'is_debug = false' 'dcheck_always_on = false'
+  printf '%s\n' 'target_os = "android"' 'target_cpu = "arm64"' \
+    'ffmpeg_branding = "Chrome"' 'proprietary_codecs = true' \
+    'media_use_ffmpeg = true'
 } > "$test_root/input/build-provenance/gn-args-resolved.txt"
 : > "$test_root/input/out/HeliumSync.apk"
-(
-  cd "$test_root/input/build-provenance"
-  sha256sum android-build.lock chromium-source-commit.txt \
-    depot-tools-commit.txt depot-tools-update-policy.txt \
-    helium-sync-commit.txt helium-sync-status.txt gn-args-resolved.txt \
-    > provenance.sha256
-)
+checksum_provenance "$test_root/input/build-provenance"
 
 cat > "$test_root/input/runtime-acceptance/fixture-server.mjs" <<'EOF'
 #!/usr/bin/env node
@@ -104,13 +134,7 @@ grep -Eq '^runtime_kit_sha256=[0-9a-f]{64}$' "$test_root/result"
 cp -a "$test_root/input" "$test_root/foreign-lock-input"
 sed -i 's/HELIUM_ANDROID_VERSION_CODE=787500005/HELIUM_ANDROID_VERSION_CODE=787500006/' \
   "$test_root/foreign-lock-input/build-provenance/android-build.lock"
-(
-  cd "$test_root/foreign-lock-input/build-provenance"
-  sha256sum android-build.lock chromium-source-commit.txt \
-    depot-tools-commit.txt depot-tools-update-policy.txt \
-    helium-sync-commit.txt helium-sync-status.txt gn-args-resolved.txt \
-    > provenance.sha256
-)
+checksum_provenance "$test_root/foreign-lock-input/build-provenance"
 tar -C "$test_root/foreign-lock-input" -caf "$test_root/foreign-lock.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
@@ -129,14 +153,12 @@ sed -i 's/computer\.helium\.sync\.test/computer.helium.control.test/' \
 : > "$test_root/control-input/build-provenance/chromium-source-status.txt"
 printf 'upstream-control\n' \
   > "$test_root/control-input/build-provenance/android-composition.txt"
-(
-  cd "$test_root/control-input/build-provenance"
-  sha256sum android-build.lock chromium-source-commit.txt \
-    chromium-source-status.txt depot-tools-commit.txt \
-    depot-tools-update-policy.txt helium-sync-commit.txt \
-    helium-sync-status.txt gn-args-resolved.txt android-composition.txt \
-    > provenance.sha256
-)
+find "$test_root/control-input/build-provenance" -maxdepth 1 -type f \
+  \( -name helium-core-commit.txt -o -name android-composition.tsv \
+     -o -name android-composition.sha256 -o -name sync-inputs.sha256 \) -delete
+printf 'bash scripts/chromium/build-android-control-ci.sh \n' \
+  > "$test_root/control-input/build-provenance/build-command.txt"
+checksum_provenance "$test_root/control-input/build-provenance"
 (
   cd "$test_root/control-input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
@@ -213,13 +235,7 @@ fi
 
 printf '%s\n' 2222222222222222222222222222222222222222 \
   > "$test_root/input/build-provenance/depot-tools-commit.txt"
-(
-  cd "$test_root/input/build-provenance"
-  sha256sum android-build.lock chromium-source-commit.txt \
-    depot-tools-commit.txt depot-tools-update-policy.txt \
-    helium-sync-commit.txt helium-sync-status.txt gn-args-resolved.txt \
-    > provenance.sha256
-)
+checksum_provenance "$test_root/input/build-provenance"
 tar -C "$test_root/input" -caf "$test_root/mutated-depot.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
@@ -230,13 +246,7 @@ if AAPT2="$test_root/aapt2" \
 fi
 printf '%s\n' "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
   > "$test_root/input/build-provenance/depot-tools-commit.txt"
-(
-  cd "$test_root/input/build-provenance"
-  sha256sum android-build.lock chromium-source-commit.txt \
-    depot-tools-commit.txt depot-tools-update-policy.txt \
-    helium-sync-commit.txt helium-sync-status.txt gn-args-resolved.txt \
-    > provenance.sha256
-)
+checksum_provenance "$test_root/input/build-provenance"
 
 printf 'tampered\n' >> "$test_root/input/runtime-acceptance/fixture-server.mjs"
 tar -C "$test_root/input" -caf "$test_root/tampered-runtime.tar.xz" .
@@ -252,13 +262,7 @@ cat > "$test_root/input/runtime-acceptance/fixture-server.mjs" <<'EOF'
 EOF
 
 printf 'dirty\n' > "$test_root/input/build-provenance/helium-sync-status.txt"
-(
-  cd "$test_root/input/build-provenance"
-  sha256sum android-build.lock chromium-source-commit.txt \
-    depot-tools-commit.txt depot-tools-update-policy.txt \
-    helium-sync-commit.txt helium-sync-status.txt gn-args-resolved.txt \
-    > provenance.sha256
-)
+checksum_provenance "$test_root/input/build-provenance"
 tar -C "$test_root/input" -caf "$test_root/dirty.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \

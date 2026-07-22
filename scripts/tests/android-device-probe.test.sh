@@ -11,7 +11,9 @@ mkdir -p "$acceptance/runtime-acceptance" "$acceptance/media" "$test_root/bin"
 touch "$acceptance/runtime-acceptance/fixture-server.mjs"
 touch "$acceptance/runtime-acceptance/run-cdp-probe.mjs"
 printf 'fixture\n' > "$acceptance/media/synthetic"
-cat > "$acceptance/acceptance.env" <<'EOF'
+printf 'admitted disposable APK\n' > "$acceptance/Browser-test.apk"
+apk_sha256=$(sha256sum "$acceptance/Browser-test.apk" | cut -d' ' -f1)
+cat > "$acceptance/acceptance.env" <<EOF
 schema_version=2
 package=computer.helium.sync.test
 helium_sync_commit=1111111111111111111111111111111111111111
@@ -19,7 +21,7 @@ chromium_commit=2222222222222222222222222222222222222222
 version_code=787500005
 version_name=150.0.7871.181
 source_archive_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-apk_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+apk_sha256=$apk_sha256
 runtime_kit_sha256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
 prepared_at=2026-07-22T00:00:00+00:00
 EOF
@@ -38,8 +40,13 @@ printf '%s\n' "$*" >> "$HELIUM_TEST_ADB_LOG"
 case "$*" in
   *' get-state') printf 'device\n' ;;
   *' shell pm path computer.helium.sync.test') printf 'package:/data/app/test/base.apk\n' ;;
+  *' exec-out cat /data/app/test/base.apk') cat "$HELIUM_TEST_INSTALLED_APK" ;;
   *' shell dumpsys package computer.helium.sync.test')
     printf '  versionCode=787500005 minSdk=29 targetSdk=36\n  versionName=150.0.7871.181\n'
+    ;;
+  *' shell pidof computer.helium.sync.test') printf '1234\n' ;;
+  *' shell cat /proc/net/unix')
+    printf '00000000: 00000002 00000000 00010000 0001 01 12345 @helium_sync_test_devtools_remote\n'
     ;;
   *' shell settings get global wifi_on') printf '1\n' ;;
   *' shell settings get global mobile_data') printf '1\n' ;;
@@ -74,6 +81,7 @@ EOF
 chmod +x "$test_root/bin/adb" "$test_root/bin/node"
 
 export HELIUM_TEST_ADB_LOG="$test_root/adb.log"
+export HELIUM_TEST_INSTALLED_APK="$acceptance/Browser-test.apk"
 PATH="$test_root/bin:$PATH" \
   "$repo_root/scripts/android-media/run-device-probe.sh" \
   "$acceptance" USB-SERIAL "$test_root/evidence" \
@@ -89,6 +97,8 @@ grep -qx 'background_foreground=true' "$test_root/evidence/actions.env"
 grep -qx 'network_handoff=wifi-to-cellular' "$test_root/evidence/actions.env"
 grep -qx 'version_code=787500005' "$test_root/evidence/actions.env"
 grep -qx 'version_name=150.0.7871.181' "$test_root/evidence/actions.env"
+grep -qx "installed_apk_sha256=$apk_sha256" "$test_root/evidence/actions.env"
+grep -qx 'device_socket=helium_sync_test_devtools_remote' "$test_root/evidence/actions.env"
 grep -qx "fixture_spki_sha256_base64=$spki" "$test_root/evidence/actions.env"
 grep -Eq '^fixture_receipt_sha256=[0-9a-f]{64}$' "$test_root/evidence/actions.env"
 cmp "$test_root/fixture-provenance.json" "$test_root/evidence/fixture-provenance.json"
@@ -101,6 +111,9 @@ grep -q 'shell monkey -p computer.helium.sync.test' "$test_root/adb.log"
 grep -q 'shell svc wifi disable' "$test_root/adb.log"
 grep -q 'shell svc wifi enable' "$test_root/adb.log"
 grep -q 'shell dumpsys package computer.helium.sync.test' "$test_root/adb.log"
+grep -q 'exec-out cat /data/app/test/base.apk' "$test_root/adb.log"
+grep -q 'localabstract:helium_sync_test_devtools_remote' "$test_root/adb.log"
+! grep -q 'localabstract:chrome_devtools_remote' "$test_root/adb.log"
 grep -q 'forward --remove tcp:9222' "$test_root/adb.log"
 grep -q 'reverse --remove tcp:44721' "$test_root/adb.log"
 
@@ -122,5 +135,16 @@ if PATH="$test_root/bin:$PATH" \
   exit 1
 fi
 grep -q 'requires a non-network ADB transport' "$test_root/network-adb.out"
+
+printf 'different installed APK\n' > "$test_root/different.apk"
+export HELIUM_TEST_INSTALLED_APK="$test_root/different.apk"
+if PATH="$test_root/bin:$PATH" \
+  "$repo_root/scripts/android-media/run-device-probe.sh" \
+  "$acceptance" USB-SERIAL "$test_root/wrong-apk-evidence" \
+  > "$test_root/wrong-apk.out" 2>&1; then
+  echo 'different installed APK unexpectedly passed admission' >&2
+  exit 1
+fi
+grep -q 'installed disposable base APK does not match' "$test_root/wrong-apk.out"
 
 echo 'Android device probe orchestration contract passed'

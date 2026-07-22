@@ -85,6 +85,7 @@ run_pinned_gclient runhooks
 git diff --quiet HEAD --
 git diff --cached --quiet HEAD --
 
+rm -rf "$artifact_dir/build-provenance"
 mkdir -p "$out_dir" "$artifact_dir/build-provenance"
 cat > "$out_dir/args.gn" <<EOF
 target_os = "android"
@@ -116,6 +117,10 @@ grep -qx 'proprietary_codecs = true' \
   "$artifact_dir/build-provenance/gn-args-resolved.txt"
 grep -qx 'media_use_ffmpeg = true' \
   "$artifact_dir/build-provenance/gn-args-resolved.txt"
+grep -qx 'is_debug = false' \
+  "$artifact_dir/build-provenance/gn-args-resolved.txt"
+grep -qx 'dcheck_always_on = false' \
+  "$artifact_dir/build-provenance/gn-args-resolved.txt"
 grep -qx "chrome_public_manifest_package = \"$manifest_package\"" \
   "$artifact_dir/build-provenance/gn-args-resolved.txt"
 grep -qx "android_override_version_code = \"$HELIUM_ANDROID_VERSION_CODE\"" \
@@ -140,14 +145,7 @@ git -C "$repo_root" status --short --untracked-files=no \
   > "$provenance/helium-sync-status.txt"
 [[ ! -s "$provenance/helium-sync-status.txt" ]]
 printf 'upstream-control\n' > "$provenance/android-composition.txt"
-(
-  cd "$provenance"
-  sha256sum args.gn gn-args-resolved.txt android-build.lock \
-    chromium-ref-requested.txt chromium-source-commit.txt \
-    chromium-source-status.txt depot-tools-commit.txt \
-    depot-tools-update-policy.txt helium-sync-commit.txt \
-    helium-sync-status.txt android-composition.txt > provenance.sha256
-)
+"$repo_root/scripts/chromium/android-build-environment.sh" record "$provenance"
 
 autoninja -j "$autoninja_jobs" -C "$out_dir" "$target"
 control_apk="$out_dir/apks/ChromePublic.apk"

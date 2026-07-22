@@ -24,6 +24,8 @@ cat <<'ARGS'
 ffmpeg_branding = "Chrome"
 media_use_ffmpeg = true
 proprietary_codecs = true
+is_debug = false
+dcheck_always_on = false
 chrome_public_manifest_package = "computer.helium.sync.test"
 android_override_version_code = "$HELIUM_ANDROID_VERSION_CODE"
 android_override_version_name = "$HELIUM_ANDROID_VERSION_NAME"
@@ -84,6 +86,8 @@ grep -Fq 'compile-proof.env' "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'compile-${artifact_target}-${target_cpu}.tar.xz' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'package_runtime_acceptance "$staging/runtime-acceptance"' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'android-build-environment.sh" record' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'run-device-probe.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"

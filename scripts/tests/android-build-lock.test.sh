@@ -12,6 +12,7 @@ grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" <<<"$result"
 [[ "$HELIUM_ANDROID_VERSION_CODE" -eq 787500005 ]]
 [[ "$HELIUM_ANDROID_PREVIOUS_PRODUCTION_VERSION_CODE" -eq 787500004 ]]
 [[ "$HELIUM_ANDROID_VERSION_NAME" == "$HELIUM_ANDROID_CHROMIUM_VERSION" ]]
+[[ "$HELIUM_ANDROID_NIXPKGS_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 
 grep -Fq '10#$HELIUM_ANDROID_VERSION_CODE >' \
   "$repo_root/scripts/chromium/validate-android-build-lock.sh"

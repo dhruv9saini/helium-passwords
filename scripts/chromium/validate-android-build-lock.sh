@@ -11,12 +11,29 @@ lock="$repo_root/chromium/android-build.lock"
 for value in \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT" \
   "$HELIUM_ANDROID_CORE_COMMIT" \
-  "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"; do
+  "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
+  "$HELIUM_ANDROID_NIXPKGS_COMMIT"; do
   [[ "$value" =~ ^[0-9a-f]{40}$ ]] || {
     echo "Android build lock contains a non-immutable commit" >&2
     exit 1
   }
 done
+
+grep -Fq "expected_chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT" \
+  "$repo_root/scripts/chromiumer-nix.sh" || {
+  echo "Android build lock and Chromiumer Chromium pin differ" >&2
+  exit 1
+}
+grep -Fq "expected_nixpkgs_commit=$HELIUM_ANDROID_NIXPKGS_COMMIT" \
+  "$repo_root/scripts/chromiumer-nix.sh" || {
+  echo "Android build lock and Chromiumer nixpkgs pin differ" >&2
+  exit 1
+}
+grep -Fq "$HELIUM_ANDROID_NIXPKGS_COMMIT" \
+  "$repo_root/chromium/nix/chromiumer-shell.nix" || {
+  echo "Android build lock and Chromiumer Nix expression differ" >&2
+  exit 1
+}
 
 [[ "$HELIUM_ANDROID_CHROMIUM_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
   echo "Android build lock contains an invalid Chromium version" >&2

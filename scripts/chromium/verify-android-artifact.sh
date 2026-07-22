@@ -45,17 +45,15 @@ provenance="$temporary/build-provenance"
   cd "$provenance"
   sha256sum -c provenance.sha256
 )
-
-if [[ "$expected_package" == computer.helium.control.test ]]; then
-  grep -qx 'upstream-control' "$provenance/android-composition.txt" || {
-    echo "control artifact is missing its no-patch composition proof" >&2
-    exit 1
-  }
-  [[ ! -s "$provenance/chromium-source-status.txt" ]] || {
-    echo "control Chromium source has tracked modifications" >&2
-    exit 1
-  }
-fi
+expected_provenance_inventory=$(find "$provenance" -maxdepth 1 -type f \
+  ! -name provenance.sha256 -printf '%f\n' | sort)
+recorded_provenance_inventory=$(sed -n 's/^[0-9a-f]\{64\}  //p' \
+  "$provenance/provenance.sha256" | sort)
+[[ "$recorded_provenance_inventory" == "$expected_provenance_inventory" ]] || {
+  echo "build provenance checksum inventory is incomplete or unexpected" >&2
+  exit 1
+}
+"$repo_root/scripts/chromium/android-build-environment.sh" verify "$provenance"
 
 cmp -s "$provenance/android-build.lock" "$repo_root/chromium/android-build.lock" || {
   echo "artifact Android build lock does not match the repository lock" >&2
@@ -65,6 +63,53 @@ cmp -s "$provenance/android-build.lock" "$repo_root/chromium/android-build.lock"
 # Source only the repository-owned lock. Artifact metadata is never executable.
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
+
+if [[ "$expected_package" == computer.helium.control.test ]]; then
+  grep -Fq 'scripts/chromium/build-android-control-ci.sh' \
+    "$provenance/build-command.txt" || {
+    echo "control artifact build command does not name the control builder" >&2
+    exit 1
+  }
+  grep -qx 'upstream-control' "$provenance/android-composition.txt" || {
+    echo "control artifact is missing its no-patch composition proof" >&2
+    exit 1
+  }
+  [[ ! -s "$provenance/chromium-source-status.txt" ]] || {
+    echo "control Chromium source has tracked modifications" >&2
+    exit 1
+  }
+  for forbidden in helium-core-commit.txt android-composition.tsv \
+    android-composition.sha256 sync-inputs.sha256; do
+    [[ ! -e "$provenance/$forbidden" ]] || {
+      echo "control artifact carries patched Sync composition provenance" >&2
+      exit 1
+    }
+  done
+else
+  grep -Eq '(^|[[:space:]])(bash[[:space:]]+)?scripts/chromium/build-android-ci\.sh([[:space:]]|$)' \
+    "$provenance/build-command.txt" || {
+    echo "Sync artifact build command does not name the Sync builder" >&2
+    exit 1
+  }
+  for required in helium-core-commit.txt android-composition.tsv \
+    android-composition.sha256 sync-inputs.sha256; do
+    [[ -f "$provenance/$required" && ! -L "$provenance/$required" ]] || {
+      echo "Sync artifact is missing $required" >&2
+      exit 1
+    }
+  done
+  [[ "$(tr -d '\r\n' < "$provenance/helium-core-commit.txt")" == \
+    "$HELIUM_ANDROID_CORE_COMMIT" ]] || {
+    echo "Sync artifact Helium core does not match the build lock" >&2
+    exit 1
+  }
+  for layer in core passwords sync; do
+    grep -q "^${layer}"$'\t' "$provenance/android-composition.tsv" || {
+      echo "Sync artifact composition is missing the $layer layer" >&2
+      exit 1
+    }
+  done
+fi
 [[ "$(tr -d '\r\n' < "$provenance/chromium-source-commit.txt")" == \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]] || {
   echo "artifact Chromium commit does not match its lock" >&2
@@ -104,6 +149,25 @@ grep -qx "android_override_version_name = \"$HELIUM_ANDROID_VERSION_NAME\"" \
   echo "artifact GN versionName does not match the build lock" >&2
   exit 1
 }
+grep -qx 'is_debug = false' "$provenance/gn-args-resolved.txt" || {
+  echo "APK was not built as a non-debug browser" >&2
+  exit 1
+}
+grep -qx 'dcheck_always_on = false' "$provenance/gn-args-resolved.txt" || {
+  echo "APK enables always-on DCHECKs" >&2
+  exit 1
+}
+for required_arg in \
+  'target_os = "android"' \
+  'target_cpu = "arm64"' \
+  'ffmpeg_branding = "Chrome"' \
+  'proprietary_codecs = true' \
+  'media_use_ffmpeg = true'; do
+  grep -Fqx "$required_arg" "$provenance/gn-args-resolved.txt" || {
+    echo "APK is missing required GN provenance: $required_arg" >&2
+    exit 1
+  }
+done
 
 runtime_kit="$temporary/runtime-acceptance"
 [[ -d "$runtime_kit" ]] || { echo "missing Android runtime acceptance kit" >&2; exit 1; }

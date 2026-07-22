@@ -41,6 +41,12 @@ replace the browser gates below.
   kit bound to the same Helium Sync commit, Chromium commit, package, arm64 CPU,
   and `chrome_public_apk` target. A prepared disposable directory must pass its
   complete `PACKAGE_SHA256SUMS` inventory before installation or execution.
+- Both the Sync and upstream-control archives carry the realized Chromiumer Nix
+  store path, closure hash/size, realization capacity record, and exact
+  shell-escaped build command inside the artifact checksum boundary. Sync
+  provenance requires the locked Helium core plus core/Passwords/Sync
+  composition layers; the control requires a clean Chromium tree and the sole
+  `upstream-control` marker, and rejects any patched-composition provenance.
 - Tailscale Serve and Funnel are empty on lm. The installed TLS generation
   verifies against lm's current `.ts.net` name and `100.64.0.0/10` IPv4
   address, has at least 30 days remaining, and the offline CA private key is
@@ -206,7 +212,7 @@ audio presence, dropped frames, and `chrome://media-internals`/logcat outcome.
 | WebM + VP9 + Opus | Plays |
 | WebM/MP4 + AV1 | Matches OnePlus hardware/software capability and is recorded |
 | MSE segmented H.264/AAC | Appends and plays to completion |
-| HLS/DASH test manifest | Plays only through the explicitly supported web/MSE path |
+| HLS/DASH test manifest | The fixture parser resolves only fixed same-origin media and appends the init/media fragments through MSE |
 | Widevine DRM fixture | EME API and `com.widevine.alpha` availability are recorded separately; protected playback is expected to fail until CDM provisioning is deliberately implemented |
 
 Run the matrix on an upstream Chromium control APK and Helium Sync APK from the
@@ -257,6 +263,22 @@ fixture receipt's exact SPKI override must be the running `.test` browser's
 only certificate override; the broad ignore-certificate-errors switch and any
 normal package fail before evidence capture. The temporary self-signed runtime
 test proves source behavior only and cannot satisfy this device gate.
+
+The two APKs are independently installable and must never share a DevTools
+endpoint. Launch the admitted test package with exactly one
+`--enable-automation` switch and its exact command-line override:
+
+```text
+computer.helium.sync.test     --remote-debugging-socket-name=helium_sync_test_devtools_remote
+computer.helium.control.test  --remote-debugging-socket-name=helium_control_test_devtools_remote
+```
+
+The device runner hashes the installed monolithic `base.apk` and compares it
+with `Browser-test.apk`, requires the installed version, requires one running
+main process and one exact abstract socket, forwards only that socket, and then
+requires CDP's `Android-Package` and embedded WebKit source revision to match
+the artifact. A same-version different APK, generic/fallback Chrome socket,
+wrong package, or wrong source revision fails before a probe target is created.
 
 After deterministic gates pass, run ChatGPT as a manual end-to-end scenario and
 record only timing/status observations, never conversation content or tokens.

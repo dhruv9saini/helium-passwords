@@ -329,15 +329,23 @@ function play(name, src) {
     video.play().catch(error => { clearTimeout(timer); resolve({name, ok:false, error:String(error)}); });
   });
 }
-async function playMse(src, name = 'mse') {
+async function playMseParts(sources, name = 'mse') {
   if (!window.MediaSource || !MediaSource.isTypeSupported(mp4Mime)) return {name, ok:false, error:'unsupported'};
   const video = document.createElement('video'); video.controls=true; video.muted=true; video.playsInline=true;
   document.querySelector('#videos').append(video);
   const mediaSource = new MediaSource(); video.src = URL.createObjectURL(mediaSource);
   await new Promise((resolve,reject) => { mediaSource.onsourceopen=resolve; mediaSource.onerror=reject; });
   const sourceBuffer = mediaSource.addSourceBuffer(mp4Mime);
-  const bytes = await fetch(src, {cache:'no-store'}).then(response => response.arrayBuffer());
-  await new Promise((resolve,reject) => { sourceBuffer.onupdateend=resolve; sourceBuffer.onerror=reject; sourceBuffer.appendBuffer(bytes); });
+  for (const src of sources) {
+    const response = await fetch(src, {cache:'no-store'});
+    if (!response.ok) throw new Error('MSE media HTTP ' + response.status);
+    const bytes = await response.arrayBuffer();
+    await new Promise((resolve,reject) => {
+      sourceBuffer.addEventListener('updateend', resolve, {once:true});
+      sourceBuffer.addEventListener('error', reject, {once:true});
+      sourceBuffer.appendBuffer(bytes);
+    });
+  }
   mediaSource.endOfStream();
   return new Promise(resolve => {
     const timer=setTimeout(() => resolve({name,ok:false,error:'timeout'}),12000);
@@ -353,6 +361,26 @@ async function playMse(src, name = 'mse') {
     video.onerror=()=>{clearTimeout(timer);resolve({name,ok:false,error:String(video.error?.code||'media error')});};
     video.play().catch(error=>{clearTimeout(timer);resolve({name,ok:false,error:String(error)});});
   });
+}
+async function playMse(src, name = 'mse') { return playMseParts([src], name); }
+async function playHls(manifestPath) {
+  try {
+    const response = await fetch(manifestPath, {cache:'no-store'});
+    if (!response.ok) throw new Error('HLS manifest HTTP ' + response.status);
+    const manifest = await response.text();
+    const map = /^#EXT-X-MAP:URI="([^"]+)"$/m.exec(manifest)?.[1] || '';
+    const segments = manifest.split(/\\r?\\n/).map(line => line.trim())
+      .filter(line => line && !line.startsWith('#'));
+    if (!map || segments.length < 1) throw new Error('HLS init or media segments were absent');
+    const sources = [map, ...segments].map(reference => new URL(reference, response.url));
+    if (sources.some(source => source.origin !== location.origin ||
+        !source.pathname.startsWith('/media/hls/') || source.search || source.hash)) {
+      throw new Error('HLS media escaped the fixed fixture directory');
+    }
+    return await playMseParts(sources.map(source => source.href), 'hls');
+  } catch (error) {
+    return {name:'hls',ok:false,error:String(error)};
+  }
 }
 async function playDash(manifestPath) {
   try {
@@ -449,7 +477,7 @@ async function widevineSupport() {
   if (manifest.files.webm) results.playback.push(await play('webm','/media/' + manifest.files.webm.name));
   if (manifest.files.av1) results.playback.push(await play('av1','/media/' + manifest.files.av1.name));
   if (manifest.files.mse) results.playback.push(await playMse('/media/' + manifest.files.mse.name));
-  if (manifest.files.hls_manifest) results.playback.push(await play('hls','/media/' + manifest.files.hls_manifest.name));
+  if (manifest.files.hls_manifest) results.playback.push(await playHls('/media/' + manifest.files.hls_manifest.name));
   if (manifest.files.dash_manifest) results.playback.push(await playDash('/media/' + manifest.files.dash_manifest.name));
   results.lifecycle.events.push(connectionSnapshot('completed'));
   results.finished_at = new Date().toISOString();
