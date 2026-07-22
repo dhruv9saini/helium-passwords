@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 5 ]]; then
-  echo "usage: $0 CHROMIUM_SRC OUT_DIR PROVENANCE_DIR HELIUM_SYNC_REPO REQUESTED_CHROMIUM_REF" >&2
+if [[ $# -ne 6 ]]; then
+  echo "usage: $0 CHROMIUM_SRC OUT_DIR PROVENANCE_DIR HELIUM_SYNC_REPO REQUESTED_CHROMIUM_REF DEPOT_TOOLS_COMMIT" >&2
   exit 64
 fi
 
@@ -11,6 +11,7 @@ out_dir=$2
 provenance_dir=$3
 repo_root=$(cd "$4" && pwd)
 requested_ref=$5
+depot_tools_commit=$6
 gn_bin=${GN:-gn}
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
@@ -22,6 +23,10 @@ gn_bin=${GN:-gn}
 command -v "$gn_bin" >/dev/null
 [[ "$requested_ref" == "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]] || {
   echo "requested Chromium ref does not match android-build.lock" >&2
+  exit 1
+}
+[[ "$depot_tools_commit" == "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" ]] || {
+  echo "executing depot_tools commit does not match android-build.lock" >&2
   exit 1
 }
 [[ "$(git -C "$chromium_src" rev-parse HEAD)" == "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]] || {
@@ -56,6 +61,9 @@ require_arg '^chrome_public_manifest_package = "computer\.helium\.sync(\.test)?"
 cp "$chromium_src/$out_dir/args.gn" "$provenance_dir/args.gn"
 cp "$repo_root/chromium/android-build.lock" "$provenance_dir/android-build.lock"
 printf '%s\n' "$requested_ref" > "$provenance_dir/chromium-ref-requested.txt"
+printf '%s\n' "$depot_tools_commit" > "$provenance_dir/depot-tools-commit.txt"
+printf '%s\n' 'DEPOT_TOOLS_UPDATE=0' \
+  > "$provenance_dir/depot-tools-update-policy.txt"
 git -C "$chromium_src" rev-parse HEAD > "$provenance_dir/chromium-source-commit.txt"
 git -C "$repo_root/helium-chromium" rev-parse HEAD > "$provenance_dir/helium-core-commit.txt"
 git -C "$repo_root" rev-parse HEAD > "$provenance_dir/helium-sync-commit.txt"
@@ -90,6 +98,8 @@ done < "$provenance_dir/android-composition.tsv" \
     gn-args-resolved.txt \
     chromium-source-commit.txt \
     chromium-ref-requested.txt \
+    depot-tools-commit.txt \
+    depot-tools-update-policy.txt \
     helium-core-commit.txt \
     helium-sync-commit.txt \
     helium-sync-status.txt \

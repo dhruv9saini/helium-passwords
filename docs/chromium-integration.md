@@ -72,6 +72,11 @@ gh workflow run chromium-android.yml
 
 `chromium/android-build.lock` is the single source for the exact Chromium tag,
 Chromium commit, Helium core commit, and depot_tools commit.
+The Android runner disables depot_tools' normal `gclient` self-update, verifies
+the exact clean depot_tools checkout immediately before and after each sync,
+and records the executing depot_tools commit plus update policy in packaged
+provenance. A returned artifact is rejected if those records differ from its
+lock.
 `apply-android-backbone.sh` applies the ordered Helium core series while
 omitting only the mandatory password-disable patch, then applies the two public
 Passwords patches, six private Sync patches and overlay, Helium
@@ -110,7 +115,9 @@ unless the source lock resolves exactly and GN proves Android target,
 `ffmpeg_branding = "Chrome"`, `proprietary_codecs = true`, and
 `media_use_ffmpeg = true`. Packaged provenance records commits, resolved GN
 args, composition order, and patch/overlay hashes. These flags do not prove a
-device decoder and do not provision Widevine.
+device decoder and do not provision Widevine. Provenance also contains
+`depot-tools-commit.txt` and `depot-tools-update-policy.txt`; the latter must be
+exactly `DEPOT_TOOLS_UPDATE=0`.
 
 Full Chromium builds run only through the isolated chromiumer workflow in
 `chromiumer-builds.md`; lm and the NAS are not compiler workspaces. GitHub

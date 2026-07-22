@@ -1,6 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+[[ "$#" -ge 2 ]] || {
+  echo "usage: gclient-sync-direct.sh DEPOT_TOOLS_DIR DEPOT_TOOLS_COMMIT [sync arguments]" >&2
+  exit 64
+}
+depot_tools=$(realpath -e "$1")
+expected_depot_tools_commit=$2
+shift 2
+[[ "$expected_depot_tools_commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "depot_tools commit must be a full Git hash" >&2
+  exit 64
+}
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 # chromiumer's worker redirects GIT_CACHE_PATH into the bounded job tree, but
 # depot_tools' local mirror serves a shallow checkout through a local
 # upload-pack/pack-objects pair. The pinned gclient accepts --cache-dir only in
@@ -42,4 +55,21 @@ if [[ -n "${GCLIENT_JOBS:-}" ]]; then
   args+=(--jobs "$GCLIENT_JOBS")
 fi
 
-exec gclient "${args[@]}" "$@"
+"$script_dir/verify-depot-tools-cache-contract.sh" \
+  "$depot_tools" "$expected_depot_tools_commit" >/dev/null
+
+# depot_tools documents DEPOT_TOOLS_UPDATE=0 as the supported way to disable
+# gclient's automatic checkout update. Invoke the verified launcher by absolute
+# path so PATH cannot select a different depot_tools checkout.
+export DEPOT_TOOLS_UPDATE=0
+set +e
+"$depot_tools/gclient" "${args[@]}" "$@"
+gclient_status=$?
+set -e
+
+# A successful or failed child must not have moved or modified the launcher
+# checkout. This postcondition also catches a future launcher that ignores the
+# documented no-update setting.
+"$script_dir/verify-depot-tools-cache-contract.sh" \
+  "$depot_tools" "$expected_depot_tools_commit" >/dev/null
+exit "$gclient_status"

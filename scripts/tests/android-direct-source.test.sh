@@ -8,7 +8,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-mkdir -p "$test_root/bin" "$test_root/work"
+mkdir -p "$test_root/bin" "$test_root/work" "$test_root/depot-tools"
 printf 'cache_dir = None\n' > "$test_root/work/.gclient"
 
 cat > "$test_root/bin/git-child" <<'EOF'
@@ -27,10 +27,44 @@ printf 'child_git_cache=disabled\n' >> "$CHILD_CAPTURE"
 EOF
 chmod +x "$test_root/bin/git-child"
 
-cat > "$test_root/bin/gclient" <<'EOF'
+cat > "$test_root/depot-tools/gclient.py" <<'EOF'
+def CMDconfig(parser, args):
+  parser.add_option(
+      "--cache-dir",
+  )
+  if options.cache_dir.lower() == "none":
+    options.cache_dir = None
+
+def CMDsync(parser, args):
+  pass
+
+class GClient:
+    def SetConfig(self, config_dict):
+        cache_dir = config_dict.get("cache_dir", UNSET_CACHE_DIR)
+        git_cache.Mirror.SetCachePath(cache_dir)
+
+    def NextMethod(self):
+        pass
+EOF
+
+cat > "$test_root/depot-tools/update_depot_tools" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+git -C "$(dirname "$0")" checkout --detach "$MUTATED_DEPOT_COMMIT" >/dev/null
+EOF
+chmod +x "$test_root/depot-tools/update_depot_tools"
+
+cat > "$test_root/depot-tools/gclient" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+base_dir=$(dirname "$0")
+if [[ $DEPOT_TOOLS_UPDATE != 0 ]]; then
+  "$base_dir"/update_depot_tools "$@"
+fi
+[[ "$DEPOT_TOOLS_UPDATE" == 0 ]]
 printf '%s\n' "$@" > "$GCLIENT_CAPTURE"
+printf 'depot_tools_update=%s\n' "$DEPOT_TOOLS_UPDATE" \
+  > "$GCLIENT_ENV_CAPTURE"
 while IFS= read -r variable; do
   case "$variable" in
     GIT_CACHE_PATH|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_*|GIT_CONFIG_VALUE_*|GIT_CONFIG_PARAMETERS)
@@ -39,15 +73,32 @@ while IFS= read -r variable; do
       ;;
   esac
 done < <(compgen -e)
+if [[ "${MUTATE_DEPOT_DURING_GCLIENT:-false}" == true ]]; then
+  "$base_dir"/update_depot_tools "$@"
+fi
 exec git-child fetch origin pinned-commit --depth=1
 EOF
-chmod +x "$test_root/bin/gclient"
+chmod +x "$test_root/depot-tools/gclient"
+
+git -C "$test_root/depot-tools" init -q
+git -C "$test_root/depot-tools" config user.email test@helium.invalid
+git -C "$test_root/depot-tools" config user.name 'Helium Test'
+git -C "$test_root/depot-tools" add gclient gclient.py update_depot_tools
+git -C "$test_root/depot-tools" commit -qm pinned
+pinned_depot_commit=$(git -C "$test_root/depot-tools" rev-parse HEAD)
+printf 'mutation\n' > "$test_root/depot-tools/mutation-marker"
+git -C "$test_root/depot-tools" add mutation-marker
+git -C "$test_root/depot-tools" commit -qm mutation
+mutated_depot_commit=$(git -C "$test_root/depot-tools" rev-parse HEAD)
+git -C "$test_root/depot-tools" checkout -q --detach "$pinned_depot_commit"
 
 (
   cd "$test_root/work"
   PATH="$test_root/bin:$PATH" \
     GCLIENT_CAPTURE="$test_root/gclient.argv" \
+    GCLIENT_ENV_CAPTURE="$test_root/gclient.env" \
     CHILD_CAPTURE="$test_root/git-child.env" \
+    MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
     GCLIENT_JOBS=2 \
     GIT_CACHE_PATH="$test_root/forbidden-cache" \
     GIT_CONFIG_COUNT=4 \
@@ -61,6 +112,7 @@ chmod +x "$test_root/bin/gclient"
     GIT_CONFIG_VALUE_3=2g \
     GIT_CONFIG_PARAMETERS="'pack.threads'='8'" \
     "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+      "$test_root/depot-tools" "$pinned_depot_commit" \
       --nohooks --no-history
 )
 
@@ -72,6 +124,9 @@ sync
 --no-history
 EOF
 cmp "$test_root/expected.argv" "$test_root/gclient.argv"
+grep -qx 'depot_tools_update=0' "$test_root/gclient.env"
+[[ "$(git -C "$test_root/depot-tools" rev-parse HEAD)" == \
+  "$pinned_depot_commit" ]]
 grep -qx 'child_argv=fetch origin pinned-commit --depth=1' \
   "$test_root/git-child.env"
 grep -qx 'child_git_cache=disabled' "$test_root/git-child.env"
@@ -79,9 +134,12 @@ grep -qx 'child_git_cache=disabled' "$test_root/git-child.env"
 
 if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
   GCLIENT_CAPTURE="$test_root/rejected.argv" \
+  GCLIENT_ENV_CAPTURE="$test_root/rejected.env" \
   CHILD_CAPTURE="$test_root/rejected-child.env" \
+  MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
   GCLIENT_JOBS=0 \
   "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+    "$test_root/depot-tools" "$pinned_depot_commit" \
   >"$test_root/rejected.out" 2>&1); then
   echo 'zero gclient job count unexpectedly passed' >&2
   exit 1
@@ -94,8 +152,11 @@ mkdir "$test_root/unsafe"
 printf 'cache_dir = "/tmp/not-disabled"\n' > "$test_root/unsafe/.gclient"
 if (cd "$test_root/unsafe" && PATH="$test_root/bin:$PATH" \
   GCLIENT_CAPTURE="$test_root/unsafe.argv" \
+  GCLIENT_ENV_CAPTURE="$test_root/unsafe.env" \
   CHILD_CAPTURE="$test_root/unsafe-child.env" \
+  MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
   "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+    "$test_root/depot-tools" "$pinned_depot_commit" \
   >"$test_root/unsafe.out" 2>&1); then
   echo 'cache-enabled gclient configuration unexpectedly passed' >&2
   exit 1
@@ -104,5 +165,64 @@ grep -qx 'gclient configuration must contain exactly one cache_dir = None assign
   "$test_root/unsafe.out"
 [[ ! -e "$test_root/unsafe.argv" ]]
 [[ ! -e "$test_root/unsafe-child.env" ]]
+
+git -C "$test_root/depot-tools" checkout -q --detach "$mutated_depot_commit"
+if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
+  GCLIENT_CAPTURE="$test_root/mutated.argv" \
+  GCLIENT_ENV_CAPTURE="$test_root/mutated.env" \
+  CHILD_CAPTURE="$test_root/mutated-child.env" \
+  MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
+  "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+    "$test_root/depot-tools" "$pinned_depot_commit" \
+  >"$test_root/mutated.out" 2>&1); then
+  echo 'mutated depot_tools HEAD unexpectedly executed gclient' >&2
+  exit 1
+fi
+grep -qx 'depot_tools checkout does not match android-build.lock' \
+  "$test_root/mutated.out"
+[[ ! -e "$test_root/mutated.argv" ]]
+[[ ! -e "$test_root/mutated-child.env" ]]
+
+git -C "$test_root/depot-tools" checkout -q --detach "$pinned_depot_commit"
+printf '# dirty\n' >> "$test_root/depot-tools/gclient.py"
+if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
+  GCLIENT_CAPTURE="$test_root/dirty.argv" \
+  GCLIENT_ENV_CAPTURE="$test_root/dirty.env" \
+  CHILD_CAPTURE="$test_root/dirty-child.env" \
+  MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
+  "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+    "$test_root/depot-tools" "$pinned_depot_commit" \
+  >"$test_root/dirty.out" 2>&1); then
+  echo 'dirty depot_tools checkout unexpectedly executed gclient' >&2
+  exit 1
+fi
+grep -qx 'depot_tools tracked files differ from the pinned commit' \
+  "$test_root/dirty.out"
+[[ ! -e "$test_root/dirty.argv" ]]
+[[ ! -e "$test_root/dirty-child.env" ]]
+git -C "$test_root/depot-tools" checkout -q -- gclient.py
+
+if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
+  GCLIENT_CAPTURE="$test_root/post-mutation.argv" \
+  GCLIENT_ENV_CAPTURE="$test_root/post-mutation.env" \
+  CHILD_CAPTURE="$test_root/post-mutation-child.env" \
+  MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
+  MUTATE_DEPOT_DURING_GCLIENT=true \
+  "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+    "$test_root/depot-tools" "$pinned_depot_commit" \
+  >"$test_root/post-mutation.out" 2>&1); then
+  echo 'gclient checkout movement escaped the postcondition' >&2
+  exit 1
+fi
+grep -qx 'depot_tools checkout does not match android-build.lock' \
+  "$test_root/post-mutation.out"
+[[ -e "$test_root/post-mutation-child.env" ]]
+
+grep -Fq 'export DEPOT_TOOLS_UPDATE=0' \
+  "$repo_root/scripts/chromium/prove-depot-tools-pin.sh"
+grep -Fq '"$depot_tools/gclient" --version' \
+  "$repo_root/scripts/chromium/prove-depot-tools-pin.sh"
+grep -Fq '[[ "$head_after" == "$head_before" ]]' \
+  "$repo_root/scripts/chromium/prove-depot-tools-pin.sh"
 
 echo 'Android direct source acquisition contract passed'

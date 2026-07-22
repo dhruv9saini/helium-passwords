@@ -16,6 +16,28 @@ expected_commit=$2
   echo "depot_tools checkout does not match android-build.lock" >&2
   exit 1
 }
+[[ -z "$(git -C "$depot_tools" status --short --untracked-files=no)" ]] || {
+  echo "depot_tools tracked files differ from the pinned commit" >&2
+  exit 1
+}
+
+for tracked_file in gclient gclient.py update_depot_tools; do
+  expected_blob=$(git -C "$depot_tools" rev-parse \
+    "$expected_commit:$tracked_file")
+  working_blob=$(git -C "$depot_tools" hash-object "$tracked_file")
+  [[ "$working_blob" == "$expected_blob" ]] || {
+    echo "depot_tools $tracked_file does not match the pinned commit" >&2
+    exit 1
+  }
+done
+
+gclient_launcher=$depot_tools/gclient
+[[ -x "$gclient_launcher" ]] || {
+  echo "pinned depot_tools checkout has no executable gclient launcher" >&2
+  exit 1
+}
+grep -Fq 'if [[ $DEPOT_TOOLS_UPDATE != 0 ]]' "$gclient_launcher"
+grep -Fq '"$base_dir"/update_depot_tools "$@"' "$gclient_launcher"
 
 gclient_source=$depot_tools/gclient.py
 [[ -f "$gclient_source" ]] || {

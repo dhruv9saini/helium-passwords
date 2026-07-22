@@ -46,6 +46,16 @@ provenance="$temporary/build-provenance"
   echo "artifact Chromium commit does not match its lock" >&2
   exit 1
 }
+[[ "$(tr -d '\r\n' < "$provenance/depot-tools-commit.txt")" == \
+  "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" ]] || {
+  echo "artifact depot_tools commit does not match its lock" >&2
+  exit 1
+}
+grep -qx 'DEPOT_TOOLS_UPDATE=0' \
+  "$provenance/depot-tools-update-policy.txt" || {
+  echo "artifact depot_tools update policy is not pinned" >&2
+  exit 1
+}
 [[ "$(tr -d '\r\n' < "$provenance/helium-sync-commit.txt")" == \
   "$expected_sync_commit" ]] || {
   echo "artifact Helium Sync commit does not match the requested source" >&2

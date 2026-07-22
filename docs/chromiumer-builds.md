@@ -297,14 +297,30 @@ gclient sync [--jobs 2] ...
 ```
 
 The exact depot_tools commit is locked in `chromium/android-build.lock`.
-Source preparation checks out that commit and verifies its parser and config
-loader before putting it on `PATH`: the `config` command owns `--cache-dir`,
-the `sync` command has no such option, and the config loader passes the
-top-level `None` value to `git_cache.Mirror.SetCachePath`. Combined with the
+Source preparation checks out that commit and verifies its HEAD, clean tracked
+tree, launcher blobs, parser, and config loader before putting it on `PATH`:
+the `config` command owns `--cache-dir`, the `sync` command has no such option,
+and the config loader passes the top-level `None` value to
+`git_cache.Mirror.SetCachePath`. [depot_tools normally updates itself whenever
+`gclient` runs][depot-tools-update]. Helium exports its documented
+`DEPOT_TOOLS_UPDATE=0` control, invokes the verified launcher's absolute path,
+and re-verifies the checkout immediately before and after every sync. The
+separate `runhooks` call has the same before/after pin check. Combined with the
 existing `--no-history`, gclient initializes each checkout and performs a
 shallow fetch from its origin. This eliminates the local mirror's
-`upload-pack -> pack-objects` path. Missing, duplicated, or cache-enabled
-configuration fails before gclient starts.
+`upload-pack -> pack-objects` path. A moved HEAD, dirty tracked file, changed
+launcher blob, missing/duplicated cache setting, or cache-enabled configuration
+fails before gclient starts. Packaged provenance records both the executing
+depot_tools commit and `DEPOT_TOOLS_UPDATE=0`; artifact validation compares
+them with the carried lock.
+
+Job `hs-android-148-disposable-apk-05` discovered the missing no-update control.
+The job checked out and validated
+`36a464bfe6ef49e0710caf65bfbabc87725720da` at 07:02:09Z, then the `gclient`
+launcher moved the checkout to `origin/main` commit
+`1fa2c22bc302b770527ca30fd6f98b0576381001` at 07:02:10Z. The job was cancelled
+before source preparation or compilation completed and retained terminal
+`cancellation`, exit `130`. It is not artifact or validation evidence.
 
 Do not replace this with `GIT_CONFIG_COUNT` pack settings. Git only processes
 the key/value pairs while the matching count is present, while depot_tools
@@ -339,6 +355,27 @@ remaining setup gate is:
    the failure before making a separate hardware and cgroup-policy decision.
 4. Re-run `connection`, budgeted `preflight`, and the short wrapper test before
    staging.
+
+After changing the depot_tools lock or launcher boundary, run this small
+detached proof before another Chromium job. It clones only depot_tools, invokes
+`gclient --version` through the real pinned launcher with auto-update disabled,
+re-verifies unchanged HEAD and tracked blobs, and returns a proof record:
+
+```sh
+job=hs-depot-pin-proof-$(date +%Y%m%d-%H%M%S)
+scripts/chromiumer-job.sh preflight 1
+scripts/chromiumer-job.sh stage "$job" 1
+scripts/chromiumer-job.sh start "$job" \
+  --summary "Pinned depot_tools no-self-update proof" \
+  --next "Fetch depot-tools-pin-proof.env and verify the terminal state." -- \
+  scripts/chromiumer-nix.sh run -- \
+    scripts/chromium/prove-depot-tools-pin.sh \
+      .build/depot-tools-pin-proof
+scripts/chromiumer-job.sh terminal "$job"
+scripts/chromiumer-job.sh limits "$job"
+scripts/chromiumer-job.sh fetch "$job" \
+  .build/depot-tools-pin-proof/depot-tools-pin-proof.env
+```
 
 The simplified harmless wrapper test was executed as
 `wrapper-test-20260721-153235`. It completed with exit code 0 while live systemd
@@ -382,3 +419,4 @@ scripts/chromiumer-job.sh test
 ```
 
 [gnu-find-blocks]: https://www.gnu.org/software/findutils/manual/html_node/find_html/Size-Directives.html
+[depot-tools-update]: https://chromium.googlesource.com/chromium/tools/depot_tools/+/HEAD/README.md#updating

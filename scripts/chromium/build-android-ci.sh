@@ -111,14 +111,33 @@ setup_depot_tools() {
     "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
   git -C "$workspace/depot_tools" checkout --detach \
     "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
+  verify_depot_tools
+  # Official depot_tools behavior is to update itself when gclient runs.
+  # Builds use the immutable commit in android-build.lock instead.
+  export DEPOT_TOOLS_UPDATE=0
+  export PATH="$workspace/depot_tools:$PATH"
+}
+
+verify_depot_tools() {
   "$repo_root/scripts/chromium/verify-depot-tools-cache-contract.sh" \
     "$workspace/depot_tools" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
-  export PATH="$workspace/depot_tools:$PATH"
 }
 
 gclient_sync() {
   GCLIENT_JOBS="$gclient_jobs" \
-    "$repo_root/scripts/chromium/gclient-sync-direct.sh" "$@"
+    "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+      "$workspace/depot_tools" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" "$@"
+}
+
+run_pinned_gclient() {
+  verify_depot_tools >/dev/null
+  export DEPOT_TOOLS_UPDATE=0
+  set +e
+  "$workspace/depot_tools/gclient" "$@"
+  local status=$?
+  set -e
+  verify_depot_tools >/dev/null
+  return "$status"
 }
 
 prepare_helium_dependencies() {
@@ -178,7 +197,7 @@ EOF
     build/install-build-deps.sh --android
   fi
   df -h
-  gclient runhooks
+  run_pinned_gclient runhooks
   df -h
 
   prepare_helium_dependencies
@@ -192,6 +211,9 @@ EOF
 
 generate_android_build_files() {
   cd "$workspace/src"
+  verify_depot_tools >/dev/null
+  local depot_tools_commit
+  depot_tools_commit=$(git -C "$workspace/depot_tools" rev-parse HEAD)
   mkdir -p "$out_dir"
   local effective_use_siso=$use_siso
   if [[ "$effective_use_siso" == auto ]]; then
@@ -227,7 +249,7 @@ EOF
   gn gen "$out_dir" --fail-on-unused-args
   "$repo_root/scripts/chromium/verify-android-media-config.sh" \
     "$workspace/src" "$out_dir" "$artifact_dir/build-provenance" \
-    "$repo_root" "$chromium_ref"
+    "$repo_root" "$chromium_ref" "$depot_tools_commit"
 }
 
 touch_out_dir() {

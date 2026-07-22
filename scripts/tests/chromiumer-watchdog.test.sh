@@ -71,7 +71,7 @@ count=0
 [ ! -f "${WATCHDOG_TEST_COUNTER}" ] || count=$(cat "${WATCHDOG_TEST_COUNTER}")
 count=$((count + 1))
 printf '%s\n' "${count}" >"${WATCHDOG_TEST_COUNTER}"
-[ "${count}" -le 2 ]
+[ "${count}" -le 3 ]
 EOF
 chmod 700 "${fake_bin}/systemctl"
 

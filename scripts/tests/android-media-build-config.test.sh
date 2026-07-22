@@ -45,12 +45,16 @@ chmod +x "$test_root/bin/git"
 PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
   "$repo_root/scripts/chromium/verify-android-media-config.sh" \
   "$test_root/src" out/Test "$test_root/provenance" "$repo_root" \
-  "$HELIUM_ANDROID_CHROMIUM_COMMIT"
+  "$HELIUM_ANDROID_CHROMIUM_COMMIT" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
 
 grep -qx 'proprietary_codecs = true' "$test_root/provenance/gn-args-resolved.txt"
 grep -qx 'chrome_public_manifest_package = "computer.helium.sync.test"' \
   "$test_root/provenance/gn-args-resolved.txt"
 grep -Eq '^[0-9a-f]{40}$' "$test_root/provenance/chromium-source-commit.txt"
+grep -qx "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
+  "$test_root/provenance/depot-tools-commit.txt"
+grep -qx 'DEPOT_TOOLS_UPDATE=0' \
+  "$test_root/provenance/depot-tools-update-policy.txt"
 grep -q 'chromium/patches/0001-helium-sync-overlay-files.patch' \
   "$test_root/provenance/sync-inputs.sha256"
 
@@ -58,7 +62,8 @@ sed -i 's/proprietary_codecs = true/proprietary_codecs = false/' "$test_root/bin
 if PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
   "$repo_root/scripts/chromium/verify-android-media-config.sh" \
   "$test_root/src" out/Test "$test_root/rejected" "$repo_root" \
-  "$HELIUM_ANDROID_CHROMIUM_COMMIT" 2>/dev/null; then
+  "$HELIUM_ANDROID_CHROMIUM_COMMIT" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
+  2>/dev/null; then
   echo 'codec-stripped Android configuration unexpectedly passed' >&2
   exit 1
 fi
@@ -85,6 +90,10 @@ grep -Fq 'gclient-sync-direct.sh' \
 grep -Fq 'cache_dir = None' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'verify-depot-tools-cache-contract.sh' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'export DEPOT_TOOLS_UPDATE=0' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq '"$workspace/depot_tools/gclient" "$@"' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'HELIUM_ANDROID_DEPOT_TOOLS_COMMIT' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
