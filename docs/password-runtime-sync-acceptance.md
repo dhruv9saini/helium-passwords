@@ -13,6 +13,12 @@ credential keys, and never retains nonce or ciphertext values. Never point it
 at a personal profile, production Android app data, or a production server
 journal.
 
+The captured state must be schema 4 with identity
+`password-form-unique-key-v2`, `migration_status` equal to `complete`, an empty
+`legacy_credentials` map, and `credential/v2/<sha256>` keys. Stable acceptance
+captures reject `pending_publication` and `queued_mutation`; those states must
+first resolve through a remote pull.
+
 ## Capture
 
 For each row below, first visually inspect and capture the public native UI

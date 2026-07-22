@@ -162,6 +162,26 @@ leaves the cursor unchanged, and stops that batch for explicit resolution.
 Tombstones are retained in latest inventory so a new or stale client cannot
 resurrect a deletion.
 
+Password identity is schema 2 and exactly follows Chromium's pinned login-table
+unique key: origin URL, username element, username value, password element, and
+signon realm. Each field is length-framed, UTF-16 fields retain their code units,
+and the SHA-256 key uses the `credential/v2/` namespace. State schema 4 preserves
+every schema-3 entry under `legacy_credentials`. A live legacy entry migrates
+only when exactly one current `PasswordForm` has its old key and fingerprint;
+two forms that collided under the old realm/URL/username tuple fail closed
+instead of collapsing. Canonical publication starts at revision zero while the
+legacy metadata remains preserved for audit.
+
+Observer events write only fingerprints and deletion intent into atomic state.
+Exactly one mutation receives an expected revision and durable
+`pending_publication` record before one HTTP push; later rapid events remain a
+separate `queued_mutation`. A push response never advances state directly.
+Every success, failure, malformed response, or restart resolves the pending
+intent against a new authenticated latest-record pull. An exact target revision
+is accepted, an unchanged baseline is retried, and any other remote revision
+fails as a real conflict. Enrollment completion and content-key rekey refuse
+legacy, queued, or pending password state.
+
 The TLS-backed synthetic three-device integration test exercises one complete
 password lifecycle with d, da, and oneplus identities: both joins remain
 pull-only through verified application, an unchanged restart performs no HTTP
@@ -353,7 +373,7 @@ evidence.
 | --- | --- | --- |
 | Transport | Opaque v2 E2EE, direct TLS 1.3 server, offline constrained CA issuance/verification, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; synthetic rootless endpoint and scheduled NAS restore proof live on lm | Restore root authorization, install the dedicated-account service, and enroll the public root on disposable browser clients |
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations; consolidated TLS-backed three-device protocol lifecycle passes | Execute native bridge promotion on disposable profiles, then provision personal d/da/oneplus only after backups |
-| Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop; artifact-bound native fixture/capture/receipt gate | Run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete and three-device restarts |
+| Passwords | Pull/apply/readback before observe/publish; full native specifics; complete `PasswordForm` unique-key identity; schema-3 preservation/collision stop; durable one-at-a-time publication and pull-verified ambiguous outcomes; artifact-bound native fixture/capture/receipt gate | Compile the bridge, then run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete, rapid observer events, ambiguous-success restarts, and three-device stale conflicts |
 | Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
 | Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; no state values accepted | Disposable-browser evidence collector and safe origin-scoped adapters only where observed necessary |
 | Tabs | Local exporter/store, atomic checked generations, standalone content-bound neutral restore, atomic marked-root current-URL browser consumer, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; authorize da's dedicated key on d; provision independent recovery recipients; enable schedules only after two-route preflight; implement full tab topology reconstruction and prove first/second disposable browser starts on every device |

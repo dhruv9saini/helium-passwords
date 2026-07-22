@@ -88,6 +88,16 @@ byte-identical no-op restart snapshots.
   mismatched cursors trigger another pull and publish nothing. The offline
   completion command proves the equivalent stopped-profile gate.
 - Restarting an unchanged profile publishes zero password records.
+- Two password forms that differ only in username element or password element
+  remain distinct. A schema-3 state with both forms fails migration without
+  dropping its preserved legacy state or merging the two forms.
+- Rapid update/update/delete observer events publish one record at a time; the
+  next mutation uses the pulled accepted revision rather than reusing the first
+  mutation's expected revision.
+- Terminate the browser after the server accepts a mutation but before a usable
+  response reaches the bridge. Restart resolves the durable pending intent by
+  pull: an exact accepted record advances, an unchanged baseline retries, and a
+  different newer record stops as stale.
 - One profile changes a password while a second is offline; reconnecting the
   stale profile does not overwrite the newer value.
 - Independent credentials changed offline converge after reconnect.
@@ -101,6 +111,8 @@ byte-identical no-op restart snapshots.
   rejected on every client. The stopped-profile cutover preserves a mode-0600
   rollback token and atomically installs only a server-confirmed new token.
 - No plaintext password or bearer token appears in daemon/browser logs.
+- Enrollment promotion and content-key rekey reject schema-3, legacy-preserved,
+  queued, or pending password state.
 
 ## Gate 3: Cookies and Login State
 

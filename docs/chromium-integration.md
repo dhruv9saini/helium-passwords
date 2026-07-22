@@ -29,13 +29,29 @@ prevents a stopped browser's old export from satisfying backup health.
 
 ### Passwords
 
-Suggested key:
+Canonical key material follows Chromium 148's complete login-table unique key:
 
 ```text
-<signon_realm>/<username_element>/<username_value>/<origin_url>
+length(origin_url) || origin_url
+length(username_element UTF-16 units) || username_element UTF-16BE
+length(username_value UTF-16 units) || username_value UTF-16BE
+length(password_element UTF-16 units) || password_element UTF-16BE
+length(signon_realm) || signon_realm
 ```
 
-Suggested payload fields should mirror Chromium `PasswordForm` fields needed to reconstruct a login through `PasswordStoreInterface::AddLogin`, `UpdateLogin`, or `RemoveLogin`.
+The material has a versioned domain prefix and becomes
+`credential/v2/<sha256>`. Length framing prevents delimiter ambiguity and raw
+UTF-16 code units prevent replacement-character collisions. The encrypted
+payload is Chromium's complete serialized `PasswordSpecificsData`, reconstructed
+through `PasswordStoreInterface::AddLogin`, `UpdateLogin`, or `RemoveLogin`.
+
+`password-state.json` schema 4 stores only fingerprints, revisions, deletion
+state, key IDs, and publication intent. A schema-3 file is atomically rewritten
+with all old entries preserved under `legacy_credentials`; only an unambiguous
+local form/fingerprint match can seed a canonical record. One
+`pending_publication` is durable before one push, and later observer intent is
+kept separately. HTTP responses are not authoritative: a new latest-record pull
+must verify the target revision and fingerprint, including after restart.
 
 ### Cookies
 
