@@ -559,9 +559,11 @@ Content-key rotation order is fixed. Every remote command also receives
    This refuses unless both native revision inventories use the expected
    schemas and their verified cursors equal `client.json`; only then does it
    CAS-rekey every latest record and tombstone and acknowledge d's rekey.
-5. Let every join pull/apply/read back the rekey, then run `key-ack-rekey` on
-   each join. Finally run `key-retire` on d. Retirement fails until every live
-   active device has acknowledged.
+5. Restart every enrolled browser so it loads the new active key, then let every
+   join pull/apply/read back the rekey and run `key-ack-rekey` on each join.
+   Stop the browsers again, run `key-retire` on d, and run `key-adopt` on every
+   join so each durable keyring removes the retired key before the final
+   restart. Retirement fails until every live active device has acknowledged.
 
 Never retire while a device is offline or before every acknowledgement.
 
