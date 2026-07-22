@@ -171,7 +171,9 @@ dimensions, decoded-audio evidence, required codec capabilities, and browser
 product/protocol provenance. When requested, the same result must contain
 actual `h2` and `h3` `PerformanceResourceTiming.nextHopProtocol` values, an
 ordered hidden-to-visible transition, and a Network Information API change
-event. Run the identical command with a new directory for the same-commit
+event. The probe consumes an initial HTTP/3-origin response to allow Alt-Svc
+discovery, records its protocol/status/timing, and then requires the measured
+stream to use `h3`. Run the identical command with a new directory for the same-commit
 upstream control; ChatGPT timing remains a separate content-free manual gate.
 
 A copied backup never opens a browser.

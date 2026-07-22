@@ -285,6 +285,17 @@ async function stream(path) {
     response_encoding: response.headers.get('content-encoding') || 'identity',
   };
 }
+async function warmTransport(path) {
+  const started = performance.now();
+  const response = await fetch(path, {cache:'no-store'});
+  await response.arrayBuffer();
+  const timing = performance.getEntriesByName(response.url).at(-1);
+  return {
+    status: response.status,
+    completed_ms: Math.max(1, Math.round(performance.now() - started)),
+    protocol: timing?.nextHopProtocol || '',
+  };
+}
 function sse() {
   return new Promise((resolve, reject) => {
     const started = performance.now(), ticksBefore = interactionTicks;
@@ -420,6 +431,11 @@ async function widevineSupport() {
   for (const protocol of ['h2','h3']) {
     const endpoint = new URLSearchParams(location.search).get(protocol);
     if (!endpoint) continue;
+    if (protocol === 'h3') {
+      try { results.transport_warmup_h3 = await warmTransport(endpoint); }
+      catch (error) { results.transport_warmup_h3 = {error:String(error)}; }
+      show();
+    }
     try { results['fetch_' + protocol] = await stream(endpoint); }
     catch (error) { results['fetch_' + protocol] = {error:String(error)}; }
     show();

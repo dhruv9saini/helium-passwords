@@ -86,6 +86,13 @@ export function validateProbeResult(result) {
   for (const protocol of result.required_transport_protocols) {
     validateFetchStream(result[`fetch_${protocol}`], protocol, expected, result.expected_chunks, protocol);
   }
+  if (result.required_transport_protocols.includes("h3")) {
+    const warmup = result.transport_warmup_h3;
+    if (warmup?.status !== 200 || !Number.isInteger(warmup.completed_ms) ||
+        warmup.completed_ms <= 0 || typeof warmup.protocol !== "string") {
+      throw new Error("HTTP/3 Alt-Svc warmup evidence was absent or invalid");
+    }
+  }
   if (JSON.stringify(result.sse?.values) !== JSON.stringify(expectedValues)) {
     throw new Error("SSE stream was incomplete or reordered");
   }

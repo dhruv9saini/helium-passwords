@@ -112,6 +112,7 @@ test("probe page contains the codec and browser-observable streaming gates", asy
   assert.match(page, /interaction_ticks/);
   assert.match(page, /new EventSource/);
   assert.match(page, /response\.body\.getReader/);
+  assert.match(page, /transport_warmup_h3/);
   assert.match(page, /visibilitychange/);
   assert.match(page, /connectionchange/);
   assert.match(page, /__heliumMediaResult/);
@@ -267,6 +268,17 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     required_transport_protocols: ["h3"],
     fetch_h3: { ...stream, protocol: "h2" },
   }), /expected h3/);
+  assert.equal(validateProbeResult({
+    ...result,
+    required_transport_protocols: ["h3"],
+    transport_warmup_h3: { status: 200, completed_ms: 100, protocol: "h2" },
+    fetch_h3: { ...stream, protocol: "h3" },
+  }).fetch_h3.protocol, "h3");
+  assert.throws(() => validateProbeResult({
+    ...result,
+    required_transport_protocols: ["h3"],
+    fetch_h3: { ...stream, protocol: "h3" },
+  }), /Alt-Svc warmup evidence was absent/);
 });
 
 test("CDP runner refuses non-loopback origins and existing evidence", async t => {

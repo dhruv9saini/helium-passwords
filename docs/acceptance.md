@@ -240,7 +240,10 @@ Wi-Fi and mobile data are both enabled and restores Wi-Fi on every exit. The
 HTTP/2 and HTTP/3 URLs are separate credential-free synthetic HTTPS origins.
 Evidence passes only when the browser reports the requested `h2`/`h3`
 negotiation and the page observes the required visibility and connection
-events. A script action alone is not acceptance evidence.
+events. Before the measured HTTP/3 request, the probe fully consumes one
+warm-up response so the browser can learn the origin's authenticated Alt-Svc
+advertisement; the measured request still must report `h3`. A script action
+alone is not acceptance evidence.
 
 After deterministic gates pass, run ChatGPT as a manual end-to-end scenario and
 record only timing/status observations, never conversation content or tokens.
