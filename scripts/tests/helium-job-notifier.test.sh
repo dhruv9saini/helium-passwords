@@ -29,14 +29,20 @@ if [ -n "${FAKE_MAIL_FAIL_ONCE:-}" ] && [ ! -e "${FAKE_MAIL_FAIL_ONCE}" ]; then
 fi
 key=
 body=
+arguments=$*
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --key) key=$2; shift 2 ;;
         --body-file) body=$2; shift 2 ;;
+        --to)
+            echo "recipient selection must remain inside Mailbridge" >&2
+            exit 64
+            ;;
         *) shift ;;
     esac
 done
-printf '%s\t%s\n' "${key}" "$(sha256sum "${body}" | awk '{print $1}')" \
+printf '%s\t%s\t%s\n' "${key}" "$(sha256sum "${body}" | awk '{print $1}')" \
+    "${arguments}" \
     >>"${FAKE_MAIL_CALLS}"
 EOF
 chmod 700 "${fake_mailbridge}"
@@ -45,9 +51,17 @@ export HELIUM_JOB_NOTIFY_STATE_ROOT="${test_root}/state"
 export HELIUM_JOB_NOTIFY_SSH="${fake_ssh}"
 export HELIUM_MAILBRIDGE_CLI="${fake_mailbridge}"
 export HELIUM_MAILBRIDGE_CONFIG="${test_root}/unused.toml"
+export HELIUM_JOB_NOTIFY_RECIPIENT=attacker@example.invalid
 export FAKE_REMOTE_ROOT="${test_root}/remote"
 export FAKE_MAIL_CALLS="${test_root}/mail-calls"
 notifier="${root_dir}/scripts/helium-job-notifier.sh"
+
+! grep -qi 'recipient' "${notifier}"
+! grep -q 'HELIUM_JOB_NOTIFY_RECIPIENT' "${notifier}"
+! grep -Eq -- '(^|[[:space:]])--to([=[:space:]]|$)' "${notifier}"
+! grep -Eq '[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}' "${notifier}"
+grep -q 'dhruv.codex@gmail.com' "${root_dir}/docs/job-notifications.md"
+! grep -q 'dhruv9saini@gmail.com' "${root_dir}/docs/job-notifications.md"
 
 for result in success failure timeout cancellation; do
     job="test-${result}"
@@ -66,6 +80,8 @@ done
 
 "${notifier}" poll
 [ "$(wc -l <"${FAKE_MAIL_CALLS}")" -eq 4 ]
+! grep -Eq -- '(^|[[:space:]])--to([=[:space:]]|$)' "${FAKE_MAIL_CALLS}"
+! grep -q 'attacker@example.invalid' "${FAKE_MAIL_CALLS}"
 for result in success failure timeout cancellation; do
     jq -e --arg result "${result}" \
         '.status == "notification-queued" and .result == $result' \
@@ -102,5 +118,7 @@ jq -e '.status == "notification-queued" and .result == "success"' \
 [ "$(wc -l <"${FAKE_MAIL_CALLS}")" -eq 5 ]
 "${notifier}" poll
 [ "$(wc -l <"${FAKE_MAIL_CALLS}")" -eq 5 ]
+! grep -Eq -- '(^|[[:space:]])--to([=[:space:]]|$)' "${FAKE_MAIL_CALLS}"
+! grep -q 'attacker@example.invalid' "${FAKE_MAIL_CALLS}"
 
 echo "helium job notifier terminal, retry, and exactly-once simulations passed"

@@ -1,7 +1,7 @@
 # Helium Job Completion Notifications
 
 Every production start is armed for one terminal notification to
-`dhruv9saini@gmail.com`. This path is only for Chromium and complete Helium
+`dhruv.codex@gmail.com`. This path is only for Chromium and complete Helium
 jobs. It never sends mail for routine Codex turns.
 
 ## Single Flow
@@ -34,6 +34,12 @@ body and delivery state in its independent
 `~/.local/state/codex-mailbridge/notifications.sqlite3` queue. The existing
 Mailbridge configuration and password file remain the only mail credential
 source on lm.
+
+The notifier does not accept, store, default, or pass a recipient. There is no
+recipient environment override and its Mailbridge invocation has no `--to`
+option. `queue-notification` always routes through Mailbridge's single
+configured user address, which must be `dhruv.codex@gmail.com`; alternate
+recipient selection therefore fails at the only component that owns routing.
 
 SMTP acceptance marks the queue sent without affecting the already-recorded
 build result. A definite temporary SMTP failure is retried with capped
