@@ -93,6 +93,7 @@ verified archive:
 AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
   scripts/android-media/prepare-disposable-acceptance.sh \
   /srv/nas/helium-builds/JOB/chrome_public_apk-arm64.tar.xz \
+  computer.helium.sync.test \
   HELIUM_SYNC_COMMIT \
   /srv/nas/helium-acceptance/JOB
 
@@ -104,6 +105,25 @@ build provenance, and artifact-carried probe scripts, generates deterministic
 synthetic media with those scripts, and records hashes for the archive, APK,
 runtime kit, and complete prepared directory. It does not install or launch
 the APK.
+
+Build the same-commit control through the separate no-patch entry point:
+
+```sh
+scripts/chromiumer-job.sh start "$control_job" \
+  --summary "Unmodified Chromium 148 Android control APK" \
+  --next "Fetch, verify, and run the disposable control probe before the Sync APK." -- \
+  scripts/chromiumer-nix.sh run -- env \
+    HELIUM_SYNC_REPO=. GITHUB_WORKSPACE=.build \
+    AUTONINJA_JOBS=2 GCLIENT_JOBS=2 \
+    bash scripts/chromium/build-android-control-ci.sh
+```
+
+Its composition proof is exactly `upstream-control`, its package is
+`computer.helium.control.test`, and its archive contains
+`ChromiumControl.apk`. Verify and prepare it with the same tools by supplying
+that package and a different nonexistent acceptance directory. Both prepared
+directories name the admitted file `Browser-test.apk`; their package identity,
+archive hash, source commit, and composition remain explicit in provenance.
 
 After the test package is explicitly installed and launched on disposable
 oneplus state, run the carried probe from the host connected to that device.

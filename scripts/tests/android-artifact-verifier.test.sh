@@ -86,13 +86,56 @@ grep -qx "helium_sync_commit=$commit" "$test_root/result"
 grep -Eq '^apk_sha256=[0-9a-f]{64}$' "$test_root/result"
 grep -Eq '^runtime_kit_sha256=[0-9a-f]{64}$' "$test_root/result"
 
+cp -a "$test_root/input" "$test_root/control-input"
+find "$test_root/control-input/out/HeliumSync.apk" -delete
+: > "$test_root/control-input/out/ChromiumControl.apk"
+sed -i 's/computer\.helium\.sync\.test/computer.helium.control.test/' \
+  "$test_root/control-input/build-provenance/gn-args-resolved.txt" \
+  "$test_root/control-input/runtime-acceptance/kit.env"
+: > "$test_root/control-input/build-provenance/chromium-source-status.txt"
+printf 'upstream-control\n' \
+  > "$test_root/control-input/build-provenance/android-composition.txt"
+(
+  cd "$test_root/control-input/build-provenance"
+  sha256sum android-build.lock chromium-source-commit.txt \
+    chromium-source-status.txt depot-tools-commit.txt \
+    depot-tools-update-policy.txt helium-sync-commit.txt \
+    helium-sync-status.txt gn-args-resolved.txt android-composition.txt \
+    > provenance.sha256
+)
+(
+  cd "$test_root/control-input/runtime-acceptance"
+  sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs kit.env \
+    > SHA256SUMS
+)
+tar -C "$test_root/control-input" -caf "$test_root/control-artifact.tar.xz" .
+cat > "$test_root/control-aapt2" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == dump && "$2" == packagename && -f "$3" ]]
+printf '%s\n' computer.helium.control.test
+EOF
+chmod +x "$test_root/control-aapt2"
+AAPT2="$test_root/control-aapt2" \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh" \
+  "$test_root/control-artifact.tar.xz" computer.helium.control.test "$commit" \
+  > "$test_root/control-result"
+grep -qx 'package=computer.helium.control.test' "$test_root/control-result"
+AAPT2="$test_root/control-aapt2" \
+  "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
+  "$test_root/control-artifact.tar.xz" computer.helium.control.test "$commit" \
+  "$test_root/control-prepared" > "$test_root/control-prepared-result"
+grep -qx 'package=computer.helium.control.test' \
+  "$test_root/control-prepared/acceptance.env"
+[[ -f "$test_root/control-prepared/Browser-test.apk" ]]
+
 AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
-  "$test_root/artifact.tar.xz" "$commit" "$test_root/prepared" \
+  "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/prepared" \
   > "$test_root/prepared-result"
 grep -qx 'package=computer.helium.sync.test' "$test_root/prepared/acceptance.env"
 grep -qx "helium_sync_commit=$commit" "$test_root/prepared/acceptance.env"
-[[ -f "$test_root/prepared/HeliumSync-test.apk" ]]
+[[ -f "$test_root/prepared/Browser-test.apk" ]]
 [[ -f "$test_root/prepared/media/h264-aac.mp4" ]]
 [[ -f "$test_root/prepared/media/h264-aac-fragmented.mp4" ]]
 [[ -f "$test_root/prepared/media/vp9-opus.webm" ]]
@@ -102,7 +145,8 @@ grep -qx "helium_sync_commit=$commit" "$test_root/prepared/acceptance.env"
 )
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
-  "$test_root/artifact.tar.xz" "$commit" "$test_root/prepared" \
+  "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/prepared" \
   > /dev/null 2>&1; then
   echo "existing disposable acceptance directory was unexpectedly overwritten" >&2
   exit 1

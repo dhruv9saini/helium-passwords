@@ -222,6 +222,12 @@ private patch, hooks, GN, build, and packaging phases consume this checkout;
 they do not own another acquisition path. The revision form is documented by
 the [official depot_tools gclient source](https://chromium.googlesource.com/chromium/tools/depot_tools.git/+/HEAD/gclient.py).
 
+The upstream Android control also calls this helper exactly once, then runs
+pinned hooks and refuses any tracked Chromium diff before GN. Its dedicated
+builder applies no Helium/core, Passwords, or Sync composition and packages
+`ChromiumControl.apk` only after recording `upstream-control`. Run it as a new
+isolated job; never reuse a terminal Sync workspace as the control.
+
 `CHROMIUM_REF` may be omitted because the helper uses the lock; if supplied it
 must equal the same full commit:
 

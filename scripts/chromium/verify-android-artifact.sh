@@ -12,7 +12,12 @@ expected_sync_commit=$3
 aapt2=${AAPT2:-aapt2}
 
 case "$expected_package" in
-  computer.helium.sync|computer.helium.sync.test) ;;
+  computer.helium.sync|computer.helium.sync.test)
+    expected_apk=HeliumSync.apk
+    ;;
+  computer.helium.control.test)
+    expected_apk=ChromiumControl.apk
+    ;;
   *) echo "invalid expected Android package" >&2; exit 64 ;;
 esac
 [[ "$expected_sync_commit" =~ ^[0-9a-f]{40}$ ]] || {
@@ -38,6 +43,17 @@ provenance="$temporary/build-provenance"
   cd "$provenance"
   sha256sum -c provenance.sha256
 )
+
+if [[ "$expected_package" == computer.helium.control.test ]]; then
+  grep -qx 'upstream-control' "$provenance/android-composition.txt" || {
+    echo "control artifact is missing its no-patch composition proof" >&2
+    exit 1
+  }
+  [[ ! -s "$provenance/chromium-source-status.txt" ]] || {
+    echo "control Chromium source has tracked modifications" >&2
+    exit 1
+  }
+fi
 
 # shellcheck source=../../chromium/android-build.lock
 . "$provenance/android-build.lock"
@@ -109,9 +125,9 @@ grep -qx "manifest_package=$expected_package" "$runtime_kit/kit.env"
 grep -qx 'target_cpu=arm64' "$runtime_kit/kit.env"
 grep -qx 'artifact_target=chrome_public_apk' "$runtime_kit/kit.env"
 
-mapfile -d '' apks < <(find "$temporary" -type f -name HeliumSync.apk -print0)
+mapfile -d '' apks < <(find "$temporary" -type f -name "$expected_apk" -print0)
 [[ ${#apks[@]} -eq 1 ]] || {
-  echo "artifact must contain exactly one HeliumSync.apk" >&2
+  echo "artifact must contain exactly one $expected_apk" >&2
   exit 1
 }
 manifest_package=$($aapt2 dump packagename "${apks[0]}")

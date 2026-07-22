@@ -68,8 +68,9 @@ moving refs, composes the shared Passwords/Sync patch train, records resolved GN
 args, packages the commit-bound runtime acceptance scripts, and compiles only
 on chromiumer. Its codec flags and source tests are necessary but not runtime
 proof. `scripts/android-media/prepare-disposable-acceptance.sh` verifies a
-returned test-package archive, creates a new checksum-complete test directory,
-and never installs or launches it. The exact device commands are in
+returned Sync or upstream-control test-package archive, creates a new
+checksum-complete test directory with one `Browser-test.apk`, and never
+installs or launches it. The exact device commands are in
 `deployment.md`. Acceptance still requires same-SHA upstream-control and Sync
 APKs on oneplus for H.264/AAC, MSE, VP9/Opus, progressive Fetch, gzip/Brotli,
 SSE, HTTP/2, HTTP/3, background/foreground, and network handoff.

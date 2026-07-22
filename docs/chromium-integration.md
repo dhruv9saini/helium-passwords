@@ -116,6 +116,14 @@ not an APK. Use separate unique jobs for `media`, the two Helium sync GN
 targets, and finally `chrome_public_apk`; every job must pass the same admission
 and isolation policy.
 
+The Android runtime A/B uses `build-android-control-ci.sh` for the control. It
+consumes the same immutable source helper and codec arguments but requires a
+clean tracked Chromium tree after hooks, applies no Helium, Passwords, or Sync
+patch, records composition `upstream-control`, and emits the distinct
+`computer.helium.control.test` package. This is deliberately a separate entry
+point so a hidden composition flag cannot accidentally label a patched APK as
+the control.
+
 GN generation uses `--fail-on-unused-args`. Media/provenance validation fails
 unless the source lock resolves exactly and GN proves Android target,
 `ffmpeg_branding = "Chrome"`, `proprietary_codecs = true`, and
