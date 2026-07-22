@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strings"
 	"syscall"
 	"time"
 
@@ -19,29 +18,24 @@ import (
 
 func main() {
 	var (
-		dataDir        = flag.String("data-dir", defaultDataDir(), "helium-sync data directory")
-		passphraseFile = flag.String("passphrase-file", envOrDefault("HELIUM_SYNC_PASSPHRASE_FILE", filepath.Join(defaultDataDir(), "passphrase")), "passphrase file")
-		tokenFile      = flag.String("token-file", envOrDefault("HELIUM_SYNC_TOKEN_FILE", filepath.Join(defaultDataDir(), "token")), "daemon token file")
-		listen         = flag.String("listen", envOrDefault("HELIUM_SYNC_LISTEN", "127.0.0.1:44719"), "listen address")
+		dataDir     = flag.String("data-dir", defaultDataDir(), "helium-sync opaque server data directory")
+		devicesFile = flag.String("devices-file", envOrDefault("HELIUM_SYNC_DEVICES_FILE", filepath.Join(defaultDataDir(), "devices.json")), "hashed per-device registry")
+		listen      = flag.String("listen", envOrDefault("HELIUM_SYNC_LISTEN", "127.0.0.1:44719"), "listen address")
 	)
 	flag.Parse()
 
-	passphrase, err := readSecret(*passphraseFile)
+	store, err := syncstore.OpenStore(*dataDir)
 	if err != nil {
 		fail(err)
 	}
-	token, err := readSecret(*tokenFile)
-	if err != nil {
-		fail(err)
-	}
-	store, err := syncstore.OpenStore(*dataDir, passphrase)
+	registry, err := syncstore.OpenDeviceRegistry(*devicesFile)
 	if err != nil {
 		fail(err)
 	}
 
 	server := &http.Server{
 		Addr:              *listen,
-		Handler:           syncstore.NewHandler(store, syncstore.HandlerOptions{Token: token}),
+		Handler:           syncstore.NewHandler(store, registry),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 	go func() {
@@ -60,18 +54,6 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		fail(err)
 	}
-}
-
-func readSecret(path string) (string, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read %s: %w", path, err)
-	}
-	secret := strings.TrimSpace(string(raw))
-	if secret == "" {
-		return "", fmt.Errorf("%s is empty", path)
-	}
-	return secret, nil
 }
 
 func defaultDataDir() string {

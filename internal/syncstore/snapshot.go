@@ -3,7 +3,6 @@ package syncstore
 import (
 	"bufio"
 	"bytes"
-	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -24,13 +23,12 @@ const (
 )
 
 type snapshotMetadata struct {
-	Version        int       `json:"version"`
-	CreatedAt      time.Time `json:"created_at"`
-	LastSeq        int64     `json:"last_seq"`
-	RecordCount    int       `json:"record_count"`
-	RecordsBytes   int64     `json:"records_bytes"`
-	RecordsSHA256  string    `json:"records_sha256"`
-	Authentication string    `json:"authentication"`
+	Version       int       `json:"version"`
+	CreatedAt     time.Time `json:"created_at"`
+	LastSeq       int64     `json:"last_seq"`
+	RecordCount   int       `json:"record_count"`
+	RecordsBytes  int64     `json:"records_bytes"`
+	RecordsSHA256 string    `json:"records_sha256"`
 }
 
 type validatedSnapshot struct {
@@ -52,7 +50,7 @@ func (store *Store) createSnapshot() error {
 	if newest, err := store.newestValidSnapshot(); err == nil &&
 		newest.metadata.RecordsSHA256 == hash &&
 		newest.metadata.RecordCount == len(store.records) &&
-		newest.metadata.LastSeq == store.nextSeq-1 {
+		newest.metadata.LastSeq == int64(store.nextSeq-1) {
 		return nil
 	}
 
@@ -71,14 +69,10 @@ func (store *Store) createSnapshot() error {
 	metadata := snapshotMetadata{
 		Version:       snapshotVersion,
 		CreatedAt:     created,
-		LastSeq:       store.nextSeq - 1,
+		LastSeq:       int64(store.nextSeq - 1),
 		RecordCount:   len(store.records),
 		RecordsBytes:  int64(len(raw)),
 		RecordsSHA256: hash,
-	}
-	metadata.Authentication, err = store.snapshotAuthentication(metadata)
-	if err != nil {
-		return err
 	}
 	if err := writeSyncedFile(filepath.Join(temp, snapshotRecords), raw, 0600); err != nil {
 		return err
@@ -194,18 +188,6 @@ func (store *Store) validateSnapshot(name string) (validatedSnapshot, error) {
 	if metadata.Version != snapshotVersion || metadata.RecordCount < 0 || metadata.LastSeq < 0 {
 		return validatedSnapshot{}, errors.New("invalid snapshot metadata")
 	}
-	provided, err := hex.DecodeString(metadata.Authentication)
-	if err != nil {
-		return validatedSnapshot{}, errors.New("invalid snapshot authentication")
-	}
-	expected, err := store.snapshotAuthentication(metadata)
-	if err != nil {
-		return validatedSnapshot{}, err
-	}
-	expectedBytes, _ := hex.DecodeString(expected)
-	if !hmac.Equal(provided, expectedBytes) {
-		return validatedSnapshot{}, errors.New("snapshot authentication failed")
-	}
 	raw, err := os.ReadFile(filepath.Join(root, snapshotRecords))
 	if err != nil {
 		return validatedSnapshot{}, err
@@ -227,17 +209,6 @@ func (store *Store) validateSnapshot(name string) (validatedSnapshot, error) {
 	return validatedSnapshot{name: name, raw: raw, metadata: metadata}, nil
 }
 
-func (store *Store) snapshotAuthentication(metadata snapshotMetadata) (string, error) {
-	metadata.Authentication = ""
-	raw, err := json.Marshal(metadata)
-	if err != nil {
-		return "", err
-	}
-	mac := hmac.New(sha256.New, store.snapshotKey)
-	mac.Write(raw)
-	return hex.EncodeToString(mac.Sum(nil)), nil
-}
-
 func (store *Store) validateJournalBytes(raw []byte) (int, int64, error) {
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 0, 64*1024), 32*1024*1024)
@@ -248,22 +219,18 @@ func (store *Store) validateJournalBytes(raw []byte) (int, int64, error) {
 		if text == "" {
 			continue
 		}
-		var record StoredRecord
+		var record OpaqueRecord
 		if err := json.Unmarshal([]byte(text), &record); err != nil {
 			return 0, 0, err
 		}
-		if err := validateStored(record); err != nil {
+		if err := record.validate(); err != nil {
 			return 0, 0, err
 		}
-		if record.Seq != last+1 {
+		if int64(record.Seq) != last+1 {
 			return 0, 0, errors.New("non-contiguous snapshot sequence")
 		}
-		payload, err := decryptRecord(store.aead, record)
-		if err != nil || !json.Valid(payload) {
-			return 0, 0, errors.New("snapshot record authentication failed")
-		}
 		count++
-		last = record.Seq
+		last = int64(record.Seq)
 	}
 	if err := scanner.Err(); err != nil {
 		return 0, 0, err

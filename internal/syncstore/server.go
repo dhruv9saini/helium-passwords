@@ -1,7 +1,6 @@
 package syncstore
 
 import (
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,131 +11,309 @@ import (
 
 const maxRequestBytes = 16 * 1024 * 1024
 
-type HandlerOptions struct {
-	Token string
-}
-
-func NewHandler(store *Store, options HandlerOptions) http.Handler {
+func NewHandler(store *Store, registry *DeviceRegistry) http.Handler {
 	mux := http.NewServeMux()
-	server := server{store: store, token: options.Token}
-	mux.HandleFunc("/v1/health", server.health)
-	mux.HandleFunc("/v1/records/push", server.withAuth(server.push))
-	mux.HandleFunc("/v1/records/pull", server.withAuth(server.pull))
-	mux.HandleFunc("/v1/records/latest", server.withAuth(server.latest))
+	server := server{store: store, registry: registry}
+	mux.HandleFunc("/v2/health", server.health)
+	mux.HandleFunc("/v2/records/push", server.withScope(ScopePush, server.push))
+	mux.HandleFunc("/v2/records/pull", server.withScope(ScopePull, server.pull))
+	mux.HandleFunc("/v2/records/latest", server.withScope(ScopePull, server.latest))
+	mux.HandleFunc("/v2/keys/stage", server.withScope(ScopeRotate, server.stageKey))
+	mux.HandleFunc("/v2/keys/status", server.withScope(ScopePull, server.keyStatus))
+	mux.HandleFunc("/v2/keys/ack-install", server.withScope(ScopePull, server.ackKeyInstall))
+	mux.HandleFunc("/v2/keys/activate", server.withScope(ScopeRotate, server.activateKey))
+	mux.HandleFunc("/v2/keys/ack-rekey", server.withScope(ScopePull, server.ackRekey))
+	mux.HandleFunc("/v2/keys/retire", server.withScope(ScopeRotate, server.retireKey))
+	mux.HandleFunc("/v2/credentials/stage", server.withScope(ScopePull, server.stageCredential))
+	mux.HandleFunc("/v2/credentials/confirm", server.withScope(ScopePull, server.confirmCredential))
+	mux.HandleFunc("/v2/credentials/retire", server.withScope(ScopePull, server.retireCredential))
+	mux.HandleFunc("/v2/enrollment/complete", server.withScope(ScopePull, server.completeEnrollment))
 	return mux
 }
 
 type server struct {
-	store *Store
-	token string
+	store    *Store
+	registry *DeviceRegistry
 }
 
 func (server server) health(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (server server) withAuth(next http.HandlerFunc) http.HandlerFunc {
+func (server server) withScope(scope DeviceScope, next func(http.ResponseWriter, *http.Request, DevicePrincipal)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if server.token == "" {
-			writeError(w, http.StatusInternalServerError, errors.New("server token is not configured"))
+		if server.registry == nil {
+			writeError(w, http.StatusInternalServerError, "server_misconfigured", errors.New("device registry is not configured"))
 			return
 		}
 		auth := r.Header.Get("Authorization")
 		if !strings.HasPrefix(auth, "Bearer ") {
-			writeError(w, http.StatusUnauthorized, errors.New("missing bearer token"))
+			writeError(w, http.StatusUnauthorized, "unauthorized", errors.New("missing bearer credential"))
 			return
 		}
-		token := strings.TrimPrefix(auth, "Bearer ")
-		if subtle.ConstantTimeCompare([]byte(token), []byte(server.token)) != 1 {
-			writeError(w, http.StatusUnauthorized, errors.New("invalid bearer token"))
+		principal, err := server.registry.Authenticate(strings.TrimPrefix(auth, "Bearer "))
+		if err != nil {
+			writeError(w, http.StatusUnauthorized, "unauthorized", err)
 			return
 		}
-		next(w, r)
+		if !principal.Allows(scope) {
+			writeError(w, http.StatusForbidden, "scope_denied", fmt.Errorf("device %q lacks %s scope", principal.ID, scope))
+			return
+		}
+		next(w, r, principal)
 	}
 }
 
-func (server server) push(w http.ResponseWriter, r *http.Request) {
+func (server server) push(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
 	if r.Method != http.MethodPost {
-		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
 		return
 	}
 	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	decoder.DisallowUnknownFields()
 	var request PushRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes)).Decode(&request); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Errorf("decode request: %w", err))
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", fmt.Errorf("decode request: %w", err))
 		return
 	}
-	response, err := server.store.Put(request.Records, request.Device)
+	response, err := server.store.Put(principal.ID, server.registry.AcceptedWriteKeyIDs(), request.Mutations)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		var conflict *ConflictError
+		if errors.As(err, &conflict) {
+			writeJSON(w, http.StatusConflict, struct {
+				Code            string  `json:"code"`
+				Error           string  `json:"error"`
+				Kind            Kind    `json:"kind"`
+				Key             string  `json:"key"`
+				CurrentRevision Counter `json:"current_revision"`
+			}{"revision_conflict", conflict.Error(), conflict.Kind, conflict.Key, conflict.CurrentRevision})
+			return
+		}
+		writeError(w, http.StatusBadRequest, "invalid_mutation", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (server server) pull(w http.ResponseWriter, r *http.Request) {
+func (server server) pull(w http.ResponseWriter, r *http.Request, _ DevicePrincipal) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
 		return
 	}
-	since, kinds, _, err := parseQuery(r)
+	since, kinds, err := parseQuery(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, http.StatusBadRequest, "invalid_query", err)
 		return
 	}
-	response, err := server.store.Pull(since, kinds)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, server.store.Pull(since, kinds))
 }
 
-func (server server) latest(w http.ResponseWriter, r *http.Request) {
+func (server server) latest(w http.ResponseWriter, r *http.Request, _ DevicePrincipal) {
 	if r.Method != http.MethodGet {
-		writeError(w, http.StatusMethodNotAllowed, errors.New("method not allowed"))
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
 		return
 	}
-	_, kinds, includeDeleted, err := parseQuery(r)
+	_, kinds, err := parseQuery(r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err)
+		writeError(w, http.StatusBadRequest, "invalid_query", err)
 		return
 	}
-	response, err := server.store.Latest(kinds, includeDeleted)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, server.store.Latest(kinds))
 }
 
-func parseQuery(r *http.Request) (int64, map[Kind]struct{}, bool, error) {
+func (server server) stageKey(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
+		return
+	}
+	if principal.Role != RoleSeed || principal.ID != "d" {
+		writeError(w, http.StatusForbidden, "scope_denied", errors.New("only d may rotate content keys"))
+		return
+	}
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	decoder.DisallowUnknownFields()
+	var request KeyTransitionRequest
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err)
+		return
+	}
+	if err := server.registry.StageKey(request.ExpectedKeyID, request.NewKeyID); err != nil {
+		writeError(w, http.StatusConflict, "key_rotation_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, KeyTransitionResponse{ActiveKeyID: request.ExpectedKeyID, StagedKeyID: request.NewKeyID})
+}
+
+func (server server) keyStatus(w http.ResponseWriter, r *http.Request, _ DevicePrincipal) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
+		return
+	}
+	writeJSON(w, http.StatusOK, server.registry.KeyStatus())
+}
+
+func (server server) ackKeyInstall(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	var request KeyAcknowledgementRequest
+	if !decodePost(w, r, &request) {
+		return
+	}
+	if err := server.registry.AcknowledgeKeyInstall(principal.ID, request.KeyID); err != nil {
+		writeError(w, http.StatusConflict, "key_install_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"acknowledged": true})
+}
+
+func (server server) activateKey(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	if principal.Role != RoleSeed {
+		writeError(w, http.StatusForbidden, "scope_denied", errors.New("only d may activate keys"))
+		return
+	}
+	var request KeyTransitionRequest
+	if !decodePost(w, r, &request) {
+		return
+	}
+	if err := server.registry.ActivateStagedKey(request.ExpectedKeyID, request.NewKeyID); err != nil {
+		writeError(w, http.StatusConflict, "key_activation_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, KeyTransitionResponse{ActiveKeyID: request.NewKeyID, RetiringKeyID: request.ExpectedKeyID})
+}
+
+func (server server) ackRekey(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	var request KeyAcknowledgementRequest
+	if !decodePost(w, r, &request) {
+		return
+	}
+	if request.AcknowledgedSeq != server.store.Cursor() {
+		writeError(w, http.StatusConflict, "rekey_cursor_conflict", errors.New("rekey acknowledgement cursor is stale"))
+		return
+	}
+	if err := server.registry.AcknowledgeRekey(principal.ID, request.KeyID); err != nil {
+		writeError(w, http.StatusConflict, "rekey_ack_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"acknowledged": true})
+}
+
+func (server server) retireKey(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	if principal.Role != RoleSeed {
+		writeError(w, http.StatusForbidden, "scope_denied", errors.New("only d may retire keys"))
+		return
+	}
+	var request KeyRetirementRequest
+	if !decodePost(w, r, &request) {
+		return
+	}
+	if err := server.registry.RetireKey(request.ActiveKeyID, request.RetiringKeyID); err != nil {
+		writeError(w, http.StatusConflict, "key_retirement_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, KeyTransitionResponse{ActiveKeyID: request.ActiveKeyID})
+}
+
+func (server server) stageCredential(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	var request CredentialStageRequest
+	if !decodePost(w, r, &request) {
+		return
+	}
+	if err := server.registry.StageCredentialHash(principal.ID, request.NewTokenSHA256); err != nil {
+		writeError(w, http.StatusConflict, "credential_stage_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"staged": true})
+}
+
+func (server server) confirmCredential(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
+		return
+	}
+	if err := server.registry.ConfirmCredential(principal.ID, principal.CredentialHash); err != nil {
+		writeError(w, http.StatusConflict, "credential_confirm_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"confirmed": true})
+}
+
+func (server server) retireCredential(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
+		return
+	}
+	if err := server.registry.RetireOldCredentials(principal.ID, principal.CredentialHash); err != nil {
+		writeError(w, http.StatusConflict, "credential_retire_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"retired": true})
+}
+
+func decodePost(w http.ResponseWriter, r *http.Request, value any) bool {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
+		return false
+	}
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err)
+		return false
+	}
+	return true
+}
+
+func (server server) completeEnrollment(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
+		return
+	}
+	if principal.Role != RoleJoin {
+		writeError(w, http.StatusForbidden, "scope_denied", errors.New("seed device does not use join enrollment"))
+		return
+	}
+	defer r.Body.Close()
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxRequestBytes))
+	decoder.DisallowUnknownFields()
+	var request EnrollmentCompleteRequest
+	if err := decoder.Decode(&request); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", err)
+		return
+	}
+	current := server.store.Cursor()
+	if request.AcknowledgedSeq != current {
+		writeError(w, http.StatusConflict, "enrollment_cursor_conflict",
+			fmt.Errorf("acknowledged sequence %d is not current sequence %d", request.AcknowledgedSeq, current))
+		return
+	}
+	if err := server.registry.Promote(principal.ID); err != nil {
+		writeError(w, http.StatusConflict, "enrollment_conflict", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, EnrollmentCompleteResponse{Phase: PhaseActive})
+}
+
+func parseQuery(r *http.Request) (Counter, map[Kind]struct{}, error) {
 	query := r.URL.Query()
-	since := int64(0)
+	var since Counter
 	if raw := query.Get("since"); raw != "" {
 		value, err := strconv.ParseInt(raw, 10, 64)
 		if err != nil || value < 0 {
-			return 0, nil, false, errors.New("since must be a non-negative integer")
+			return 0, nil, errors.New("since must be a non-negative int64")
 		}
-		since = value
+		since = Counter(value)
 	}
 	kinds, err := ParseKinds(query["kind"])
 	if err != nil {
-		return 0, nil, false, err
+		return 0, nil, err
 	}
-	includeDeleted := false
-	if raw := query.Get("include_deleted"); raw != "" {
-		value, err := strconv.ParseBool(raw)
-		if err != nil {
-			return 0, nil, false, errors.New("include_deleted must be a boolean")
-		}
-		includeDeleted = value
-	}
-	return since, kinds, includeDeleted, nil
+	return since, kinds, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {
@@ -145,6 +322,6 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	_ = json.NewEncoder(w).Encode(value)
 }
 
-func writeError(w http.ResponseWriter, status int, err error) {
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+func writeError(w http.ResponseWriter, status int, code string, err error) {
+	writeJSON(w, status, map[string]string{"code": code, "error": err.Error()})
 }

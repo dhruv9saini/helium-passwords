@@ -6,58 +6,34 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 )
 
-const (
-	configFile  = "config.json"
-	recordsFile = "records.jsonl"
-)
+const recordsFile = "records.jsonl"
 
 type Store struct {
 	mu          sync.Mutex
 	dataDir     string
 	recordsPath string
 	snapshotDir string
-	aead        anyAEAD
-	snapshotKey []byte
-	records     []StoredRecord
-	nextSeq     int64
+	records     []OpaqueRecord
+	nextSeq     Counter
 }
 
-type anyAEAD interface {
-	NonceSize() int
-	Overhead() int
-	Seal(dst, nonce, plaintext, additionalData []byte) []byte
-	Open(dst, nonce, ciphertext, additionalData []byte) ([]byte, error)
-}
-
-func OpenStore(dataDir string, passphrase string) (*Store, error) {
+func OpenStore(dataDir string) (*Store, error) {
 	if strings.TrimSpace(dataDir) == "" {
 		return nil, errors.New("data dir is required")
 	}
 	if err := os.MkdirAll(dataDir, 0700); err != nil {
 		return nil, fmt.Errorf("create data dir: %w", err)
 	}
-	config, err := loadOrCreateConfig(filepath.Join(dataDir, configFile))
-	if err != nil {
-		return nil, err
-	}
-	aead, snapshotKey, err := newCryptography(config, passphrase)
-	if err != nil {
-		return nil, err
-	}
 	store := &Store{
-		dataDir:     dataDir,
-		recordsPath: filepath.Join(dataDir, recordsFile),
-		snapshotDir: filepath.Join(dataDir, "snapshots"),
-		aead:        aead,
-		snapshotKey: snapshotKey,
-		nextSeq:     1,
+		dataDir: dataDir, recordsPath: filepath.Join(dataDir, recordsFile),
+		snapshotDir: filepath.Join(dataDir, "snapshots"), nextSeq: 1,
 	}
 	if err := store.loadRecords(); err != nil {
 		if recoveryErr := store.recoverJournal(err); recoveryErr != nil {
@@ -73,33 +49,6 @@ func OpenStore(dataDir string, passphrase string) (*Store, error) {
 	return store, nil
 }
 
-func loadOrCreateConfig(path string) (Config, error) {
-	raw, err := os.ReadFile(path)
-	if err == nil {
-		var config Config
-		if err := json.Unmarshal(raw, &config); err != nil {
-			return Config{}, fmt.Errorf("read config: %w", err)
-		}
-		return config, nil
-	}
-	if !errors.Is(err, os.ErrNotExist) {
-		return Config{}, fmt.Errorf("read config: %w", err)
-	}
-	config, err := newConfig()
-	if err != nil {
-		return Config{}, err
-	}
-	raw, err = json.MarshalIndent(config, "", "  ")
-	if err != nil {
-		return Config{}, err
-	}
-	raw = append(raw, '\n')
-	if err := os.WriteFile(path, raw, 0600); err != nil {
-		return Config{}, fmt.Errorf("write config: %w", err)
-	}
-	return config, nil
-}
-
 func (store *Store) loadRecords() error {
 	file, err := os.OpenFile(store.recordsPath, os.O_RDONLY|os.O_CREATE, 0600)
 	if err != nil {
@@ -109,6 +58,7 @@ func (store *Store) loadRecords() error {
 
 	store.records = nil
 	store.nextSeq = 1
+	revisions := make(map[string]Counter)
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 32*1024*1024)
 	line := 0
@@ -118,23 +68,21 @@ func (store *Store) loadRecords() error {
 		if text == "" {
 			continue
 		}
-		var record StoredRecord
-		if err := json.Unmarshal([]byte(text), &record); err != nil {
+		var record OpaqueRecord
+		if err := strictDecode([]byte(text), &record); err != nil {
 			return fmt.Errorf("parse records line %d: %w", line, err)
 		}
-		if err := validateStored(record); err != nil {
+		if err := record.validate(); err != nil {
 			return fmt.Errorf("validate records line %d: %w", line, err)
 		}
 		if record.Seq != store.nextSeq {
 			return fmt.Errorf("validate records line %d: wanted seq %d, got %d", line, store.nextSeq, record.Seq)
 		}
-		payload, err := decryptRecord(store.aead, record)
-		if err != nil {
-			return fmt.Errorf("decrypt records line %d: %w", line, err)
+		identity := recordIdentity(record.Kind, record.Key)
+		if record.Revision != revisions[identity]+1 {
+			return fmt.Errorf("validate records line %d: non-contiguous revision for %s/%s", line, record.Kind, record.Key)
 		}
-		if !json.Valid(payload) {
-			return fmt.Errorf("validate records line %d: decrypted payload is not JSON", line)
-		}
+		revisions[identity] = record.Revision
 		store.records = append(store.records, record)
 		store.nextSeq++
 	}
@@ -144,74 +92,67 @@ func (store *Store) loadRecords() error {
 	return nil
 }
 
-func validateStored(record StoredRecord) error {
-	if record.Seq <= 0 {
-		return errors.New("seq must be positive")
-	}
-	if _, ok := allKinds[record.Kind]; !ok {
-		return fmt.Errorf("unknown record kind %q", record.Kind)
-	}
-	if strings.TrimSpace(record.Key) == "" {
-		return errors.New("key is required")
-	}
-	if record.Version <= 0 {
-		return errors.New("version must be positive")
-	}
-	if record.UpdatedAt.IsZero() {
-		return errors.New("updated_at is required")
-	}
-	if record.Nonce == "" || record.Ciphertext == "" {
-		return errors.New("encrypted payload is required")
-	}
-	return nil
-}
-
-func (store *Store) Put(records []PlainRecord, defaultDevice string) (PushResponse, error) {
+// Put applies a batch atomically after checking every expected revision. The
+// authenticated server principal supplies deviceID; it is never read from the
+// request body.
+func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mutations []OpaqueMutation) (PushResponse, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	if len(records) == 0 {
-		return PushResponse{NextSeq: store.nextSeq}, nil
+	if strings.TrimSpace(deviceID) == "" {
+		return PushResponse{}, errors.New("authenticated device id is required")
 	}
-	now := time.Now().UTC()
-	pending := make([]StoredRecord, 0, len(records))
+	if len(mutations) == 0 {
+		return PushResponse{Records: []OpaqueRecord{}, NextSeq: store.nextSeq - 1}, nil
+	}
+	if int64(store.nextSeq) > math.MaxInt64-int64(len(mutations)) {
+		return PushResponse{}, errors.New("sequence space exhausted")
+	}
+	latest := make(map[string]Counter)
+	for _, record := range store.records {
+		latest[recordIdentity(record.Kind, record.Key)] = record.Revision
+	}
+	seen := make(map[string]struct{}, len(mutations))
+	for _, mutation := range mutations {
+		if err := mutation.validate(); err != nil {
+			return PushResponse{}, err
+		}
+		if _, accepted := acceptedKeyIDs[mutation.KeyID]; !accepted {
+			return PushResponse{}, fmt.Errorf("key_id %q is not write-active", mutation.KeyID)
+		}
+		identity := recordIdentity(mutation.Kind, mutation.Key)
+		if _, duplicate := seen[identity]; duplicate {
+			return PushResponse{}, fmt.Errorf("duplicate mutation for %s/%s", mutation.Kind, mutation.Key)
+		}
+		seen[identity] = struct{}{}
+		current := latest[identity]
+		if mutation.ExpectedRevision != current {
+			return PushResponse{}, &ConflictError{
+				Kind: mutation.Kind, Key: mutation.Key,
+				Expected: mutation.ExpectedRevision, CurrentRevision: current,
+			}
+		}
+		if current == Counter(math.MaxInt64) {
+			return PushResponse{}, errors.New("revision space exhausted")
+		}
+	}
+
+	pending := make([]OpaqueRecord, 0, len(mutations))
 	var encoded []byte
-	for _, plain := range records {
-		if plain.Deleted && len(plain.Payload) == 0 {
-			plain.Payload = json.RawMessage(emptyJSONObject)
+	for _, mutation := range mutations {
+		record := OpaqueRecord{
+			Seq: store.nextSeq + Counter(len(pending)), Kind: mutation.Kind,
+			Key: mutation.Key, Revision: mutation.ExpectedRevision + 1,
+			Deleted: mutation.Deleted, DeviceID: deviceID, KeyID: mutation.KeyID,
+			Nonce: mutation.Nonce, Ciphertext: mutation.Ciphertext,
 		}
-		if err := plain.validate(); err != nil {
-			return PushResponse{}, err
-		}
-		if plain.Version <= 0 {
-			plain.Version = now.UnixNano()
-		}
-		if plain.UpdatedAt.IsZero() {
-			plain.UpdatedAt = now
-		}
-		if strings.TrimSpace(plain.OriginDevice) == "" {
-			plain.OriginDevice = defaultDevice
-		}
-		stored := StoredRecord{
-			Seq:          store.nextSeq + int64(len(pending)),
-			Kind:         plain.Kind,
-			Key:          plain.Key,
-			Version:      plain.Version,
-			UpdatedAt:    plain.UpdatedAt.UTC(),
-			Deleted:      plain.Deleted,
-			OriginDevice: plain.OriginDevice,
-		}
-		stored, err := encryptRecord(store.aead, stored, plain.Payload)
-		if err != nil {
-			return PushResponse{}, err
-		}
-		raw, err := json.Marshal(stored)
+		raw, err := json.Marshal(record)
 		if err != nil {
 			return PushResponse{}, err
 		}
 		encoded = append(encoded, raw...)
 		encoded = append(encoded, '\n')
-		pending = append(pending, stored)
+		pending = append(pending, record)
 	}
 	file, err := os.OpenFile(store.recordsPath, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0600)
 	if err != nil {
@@ -232,80 +173,53 @@ func (store *Store) Put(records []PlainRecord, defaultDevice string) (PushRespon
 		return PushResponse{}, fmt.Errorf("close records: %w", err)
 	}
 	store.records = append(store.records, pending...)
-	store.nextSeq += int64(len(pending))
+	store.nextSeq += Counter(len(pending))
 	if err := store.createSnapshot(); err != nil {
 		return PushResponse{}, fmt.Errorf("checkpoint records: %w", err)
 	}
-	return PushResponse{Accepted: len(pending), NextSeq: store.nextSeq}, nil
+	return PushResponse{Records: pending, NextSeq: store.nextSeq - 1}, nil
 }
 
-func (store *Store) Pull(since int64, kinds map[Kind]struct{}) (PullResponse, error) {
+func (store *Store) Pull(since Counter, kinds map[Kind]struct{}) PullResponse {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	var out []RecordEnvelope
+	out := make([]OpaqueRecord, 0)
 	for _, record := range store.records {
-		if record.Seq <= since || !record.matches(kinds) {
-			continue
+		if record.Seq > since && record.matches(kinds) {
+			out = append(out, record)
 		}
-		envelope, err := store.decryptEnvelope(record)
-		if err != nil {
-			return PullResponse{}, err
-		}
-		out = append(out, envelope)
 	}
-	return PullResponse{Records: out, NextSeq: store.nextSeq}, nil
+	return PullResponse{Records: out, NextSeq: store.nextSeq - 1}
 }
 
-func (store *Store) Latest(kinds map[Kind]struct{}, includeDeleted bool) (PullResponse, error) {
+// Latest always returns tombstones. Omitting them can resurrect deleted data on
+// a new or stale device.
+func (store *Store) Latest(kinds map[Kind]struct{}) PullResponse {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
-	latest := make(map[string]StoredRecord)
+	latest := make(map[string]OpaqueRecord)
 	for _, record := range store.records {
-		if !record.matches(kinds) {
-			continue
-		}
-		mapKey := string(record.Kind) + "\x00" + record.Key
-		current, ok := latest[mapKey]
-		if !ok || record.Version > current.Version || (record.Version == current.Version && record.Seq > current.Seq) {
-			latest[mapKey] = record
+		if record.matches(kinds) {
+			latest[recordIdentity(record.Kind, record.Key)] = record
 		}
 	}
-	var out []RecordEnvelope
+	out := make([]OpaqueRecord, 0, len(latest))
 	for _, record := range store.records {
-		mapKey := string(record.Kind) + "\x00" + record.Key
-		if latestRecord, ok := latest[mapKey]; !ok || latestRecord.Seq != record.Seq {
-			continue
+		if current, ok := latest[recordIdentity(record.Kind, record.Key)]; ok && current.Seq == record.Seq {
+			out = append(out, record)
 		}
-		if record.Deleted && !includeDeleted {
-			continue
-		}
-		envelope, err := store.decryptEnvelope(record)
-		if err != nil {
-			return PullResponse{}, err
-		}
-		out = append(out, envelope)
 	}
-	return PullResponse{Records: out, NextSeq: store.nextSeq}, nil
+	return PullResponse{Records: out, NextSeq: store.nextSeq - 1}
 }
 
-func (store *Store) decryptEnvelope(record StoredRecord) (RecordEnvelope, error) {
-	payload, err := decryptRecord(store.aead, record)
-	if err != nil {
-		return RecordEnvelope{}, err
-	}
-	if !json.Valid(payload) {
-		return RecordEnvelope{}, fmt.Errorf("decrypted seq %d is not valid JSON", record.Seq)
-	}
-	return RecordEnvelope{
-		Seq:          record.Seq,
-		Kind:         record.Kind,
-		Key:          record.Key,
-		Version:      record.Version,
-		UpdatedAt:    record.UpdatedAt,
-		Deleted:      record.Deleted,
-		OriginDevice: record.OriginDevice,
-		Payload:      json.RawMessage(payload),
-	}, nil
+func (store *Store) Cursor() Counter {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return store.nextSeq - 1
+}
+
+func recordIdentity(kind Kind, key string) string {
+	return string(kind) + "\x00" + key
 }
