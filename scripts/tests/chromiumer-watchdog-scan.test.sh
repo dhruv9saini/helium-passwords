@@ -258,7 +258,7 @@ run_scan_case() {
         wait_for_file "${state_dir}/watchdog-stop.env"
         grep -Fqx "reason=${expected_reason}" \
             "${state_dir}/watchdog-stop.env"
-        [ -e "${stopped}" ]
+        wait_for_file "${stopped}"
     fi
 
     set +e
