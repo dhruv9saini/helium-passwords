@@ -120,7 +120,12 @@ and a source-local `ssh_known_hosts` file. Both files must be owned by the
 source user, mode `0600`, nonempty regular files, and not symlinks. The
 transport ignores user SSH config, offers only that identity, requires a
 matching pinned host key, disables forwarding and TTY allocation, and uses
-BatchMode. Give the public half of this key a `restrict` authorization on each
+BatchMode. Specifically, it uses OpenSSH `-F none`, whose defined meaning is
+to read no client configuration files, and supplies the dedicated pinned-host
+file as both the user and global host-key database. Do not replace either with
+`/dev/null`: the OnePlus Arch chroot has had a non-device `/dev/null`, and an
+unattended transport must not depend on that path being a valid character
+device. Give the public half of this key a `restrict` authorization on each
 destination. This makes the unattended route explicit without reusing a
 general-purpose login key or trusting a first connection.
 
@@ -245,8 +250,11 @@ directory. It never deletes bytes and it never happens automatically.
   Magisk runner's isolated UTS namespace supplies `oneplus` only to the backup
   process, avoiding any global hostname change. The chroot's dedicated key now
   reaches lm and da noninteractively with strict pinned-host-key verification.
-  The source remains disabled until offline public recovery recipients and the
-  native browser export exist.
+  OpenSSH 10.3p1 on lm and in the chroot both parse `-F none`; a synthetic
+  command-only route proof also reaches both destinations without reading a
+  client config or relying on the chroot's malformed `/dev/null`. The source
+  remains disabled until offline public recovery recipients and the native
+  browser export exist.
 - da's dedicated public-key fingerprint is
   `SHA256:AxzKZUs3u5vVOxzhrHKRXMShn5amwgQxE/zemOtVPV4`; oneplus's is
   `SHA256:HyHqmUFOnyo5rNWP+OYTq6QM36Sbr+pYc2dd1n7nhCM`. Destinations authorize

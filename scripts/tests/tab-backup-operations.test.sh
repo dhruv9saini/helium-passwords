@@ -60,8 +60,15 @@ cat >"${temporary}/bin/ssh" <<'EOF'
 set -euo pipefail
 while [[ "${1:-}" == -* ]]; do
 	case "$1" in
-		-F) [ "$2" = /dev/null ]; shift 2 ;;
-		-o) shift 2 ;;
+		-F) [ "$2" = none ]; shift 2 ;;
+		-o)
+			case "$2" in
+				GlobalKnownHostsFile=*|UserKnownHostsFile=*)
+					[ "${2#*=}" = "${TAB_TEST_SSH_KNOWN_HOSTS}" ]
+					;;
+			esac
+			shift 2
+			;;
 		-i) [ "$2" = "${TAB_TEST_SSH_IDENTITY}" ]; shift 2 ;;
 		-l) [ "$2" = d ]; shift 2 ;;
 		*) echo "unexpected SSH option: $1" >&2; exit 1 ;;
@@ -83,9 +90,11 @@ cat >"${temporary}/bin/rsync" <<'EOF'
 set -euo pipefail
 arguments=("$@")
 [ "$1" = -e ]
-[[ "$2" == *"-F /dev/null"* ]]
+[[ "$2" == *"-F none"* ]]
+[[ "$2" != *"/dev/null"* ]]
 [[ "$2" == *"-o IdentitiesOnly=yes"* ]]
 [[ "$2" == *"-o StrictHostKeyChecking=yes"* ]]
+[[ "$2" == *"-o GlobalKnownHostsFile=${TAB_TEST_SSH_KNOWN_HOSTS}"* ]]
 [[ "$2" == *"-o UserKnownHostsFile=${TAB_TEST_SSH_KNOWN_HOSTS}"* ]]
 [[ "$2" == *"-i ${TAB_TEST_SSH_IDENTITY}"* ]]
 [[ "$2" == *"-l d"* ]]

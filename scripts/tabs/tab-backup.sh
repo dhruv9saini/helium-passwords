@@ -50,17 +50,19 @@ destination_run() {
     local index=$1 command_text
     shift
 	printf -v command_text '%q ' "$@"
-	ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 \
+	ssh -F none -o BatchMode=yes -o ConnectTimeout=10 \
 		-o ClearAllForwardings=yes -o RequestTTY=no -o IdentitiesOnly=yes \
-		-o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null \
+		-o StrictHostKeyChecking=yes \
+		-o "GlobalKnownHostsFile=${TAB_SSH_KNOWN_HOSTS}" \
 		-o "UserKnownHostsFile=${TAB_SSH_KNOWN_HOSTS}" \
 		-i "${TAB_SSH_IDENTITY}" -l "${TAB_SSH_USER}" \
 		"${TAB_DEST_SSH[index]}" "${command_text}"
 }
 
 destination_rsh() {
-	printf 'ssh -F /dev/null -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes -o RequestTTY=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=/dev/null -o UserKnownHostsFile=%s -i %s -l %s\n' \
-		"${TAB_SSH_KNOWN_HOSTS}" "${TAB_SSH_IDENTITY}" "${TAB_SSH_USER}"
+	printf 'ssh -F none -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes -o RequestTTY=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=%s -o UserKnownHostsFile=%s -i %s -l %s\n' \
+		"${TAB_SSH_KNOWN_HOSTS}" "${TAB_SSH_KNOWN_HOSTS}" \
+		"${TAB_SSH_IDENTITY}" "${TAB_SSH_USER}"
 }
 
 verify_destination_host() {
