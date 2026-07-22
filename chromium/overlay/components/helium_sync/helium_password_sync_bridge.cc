@@ -37,28 +37,27 @@ namespace helium_sync {
 namespace {
 
 constexpr char kPasswordKind[] = "passwords";
-constexpr char kLegacySimplePayloadFormat[] = "helium-password-v1";
 constexpr char kChromiumSpecificsPayloadFormat[] =
     "chromium-password-specifics-data-v1";
-constexpr int kPasswordStateSchema = 2;
+constexpr int kPasswordStateSchema = 3;
 
 #if BUILDFLAG(IS_ANDROID)
-void AndroidStatusLog(const std::string& message) {
+void AndroidStatusLog(const std::string &message) {
   __android_log_write(ANDROID_LOG_WARN, "HeliumSync", message.c_str());
 }
 #else
-void AndroidStatusLog(const std::string&) {}
+void AndroidStatusLog(const std::string &) {}
 #endif
 
 using Credential = password_manager::PasswordForm;
 
-const Credential& ChangeCredential(
-    const password_manager::PasswordStoreChange& change) {
+const Credential &
+ChangeCredential(const password_manager::PasswordStoreChange &change) {
   return change.form();
 }
 
-Credential CredentialFromSpecifics(
-    const sync_pb::PasswordSpecificsData& specifics) {
+Credential
+CredentialFromSpecifics(const sync_pb::PasswordSpecificsData &specifics) {
   Credential credential = password_manager::PasswordFromSpecifics(specifics);
   credential.in_store = password_manager::PasswordForm::Store::kProfileStore;
   return credential;
@@ -66,7 +65,7 @@ Credential CredentialFromSpecifics(
 
 std::string PasswordRecordKeyForValues(std::string_view signon_realm,
                                        std::string_view url,
-                                       const std::u16string& username) {
+                                       const std::u16string &username) {
   std::string material;
   material.append(signon_realm);
   material.push_back('\0');
@@ -78,7 +77,7 @@ std::string PasswordRecordKeyForValues(std::string_view signon_realm,
 }
 
 template <typename CredentialLike>
-std::string SignonRealmForCredential(const CredentialLike& credential) {
+std::string SignonRealmForCredential(const CredentialLike &credential) {
   if (!credential.signon_realm.empty()) {
     return credential.signon_realm;
   }
@@ -89,30 +88,30 @@ std::string SignonRealmForCredential(const CredentialLike& credential) {
 }
 
 template <typename CredentialLike>
-std::string UrlForCredential(const CredentialLike& credential) {
+std::string UrlForCredential(const CredentialLike &credential) {
   if (credential.url.is_valid()) {
     return credential.url.spec();
   }
   return SignonRealmForCredential(credential);
 }
 
-std::string PasswordRecordKey(const Credential& credential) {
+std::string PasswordRecordKey(const Credential &credential) {
   return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
                                     UrlForCredential(credential),
                                     credential.username_value);
 }
 
-std::string PasswordRecordKeyForForm(
-    const password_manager::PasswordForm& credential) {
+std::string
+PasswordRecordKeyForForm(const password_manager::PasswordForm &credential) {
   return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
                                     UrlForCredential(credential),
                                     credential.username_value);
 }
 
-std::optional<std::string> PasswordPayloadJSON(const Credential& credential) {
+std::optional<std::string> PasswordPayloadJSON(const Credential &credential) {
   sync_pb::PasswordSpecificsData specifics =
-      password_manager::SpecificsDataFromPassword(
-          credential, /*base_password_data=*/{});
+      password_manager::SpecificsDataFromPassword(credential,
+                                                  /*base_password_data=*/{});
   std::string serialized;
   if (!specifics.SerializeToString(&serialized)) {
     return std::nullopt;
@@ -129,50 +128,15 @@ std::optional<std::string> PasswordPayloadJSON(const Credential& credential) {
   return payload_json;
 }
 
-std::optional<Credential> PayloadToCredential(const base::DictValue& payload) {
-  const std::string* format = payload.FindString("format");
+std::optional<Credential> PayloadToCredential(const base::DictValue &payload) {
+  const std::string *format = payload.FindString("format");
   if (!format) {
     return std::nullopt;
   }
-  if (*format == kLegacySimplePayloadFormat) {
-    const std::string* url_string = payload.FindString("url");
-    const std::string* username = payload.FindString("username");
-    const std::string* password = payload.FindString("password");
-    if (!url_string || !username || !password) {
-      return std::nullopt;
-    }
-    GURL url(*url_string);
-    if (!url.is_valid()) {
-      return std::nullopt;
-    }
-
-    Credential credential;
-    credential.scheme = password_manager::PasswordForm::Scheme::kHtml;
-    credential.signon_realm = url.DeprecatedGetOriginAsURL().spec();
-    if (const std::string* signon_realm = payload.FindString("signon_realm")) {
-      if (!signon_realm->empty()) {
-        credential.signon_realm = *signon_realm;
-      }
-    }
-    credential.url = std::move(url);
-    credential.username_value = base::UTF8ToUTF16(*username);
-    credential.password_value = base::UTF8ToUTF16(*password);
-    credential.in_store = password_manager::PasswordForm::Store::kProfileStore;
-    credential.type = password_manager::PasswordForm::Type::kImported;
-    credential.date_created = base::Time::Now();
-    credential.date_password_modified = credential.date_created;
-    if (const std::string* note = payload.FindString("note");
-        note && !note->empty()) {
-      credential.notes.emplace_back(base::UTF8ToUTF16(*note),
-                                    credential.date_created);
-    }
-    return credential;
-  }
-
   if (*format != kChromiumSpecificsPayloadFormat) {
     return std::nullopt;
   }
-  const std::string* encoded =
+  const std::string *encoded =
       payload.FindString("password_specifics_data_b64");
   if (!encoded) {
     return std::nullopt;
@@ -194,7 +158,7 @@ std::optional<Credential> PayloadToCredential(const base::DictValue& payload) {
   return credential;
 }
 
-std::optional<Record> UpsertRecordForCredential(const Credential& credential) {
+std::optional<Record> UpsertRecordForCredential(const Credential &credential) {
   std::optional<std::string> payload_json = PasswordPayloadJSON(credential);
   if (!payload_json) {
     return std::nullopt;
@@ -210,27 +174,32 @@ std::string ContentFingerprint(std::string_view payload_json) {
   return base::HexEncodeLower(crypto::SHA256HashString(payload_json));
 }
 
-}  // namespace
+} // namespace
 
 HeliumPasswordSyncBridge::HeliumPasswordSyncBridge(
     scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
-    std::unique_ptr<HeliumSyncClient> client,
-    std::string device_name,
+    std::unique_ptr<HeliumSyncClient> client, std::string device_name,
     base::FilePath state_path)
-    : profile_store_(std::move(profile_store)),
-      client_(std::move(client)),
-      device_name_(std::move(device_name)),
-      state_path_(std::move(state_path)) {}
-
-HeliumPasswordSyncBridge::~HeliumPasswordSyncBridge() {
-  Stop();
+    : profile_store_(std::move(profile_store)), client_(std::move(client)),
+      device_name_(std::move(device_name)), state_path_(std::move(state_path)) {
 }
+
+HeliumPasswordSyncBridge::~HeliumPasswordSyncBridge() { Stop(); }
 
 void HeliumPasswordSyncBridge::Start() {
   if (!profile_store_ || !client_ || observing_) {
     return;
   }
   state_trusted_ = LoadState();
+  if (!state_trusted_) {
+    if (base::PathExists(state_path_) || !SaveState()) {
+      LOG(WARNING)
+          << "Helium password sync disabled: state is invalid or unwritable";
+      AndroidStatusLog("password state invalid or unwritable; fail closed");
+      return;
+    }
+    state_trusted_ = true;
+  }
   pull_timer_.Start(FROM_HERE, base::Seconds(30),
                     base::BindRepeating(&HeliumPasswordSyncBridge::PullAndApply,
                                         weak_factory_.GetWeakPtr()));
@@ -252,7 +221,7 @@ void HeliumPasswordSyncBridge::PullAndApply() {
   }
   pull_in_flight_ = true;
   reconciling_ = true;
-  client_->Latest({kPasswordKind}, /*include_deleted=*/false,
+  client_->Latest({kPasswordKind},
                   base::BindOnce(&HeliumPasswordSyncBridge::OnPullComplete,
                                  weak_factory_.GetWeakPtr()));
 }
@@ -274,17 +243,22 @@ void HeliumPasswordSyncBridge::RequestPostApplyRead() {
 }
 
 void HeliumPasswordSyncBridge::OnLoginsChanged(
-    password_manager::PasswordStoreInterface* store,
-    const password_manager::PasswordStoreChangeList& changes) {
+    password_manager::PasswordStoreInterface *store,
+    const password_manager::PasswordStoreChangeList &changes) {
   if (store != profile_store_.get() || reconciling_ || applying_remote_) {
     return;
   }
 
   std::vector<Record> records;
-  for (const auto& change : changes) {
-    const Credential& credential = ChangeCredential(change);
+  for (const auto &change : changes) {
+    const Credential &credential = ChangeCredential(change);
     if (change.type() == password_manager::PasswordStoreChange::REMOVE) {
-      known_keys_.erase(PasswordRecordKey(credential));
+      Record tombstone;
+      tombstone.kind = kPasswordKind;
+      tombstone.key = PasswordRecordKey(credential);
+      tombstone.deleted = true;
+      tombstone.payload_json = "{}";
+      records.push_back(std::move(tombstone));
       continue;
     }
     std::optional<Record> record = UpsertRecordForCredential(credential);
@@ -298,21 +272,21 @@ void HeliumPasswordSyncBridge::OnLoginsChanged(
 }
 
 void HeliumPasswordSyncBridge::OnLoginsRetained(
-    password_manager::PasswordStoreInterface* store,
-    const std::vector<password_manager::PasswordForm>& retained_passwords) {
+    password_manager::PasswordStoreInterface *store,
+    const std::vector<password_manager::PasswordForm> &retained_passwords) {
   if (store != profile_store_.get() || reconciling_ || applying_remote_) {
     return;
   }
 
   std::set<std::string> retained_keys;
-  for (const auto& credential : retained_passwords) {
+  for (const auto &credential : retained_passwords) {
     retained_keys.insert(PasswordRecordKeyForForm(credential));
   }
   known_keys_ = std::move(retained_keys);
 }
 
 void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom(
-    password_manager::PasswordStoreInterface* store,
+    password_manager::PasswordStoreInterface *store,
     password_manager::LoginsResultOrError results_or_error) {
   if (store != profile_store_.get()) {
     return;
@@ -320,7 +294,7 @@ void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom(
   PendingRead pending = pending_read_;
   pending_read_ = PendingRead::kNone;
 
-  auto* credentials =
+  auto *credentials =
       std::get_if<password_manager::LoginsResult>(&results_or_error);
   if (!credentials) {
     LOG(WARNING) << "Helium password sync read failed for pending "
@@ -336,131 +310,260 @@ void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom(
                    base::NumberToString(credentials->size()));
 
   switch (pending) {
-    case PendingRead::kApplyRemote:
+  case PendingRead::kApplyRemote:
 #if BUILDFLAG(IS_ANDROID)
-      if (credentials->empty() && initial_empty_read_retries_ < 3) {
-        initial_empty_read_retries_++;
-        AndroidStatusLog("password reconcile empty retry=" +
-                         base::NumberToString(initial_empty_read_retries_));
-        base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-            FROM_HERE,
-            base::BindOnce(&HeliumPasswordSyncBridge::RequestReconcileRead,
-                           weak_factory_.GetWeakPtr()),
-            base::Seconds(1));
-        return;
-      }
+    if (credentials->empty() && initial_empty_read_retries_ < 3) {
+      initial_empty_read_retries_++;
+      AndroidStatusLog("password reconcile empty retry=" +
+                       base::NumberToString(initial_empty_read_retries_));
+      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE,
+          base::BindOnce(&HeliumPasswordSyncBridge::RequestReconcileRead,
+                         weak_factory_.GetWeakPtr()),
+          base::Seconds(1));
+      return;
+    }
 #endif
-      initial_empty_read_retries_ = 0;
-      ReconcileRemotePasswords(*credentials);
-      break;
-    case PendingRead::kPostApply:
+    initial_empty_read_retries_ = 0;
+    ReconcileRemotePasswords(*credentials);
+    break;
+  case PendingRead::kPostApply:
 #if BUILDFLAG(IS_ANDROID)
-      if (credentials->empty() && post_apply_empty_read_retries_ < 3) {
-        post_apply_empty_read_retries_++;
-        AndroidStatusLog("password post-apply empty retry=" +
-                         base::NumberToString(post_apply_empty_read_retries_));
-        base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-            FROM_HERE,
-            base::BindOnce(&HeliumPasswordSyncBridge::RequestPostApplyRead,
-                           weak_factory_.GetWeakPtr()),
-            base::Seconds(2));
-        return;
-      }
+    if (credentials->empty() && post_apply_empty_read_retries_ < 3) {
+      post_apply_empty_read_retries_++;
+      AndroidStatusLog("password post-apply empty retry=" +
+                       base::NumberToString(post_apply_empty_read_retries_));
+      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
+          FROM_HERE,
+          base::BindOnce(&HeliumPasswordSyncBridge::RequestPostApplyRead,
+                         weak_factory_.GetWeakPtr()),
+          base::Seconds(2));
+      return;
+    }
 #endif
-      post_apply_empty_read_retries_ = 0;
-      PublishLocalMutations(*credentials);
-      FinishReconcile();
-      break;
-    case PendingRead::kNone:
-      break;
+    post_apply_empty_read_retries_ = 0;
+    if (!VerifyRemoteWrites(*credentials)) {
+      LOG(WARNING) << "Helium password sync post-write verification failed";
+      AndroidStatusLog("password post-write verification failed");
+      reconciling_ = false;
+      return;
+    }
+    PublishLocalMutations(*credentials);
+    FinishReconcile();
+    break;
+  case PendingRead::kNone:
+    break;
   }
 }
 
 void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
-    const password_manager::LoginsResult& local_credentials) {
-  std::map<std::string, const Credential*> local_by_key;
-  for (const auto& credential : local_credentials) {
+    const password_manager::LoginsResult &local_credentials) {
+  std::map<std::string, const Credential *> local_by_key;
+  for (const auto &credential : local_credentials) {
     local_by_key[PasswordRecordKey(credential)] = &credential;
   }
 
-  applying_remote_ = true;
-  for (const auto& remote : pending_remote_records_) {
-    const auto state = credential_state_.find(remote.key);
+  // Validate the complete remote batch and detect conflicts before issuing a
+  // single PasswordStore write. A malformed later record must not leave a
+  // partially applied generation that could then be acknowledged.
+  for (const auto &remote : pending_remote_records_) {
+    const Record &record = remote.record;
+    const auto state = credential_state_.find(record.key);
     if (state != credential_state_.end() &&
-        remote.seq <= state->second.remote_seq) {
+        record.revision <= state->second.revision) {
       continue;
     }
-    const auto existing = local_by_key.find(remote.key);
+    const auto existing = local_by_key.find(record.key);
+    if (state != credential_state_.end()) {
+      bool local_matches_baseline = false;
+      if (state->second.deleted) {
+        local_matches_baseline = existing == local_by_key.end();
+      } else if (existing != local_by_key.end()) {
+        std::optional<std::string> local_payload =
+            PasswordPayloadJSON(*existing->second);
+        local_matches_baseline =
+            local_payload &&
+            ContentFingerprint(*local_payload) == state->second.fingerprint;
+      }
+      if (!local_matches_baseline) {
+        blocked_remote_keys_.insert(record.key);
+        continue;
+      }
+    }
+    if (!record.deleted) {
+      std::optional<base::Value> parsed =
+          base::JSONReader::Read(record.payload_json, base::JSON_PARSE_RFC);
+      std::optional<Credential> credential =
+          parsed && parsed->is_dict()
+              ? PayloadToCredential(parsed->GetDict())
+              : std::nullopt;
+      if (!credential || PasswordRecordKey(*credential) != record.key) {
+        blocked_remote_keys_.insert(record.key);
+      }
+    }
+  }
+  if (!blocked_remote_keys_.empty()) {
+    pending_remote_records_.clear();
+    LOG(WARNING) << "Helium password sync blocked a malformed or concurrent "
+                    "remote batch before applying it";
+    AndroidStatusLog("password reconciliation blocked before apply");
+    reconciling_ = false;
+    return;
+  }
+
+  applying_remote_ = true;
+  for (const auto &remote : pending_remote_records_) {
+    const Record &record = remote.record;
+    const auto state = credential_state_.find(record.key);
+    if (state != credential_state_.end() &&
+        record.revision <= state->second.revision) {
+      continue;
+    }
+    const auto existing = local_by_key.find(record.key);
+    if (state != credential_state_.end() &&
+        record.revision > state->second.revision) {
+      bool local_matches_baseline = false;
+      if (state->second.deleted) {
+        local_matches_baseline = existing == local_by_key.end();
+      } else if (existing != local_by_key.end()) {
+        std::optional<std::string> local_payload =
+            PasswordPayloadJSON(*existing->second);
+        local_matches_baseline =
+            local_payload &&
+            ContentFingerprint(*local_payload) == state->second.fingerprint;
+      }
+      if (!local_matches_baseline) {
+        blocked_remote_keys_.insert(record.key);
+        LOG(WARNING) << "Helium password sync stopped a concurrent local and "
+                        "remote mutation for "
+                     << record.key;
+        continue;
+      }
+    }
+    if (record.deleted) {
+      if (existing == local_by_key.end()) {
+        credential_state_[record.key] = {std::string(), record.seq,
+                                         record.revision, true, record.key_id};
+        known_keys_.erase(record.key);
+        continue;
+      }
+      pending_verification_[record.key] = remote;
+      pending_remote_writes_++;
+      profile_store_->RemoveLogin(
+          *existing->second,
+          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
+                         weak_factory_.GetWeakPtr()));
+      continue;
+    }
     std::optional<base::Value> parsed =
-        base::JSONReader::Read(remote.payload_json, base::JSON_PARSE_RFC);
+        base::JSONReader::Read(record.payload_json, base::JSON_PARSE_RFC);
     if (!parsed || !parsed->is_dict()) {
-      blocked_remote_keys_.insert(remote.key);
+      blocked_remote_keys_.insert(record.key);
       continue;
     }
     std::optional<Credential> credential =
         PayloadToCredential(parsed->GetDict());
-    if (!credential || PasswordRecordKey(*credential) != remote.key) {
-      blocked_remote_keys_.insert(remote.key);
+    if (!credential || PasswordRecordKey(*credential) != record.key) {
+      blocked_remote_keys_.insert(record.key);
       continue;
     }
     std::optional<std::string> canonical_payload =
         PasswordPayloadJSON(*credential);
     if (!canonical_payload) {
-      blocked_remote_keys_.insert(remote.key);
+      blocked_remote_keys_.insert(record.key);
       continue;
     }
-    const std::string* payload_format =
-        parsed->GetDict().FindString("format");
-    const bool needs_payload_migration =
-        payload_format && *payload_format == kLegacySimplePayloadFormat;
-    std::string fingerprint = ContentFingerprint(
-        needs_payload_migration ? remote.payload_json : *canonical_payload);
+    std::string fingerprint = ContentFingerprint(*canonical_payload);
 
     if (existing != local_by_key.end()) {
       std::optional<std::string> local_payload =
           PasswordPayloadJSON(*existing->second);
-      if (local_payload &&
-          ContentFingerprint(*local_payload) ==
-              ContentFingerprint(*canonical_payload)) {
-        credential_state_[remote.key] = {fingerprint, remote.seq};
+      if (local_payload && ContentFingerprint(*local_payload) ==
+                               ContentFingerprint(*canonical_payload)) {
+        credential_state_[record.key] = {fingerprint, record.seq,
+                                         record.revision, false, record.key_id};
         continue;
       }
     }
 
+    RemotePasswordRecord expected = remote;
+    expected.fingerprint = fingerprint;
+    pending_verification_[record.key] = std::move(expected);
     pending_remote_writes_++;
     if (existing == local_by_key.end()) {
       profile_store_->AddLogin(
           *credential,
           base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
-                         weak_factory_.GetWeakPtr(), remote.key,
-                         std::move(fingerprint), remote.seq));
+                         weak_factory_.GetWeakPtr()));
     } else {
       profile_store_->UpdateLogin(
           *credential,
           base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
-                         weak_factory_.GetWeakPtr(), remote.key,
-                         std::move(fingerprint), remote.seq));
+                         weak_factory_.GetWeakPtr()));
     }
-    known_keys_.insert(remote.key);
+    known_keys_.insert(record.key);
   }
   pending_remote_records_.clear();
+  if (!blocked_remote_keys_.empty()) {
+    applying_remote_ = false;
+    reconciling_ = false;
+    LOG(WARNING) << "Helium password sync left the verified cursor unchanged "
+                    "because remote records are blocked";
+    AndroidStatusLog("password reconciliation blocked; cursor unchanged");
+    return;
+  }
   if (pending_remote_writes_ == 0) {
     applying_remote_ = false;
     RequestPostApplyRead();
   }
 }
 
+bool HeliumPasswordSyncBridge::VerifyRemoteWrites(
+    const password_manager::LoginsResult &local_credentials) {
+  std::map<std::string, const Credential *> local_by_key;
+  for (const auto &credential : local_credentials) {
+    local_by_key[PasswordRecordKey(credential)] = &credential;
+  }
+  for (const auto &[key, expected] : pending_verification_) {
+    const Record &record = expected.record;
+    const auto local = local_by_key.find(key);
+    if (record.deleted) {
+      if (local != local_by_key.end()) {
+        return false;
+      }
+    } else {
+      if (local == local_by_key.end()) {
+        return false;
+      }
+      std::optional<std::string> payload = PasswordPayloadJSON(*local->second);
+      if (!payload || ContentFingerprint(*payload) != expected.fingerprint) {
+        return false;
+      }
+    }
+    credential_state_[key] = {expected.fingerprint, record.seq, record.revision,
+                              record.deleted, record.key_id};
+  }
+  pending_verification_.clear();
+  return SaveState();
+}
+
 void HeliumPasswordSyncBridge::PublishLocalMutations(
-    const password_manager::LoginsResult& credentials) {
+    const password_manager::LoginsResult &credentials) {
   known_keys_ = KeysFor(credentials);
   std::vector<Record> records;
-  for (const auto& credential : credentials) {
+  for (const auto &credential : credentials) {
     std::optional<Record> record = UpsertRecordForCredential(credential);
     if (!record || blocked_remote_keys_.contains(record->key)) {
       continue;
     }
     std::string fingerprint = ContentFingerprint(record->payload_json);
     const auto state = credential_state_.find(record->key);
+    if (client_->enrollment_phase() == "pending" &&
+        state == credential_state_.end()) {
+      credential_state_[record->key] = {std::move(fingerprint), 0, 0, false,
+                                        std::string()};
+      continue;
+    }
     if (!state_trusted_ && state == credential_state_.end()) {
       credential_state_[record->key] = {std::move(fingerprint), 0};
       continue;
@@ -483,36 +586,46 @@ void HeliumPasswordSyncBridge::PushRecords(std::vector<Record> records) {
   AndroidStatusLog("password pushing count=" +
                    base::NumberToString(records.size()));
   std::map<std::string, std::string> fingerprints;
-  for (auto& record : records) {
-    record.origin_device = device_name_;
+  for (auto &record : records) {
+    const auto state = credential_state_.find(record.key);
+    record.expected_revision =
+        state == credential_state_.end() ? 0 : state->second.revision;
     fingerprints[record.key] = ContentFingerprint(record.payload_json);
   }
-  client_->Push(
-      std::move(records),
-      base::BindOnce(&HeliumPasswordSyncBridge::OnPushComplete,
-                     weak_factory_.GetWeakPtr(), std::move(fingerprints)));
+  client_->Push(std::move(records),
+                base::BindOnce(&HeliumPasswordSyncBridge::OnPushComplete,
+                               weak_factory_.GetWeakPtr(),
+                               std::move(fingerprints)));
 }
 
 void HeliumPasswordSyncBridge::OnPushComplete(
-    std::map<std::string, std::string> fingerprints,
-    bool ok,
-    std::string error) {
+    std::map<std::string, std::string> fingerprints, bool ok,
+    RecordsResult result, std::string error) {
   if (!ok) {
     LOG(WARNING) << "Helium password sync push failed: " << error;
     AndroidStatusLog("password push failed " + error);
     return;
   }
-  for (auto& [key, fingerprint] : fingerprints) {
-    CredentialState& state = credential_state_[key];
-    state.fingerprint = std::move(fingerprint);
+  if (result.records.size() != fingerprints.size()) {
+    LOG(WARNING) << "Helium password sync push returned wrong record count";
+    return;
+  }
+  for (const Record &accepted : result.records) {
+    const auto fingerprint = fingerprints.find(accepted.key);
+    if (fingerprint == fingerprints.end()) {
+      LOG(WARNING) << "Helium password sync push returned an unknown record";
+      return;
+    }
+    credential_state_[accepted.key] = {
+        accepted.deleted ? std::string() : fingerprint->second, accepted.seq,
+        accepted.revision, accepted.deleted, accepted.key_id};
   }
   SaveState();
   LOG(WARNING) << "Helium password sync push completed";
   AndroidStatusLog("password push completed");
 }
 
-void HeliumPasswordSyncBridge::OnPullComplete(bool ok,
-                                              std::string response_json,
+void HeliumPasswordSyncBridge::OnPullComplete(bool ok, RecordsResult result,
                                               std::string error) {
   pull_in_flight_ = false;
   if (!ok) {
@@ -521,52 +634,26 @@ void HeliumPasswordSyncBridge::OnPullComplete(bool ok,
     reconciling_ = false;
     return;
   }
-
-  std::optional<base::Value> root =
-      base::JSONReader::Read(response_json, base::JSON_PARSE_RFC);
-  if (!root || !root->is_dict()) {
-    reconciling_ = false;
-    return;
-  }
-  const base::ListValue* records = root->GetDict().FindList("records");
-  if (!records) {
-    LOG(WARNING) << "Helium password sync pull had no records list";
-    AndroidStatusLog("password pull missing records");
-    reconciling_ = false;
-    return;
-  }
+  pending_next_seq_ = result.next_seq;
 
   pending_remote_records_.clear();
   blocked_remote_keys_.clear();
-  for (const base::Value& item : *records) {
-    if (!item.is_dict()) {
+  for (Record &record : result.records) {
+    if (record.kind != kPasswordKind) {
       continue;
     }
-    const base::DictValue& dict = item.GetDict();
-    const std::string* kind = dict.FindString("kind");
-    const std::string* key = dict.FindString("key");
-    if (!kind || *kind != kPasswordKind || !key) {
-      continue;
-    }
-    RemotePasswordRecord record;
-    record.key = *key;
-    std::optional<int> seq = dict.FindInt("seq");
-    if (!seq || *seq <= 0) {
-      blocked_remote_keys_.insert(record.key);
-      continue;
-    }
-    record.seq = *seq;
-    if (dict.FindBool("deleted").value_or(false)) {
-      continue;
-    }
-    if (const base::DictValue* payload = dict.FindDict("payload")) {
-      if (!base::JSONWriter::Write(*payload, &record.payload_json)) {
+    RemotePasswordRecord remote;
+    remote.record = std::move(record);
+    if (!remote.record.deleted) {
+      std::optional<base::Value> payload = base::JSONReader::Read(
+          remote.record.payload_json, base::JSON_PARSE_RFC);
+      if (!payload || !payload->is_dict() ||
+          !PayloadToCredential(payload->GetDict())) {
+        blocked_remote_keys_.insert(remote.record.key);
         continue;
       }
-    } else {
-      record.payload_json = "{}";
     }
-    pending_remote_records_.push_back(std::move(record));
+    pending_remote_records_.push_back(std::move(remote));
   }
 
   if (pending_remote_records_.empty()) {
@@ -582,10 +669,7 @@ void HeliumPasswordSyncBridge::OnPullComplete(bool ok,
   RequestReconcileRead();
 }
 
-void HeliumPasswordSyncBridge::OnRemoteRecordComplete(std::string key,
-                                                      std::string fingerprint,
-                                                      int64_t remote_seq) {
-  credential_state_[std::move(key)] = {std::move(fingerprint), remote_seq};
+void HeliumPasswordSyncBridge::OnRemoteRecordComplete() {
   if (pending_remote_writes_ > 0) {
     pending_remote_writes_--;
   }
@@ -602,7 +686,19 @@ void HeliumPasswordSyncBridge::OnRemoteRecordComplete(std::string key,
 
 void HeliumPasswordSyncBridge::FinishReconcile() {
   state_trusted_ = true;
-  SaveState();
+  verified_sequence_ = pending_next_seq_;
+  if (!SaveState()) {
+    LOG(WARNING) << "Helium password sync could not persist verified state";
+    reconciling_ = false;
+    return;
+  }
+  std::string error;
+  if (!client_->AcknowledgeApplied(pending_next_seq_, &error)) {
+    LOG(WARNING) << "Helium password sync cursor acknowledgement failed: "
+                 << error;
+    reconciling_ = false;
+    return;
+  }
   reconciling_ = false;
   if (!observing_ && profile_store_) {
     observing_ = true;
@@ -619,7 +715,7 @@ void HeliumPasswordSyncBridge::FinishReconcile() {
 bool HeliumPasswordSyncBridge::LoadState() {
   credential_state_.clear();
   if (state_path_.empty() || !base::PathExists(state_path_)) {
-    return true;
+    return false;
   }
 
   std::string raw;
@@ -635,9 +731,13 @@ bool HeliumPasswordSyncBridge::LoadState() {
     LOG(WARNING) << "Helium password sync state is invalid";
     return false;
   }
-  const base::DictValue* credentials =
+  const base::DictValue *credentials =
       parsed->GetDict().FindDict("credentials");
-  if (!credentials) {
+  const std::string *verified_sequence =
+      parsed->GetDict().FindString("verified_sequence");
+  if (!credentials || !verified_sequence ||
+      !base::StringToInt64(*verified_sequence, &verified_sequence_) ||
+      verified_sequence_ < 0) {
     LOG(WARNING) << "Helium password sync state has no credentials map";
     return false;
   }
@@ -645,15 +745,23 @@ bool HeliumPasswordSyncBridge::LoadState() {
     if (!value.is_dict()) {
       return false;
     }
-    const std::string* fingerprint = value.GetDict().FindString("fingerprint");
-    const std::string* remote_seq = value.GetDict().FindString("remote_seq");
+    const std::string *fingerprint = value.GetDict().FindString("fingerprint");
+    const std::string *remote_seq = value.GetDict().FindString("remote_seq");
+    const std::string *revision = value.GetDict().FindString("revision");
+    const std::string *key_id = value.GetDict().FindString("key_id");
+    std::optional<bool> deleted = value.GetDict().FindBool("deleted");
     int64_t parsed_seq = 0;
-    if (!fingerprint || fingerprint->empty() || !remote_seq ||
-        !base::StringToInt64(*remote_seq, &parsed_seq) || parsed_seq < 0) {
+    int64_t parsed_revision = 0;
+    if (!fingerprint || !remote_seq || !revision || !key_id || !deleted ||
+        (!*deleted && fingerprint->empty()) ||
+        !base::StringToInt64(*remote_seq, &parsed_seq) || parsed_seq < 0 ||
+        !base::StringToInt64(*revision, &parsed_revision) ||
+        parsed_revision < 0 || (parsed_revision > 0 && key_id->empty())) {
       credential_state_.clear();
       return false;
     }
-    credential_state_[key] = {*fingerprint, parsed_seq};
+    credential_state_[key] = {*fingerprint, parsed_seq, parsed_revision,
+                              *deleted, *key_id};
   }
   return true;
 }
@@ -665,11 +773,15 @@ bool HeliumPasswordSyncBridge::SaveState() const {
   }
   base::DictValue root;
   root.Set("schema_version", kPasswordStateSchema);
+  root.Set("verified_sequence", base::NumberToString(verified_sequence_));
   base::DictValue credentials;
-  for (const auto& [key, state] : credential_state_) {
+  for (const auto &[key, state] : credential_state_) {
     base::DictValue value;
     value.Set("fingerprint", state.fingerprint);
     value.Set("remote_seq", base::NumberToString(state.remote_seq));
+    value.Set("revision", base::NumberToString(state.revision));
+    value.Set("deleted", state.deleted);
+    value.Set("key_id", state.key_id);
     credentials.Set(key, std::move(value));
   }
   root.Set("credentials", std::move(credentials));
@@ -682,12 +794,12 @@ bool HeliumPasswordSyncBridge::SaveState() const {
 }
 
 std::set<std::string> HeliumPasswordSyncBridge::KeysFor(
-    const password_manager::LoginsResult& credentials) const {
+    const password_manager::LoginsResult &credentials) const {
   std::set<std::string> keys;
-  for (const auto& credential : credentials) {
+  for (const auto &credential : credentials) {
     keys.insert(PasswordRecordKey(credential));
   }
   return keys;
 }
 
-}  // namespace helium_sync
+} // namespace helium_sync

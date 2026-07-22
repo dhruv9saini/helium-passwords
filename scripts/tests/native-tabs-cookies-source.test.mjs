@@ -18,7 +18,7 @@ const service = fs.readFileSync(new URL(
 test("native cookie identity includes partition, host/domain form, scheme, and port", () => {
   const identity = cookie.slice(
     cookie.indexOf("std::optional<std::string> CookieIdentity"),
-    cookie.indexOf("std::optional<base::ListValue> CookiesToValue"),
+    cookie.indexOf("std::optional<std::string> CookieRecordKey"),
   );
   assert.match(identity, /CookiePartitionKey::Serialize\(cookie\.PartitionKey\(\)\)/);
   assert.match(identity, /TopLevelSite/);
@@ -30,22 +30,21 @@ test("native cookie identity includes partition, host/domain form, scheme, and p
   assert.match(identity, /cookie\.SourcePort\(\)/);
 });
 
-test("native cookie reconciliation pulls first and only policy sources publish", () => {
+test("native cookie reconciliation pulls first and publishes only local mutations", () => {
   const reconcile = cookie.slice(
     cookie.indexOf("void Reconcile()"),
     cookie.indexOf("void OnLatest"),
   );
   assert.match(reconcile, /client_->Latest\(\s*\{kCookieKind\}/);
 
-  const onCookies = cookie.slice(
-    cookie.indexOf("void OnCookies"),
-    cookie.indexOf("void OnSourcePush"),
+  const publish = cookie.slice(
+    cookie.indexOf("void PublishLocalMutations"),
+    cookie.indexOf("void OnPushComplete"),
   );
-  assert.match(onCookies, /if \(policy\.source == device_name_\)/);
-  assert.match(onCookies, /!policy\.replicas\.contains\(device_name_\)/);
-  assert.match(onCookies, /source_records\.push_back/);
-  assert.match(onCookies, /needs_reauthentication = true/);
-  assert.equal((onCookies.match(/client_->Push/g) ?? []).length, 1);
+  assert.match(publish, /baseline_cookie_fingerprint/);
+  assert.match(publish, /expected_revision/);
+  assert.match(publish, /mutation\.deleted = true/);
+  assert.equal((publish.match(/client_->Push/g) ?? []).length, 1);
 });
 
 test("native cookie apply uses Chromium CookieManager and rejects malformed authority", () => {
@@ -53,10 +52,13 @@ test("native cookie apply uses Chromium CookieManager and rejects malformed auth
   assert.match(cookie, /GetAllCookies/);
   assert.match(cookie, /SetCanonicalCookie/);
   assert.match(cookie, /DeleteCanonicalCookie/);
-  assert.match(cookie, /origin != policy\.source/);
+  assert.match(cookie, /record\.device_id\.empty\(\)/);
+  assert.match(cookie, /record\.key_id\.empty\(\)/);
+  assert.match(cookie, /cookie-key-epoch-changed/);
   assert.match(cookie, /CookiePartitionKey::FromUntrustedInput/);
-  assert.match(cookie, /DomainsOverlap\(existing\.domain, policy\.domain\)/);
-  assert.match(cookie, /source_port == 0/);
+  assert.match(cookie, /CookieRecordKey\(\*cookie\)/);
+  assert.match(cookie, /SealLocalPayload/);
+  assert.match(cookie, /destination-set-rejected/);
 });
 
 test("native tab export matches the independent store schema and is atomic", () => {
@@ -75,7 +77,7 @@ test("native tab export matches the independent store schema and is atomic", () 
 
 test("tab snapshots stay independent of remote-sync credentials and profile files", () => {
   const tabStart = service.indexOf("tab_snapshot_bridge_->Start()");
-  const tokenRead = service.indexOf("ReadFirstConfigValue(profile, kTokenFile)");
+  const tokenRead = service.indexOf("ReadConfigValue(config_dir, kTokenFile)");
   assert.ok(tabStart >= 0 && tokenRead > tabStart);
   assert.match(tabs, /profile_->GetPath\(\)\.IsParent\(export_path_\)/);
   assert.doesNotMatch(tabs, /Session_|Tabs_|Login Data|Network\/Cookies/);

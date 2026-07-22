@@ -6,7 +6,6 @@ artifact=${1:-}
 home_dir=${HOME:?HOME is required}
 bin_dir=${HELIUM_LAPTOP_BIN_DIR:-$home_dir/.local/bin}
 app_dir=${HELIUM_LAPTOP_APP_DIR:-$home_dir/.local/opt/helium-sync-app}
-profile=${HELIUM_LAPTOP_PROFILE:-$home_dir/.config/net.imput.helium}
 replace_default=${HELIUM_LAPTOP_REPLACE_DEFAULT:-0}
 
 mkdir -p "$bin_dir" "$(dirname "$app_dir")"
@@ -19,18 +18,10 @@ trap cleanup EXIT
 
 cd "$repo_root"
 go build -o "$tmp_bin/helium-sync" ./cmd/helium-sync
-go build -o "$tmp_bin/helium-syncd" ./cmd/helium-syncd
-go build -o "$tmp_bin/helium-local-syncd" ./cmd/helium-local-syncd
 go build -o "$tmp_bin/helium-tabs" ./cmd/helium-tabs
 
 install -m 0755 "$tmp_bin/helium-sync" "$bin_dir/helium-sync"
-install -m 0755 "$tmp_bin/helium-syncd" "$bin_dir/helium-syncd"
-install -m 0755 "$tmp_bin/helium-local-syncd" "$bin_dir/helium-local-syncd"
 install -m 0755 "$tmp_bin/helium-tabs" "$bin_dir/helium-tabs"
-install -m 0755 "$repo_root/scripts/android-local/cdp-cookiecloud.mjs" "$bin_dir/cdp-cookiecloud"
-install -m 0644 "$repo_root/scripts/android-local/cookie-replication.mjs" "$bin_dir/cookie-replication.mjs"
-install -m 0755 "$repo_root/scripts/android-local/cdp-password-sync.mjs" "$bin_dir/cdp-password-sync"
-install -m 0644 "$repo_root/scripts/android-local/password-reconcile.mjs" "$bin_dir/password-reconcile.mjs"
 install -m 0755 "$repo_root/scripts/laptop/start-helium-sync-local.sh" "$bin_dir/start-helium-sync-local"
 
 if [[ -n "$artifact" ]]; then
@@ -73,15 +64,6 @@ exec "${HOME:?HOME is required}/.local/bin/start-helium-sync-local" "$@"
 EOF
   chmod 0755 "$scripts_dir/helium-browser"
 fi
-
-"$bin_dir/helium-sync" init >/dev/null
-mkdir -p "$profile/Default/helium-sync"
-cp "$home_dir/.local/share/helium-sync/token" "$profile/Default/helium-sync/token"
-printf '%s\n' "${HELIUM_PASSWORD_SYNC_BASE_URL:-http://127.0.0.1:44719}" >"$profile/Default/helium-sync/base_url"
-printf '%s\n' "${HELIUM_SYNC_DEVICE_NAME:-helium-laptop}" >"$profile/Default/helium-sync/device_name"
-chmod 0600 "$profile/Default/helium-sync/token" "$profile/Default/helium-sync/base_url" "$profile/Default/helium-sync/device_name"
-
-"$bin_dir/start-helium-sync-local" --services-only
 
 desktop_dir=${XDG_DATA_HOME:-$home_dir/.local/share}/applications
 mkdir -p "$desktop_dir"

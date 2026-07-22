@@ -31,6 +31,7 @@ source_set("helium_sync") {
     "//crypto",
     "//net",
     "//services/network/public/cpp",
+    "//services/network/public/mojom",
     "//url",
   ]
 }

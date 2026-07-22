@@ -1,9 +1,9 @@
 diff --git a/chrome/browser/helium_sync/BUILD.gn b/chrome/browser/helium_sync/BUILD.gn
 new file mode 100644
-index 0000000..8240d4e
+index 0000000..f30691c
 --- /dev/null
 +++ b/chrome/browser/helium_sync/BUILD.gn
-@@ -0,0 +1,36 @@
+@@ -0,0 +1,37 @@
 +# Copyright 2026 The Helium Authors
 +
 +source_set("helium_sync") {
@@ -37,22 +37,23 @@ index 0000000..8240d4e
 +    "//crypto",
 +    "//net",
 +    "//services/network/public/cpp",
++    "//services/network/public/mojom",
 +    "//url",
 +  ]
 +}
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
 new file mode 100644
-index 0000000..1d298b1
+index 0000000..4437b05
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
-@@ -0,0 +1,853 @@
+@@ -0,0 +1,1506 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
 +
 +#include <algorithm>
++#include <cstdint>
 +#include <deque>
-+#include <limits>
 +#include <map>
 +#include <optional>
 +#include <set>
@@ -71,113 +72,138 @@ index 0000000..1d298b1
 +#include "base/memory/raw_ptr.h"
 +#include "base/memory/weak_ptr.h"
 +#include "base/strings/string_number_conversions.h"
-+#include "base/strings/string_util.h"
++#include "base/task/sequenced_task_runner.h"
 +#include "base/time/time.h"
++#include "base/time/time_to_iso8601.h"
 +#include "base/timer/timer.h"
 +#include "base/values.h"
++#include "build/build_config.h"
 +#include "chrome/browser/profiles/profile.h"
 +#include "components/helium_sync/helium_sync_client.h"
 +#include "content/public/browser/storage_partition.h"
 +#include "crypto/sha2.h"
++#include "net/base/schemeful_site.h"
 +#include "net/cookies/canonical_cookie.h"
 +#include "net/cookies/cookie_constants.h"
 +#include "net/cookies/cookie_options.h"
 +#include "net/cookies/cookie_partition_key.h"
 +#include "services/network/public/mojom/cookie_manager.mojom.h"
++#include "services/network/public/mojom/device_bound_sessions.mojom.h"
 +#include "url/gurl.h"
 +
 +namespace helium_sync {
 +namespace {
 +
 +constexpr char kCookieKind[] = "cookies";
-+constexpr char kCookieFormat[] = "helium-cookie-domain-v1";
-+constexpr int kStateSchema = 1;
-+constexpr int kMaxCookiesPerDomain = 5000;
-+constexpr int kMaxCookiePayloadBytes = 2 * 1024 * 1024;
++constexpr char kCookiePayloadFormat[] = "helium-cookie-v2";
++constexpr char kRollbackPayloadFormat[] = "helium-cookie-rollback-v1";
++constexpr char kRollbackPurpose[] = "cookie-apply-rollback-v1";
++constexpr int kStateSchema = 2;
++constexpr int kRollbackSchema = 1;
++constexpr int kReauthSchema = 1;
++constexpr size_t kMaxCookieRecords = 50000;
++constexpr size_t kMaxCookiePayloadBytes = 64 * 1024;
++constexpr size_t kMaxRollbackPayloadBytes = 32 * 1024 * 1024;
 +constexpr base::TimeDelta kReconcileInterval = base::Minutes(1);
 +
-+struct Policy {
-+  std::string domain;
-+  std::string source;
-+  std::set<std::string> replicas;
++constexpr char kDeletedFingerprint[] = "deleted";
++
++struct PendingPublish {
++  int64_t expected_revision = 0;
++  int64_t target_revision = 0;
++  std::string payload_fingerprint;
++  std::string cookie_fingerprint;
++  bool deleted = false;
++};
++
++struct RecordState {
++  int64_t remote_revision = 0;
++  std::string key_id;
++  std::string device_id;
++  std::string remote_payload_fingerprint;
++  std::string baseline_cookie_fingerprint;
++  bool remote_deleted = false;
++  bool non_clonable = false;
++  std::string non_clonable_reason;
++  std::string site;
++  std::optional<PendingPublish> pending;
++};
++
++struct BridgeState {
++  std::map<std::string, RecordState> records;
++  std::string blocked_reason;
++  bool migrated_from_policy_v1 = false;
++  int64_t verified_sequence = 0;
++};
++
++struct CookieSnapshot {
++  std::map<std::string, net::CanonicalCookie> cookies;
++  std::map<std::string, std::string> cookie_fingerprints;
++  base::ListValue serialized;
++  std::string fingerprint;
++};
++
++struct RemoteCookie {
++  Record record;
++  std::optional<net::CanonicalCookie> cookie;
++  std::string payload_fingerprint;
++  std::string cookie_fingerprint = kDeletedFingerprint;
++  bool effective_deleted = false;
 +  bool device_bound = false;
-+};
-+
-+struct DomainState {
-+  std::string source_fingerprint;
-+  int source_generation = 0;
-+  int replica_generation = 0;
-+  bool needs_reauthentication = false;
-+};
-+
-+struct RemoteDomain {
-+  int generation = 0;
-+  std::string fingerprint;
-+  std::vector<net::CanonicalCookie> cookies;
-+};
-+
-+struct PendingSourceState {
-+  std::string fingerprint;
-+  int generation = 0;
++  std::string site;
 +};
 +
 +struct CookieOperation {
 +  bool set = false;
++  std::string record_key;
 +  net::CanonicalCookie cookie;
 +  GURL source_url;
 +};
 +
-+struct PendingReplica {
-+  std::string domain;
-+  int generation = 0;
-+  std::deque<CookieOperation> operations;
++struct RollbackJournal {
++  std::string status;
++  SealedPayload sealed_payload;
++  std::string before_fingerprint;
++  std::string target_fingerprint;
++  size_t set_count = 0;
++  size_t delete_count = 0;
 +};
 +
-+std::string CanonicalDomain(std::string value) {
-+  value = std::string(base::TrimWhitespaceASCII(value, base::TRIM_ALL));
-+  value = base::ToLowerASCII(value);
-+  if (base::StartsWith(value, ".")) {
-+    value.erase(0, 1);
-+  }
-+  return value;
++std::string Sha256(std::string_view value) {
++  return base::HexEncodeLower(crypto::SHA256HashString(value));
 +}
 +
-+bool DomainMatches(std::string_view cookie_domain,
-+                   std::string_view policy_domain) {
-+  std::string domain = CanonicalDomain(std::string(cookie_domain));
-+  return domain == policy_domain ||
-+         (domain.size() > policy_domain.size() &&
-+          base::EndsWith(domain,
-+                         std::string(".") + std::string(policy_domain)));
-+}
-+
-+bool DomainsOverlap(std::string_view left, std::string_view right) {
-+  return DomainMatches(left, right) || DomainMatches(right, left);
-+}
-+
-+std::string DomainRecordKey(std::string_view domain) {
-+  return "domain/" + std::string(domain);
++bool IsLowerHexDigest(std::string_view value) {
++  return value.size() == 64 && std::ranges::all_of(value, [](char c) {
++           return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
++         });
 +}
 +
 +std::string TimeToJSON(base::Time value) {
-+  if (value.is_null()) {
-+    return "0";
-+  }
 +  return base::NumberToString(
-+      value.ToDeltaSinceWindowsEpoch().InMicroseconds());
++      value.is_null() ? 0 : value.ToDeltaSinceWindowsEpoch().InMicroseconds());
 +}
 +
 +std::optional<base::Time> TimeFromJSON(const base::DictValue& value,
 +                                       std::string_view key) {
 +  const std::string* encoded = value.FindString(key);
 +  int64_t micros = 0;
-+  if (!encoded || !base::StringToInt64(*encoded, &micros)) {
++  if (!encoded || !base::StringToInt64(*encoded, &micros) || micros < 0) {
 +    return std::nullopt;
 +  }
-+  if (micros == 0) {
-+    return base::Time();
++  return micros == 0 ? base::Time()
++                     : base::Time::FromDeltaSinceWindowsEpoch(
++                           base::Microseconds(micros));
++}
++
++std::optional<int64_t> Int64FromJSON(const base::DictValue& value,
++                                     std::string_view key) {
++  const std::string* encoded = value.FindString(key);
++  int64_t parsed = 0;
++  if (!encoded || !base::StringToInt64(*encoded, &parsed) || parsed < 0) {
++    return std::nullopt;
 +  }
-+  return base::Time::FromDeltaSinceWindowsEpoch(base::Microseconds(micros));
++  return parsed;
 +}
 +
 +std::optional<base::DictValue> CookieToValue(
@@ -197,9 +223,12 @@ index 0000000..1d298b1
 +  value.Set("priority", static_cast<int>(cookie.Priority()));
 +  value.Set("source_scheme", static_cast<int>(cookie.SourceScheme()));
 +  value.Set("source_port", cookie.SourcePort());
++  value.Set("source_type", static_cast<int>(cookie.SourceType()));
 +  if (cookie.PartitionKey()) {
 +    auto serialized = net::CookiePartitionKey::Serialize(cookie.PartitionKey());
 +    if (!serialized.has_value()) {
++      // Nonce partition keys cannot be reconstructed. Fail the whole snapshot
++      // instead of silently dropping a live valid cookie.
 +      return std::nullopt;
 +    }
 +    base::DictValue partition;
@@ -209,23 +238,6 @@ index 0000000..1d298b1
 +    value.Set("partition_key", std::move(partition));
 +  }
 +  return value;
-+}
-+
-+GURL SourceUrlForCookie(const net::CanonicalCookie& cookie) {
-+  std::string url =
-+      (cookie.SourceScheme() == net::CookieSourceScheme::kSecure ||
-+       cookie.SecureAttribute())
-+          ? "https://"
-+          : "http://";
-+  url += cookie.DomainWithoutDot();
-+  const int port = cookie.SourcePort();
-+  if (port > 0 && port <= 65535 &&
-+      !((url.starts_with("https://") && port == 443) ||
-+        (url.starts_with("http://") && port == 80))) {
-+    url += ":" + base::NumberToString(port);
-+  }
-+  url += "/";
-+  return GURL(url);
 +}
 +
 +std::optional<net::CanonicalCookie> CookieFromValue(
@@ -244,13 +256,14 @@ index 0000000..1d298b1
 +  std::optional<int> priority = value.FindInt("priority");
 +  std::optional<int> source_scheme = value.FindInt("source_scheme");
 +  std::optional<int> source_port = value.FindInt("source_port");
-+  if (!name || !cookie_value || !domain || !path || !creation || !expiry ||
++  std::optional<int> source_type = value.FindInt("source_type");
++  if (!name || !cookie_value || !domain || domain->empty() || !path ||
++      path->empty() || (*path)[0] != '/' || !creation || !expiry ||
 +      !last_access || !last_update || !secure || !http_only || !same_site ||
-+      !priority || !source_scheme || !source_port || path->empty() ||
-+      (*path)[0] != '/' || *same_site < -1 || *same_site > 2 || *priority < 0 ||
-+      *priority > 2 || *source_scheme < 0 || *source_scheme > 2 ||
-+      *source_port < -1 || *source_port == 0 || *source_port > 65535 ||
-+      (!expiry->is_null() && *expiry <= *creation)) {
++      !priority || !source_scheme || !source_port || !source_type ||
++      *same_site < -1 || *same_site > 2 || *priority < 0 || *priority > 2 ||
++      *source_scheme < 0 || *source_scheme > 2 || *source_port < -1 ||
++      *source_port > 65535 || *source_type < 1 || *source_type > 3) {
 +    return std::nullopt;
 +  }
 +
@@ -270,157 +283,342 @@ index 0000000..1d298b1
 +    partition_key = std::move(*parsed);
 +  }
 +
-+  const net::CookieSourceScheme scheme =
-+      static_cast<net::CookieSourceScheme>(*source_scheme);
-+  std::string source = (scheme == net::CookieSourceScheme::kSecure || *secure)
-+                           ? "https://"
-+                           : "http://";
-+  source += CanonicalDomain(*domain) + "/";
-+  GURL source_url(source);
-+  if (!source_url.is_valid()) {
-+    return std::nullopt;
-+  }
 +  std::unique_ptr<net::CanonicalCookie> cookie =
-+      net::CanonicalCookie::CreateSanitizedCookie(
-+          source_url, *name, *cookie_value, *domain, *path, *creation, *expiry,
-+          *last_access, *secure, *http_only,
++      net::CanonicalCookie::FromStorage(
++          *name, *cookie_value, *domain, *path, *creation, *expiry,
++          *last_access, *last_update, *secure, *http_only,
 +          static_cast<net::CookieSameSite>(*same_site),
-+          static_cast<net::CookiePriority>(*priority), partition_key,
-+          /*status=*/nullptr);
++          static_cast<net::CookiePriority>(*priority), std::move(partition_key),
++          static_cast<net::CookieSourceScheme>(*source_scheme), *source_port,
++          static_cast<net::CookieSourceType>(*source_type),
++          net::CanonicalCookieFromStorageCallSite::kCookieManager);
 +  if (!cookie) {
-+    return std::nullopt;
-+  }
-+  cookie->SetSourceScheme(scheme);
-+  cookie->SetSourcePort(*source_port);
-+  if (!SourceUrlForCookie(*cookie).is_valid()) {
 +    return std::nullopt;
 +  }
 +  return std::move(*cookie);
 +}
 +
 +std::optional<std::string> CookieIdentity(const net::CanonicalCookie& cookie) {
-+  std::string partition = "unpartitioned";
++  std::string identity;
++  auto append = [&identity](std::string_view part) {
++    identity += base::NumberToString(part.size());
++    identity += ":";
++    identity.append(part);
++  };
 +  if (cookie.PartitionKey()) {
 +    auto serialized = net::CookiePartitionKey::Serialize(cookie.PartitionKey());
 +    if (!serialized.has_value()) {
 +      return std::nullopt;
 +    }
-+    partition = serialized->TopLevelSite() + "\0" +
-+                (serialized->has_cross_site_ancestor() ? "1" : "0");
++    append("partitioned");
++    append(serialized->TopLevelSite());
++    append(serialized->has_cross_site_ancestor() ? "1" : "0");
++  } else {
++    append("unpartitioned");
 +  }
-+  return partition + "\0" + cookie.Domain() + "\0" + cookie.Path() + "\0" +
-+         cookie.Name() + "\0" +
-+         base::NumberToString(static_cast<int>(cookie.SourceScheme())) + "\0" +
-+         base::NumberToString(cookie.SourcePort());
++  append(cookie.Domain());
++  append(cookie.Path());
++  append(cookie.Name());
++  append(base::NumberToString(static_cast<int>(cookie.SourceScheme())));
++  append(base::NumberToString(cookie.SourcePort()));
++  return identity;
 +}
 +
-+std::optional<base::ListValue> CookiesToValue(
-+    std::vector<net::CanonicalCookie> cookies) {
-+  std::map<std::string, net::CanonicalCookie> by_identity;
-+  for (net::CanonicalCookie& cookie : cookies) {
-+    if (cookie.IsExpired(base::Time::Now())) {
-+      continue;
-+    }
-+    std::optional<std::string> identity = CookieIdentity(cookie);
-+    if (!identity) {
-+      return std::nullopt;
-+    }
-+    by_identity.insert_or_assign(std::move(*identity), std::move(cookie));
-+  }
-+  if (by_identity.size() > kMaxCookiesPerDomain) {
++std::optional<std::string> CookieRecordKey(const net::CanonicalCookie& cookie) {
++  std::optional<std::string> identity = CookieIdentity(cookie);
++  return identity ? std::optional<std::string>(Sha256(*identity))
++                  : std::nullopt;
++}
++
++std::optional<std::string> CookieFingerprint(
++    const net::CanonicalCookie& cookie) {
++  std::optional<base::DictValue> value = CookieToValue(cookie);
++  if (!value) {
 +    return std::nullopt;
 +  }
-+  base::ListValue out;
-+  for (const auto& [identity, cookie] : by_identity) {
++  // Chromium reads update these fields and a destination may not recreate
++  // them byte-for-byte. They are retained for rollback but never count as a
++  // user/session mutation.
++  value->Remove("creation");
++  value->Remove("last_access");
++  value->Remove("last_update");
++  std::string raw;
++  if (!base::JSONWriter::Write(*value, &raw)) {
++    return std::nullopt;
++  }
++  return Sha256(raw);
++}
++
++std::optional<CookieSnapshot> BuildSnapshot(
++    std::vector<net::CanonicalCookie> cookies,
++    base::Time now = base::Time::Now()) {
++  CookieSnapshot out;
++  for (net::CanonicalCookie& cookie : cookies) {
++    if (cookie.IsExpired(now)) {
++      continue;
++    }
++    std::optional<std::string> key = CookieRecordKey(cookie);
++    std::optional<std::string> fingerprint = CookieFingerprint(cookie);
++    if (!key || !fingerprint || out.cookies.contains(*key)) {
++      return std::nullopt;
++    }
++    out.cookie_fingerprints[*key] = std::move(*fingerprint);
++    out.cookies.emplace(*key, std::move(cookie));
++  }
++  if (out.cookies.size() > kMaxCookieRecords) {
++    return std::nullopt;
++  }
++  std::string fingerprint_input;
++  for (const auto& [key, cookie] : out.cookies) {
 +    std::optional<base::DictValue> value = CookieToValue(cookie);
 +    if (!value) {
 +      return std::nullopt;
 +    }
-+    out.Append(std::move(*value));
++    out.serialized.Append(std::move(*value));
++    fingerprint_input += key + "\0" + out.cookie_fingerprints.at(key) + "\n";
 +  }
++  out.fingerprint = Sha256(fingerprint_input);
 +  return out;
 +}
 +
-+std::optional<std::string> FingerprintCookies(const base::ListValue& cookies) {
-+  base::ListValue mutation_fields;
-+  for (const base::Value& item : cookies) {
-+    if (!item.is_dict()) {
-+      return std::nullopt;
-+    }
-+    base::DictValue cookie = item.GetDict().Clone();
-+    // Reads update access metadata and replicas cannot recreate update time.
-+    // They are retained in the payload for recovery but are not rotations.
-+    cookie.Remove("creation");
-+    cookie.Remove("last_access");
-+    cookie.Remove("last_update");
-+    mutation_fields.Append(std::move(cookie));
++GURL SourceUrlForCookie(const net::CanonicalCookie& cookie) {
++  std::string source =
++      cookie.SourceScheme() == net::CookieSourceScheme::kSecure ||
++              cookie.SecureAttribute()
++          ? "https://"
++          : "http://";
++  source += cookie.DomainWithoutDot();
++  if (cookie.SourcePort() >= 0 && cookie.SourcePort() <= 65535 &&
++      !((source.starts_with("https://") && cookie.SourcePort() == 443) ||
++        (source.starts_with("http://") && cookie.SourcePort() == 80))) {
++    source += ":" + base::NumberToString(cookie.SourcePort());
 +  }
-+  std::string raw;
-+  if (!base::JSONWriter::Write(mutation_fields, &raw)) {
-+    return std::nullopt;
-+  }
-+  return base::HexEncodeLower(crypto::SHA256HashString(raw));
++  source += cookie.Path();
++  return GURL(source);
 +}
 +
-+std::optional<std::string> MakeDomainPayload(const Policy& policy,
-+                                             int generation,
-+                                             base::ListValue cookies) {
-+  base::DictValue payload;
-+  payload.Set("format", kCookieFormat);
-+  payload.Set("domain", policy.domain);
-+  payload.Set("source_device", policy.source);
-+  payload.Set("mode", policy.device_bound ? "device-bound" : "portable");
-+  payload.Set("generation", generation);
-+  payload.Set("cookies", std::move(cookies));
++std::string SiteForCookie(const net::CanonicalCookie& cookie) {
++  GURL source = SourceUrlForCookie(cookie);
++  return source.is_valid() ? net::SchemefulSite(source).Serialize() : "";
++}
++
++std::optional<std::string> MakeCookiePayload(
++    const net::CanonicalCookie& cookie,
++    const std::set<std::string>& device_bound_sites) {
++  std::optional<base::DictValue> serialized = CookieToValue(cookie);
++  if (!serialized) {
++    return std::nullopt;
++  }
++  base::DictValue root;
++  root.Set("format", kCookiePayloadFormat);
++  root.Set("cookie", std::move(*serialized));
++  std::string site = SiteForCookie(cookie);
++  if (!site.empty() && device_bound_sites.contains(site)) {
++    base::DictValue auxiliary;
++    auxiliary.Set("kind", "device-bound-session");
++    auxiliary.Set("site", site);
++    auxiliary.Set("transfer", "password-reauthentication");
++    root.Set("auxiliary_state", std::move(auxiliary));
++  }
 +  std::string raw;
-+  if (!base::JSONWriter::Write(payload, &raw) ||
++  if (!base::JSONWriter::Write(root, &raw) ||
 +      raw.size() > kMaxCookiePayloadBytes) {
 +    return std::nullopt;
 +  }
 +  return raw;
 +}
 +
-+std::optional<RemoteDomain> ParseRemoteDomain(const Policy& policy,
-+                                              const base::DictValue& payload) {
-+  const std::string* format = payload.FindString("format");
-+  const std::string* domain = payload.FindString("domain");
-+  const std::string* source = payload.FindString("source_device");
-+  const std::string* mode = payload.FindString("mode");
-+  std::optional<int> generation = payload.FindInt("generation");
-+  const base::ListValue* cookies = payload.FindList("cookies");
-+  if (!format || *format != kCookieFormat || !domain ||
-+      CanonicalDomain(*domain) != policy.domain || !source ||
-+      *source != policy.source || !mode ||
-+      *mode != (policy.device_bound ? "device-bound" : "portable") ||
-+      !generation || *generation <= 0 || !cookies ||
-+      cookies->size() > kMaxCookiesPerDomain ||
-+      (policy.device_bound && !cookies->empty())) {
-+    return std::nullopt;
-+  }
-+  RemoteDomain out;
-+  out.generation = *generation;
-+  for (const base::Value& item : *cookies) {
-+    if (!item.is_dict()) {
++std::optional<RemoteCookie> ParseRemoteCookie(Record record) {
++  RemoteCookie out;
++  out.record = std::move(record);
++  if (out.record.deleted) {
++    std::optional<base::Value> tombstone_payload =
++        base::JSONReader::Read(out.record.payload_json, base::JSON_PARSE_RFC);
++    if (!tombstone_payload || !tombstone_payload->is_dict() ||
++        !tombstone_payload->GetDict().empty()) {
 +      return std::nullopt;
 +    }
-+    std::optional<net::CanonicalCookie> cookie =
-+        CookieFromValue(item.GetDict());
-+    if (!cookie || !DomainMatches(cookie->Domain(), policy.domain) ||
-+        cookie->IsExpired(base::Time::Now())) {
++    out.payload_fingerprint = kDeletedFingerprint;
++    out.effective_deleted = true;
++    return out;
++  }
++  if (out.record.payload_json.empty() ||
++      out.record.payload_json.size() > kMaxCookiePayloadBytes) {
++    return std::nullopt;
++  }
++  std::optional<base::Value> parsed =
++      base::JSONReader::Read(out.record.payload_json, base::JSON_PARSE_RFC);
++  if (!parsed || !parsed->is_dict()) {
++    return std::nullopt;
++  }
++  const std::string* format = parsed->GetDict().FindString("format");
++  if (!format || *format != kCookiePayloadFormat) {
++    return std::nullopt;
++  }
++  const base::DictValue* cookie_value = parsed->GetDict().FindDict("cookie");
++  if (!cookie_value) {
++    return std::nullopt;
++  }
++  std::optional<net::CanonicalCookie> cookie = CookieFromValue(*cookie_value);
++  if (!cookie) {
++    return std::nullopt;
++  }
++  std::optional<std::string> key = CookieRecordKey(*cookie);
++  std::optional<std::string> fingerprint = CookieFingerprint(*cookie);
++  if (!key || *key != out.record.key || !fingerprint) {
++    return std::nullopt;
++  }
++  if (const base::DictValue* auxiliary =
++          parsed->GetDict().FindDict("auxiliary_state")) {
++    const std::string* kind = auxiliary->FindString("kind");
++    const std::string* site = auxiliary->FindString("site");
++    const std::string* transfer = auxiliary->FindString("transfer");
++    if (!kind || *kind != "device-bound-session" || !site || site->empty() ||
++        !transfer || *transfer != "password-reauthentication" ||
++        *site != SiteForCookie(*cookie)) {
 +      return std::nullopt;
 +    }
-+    out.cookies.push_back(std::move(*cookie));
++    out.device_bound = true;
++    out.site = *site;
 +  }
-+  std::optional<base::ListValue> normalized = CookiesToValue(out.cookies);
-+  if (!normalized) {
-+    return std::nullopt;
++  out.payload_fingerprint = Sha256(out.record.payload_json);
++  out.cookie_fingerprint = std::move(*fingerprint);
++  out.effective_deleted = cookie->IsExpired(base::Time::Now());
++  if (!out.effective_deleted) {
++    out.cookie = std::move(*cookie);
 +  }
-+  std::optional<std::string> fingerprint = FingerprintCookies(*normalized);
-+  if (!fingerprint) {
-+    return std::nullopt;
-+  }
-+  out.fingerprint = std::move(*fingerprint);
 +  return out;
++}
++
++bool WriteSecretFile(const base::FilePath& path, std::string_view contents) {
++  if (!base::CreateDirectory(path.DirName()) ||
++      !base::ImportantFileWriter::WriteFileAtomically(path, contents,
++                                                      "HeliumSync")) {
++    return false;
++  }
++#if BUILDFLAG(IS_POSIX)
++  return base::SetPosixFilePermissions(path, 0600);
++#else
++  return true;
++#endif
++}
++
++base::DictValue RecordStateToValue(const RecordState& state) {
++  base::DictValue value;
++  value.Set("remote_revision", base::NumberToString(state.remote_revision));
++  value.Set("key_id", state.key_id);
++  value.Set("device_id", state.device_id);
++  value.Set("remote_payload_fingerprint", state.remote_payload_fingerprint);
++  value.Set("baseline_cookie_fingerprint", state.baseline_cookie_fingerprint);
++  value.Set("remote_deleted", state.remote_deleted);
++  value.Set("non_clonable", state.non_clonable);
++  value.Set("non_clonable_reason", state.non_clonable_reason);
++  value.Set("site", state.site);
++  if (state.pending) {
++    base::DictValue pending;
++    pending.Set("expected_revision",
++                base::NumberToString(state.pending->expected_revision));
++    pending.Set("target_revision",
++                base::NumberToString(state.pending->target_revision));
++    pending.Set("payload_fingerprint", state.pending->payload_fingerprint);
++    pending.Set("cookie_fingerprint", state.pending->cookie_fingerprint);
++    pending.Set("deleted", state.pending->deleted);
++    value.Set("pending_publish", std::move(pending));
++  }
++  return value;
++}
++
++std::optional<RecordState> RecordStateFromValue(const base::DictValue& value) {
++  RecordState state;
++  std::optional<int64_t> revision = Int64FromJSON(value, "remote_revision");
++  const std::string* key_id = value.FindString("key_id");
++  const std::string* device_id = value.FindString("device_id");
++  const std::string* remote_payload =
++      value.FindString("remote_payload_fingerprint");
++  const std::string* baseline = value.FindString("baseline_cookie_fingerprint");
++  std::optional<bool> deleted = value.FindBool("remote_deleted");
++  if (!revision || !key_id || !device_id || !remote_payload || !baseline ||
++      !deleted) {
++    return std::nullopt;
++  }
++  state.remote_revision = *revision;
++  state.key_id = *key_id;
++  state.device_id = *device_id;
++  state.remote_payload_fingerprint = *remote_payload;
++  state.baseline_cookie_fingerprint = *baseline;
++  state.remote_deleted = *deleted;
++  state.non_clonable = value.FindBool("non_clonable").value_or(false);
++  if (const std::string* reason = value.FindString("non_clonable_reason")) {
++    state.non_clonable_reason = *reason;
++  }
++  if (const std::string* site = value.FindString("site")) {
++    state.site = *site;
++  }
++  if (const base::DictValue* pending = value.FindDict("pending_publish")) {
++    PendingPublish parsed;
++    std::optional<int64_t> expected =
++        Int64FromJSON(*pending, "expected_revision");
++    std::optional<int64_t> target = Int64FromJSON(*pending, "target_revision");
++    const std::string* payload = pending->FindString("payload_fingerprint");
++    const std::string* cookie = pending->FindString("cookie_fingerprint");
++    std::optional<bool> pending_deleted = pending->FindBool("deleted");
++    if (!expected || !target || *target != *expected + 1 || !payload ||
++        !cookie || !pending_deleted) {
++      return std::nullopt;
++    }
++    parsed.expected_revision = *expected;
++    parsed.target_revision = *target;
++    parsed.payload_fingerprint = *payload;
++    parsed.cookie_fingerprint = *cookie;
++    parsed.deleted = *pending_deleted;
++    state.pending = std::move(parsed);
++  }
++  return state;
++}
++
++std::vector<CookieOperation> DiffSnapshots(const CookieSnapshot& before,
++                                           const CookieSnapshot& after,
++                                           const std::set<std::string>& keys) {
++  std::vector<CookieOperation> operations;
++  for (const std::string& key : keys) {
++    auto old_cookie = before.cookies.find(key);
++    auto new_cookie = after.cookies.find(key);
++    if (old_cookie != before.cookies.end() &&
++        new_cookie == after.cookies.end()) {
++      operations.push_back({false, key, old_cookie->second, GURL()});
++      continue;
++    }
++    if (new_cookie != after.cookies.end() &&
++        (old_cookie == before.cookies.end() ||
++         before.cookie_fingerprints.at(key) !=
++             after.cookie_fingerprints.at(key))) {
++      operations.push_back({true, key, new_cookie->second,
++                            SourceUrlForCookie(new_cookie->second)});
++    }
++  }
++  return operations;
++}
++
++std::set<std::string> AllSnapshotKeys(const CookieSnapshot& left,
++                                      const CookieSnapshot& right) {
++  std::set<std::string> keys;
++  for (const auto& [key, cookie] : left.cookies) {
++    keys.insert(key);
++  }
++  for (const auto& [key, cookie] : right.cookies) {
++    keys.insert(key);
++  }
++  return keys;
++}
++
++std::optional<CookieSnapshot> RefreshLiveSnapshot(
++    const CookieSnapshot& snapshot) {
++  std::vector<net::CanonicalCookie> cookies;
++  cookies.reserve(snapshot.cookies.size());
++  for (const auto& [key, cookie] : snapshot.cookies) {
++    cookies.push_back(cookie);
++  }
++  return BuildSnapshot(std::move(cookies));
 +}
 +
 +}  // namespace
@@ -429,27 +627,34 @@ index 0000000..1d298b1
 + public:
 +  Impl(Profile* profile,
 +       std::unique_ptr<HeliumSyncClient> client,
-+       std::string device_name,
-+       base::FilePath policies_path,
-+       base::FilePath state_path)
++       base::FilePath state_path,
++       base::FilePath rollback_path,
++       base::FilePath reauth_signal_path)
 +      : profile_(profile),
 +        client_(std::move(client)),
-+        device_name_(std::move(device_name)),
-+        policies_path_(std::move(policies_path)),
-+        state_path_(std::move(state_path)) {}
++        state_path_(std::move(state_path)),
++        rollback_path_(std::move(rollback_path)),
++        reauth_signal_path_(std::move(reauth_signal_path)) {}
 +
 +  ~Impl() { Stop(); }
 +
 +  void Start() {
-+    if (!profile_ || !client_ || policies_path_.empty() || !LoadPolicies()) {
-+      LOG(WARNING) << "Helium cookie sync inactive: cookie policy is missing "
-+                      "or invalid";
++    if (!profile_ || !client_ || !LoadState()) {
++      LOG(WARNING) << "Helium cookie sync inactive: state is invalid";
 +      return;
 +    }
-+    LoadState();
 +    reconcile_timer_.Start(
 +        FROM_HERE, kReconcileInterval,
 +        base::BindRepeating(&Impl::Reconcile, weak_factory_.GetWeakPtr()));
++    std::optional<RollbackJournal> journal = LoadRollback();
++    if (base::PathExists(rollback_path_) && !journal) {
++      Block("cookie-rollback-journal-invalid");
++      return;
++    }
++    if (journal && journal->status == "pending") {
++      RecoverRollback(std::move(*journal));
++      return;
++    }
 +    Reconcile();
 +  }
 +
@@ -457,361 +662,699 @@ index 0000000..1d298b1
 +    reconcile_timer_.Stop();
 +    weak_factory_.InvalidateWeakPtrs();
 +    reconcile_in_flight_ = false;
-+    source_push_in_flight_ = false;
-+    replica_apply_in_flight_ = false;
-+    pending_replicas_.clear();
++    operation_queue_.clear();
 +  }
 +
 + private:
-+  bool LoadPolicies() {
-+    std::string raw;
-+    if (!base::ReadFileToString(policies_path_, &raw)) {
-+      return false;
-+    }
-+    std::optional<base::Value> parsed =
-+        base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
-+    if (!parsed || !parsed->is_dict()) {
-+      return false;
-+    }
-+    const base::ListValue* list = parsed->GetDict().FindList("cookie_policies");
-+    if (!list || list->empty()) {
-+      return false;
-+    }
-+    std::vector<Policy> loaded;
-+    for (const base::Value& item : *list) {
-+      if (!item.is_dict()) {
-+        return false;
-+      }
-+      const base::DictValue& value = item.GetDict();
-+      const std::string* domain_value = value.FindString("domain");
-+      const std::string* source = value.FindString("source");
-+      const std::string* mode = value.FindString("mode");
-+      const base::ListValue* replicas = value.FindList("replicas");
-+      if (!domain_value || !source || source->empty() || !mode || !replicas ||
-+          (*mode != "portable" && *mode != "device-bound")) {
-+        return false;
-+      }
-+      Policy policy;
-+      policy.domain = CanonicalDomain(*domain_value);
-+      policy.source = *source;
-+      policy.device_bound = *mode == "device-bound";
-+      GURL domain_url("https://" + policy.domain + "/");
-+      if (policy.domain.empty() || !domain_url.is_valid() ||
-+          domain_url.host() != policy.domain) {
-+        return false;
-+      }
-+      for (const base::Value& replica : *replicas) {
-+        if (!replica.is_string() || replica.GetString().empty() ||
-+            replica.GetString() == policy.source ||
-+            !policy.replicas.insert(replica.GetString()).second) {
-+          return false;
-+        }
-+      }
-+      for (const Policy& existing : loaded) {
-+        if (DomainsOverlap(existing.domain, policy.domain)) {
-+          return false;
-+        }
-+      }
-+      loaded.push_back(std::move(policy));
-+    }
-+    policies_ = std::move(loaded);
-+    return true;
-+  }
-+
-+  void LoadState() {
-+    state_.clear();
++  bool LoadState() {
++    state_ = BridgeState();
 +    if (!base::PathExists(state_path_)) {
-+      return;
++      return true;
 +    }
 +    std::string raw;
 +    std::optional<base::Value> parsed;
 +    if (!base::ReadFileToString(state_path_, &raw) ||
 +        !(parsed = base::JSONReader::Read(raw, base::JSON_PARSE_RFC)) ||
-+        !parsed->is_dict() ||
-+        parsed->GetDict().FindInt("schema_version").value_or(0) !=
-+            kStateSchema) {
-+      LOG(WARNING) << "Helium cookie sync ignored invalid state";
-+      return;
++        !parsed->is_dict()) {
++      return false;
 +    }
-+    const base::DictValue* domains = parsed->GetDict().FindDict("domains");
-+    if (!domains) {
-+      return;
++    int schema = parsed->GetDict().FindInt("schema_version").value_or(0);
++    if (schema == 1) {
++      base::FilePath backup = state_path_.AddExtensionASCII("policy-v1.bak");
++      if (!base::PathExists(backup) && !base::CopyFile(state_path_, backup)) {
++        return false;
++      }
++      state_.migrated_from_policy_v1 = true;
++      return true;
 +    }
-+    for (const auto [domain, value] : *domains) {
-+      if (!value.is_dict()) {
-+        state_.clear();
-+        return;
-+      }
-+      DomainState item;
-+      if (const std::string* fingerprint =
-+              value.GetDict().FindString("source_fingerprint")) {
-+        item.source_fingerprint = *fingerprint;
-+      }
-+      item.source_generation =
-+          value.GetDict().FindInt("source_generation").value_or(0);
-+      item.replica_generation =
-+          value.GetDict().FindInt("replica_generation").value_or(0);
-+      item.needs_reauthentication =
-+          value.GetDict().FindBool("needs_reauthentication").value_or(false);
-+      if (item.source_generation < 0 || item.replica_generation < 0) {
-+        state_.clear();
-+        return;
-+      }
-+      state_[domain] = std::move(item);
++    if (schema != kStateSchema) {
++      return false;
 +    }
++    if (const std::string* blocked =
++            parsed->GetDict().FindString("blocked_reason")) {
++      state_.blocked_reason = *blocked;
++    }
++    std::optional<int64_t> verified_sequence =
++        Int64FromJSON(parsed->GetDict(), "verified_sequence");
++    if (!verified_sequence) {
++      return false;
++    }
++    state_.verified_sequence = *verified_sequence;
++    state_.migrated_from_policy_v1 =
++        parsed->GetDict().FindBool("migrated_from_policy_v1").value_or(false);
++    const base::DictValue* records = parsed->GetDict().FindDict("records");
++    if (!records) {
++      return false;
++    }
++    for (const auto [key, value] : *records) {
++      if (!IsLowerHexDigest(key) || !value.is_dict()) {
++        return false;
++      }
++      std::optional<RecordState> record = RecordStateFromValue(value.GetDict());
++      if (!record) {
++        return false;
++      }
++      state_.records.emplace(key, std::move(*record));
++    }
++    return true;
 +  }
 +
 +  bool SaveState() const {
-+    if (!base::CreateDirectory(state_path_.DirName())) {
-+      return false;
-+    }
-+    base::DictValue domains;
-+    for (const auto& [domain, item] : state_) {
-+      base::DictValue value;
-+      value.Set("source_fingerprint", item.source_fingerprint);
-+      value.Set("source_generation", item.source_generation);
-+      value.Set("replica_generation", item.replica_generation);
-+      value.Set("needs_reauthentication", item.needs_reauthentication);
-+      domains.Set(domain, std::move(value));
++    base::DictValue records;
++    for (const auto& [key, record] : state_.records) {
++      records.Set(key, RecordStateToValue(record));
 +    }
 +    base::DictValue root;
 +    root.Set("schema_version", kStateSchema);
-+    root.Set("domains", std::move(domains));
++    root.Set("verified_sequence",
++             base::NumberToString(state_.verified_sequence));
++    root.Set("blocked_reason", state_.blocked_reason);
++    root.Set("migrated_from_policy_v1", state_.migrated_from_policy_v1);
++    root.Set("records", std::move(records));
 +    std::string raw;
 +    return base::JSONWriter::Write(root, &raw) &&
-+           base::ImportantFileWriter::WriteFileAtomically(state_path_, raw,
-+                                                          "HeliumSync");
++           WriteSecretFile(state_path_, raw);
++  }
++
++  void Block(std::string reason) {
++    LOG(WARNING) << "Helium cookie sync stopped: " << reason;
++    state_.blocked_reason = std::move(reason);
++    SaveState();
++    reconcile_in_flight_ = false;
 +  }
 +
 +  void Reconcile() {
-+    if (reconcile_in_flight_) {
++    if (reconcile_in_flight_ || !state_.blocked_reason.empty()) {
 +      return;
 +    }
 +    reconcile_in_flight_ = true;
-+    client_->Latest(
-+        {kCookieKind}, /*include_deleted=*/false,
-+        base::BindOnce(&Impl::OnLatest, weak_factory_.GetWeakPtr()));
++    client_->Latest({kCookieKind}, base::BindOnce(&Impl::OnLatest,
++                                                  weak_factory_.GetWeakPtr()));
 +  }
 +
-+  void OnLatest(bool ok, std::string response, std::string error) {
++  void OnLatest(bool ok, RecordsResult result, std::string error) {
 +    if (!ok) {
 +      LOG(WARNING) << "Helium cookie pull failed: " << error;
 +      reconcile_in_flight_ = false;
 +      return;
 +    }
-+    std::optional<std::map<std::string, RemoteDomain>> remote =
-+        ParseRemote(std::move(response));
-+    if (!remote) {
-+      LOG(WARNING) << "Helium cookie pull rejected malformed authority data";
-+      reconcile_in_flight_ = false;
++    if (result.records.size() > kMaxCookieRecords) {
++      Block("remote-cookie-record-limit-exceeded");
 +      return;
++    }
++    pending_next_seq_ = result.next_seq;
++    std::map<std::string, RemoteCookie> remote;
++    for (Record& record : result.records) {
++      if (record.kind != kCookieKind || !IsLowerHexDigest(record.key)) {
++        Block("legacy-or-malformed-cookie-record");
++        return;
++      }
++      if (record.revision <= 0 || record.device_id.empty() ||
++          record.key_id.empty() || remote.contains(record.key)) {
++        Block("malformed-cookie-authority-metadata");
++        return;
++      }
++      std::optional<RemoteCookie> parsed = ParseRemoteCookie(std::move(record));
++      if (!parsed) {
++        Block("malformed-cookie-record-payload");
++        return;
++      }
++      remote.emplace(parsed->record.key, std::move(*parsed));
 +    }
 +    profile_->GetDefaultStoragePartition()
 +        ->GetCookieManagerForBrowserProcess()
 +        ->GetAllCookies(base::BindOnce(
-+            &Impl::OnCookies, weak_factory_.GetWeakPtr(), std::move(*remote)));
++            &Impl::OnCookies, weak_factory_.GetWeakPtr(), std::move(remote)));
 +  }
 +
-+  std::optional<std::map<std::string, RemoteDomain>> ParseRemote(
-+      std::string response) {
-+    std::optional<base::Value> root =
-+        base::JSONReader::Read(response, base::JSON_PARSE_RFC);
-+    if (!root || !root->is_dict()) {
-+      return std::nullopt;
++  void OnCookies(std::map<std::string, RemoteCookie> remote,
++                 std::vector<net::CanonicalCookie> cookies) {
++    std::optional<CookieSnapshot> local = BuildSnapshot(std::move(cookies));
++    if (!local) {
++      Block("local-cookie-snapshot-not-fully-serializable");
++      return;
 +    }
-+    const base::ListValue* records = root->GetDict().FindList("records");
-+    if (!records) {
-+      return std::nullopt;
++    auto* manager =
++        profile_->GetDefaultStoragePartition()->GetDeviceBoundSessionManager();
++    if (!manager) {
++      ReconcileSnapshots(std::move(remote), std::move(*local), {});
++      return;
 +    }
-+    std::map<std::string, RemoteDomain> out;
-+    std::map<std::string, const Policy*> by_key;
-+    for (const Policy& policy : policies_) {
-+      by_key[DomainRecordKey(policy.domain)] = &policy;
-+    }
-+    for (const base::Value& item : *records) {
-+      if (!item.is_dict()) {
-+        return std::nullopt;
-+      }
-+      const base::DictValue& record = item.GetDict();
-+      const std::string* kind = record.FindString("kind");
-+      const std::string* key = record.FindString("key");
-+      if (!kind || *kind != kCookieKind || !key || !by_key.contains(*key)) {
-+        continue;
-+      }
-+      const Policy& policy = *by_key[*key];
-+      const std::string* origin = record.FindString("origin_device");
-+      const base::DictValue* payload = record.FindDict("payload");
-+      if (!origin || *origin != policy.source || !payload ||
-+          record.FindBool("deleted").value_or(false)) {
-+        return std::nullopt;
-+      }
-+      std::optional<RemoteDomain> domain = ParseRemoteDomain(policy, *payload);
-+      if (!domain || !out.emplace(policy.domain, std::move(*domain)).second) {
-+        return std::nullopt;
-+      }
-+    }
-+    return out;
++    manager->GetAllSessions(
++        base::BindOnce(&Impl::OnDeviceBoundSessions, weak_factory_.GetWeakPtr(),
++                       std::move(remote), std::move(*local)));
 +  }
 +
-+  void OnCookies(std::map<std::string, RemoteDomain> remote,
-+                 const std::vector<net::CanonicalCookie>& all_cookies) {
-+    std::vector<Record> source_records;
-+    std::map<std::string, PendingSourceState> source_state;
-+    pending_replicas_.clear();
-+    for (const Policy& policy : policies_) {
-+      auto remote_item = remote.find(policy.domain);
-+      if (policy.source == device_name_) {
-+        std::vector<net::CanonicalCookie> local;
-+        if (!policy.device_bound) {
-+          for (const net::CanonicalCookie& cookie : all_cookies) {
-+            if (DomainMatches(cookie.Domain(), policy.domain)) {
-+              local.push_back(cookie);
-+            }
-+          }
-+        }
-+        std::optional<base::ListValue> cookies = CookiesToValue(local);
-+        std::optional<std::string> fingerprint =
-+            cookies ? FingerprintCookies(*cookies) : std::nullopt;
-+        if (!cookies || !fingerprint) {
-+          LOG(WARNING) << "Helium cookie source retained prior generation for "
-+                       << policy.domain;
-+          continue;
-+        }
-+        if (remote_item != remote.end() &&
-+            remote_item->second.fingerprint == *fingerprint) {
-+          DomainState& item = state_[policy.domain];
-+          item.source_fingerprint = *fingerprint;
-+          item.source_generation = remote_item->second.generation;
-+          continue;
-+        }
-+        const int previous = remote_item == remote.end()
-+                                 ? state_[policy.domain].source_generation
-+                                 : remote_item->second.generation;
-+        if (previous == std::numeric_limits<int>::max()) {
-+          LOG(WARNING) << "Helium cookie generation overflow for "
-+                       << policy.domain;
-+          continue;
-+        }
-+        const int generation = previous + 1;
-+        std::optional<std::string> payload =
-+            MakeDomainPayload(policy, generation, std::move(*cookies));
-+        if (!payload) {
-+          continue;
-+        }
-+        Record record;
-+        record.kind = kCookieKind;
-+        record.key = DomainRecordKey(policy.domain);
-+        record.origin_device = device_name_;
-+        record.payload_json = std::move(*payload);
-+        source_records.push_back(std::move(record));
-+        source_state[policy.domain] = {*fingerprint, generation};
++  void OnDeviceBoundSessions(
++      std::map<std::string, RemoteCookie> remote,
++      CookieSnapshot local,
++      std::vector<network::mojom::DeviceBoundSessionKeyPtr> sessions) {
++    std::set<std::string> sites;
++    for (const auto& session : sessions) {
++      if (!session || session->site.opaque()) {
 +        continue;
 +      }
-+
-+      if (!policy.replicas.contains(device_name_) ||
-+          remote_item == remote.end() ||
-+          state_[policy.domain].replica_generation >=
-+              remote_item->second.generation) {
-+        continue;
-+      }
-+      if (policy.device_bound) {
-+        DomainState& item = state_[policy.domain];
-+        item.replica_generation = remote_item->second.generation;
-+        item.needs_reauthentication = true;
-+        continue;
-+      }
-+      PendingReplica pending;
-+      pending.domain = policy.domain;
-+      pending.generation = remote_item->second.generation;
-+      bool pending_valid = true;
-+      std::set<std::string> remote_identities;
-+      for (const net::CanonicalCookie& cookie : remote_item->second.cookies) {
-+        std::optional<std::string> identity = CookieIdentity(cookie);
-+        if (!identity) {
-+          pending_valid = false;
-+          break;
-+        }
-+        remote_identities.insert(*identity);
-+      }
-+      for (const net::CanonicalCookie& cookie : all_cookies) {
-+        if (!DomainMatches(cookie.Domain(), policy.domain)) {
-+          continue;
-+        }
-+        std::optional<std::string> identity = CookieIdentity(cookie);
-+        if (!identity) {
-+          pending_valid = false;
-+          break;
-+        }
-+        if (!remote_identities.contains(*identity)) {
-+          pending.operations.push_back({false, cookie, GURL()});
-+        }
-+      }
-+      for (const net::CanonicalCookie& cookie : remote_item->second.cookies) {
-+        GURL source_url = SourceUrlForCookie(cookie);
-+        if (!source_url.is_valid()) {
-+          pending_valid = false;
-+          break;
-+        }
-+        pending.operations.push_back({true, cookie, std::move(source_url)});
-+      }
-+      if (pending_valid) {
-+        pending_replicas_.push_back(std::move(pending));
-+      } else {
-+        LOG(WARNING) << "Helium cookie replica retained prior generation for "
-+                     << policy.domain;
-+      }
++      sites.insert(session->site.Serialize());
 +    }
-+    SaveState();
-+
-+    source_push_in_flight_ = !source_records.empty();
-+    if (source_push_in_flight_) {
-+      client_->Push(
-+          std::move(source_records),
-+          base::BindOnce(&Impl::OnSourcePush, weak_factory_.GetWeakPtr(),
-+                         std::move(source_state)));
-+    }
-+    replica_apply_in_flight_ = !pending_replicas_.empty();
-+    if (replica_apply_in_flight_) {
-+      StartNextReplica();
-+    }
-+    MaybeFinish();
++    ReconcileSnapshots(std::move(remote), std::move(local), std::move(sites));
 +  }
 +
-+  void OnSourcePush(std::map<std::string, PendingSourceState> pending,
-+                    bool ok,
-+                    std::string error) {
-+    source_push_in_flight_ = false;
++  void ReconcileSnapshots(std::map<std::string, RemoteCookie> remote,
++                          CookieSnapshot local,
++                          std::set<std::string> device_bound_sites) {
++    // First resolve ambiguous successful pushes from the durable pending state.
++    for (auto& [key, record_state] : state_.records) {
++      if (!record_state.pending) {
++        continue;
++      }
++      auto found = remote.find(key);
++      if (found != remote.end() &&
++          found->second.record.revision ==
++              record_state.pending->target_revision &&
++          found->second.payload_fingerprint ==
++              record_state.pending->payload_fingerprint &&
++          found->second.record.deleted == record_state.pending->deleted) {
++        AcceptRemoteState(found->second,
++                          record_state.pending->cookie_fingerprint,
++                          /*non_clonable=*/false, "");
++        state_.records[key].pending.reset();
++        continue;
++      }
++      if (found == remote.end() &&
++          record_state.pending->expected_revision == 0) {
++        continue;
++      }
++      if (found == remote.end() ||
++          found->second.record.revision !=
++              record_state.pending->expected_revision) {
++        Block("cookie-publication-cas-conflict");
++        return;
++      }
++    }
++
++    std::map<std::string, RemoteCookie> apply_updates;
++    std::set<std::string> reauth_sites;
++    for (auto& [key, remote_cookie] : remote) {
++      auto state_it = state_.records.find(key);
++      auto local_it = local.cookies.find(key);
++      std::string local_fingerprint = local_it == local.cookies.end()
++                                          ? kDeletedFingerprint
++                                          : local.cookie_fingerprints.at(key);
++
++      if (state_it == state_.records.end() ||
++          state_it->second.remote_revision == 0) {
++        if (remote_cookie.device_bound) {
++          AcceptRemoteState(remote_cookie, local_fingerprint,
++                            /*non_clonable=*/true, "device-bound-session");
++          reauth_sites.insert(remote_cookie.site);
++        } else if (remote_cookie.effective_deleted ||
++                   local_it == local.cookies.end()) {
++          apply_updates.emplace(key, remote_cookie);
++        } else if (local_fingerprint == remote_cookie.cookie_fingerprint) {
++          AcceptRemoteState(remote_cookie, local_fingerprint,
++                            /*non_clonable=*/false, "");
++        } else {
++          Block("uninitialized-cookie-has-local-and-remote-values");
++          return;
++        }
++        continue;
++      }
++
++      RecordState& established = state_it->second;
++      if (remote_cookie.record.revision < established.remote_revision) {
++        Block("cookie-authority-revision-regressed");
++        return;
++      }
++      if (remote_cookie.record.key_id != established.key_id) {
++        Block("cookie-key-epoch-changed");
++        return;
++      }
++      if (remote_cookie.record.revision == established.remote_revision) {
++        if (remote_cookie.payload_fingerprint !=
++                established.remote_payload_fingerprint ||
++            remote_cookie.record.deleted != established.remote_deleted) {
++          Block("cookie-same-revision-payload-changed");
++          return;
++        }
++        continue;
++      }
++      if (local_fingerprint != established.baseline_cookie_fingerprint) {
++        Block("concurrent-local-and-remote-cookie-change");
++        return;
++      }
++      if (remote_cookie.device_bound || established.non_clonable) {
++        AcceptRemoteState(remote_cookie, local_fingerprint,
++                          /*non_clonable=*/true,
++                          remote_cookie.device_bound
++                              ? "device-bound-session"
++                              : established.non_clonable_reason);
++        if (!remote_cookie.site.empty()) {
++          reauth_sites.insert(remote_cookie.site);
++        }
++        continue;
++      }
++      apply_updates.emplace(key, remote_cookie);
++    }
++
++    for (const auto& [key, established] : state_.records) {
++      if (established.remote_revision > 0 && !remote.contains(key)) {
++        Block("cookie-authority-record-disappeared");
++        return;
++      }
++    }
++    if (!reauth_sites.empty()) {
++      if (!WriteReauthSignal("non-clonable-device-bound-session",
++                             reauth_sites)) {
++        Block("cookie-reauth-signal-write-failed");
++        return;
++      }
++    }
++    if (!SaveState()) {
++      Block("cookie-state-write-failed");
++      return;
++    }
++
++    if (!apply_updates.empty()) {
++      BeginRemoteApply(std::move(local), std::move(apply_updates));
++      return;
++    }
++
++    PublishLocalMutations(std::move(local), std::move(remote),
++                          std::move(device_bound_sites));
++  }
++
++  void AcceptRemoteState(const RemoteCookie& remote,
++                         std::string baseline,
++                         bool non_clonable,
++                         std::string reason) {
++    RecordState& state = state_.records[remote.record.key];
++    state.remote_revision = remote.record.revision;
++    state.key_id = remote.record.key_id;
++    state.device_id = remote.record.device_id;
++    state.remote_payload_fingerprint = remote.payload_fingerprint;
++    state.baseline_cookie_fingerprint = std::move(baseline);
++    state.remote_deleted = remote.record.deleted;
++    state.non_clonable = non_clonable;
++    state.non_clonable_reason = std::move(reason);
++    state.site = remote.site;
++    state.pending.reset();
++  }
++
++  void PublishLocalMutations(CookieSnapshot local,
++                             std::map<std::string, RemoteCookie> remote,
++                             std::set<std::string> device_bound_sites) {
++    if (client_->enrollment_phase() == "pending") {
++      for (const auto& [key, cookie] : local.cookies) {
++        if (state_.records.contains(key)) {
++          continue;
++        }
++        RecordState baseline;
++        baseline.baseline_cookie_fingerprint =
++            local.cookie_fingerprints.at(key);
++        baseline.site = SiteForCookie(cookie);
++        state_.records.emplace(key, std::move(baseline));
++      }
++      FinishVerifiedInventory();
++      return;
++    }
++
++    if (!FinishVerifiedInventory()) {
++      return;
++    }
++    std::vector<Record> mutations;
++    for (const auto& [key, cookie] : local.cookies) {
++      auto state_it = state_.records.find(key);
++      std::string fingerprint = local.cookie_fingerprints.at(key);
++      if (state_it != state_.records.end() &&
++          (state_it->second.non_clonable ||
++           fingerprint == state_it->second.baseline_cookie_fingerprint)) {
++        continue;
++      }
++      int64_t expected = state_it == state_.records.end()
++                             ? 0
++                             : state_it->second.remote_revision;
++      std::optional<std::string> payload =
++          MakeCookiePayload(cookie, device_bound_sites);
++      if (!payload) {
++        Block("cookie-payload-not-fully-serializable");
++        return;
++      }
++      Record mutation;
++      mutation.kind = kCookieKind;
++      mutation.key = key;
++      mutation.expected_revision = expected;
++      mutation.revision = expected + 1;
++      mutation.payload_json = *payload;
++      mutations.push_back(std::move(mutation));
++      RecordState& pending_state = state_.records[key];
++      pending_state.pending = PendingPublish{
++          expected, expected + 1, Sha256(*payload), fingerprint, false};
++    }
++
++    for (auto& [key, record_state] : state_.records) {
++      if (record_state.remote_revision == 0 || record_state.remote_deleted ||
++          record_state.non_clonable || local.cookies.contains(key) ||
++          record_state.pending) {
++        continue;
++      }
++      Record mutation;
++      mutation.kind = kCookieKind;
++      mutation.key = key;
++      mutation.expected_revision = record_state.remote_revision;
++      mutation.revision = record_state.remote_revision + 1;
++      mutation.deleted = true;
++      mutation.payload_json = "{}";
++      mutations.push_back(std::move(mutation));
++      record_state.pending = PendingPublish{
++          record_state.remote_revision, record_state.remote_revision + 1,
++          kDeletedFingerprint, kDeletedFingerprint, true};
++    }
++
++    if (mutations.empty()) {
++      reconcile_in_flight_ = false;
++      return;
++    }
++    if (!SaveState()) {
++      Block("cookie-pending-publication-write-failed");
++      return;
++    }
++    client_->Push(
++        std::move(mutations),
++        base::BindOnce(&Impl::OnPushComplete, weak_factory_.GetWeakPtr()));
++  }
++
++  void OnPushComplete(bool ok, RecordsResult, std::string error) {
 +    if (!ok) {
-+      LOG(WARNING) << "Helium cookie source push failed: " << error;
-+      MaybeFinish();
-+      return;
++      LOG(WARNING) << "Helium cookie push unconfirmed: " << error;
 +    }
-+    for (const auto& [domain, update] : pending) {
-+      DomainState& item = state_[domain];
-+      item.source_fingerprint = update.fingerprint;
-+      item.source_generation = update.generation;
-+    }
-+    SaveState();
-+    MaybeFinish();
++    reconcile_in_flight_ = false;
++    base::SequencedTaskRunner::GetCurrentDefault()->PostTask(
++        FROM_HERE,
++        base::BindOnce(&Impl::Reconcile, weak_factory_.GetWeakPtr()));
 +  }
 +
-+  void StartNextReplica() {
-+    if (pending_replicas_.empty()) {
-+      replica_apply_in_flight_ = false;
-+      MaybeFinish();
++  bool FinishVerifiedInventory() {
++    state_.verified_sequence = pending_next_seq_;
++    if (!SaveState()) {
++      Block("cookie-verified-state-write-failed");
++      return false;
++    }
++    std::string error;
++    if (!client_->AcknowledgeApplied(pending_next_seq_, &error)) {
++      LOG(WARNING) << "Helium cookie cursor acknowledgement failed: "
++                   << error;
++      reconcile_in_flight_ = false;
++      return false;
++    }
++    if (client_->enrollment_phase() == "pending") {
++      reconcile_in_flight_ = false;
++    }
++    return true;
++  }
++
++  void BeginRemoteApply(CookieSnapshot before,
++                        std::map<std::string, RemoteCookie> updates) {
++    CookieSnapshot target = before;
++    std::set<std::string> keys;
++    for (const auto& [key, remote] : updates) {
++      keys.insert(key);
++      if (remote.effective_deleted) {
++        target.cookies.erase(key);
++        target.cookie_fingerprints.erase(key);
++      } else {
++        target.cookies.insert_or_assign(key, *remote.cookie);
++        target.cookie_fingerprints.insert_or_assign(key,
++                                                    remote.cookie_fingerprint);
++      }
++    }
++    std::vector<net::CanonicalCookie> target_cookies;
++    for (const auto& [key, cookie] : target.cookies) {
++      target_cookies.push_back(cookie);
++    }
++    std::optional<CookieSnapshot> normalized =
++        BuildSnapshot(std::move(target_cookies));
++    if (!normalized) {
++      Block("remote-cookie-apply-preview-invalid");
 +      return;
 +    }
-+    if (pending_replicas_.front().operations.empty()) {
-+      CompleteReplica();
++    target = std::move(*normalized);
++    std::vector<CookieOperation> operations =
++        DiffSnapshots(before, target, keys);
++    if (operations.empty()) {
++      for (const auto& [key, remote] : updates) {
++        std::string baseline = target.cookies.contains(key)
++                                   ? target.cookie_fingerprints.at(key)
++                                   : kDeletedFingerprint;
++        AcceptRemoteState(remote, std::move(baseline), false, "");
++      }
++      if (!SaveState()) {
++        Block("cookie-state-write-failed-after-empty-apply");
++      } else {
++        reconcile_in_flight_ = false;
++      }
 +      return;
 +    }
-+    CookieOperation operation =
-+        std::move(pending_replicas_.front().operations.front());
-+    pending_replicas_.front().operations.pop_front();
++    std::optional<std::string> rollback_plaintext = MakeRollbackPayload(before);
++    if (!rollback_plaintext) {
++      Block("cookie-rollback-payload-invalid");
++      return;
++    }
++    SealedPayload sealed;
++    std::string seal_error;
++    if (!client_->SealLocalPayload(kRollbackPurpose, *rollback_plaintext,
++                                   &sealed, &seal_error)) {
++      LOG(WARNING) << "Helium cookie rollback seal failed: " << seal_error;
++      Block("cookie-rollback-seal-failed");
++      return;
++    }
++    size_t set_count = std::ranges::count_if(
++        operations,
++        [](const CookieOperation& operation) { return operation.set; });
++    RollbackJournal journal{"pending",          std::move(sealed),
++                            before.fingerprint, target.fingerprint,
++                            set_count,          operations.size() - set_count};
++    if (!SaveRollback(journal)) {
++      Block("cookie-rollback-journal-write-failed");
++      return;
++    }
++    apply_before_ = std::move(before);
++    apply_target_ = std::move(target);
++    apply_updates_ = std::move(updates);
++    operation_queue_ =
++        std::deque<CookieOperation>(std::make_move_iterator(operations.begin()),
++                                    std::make_move_iterator(operations.end()));
++    active_journal_ = std::move(journal);
++    restoring_ = false;
++    StartNextOperation();
++  }
++
++  std::optional<std::string> MakeRollbackPayload(
++      const CookieSnapshot& before) const {
++    base::DictValue root;
++    root.Set("format", kRollbackPayloadFormat);
++    root.Set("cookies", before.serialized.Clone());
++    root.Set("fingerprint", before.fingerprint);
++    std::string raw;
++    if (!base::JSONWriter::Write(root, &raw) ||
++        raw.size() > kMaxRollbackPayloadBytes) {
++      return std::nullopt;
++    }
++    return raw;
++  }
++
++  std::optional<CookieSnapshot> ParseRollbackPayload(
++      std::string_view raw) const {
++    if (raw.size() > kMaxRollbackPayloadBytes) {
++      return std::nullopt;
++    }
++    std::optional<base::Value> parsed =
++        base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
++    if (!parsed || !parsed->is_dict()) {
++      return std::nullopt;
++    }
++    const std::string* format = parsed->GetDict().FindString("format");
++    if (!format || *format != kRollbackPayloadFormat) {
++      return std::nullopt;
++    }
++    const base::ListValue* cookies = parsed->GetDict().FindList("cookies");
++    const std::string* fingerprint =
++        parsed->GetDict().FindString("fingerprint");
++    if (!cookies || !fingerprint || cookies->size() > kMaxCookieRecords) {
++      return std::nullopt;
++    }
++    std::vector<net::CanonicalCookie> decoded;
++    for (const base::Value& value : *cookies) {
++      if (!value.is_dict()) {
++        return std::nullopt;
++      }
++      std::optional<net::CanonicalCookie> cookie =
++          CookieFromValue(value.GetDict());
++      if (!cookie) {
++        return std::nullopt;
++      }
++      decoded.push_back(std::move(*cookie));
++    }
++    std::optional<CookieSnapshot> snapshot =
++        BuildSnapshot(std::move(decoded), base::Time::Min());
++    if (!snapshot || snapshot->fingerprint != *fingerprint) {
++      return std::nullopt;
++    }
++    return snapshot;
++  }
++
++  bool SaveRollback(const RollbackJournal& journal) const {
++    base::DictValue preview;
++    preview.Set("before_fingerprint", journal.before_fingerprint);
++    preview.Set("target_fingerprint", journal.target_fingerprint);
++    preview.Set("set_count", static_cast<int>(journal.set_count));
++    preview.Set("delete_count", static_cast<int>(journal.delete_count));
++    base::DictValue root;
++    root.Set("schema_version", kRollbackSchema);
++    root.Set("status", journal.status);
++    base::DictValue sealed;
++    sealed.Set("key_id", journal.sealed_payload.key_id);
++    sealed.Set("nonce", journal.sealed_payload.nonce);
++    sealed.Set("ciphertext", journal.sealed_payload.ciphertext);
++    root.Set("sealed_payload", std::move(sealed));
++    root.Set("preview", std::move(preview));
++    std::string raw;
++    return base::JSONWriter::Write(root, &raw) &&
++           WriteSecretFile(rollback_path_, raw);
++  }
++
++  std::optional<RollbackJournal> LoadRollback() const {
++    if (!base::PathExists(rollback_path_)) {
++      return std::nullopt;
++    }
++    std::string raw;
++    std::optional<base::Value> parsed;
++    if (!base::ReadFileToString(rollback_path_, &raw) ||
++        !(parsed = base::JSONReader::Read(raw, base::JSON_PARSE_RFC)) ||
++        !parsed->is_dict() ||
++        parsed->GetDict().FindInt("schema_version").value_or(0) !=
++            kRollbackSchema) {
++      return std::nullopt;
++    }
++    const std::string* status = parsed->GetDict().FindString("status");
++    const base::DictValue* sealed =
++        parsed->GetDict().FindDict("sealed_payload");
++    const base::DictValue* preview = parsed->GetDict().FindDict("preview");
++    if (!status ||
++        (*status != "pending" && *status != "committed" &&
++         *status != "recovered") ||
++        !sealed || !preview) {
++      return std::nullopt;
++    }
++    const std::string* sealed_key_id = sealed->FindString("key_id");
++    const std::string* sealed_nonce = sealed->FindString("nonce");
++    const std::string* sealed_ciphertext = sealed->FindString("ciphertext");
++    if (!sealed_key_id || sealed_key_id->empty() || !sealed_nonce ||
++        sealed_nonce->empty() || !sealed_ciphertext ||
++        sealed_ciphertext->empty()) {
++      return std::nullopt;
++    }
++    const std::string* before = preview->FindString("before_fingerprint");
++    const std::string* target = preview->FindString("target_fingerprint");
++    std::optional<int> set_count = preview->FindInt("set_count");
++    std::optional<int> delete_count = preview->FindInt("delete_count");
++    if (!before || !target || !set_count || *set_count < 0 || !delete_count ||
++        *delete_count < 0) {
++      return std::nullopt;
++    }
++    return RollbackJournal{*status,
++                           {*sealed_key_id, *sealed_nonce, *sealed_ciphertext},
++                           *before,
++                           *target,
++                           static_cast<size_t>(*set_count),
++                           static_cast<size_t>(*delete_count)};
++  }
++
++  void RecoverRollback(RollbackJournal journal) {
++    std::string opened;
++    std::string open_error;
++    bool opened_ok = client_->OpenLocalPayload(
++        kRollbackPurpose, journal.sealed_payload, &opened, &open_error);
++    std::optional<CookieSnapshot> rollback =
++        opened_ok ? ParseRollbackPayload(opened) : std::nullopt;
++    if (!rollback) {
++      LOG(WARNING) << "Helium cookie rollback open failed: " << open_error;
++      Block("cookie-rollback-open-or-validation-failed");
++      return;
++    }
++    std::optional<CookieSnapshot> live_rollback =
++        RefreshLiveSnapshot(*rollback);
++    if (!live_rollback) {
++      Block("cookie-live-rollback-snapshot-invalid");
++      return;
++    }
++    journal.before_fingerprint = live_rollback->fingerprint;
++    active_journal_ = std::move(journal);
++    apply_before_ = std::move(*live_rollback);
++    profile_->GetDefaultStoragePartition()
++        ->GetCookieManagerForBrowserProcess()
++        ->GetAllCookies(base::BindOnce(&Impl::OnRecoveryCookies,
++                                       weak_factory_.GetWeakPtr()));
++  }
++
++  void OnRecoveryCookies(std::vector<net::CanonicalCookie> cookies) {
++    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
++    if (!current) {
++      Block("cookie-rollback-current-snapshot-invalid");
++      return;
++    }
++    if (current->fingerprint == active_journal_->target_fingerprint) {
++      active_journal_->status = "committed";
++      if (!SaveRollback(*active_journal_)) {
++        Block("cookie-rollback-finalize-failed");
++        return;
++      }
++      active_journal_.reset();
++      reconcile_in_flight_ = false;
++      Reconcile();
++      return;
++    }
++    BeginRestore(std::move(*current));
++  }
++
++  void BeginRestore(CookieSnapshot current) {
++    std::optional<CookieSnapshot> live_before =
++        RefreshLiveSnapshot(apply_before_);
++    if (!live_before) {
++      Block("cookie-rollback-refresh-failed");
++      return;
++    }
++    apply_before_ = std::move(*live_before);
++    active_journal_->before_fingerprint = apply_before_.fingerprint;
++    if (!SaveRollback(*active_journal_)) {
++      Block("cookie-rollback-refresh-write-failed");
++      return;
++    }
++    std::set<std::string> keys = AllSnapshotKeys(current, apply_before_);
++    std::vector<CookieOperation> operations =
++        DiffSnapshots(current, apply_before_, keys);
++    operation_queue_ =
++        std::deque<CookieOperation>(std::make_move_iterator(operations.begin()),
++                                    std::make_move_iterator(operations.end()));
++    restoring_ = true;
++    StartNextOperation();
++  }
++
++  void StartNextOperation() {
++    if (operation_queue_.empty()) {
++      VerifyOperationResult();
++      return;
++    }
++    CookieOperation operation = std::move(operation_queue_.front());
++    operation_queue_.pop_front();
++    current_operation_ = operation;
 +    network::mojom::CookieManager* manager =
 +        profile_->GetDefaultStoragePartition()
 +            ->GetCookieManagerForBrowserProcess();
 +    if (operation.set) {
++      if (!operation.source_url.is_valid()) {
++        OnOperationFailed("invalid-cookie-source-url");
++        return;
++      }
 +      manager->SetCanonicalCookie(
 +          operation.cookie, operation.source_url,
 +          net::CookieOptions::MakeAllInclusive(),
@@ -825,53 +1368,164 @@ index 0000000..1d298b1
 +
 +  void OnCookieSet(net::CookieAccessResult result) {
 +    if (!result.status.IsInclude()) {
-+      FailReplica("set rejected");
++      if (restoring_) {
++        Block("cookie-rollback-set-rejected");
++        return;
++      }
++      rejected_record_key_ = current_operation_->record_key;
++      rejected_site_ = SiteForCookie(current_operation_->cookie);
++      OnOperationFailed("destination-set-rejected");
 +      return;
 +    }
-+    StartNextReplica();
++    current_operation_.reset();
++    StartNextOperation();
 +  }
 +
 +  void OnCookieDeleted(bool) {
-+    // A concurrent expiry makes deletion return false but already satisfies
-+    // the replica generation.
-+    StartNextReplica();
++    // Concurrent expiry can make deletion return false while the requested
++    // state is already satisfied. The post-apply snapshot is authoritative.
++    current_operation_.reset();
++    StartNextOperation();
 +  }
 +
-+  void CompleteReplica() {
-+    PendingReplica completed = std::move(pending_replicas_.front());
-+    pending_replicas_.pop_front();
-+    DomainState& item = state_[completed.domain];
-+    item.replica_generation = completed.generation;
-+    item.needs_reauthentication = false;
-+    SaveState();
-+    StartNextReplica();
++  void OnOperationFailed(std::string reason) {
++    LOG(WARNING) << "Helium cookie operation failed: " << reason;
++    operation_queue_.clear();
++    current_operation_.reset();
++    profile_->GetDefaultStoragePartition()
++        ->GetCookieManagerForBrowserProcess()
++        ->GetAllCookies(base::BindOnce(&Impl::OnFailedApplyCookies,
++                                       weak_factory_.GetWeakPtr()));
 +  }
 +
-+  void FailReplica(std::string_view reason) {
-+    LOG(WARNING) << "Helium cookie replica apply failed for "
-+                 << pending_replicas_.front().domain << ": " << reason;
-+    pending_replicas_.clear();
-+    replica_apply_in_flight_ = false;
-+    MaybeFinish();
-+  }
-+
-+  void MaybeFinish() {
-+    if (!source_push_in_flight_ && !replica_apply_in_flight_) {
-+      reconcile_in_flight_ = false;
++  void OnFailedApplyCookies(std::vector<net::CanonicalCookie> cookies) {
++    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
++    if (!current) {
++      Block("cookie-failed-apply-snapshot-invalid");
++      return;
 +    }
++    BeginRestore(std::move(*current));
++  }
++
++  void VerifyOperationResult() {
++    profile_->GetDefaultStoragePartition()
++        ->GetCookieManagerForBrowserProcess()
++        ->GetAllCookies(base::BindOnce(&Impl::OnVerifiedCookies,
++                                       weak_factory_.GetWeakPtr()));
++  }
++
++  void OnVerifiedCookies(std::vector<net::CanonicalCookie> cookies) {
++    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
++    if (!current) {
++      Block("cookie-post-apply-snapshot-invalid");
++      return;
++    }
++    if (restoring_) {
++      if (current->fingerprint != apply_before_.fingerprint) {
++        Block("cookie-rollback-verification-failed");
++        return;
++      }
++      active_journal_->status = "recovered";
++      if (!SaveRollback(*active_journal_)) {
++        Block("cookie-rollback-recovery-state-write-failed");
++        return;
++      }
++      if (!rejected_record_key_.empty()) {
++        auto remote = apply_updates_.find(rejected_record_key_);
++        if (remote != apply_updates_.end()) {
++          std::string baseline =
++              current->cookies.contains(rejected_record_key_)
++                  ? current->cookie_fingerprints.at(rejected_record_key_)
++                  : kDeletedFingerprint;
++          AcceptRemoteState(remote->second, std::move(baseline), true,
++                            "destination-set-rejected");
++          if (!WriteReauthSignal("destination-cookie-rejected",
++                                 {rejected_site_}) ||
++              !SaveState()) {
++            Block("cookie-rejection-state-write-failed");
++            return;
++          }
++        }
++      }
++      ResetApply();
++      reconcile_in_flight_ = false;
++      Reconcile();
++      return;
++    }
++
++    if (current->fingerprint != apply_target_.fingerprint) {
++      OnOperationFailed("cookie-post-apply-verification-mismatch");
++      return;
++    }
++    for (const auto& [key, remote] : apply_updates_) {
++      std::string baseline = current->cookies.contains(key)
++                                 ? current->cookie_fingerprints.at(key)
++                                 : kDeletedFingerprint;
++      AcceptRemoteState(remote, std::move(baseline), false, "");
++    }
++    if (!SaveState()) {
++      Block("cookie-state-write-failed-after-apply");
++      return;
++    }
++    active_journal_->status = "committed";
++    if (!SaveRollback(*active_journal_)) {
++      Block("cookie-rollback-commit-write-failed");
++      return;
++    }
++    ResetApply();
++    reconcile_in_flight_ = false;
++    Reconcile();
++  }
++
++  void ResetApply() {
++    operation_queue_.clear();
++    current_operation_.reset();
++    apply_updates_.clear();
++    apply_before_ = CookieSnapshot();
++    apply_target_ = CookieSnapshot();
++    active_journal_.reset();
++    rejected_record_key_.clear();
++    rejected_site_.clear();
++    restoring_ = false;
++  }
++
++  bool WriteReauthSignal(std::string reason,
++                         const std::set<std::string>& sites) const {
++    base::ListValue list;
++    for (const std::string& site : sites) {
++      if (!site.empty()) {
++        list.Append(site);
++      }
++    }
++    base::DictValue root;
++    root.Set("schema_version", kReauthSchema);
++    root.Set("action", "automatic-password-reauthentication");
++    root.Set("status", "pending-browser-integration");
++    root.Set("reason", std::move(reason));
++    root.Set("sites", std::move(list));
++    root.Set("created_at", base::TimeToISO8601(base::Time::Now()));
++    std::string raw;
++    return base::JSONWriter::Write(root, &raw) &&
++           WriteSecretFile(reauth_signal_path_, raw);
 +  }
 +
 +  raw_ptr<Profile> profile_;
 +  std::unique_ptr<HeliumSyncClient> client_;
-+  const std::string device_name_;
-+  const base::FilePath policies_path_;
 +  const base::FilePath state_path_;
-+  std::vector<Policy> policies_;
-+  std::map<std::string, DomainState> state_;
-+  std::deque<PendingReplica> pending_replicas_;
++  const base::FilePath rollback_path_;
++  const base::FilePath reauth_signal_path_;
++  BridgeState state_;
++  CookieSnapshot apply_before_;
++  CookieSnapshot apply_target_;
++  std::map<std::string, RemoteCookie> apply_updates_;
++  std::deque<CookieOperation> operation_queue_;
++  std::optional<CookieOperation> current_operation_;
++  std::optional<RollbackJournal> active_journal_;
++  std::string rejected_record_key_;
++  std::string rejected_site_;
++  bool restoring_ = false;
 +  bool reconcile_in_flight_ = false;
-+  bool source_push_in_flight_ = false;
-+  bool replica_apply_in_flight_ = false;
++  int64_t pending_next_seq_ = 0;
 +  base::RepeatingTimer reconcile_timer_;
 +  base::WeakPtrFactory<Impl> weak_factory_{this};
 +};
@@ -879,14 +1533,14 @@ index 0000000..1d298b1
 +HeliumCookieSyncBridge::HeliumCookieSyncBridge(
 +    Profile* profile,
 +    std::unique_ptr<HeliumSyncClient> client,
-+    std::string device_name,
-+    base::FilePath policies_path,
-+    base::FilePath state_path)
++    base::FilePath state_path,
++    base::FilePath rollback_path,
++    base::FilePath reauth_signal_path)
 +    : impl_(std::make_unique<Impl>(profile,
 +                                   std::move(client),
-+                                   std::move(device_name),
-+                                   std::move(policies_path),
-+                                   std::move(state_path))) {}
++                                   std::move(state_path),
++                                   std::move(rollback_path),
++                                   std::move(reauth_signal_path))) {}
 +
 +HeliumCookieSyncBridge::~HeliumCookieSyncBridge() = default;
 +
@@ -901,18 +1555,16 @@ index 0000000..1d298b1
 +}  // namespace helium_sync
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.h b/chrome/browser/helium_sync/helium_cookie_sync_bridge.h
 new file mode 100644
-index 0000000..bc7012d
+index 0000000..442bd9d
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.h
-@@ -0,0 +1,40 @@
+@@ -0,0 +1,38 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 +#define CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 +
 +#include <memory>
-+#include <string>
-+
 +#include "base/files/file_path.h"
 +
 +class Profile;
@@ -921,15 +1573,15 @@ index 0000000..bc7012d
 +
 +class HeliumSyncClient;
 +
-+// Reconciles configured cookie domains through Chromium's privileged
-+// CookieManager. A policy has exactly one source; replicas never publish.
++// Reconciles the complete live cookie profile through Chromium's privileged
++// CookieManager. The bridge never opens or merges Chromium's cookie database.
 +class HeliumCookieSyncBridge {
 + public:
 +  HeliumCookieSyncBridge(Profile* profile,
 +                         std::unique_ptr<HeliumSyncClient> client,
-+                         std::string device_name,
-+                         base::FilePath policies_path,
-+                         base::FilePath state_path);
++                         base::FilePath state_path,
++                         base::FilePath rollback_path,
++                         base::FilePath reauth_signal_path);
 +  HeliumCookieSyncBridge(const HeliumCookieSyncBridge&) = delete;
 +  HeliumCookieSyncBridge& operator=(const HeliumCookieSyncBridge&) = delete;
 +  ~HeliumCookieSyncBridge();
@@ -947,35 +1599,36 @@ index 0000000..bc7012d
 +#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 diff --git a/chrome/browser/helium_sync/helium_sync_service.cc b/chrome/browser/helium_sync/helium_sync_service.cc
 new file mode 100644
-index 0000000..a60ae30
+index 0000000..1bed1ec
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_sync_service.cc
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,182 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_sync_service.h"
 +
++#include <cstdint>
 +#include <optional>
 +#include <string>
 +#include <vector>
 +
-+#include "base/base_paths.h"
++#include "base/base64.h"
 +#include "base/files/file_path.h"
 +#include "base/files/file_util.h"
++#include "base/json/json_reader.h"
 +#include "base/logging.h"
-+#include "base/path_service.h"
 +#include "base/strings/string_util.h"
-+#include "base/system/sys_info.h"
++#include "base/values.h"
 +#include "build/build_config.h"
 +#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
 +#include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
 +#include "chrome/browser/profiles/profile.h"
-+#include "chrome/common/chrome_paths.h"
 +#include "components/helium_sync/helium_password_sync_bridge.h"
 +#include "components/helium_sync/helium_sync_client.h"
 +#include "components/keyed_service/core/service_access_type.h"
 +#include "services/network/public/cpp/shared_url_loader_factory.h"
 +#include "url/gurl.h"
++#include "url/url_constants.h"
 +
 +#if BUILDFLAG(IS_ANDROID)
 +#include <android/log.h>
@@ -995,12 +1648,12 @@ index 0000000..a60ae30
 +constexpr char kConfigDir[] = "helium-sync";
 +constexpr char kTokenFile[] = "token";
 +constexpr char kBaseUrlFile[] = "base_url";
-+constexpr char kDeviceNameFile[] = "device_name";
++constexpr char kClientStateFile[] = "client.json";
 +constexpr char kPasswordStateFile[] = "password-state.json";
-+constexpr char kCookiePoliciesFile[] = "cookie-policies.json";
 +constexpr char kCookieStateFile[] = "cookie-state.json";
++constexpr char kCookieRollbackFile[] = "cookie-rollback.json";
++constexpr char kCookieReauthSignalFile[] = "cookie-reauth-required.json";
 +constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
-+constexpr char kDefaultBaseUrl[] = "http://127.0.0.1:44719";
 +
 +#if BUILDFLAG(IS_ANDROID)
 +void AndroidStatusLog(const std::string& message) {
@@ -1010,133 +1663,109 @@ index 0000000..a60ae30
 +void AndroidStatusLog(const std::string&) {}
 +#endif
 +
-+std::vector<base::FilePath> CandidateConfigPaths(Profile* profile,
-+                                                 const char* leaf) {
-+  std::vector<base::FilePath> paths;
-+  paths.push_back(profile->GetPath().AppendASCII(kConfigDir).AppendASCII(leaf));
-+
-+  base::FilePath user_data_dir;
-+  if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir)) {
-+    paths.push_back(user_data_dir.AppendASCII(kConfigDir).AppendASCII(leaf));
++std::optional<std::string> ReadConfigValue(const base::FilePath& config_dir,
++                                           const char* leaf) {
++  std::string value;
++  if (!base::ReadFileToString(config_dir.AppendASCII(leaf), &value)) {
++    return std::nullopt;
 +  }
-+
-+  base::FilePath home_dir;
-+  if (base::PathService::Get(base::DIR_HOME, &home_dir)) {
-+    paths.push_back(home_dir.AppendASCII(".local")
-+                        .AppendASCII("share")
-+                        .AppendASCII(kConfigDir)
-+                        .AppendASCII(leaf));
-+  }
-+
-+#if BUILDFLAG(IS_ANDROID)
-+  base::FilePath app_data_dir;
-+  if (base::PathService::Get(base::DIR_ANDROID_APP_DATA, &app_data_dir)) {
-+    paths.push_back(app_data_dir.AppendASCII(kConfigDir).AppendASCII(leaf));
-+  }
-+#endif
-+
-+  return paths;
++  value = std::string(base::TrimWhitespaceASCII(value, base::TRIM_ALL));
++  return value.empty() ? std::nullopt
++                       : std::optional<std::string>(std::move(value));
 +}
 +
-+std::optional<std::string> ReadFirstConfigValue(Profile* profile,
-+                                                const char* leaf) {
-+  for (const base::FilePath& path : CandidateConfigPaths(profile, leaf)) {
-+    std::string value;
-+    if (!base::ReadFileToString(path, &value)) {
-+      continue;
-+    }
-+    value = std::string(base::TrimWhitespaceASCII(value, base::TRIM_ALL));
-+    if (!value.empty()) {
-+      return value;
-+    }
++std::optional<std::string> ReadClientDeviceId(
++    const base::FilePath& client_state_path) {
++  std::string raw;
++  if (!base::ReadFileToString(client_state_path, &raw)) {
++    return std::nullopt;
 +  }
-+  return std::nullopt;
-+}
-+
-+std::optional<base::FilePath> FindFirstConfigPath(Profile* profile,
-+                                                  const char* leaf) {
-+  for (const base::FilePath& path : CandidateConfigPaths(profile, leaf)) {
-+    if (base::PathExists(path)) {
-+      return path;
++  std::optional<base::Value> parsed =
++      base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
++  if (!parsed || !parsed->is_dict() ||
++      parsed->GetDict().FindInt("version").value_or(0) != 1) {
++    return std::nullopt;
++  }
++  const base::DictValue& state = parsed->GetDict();
++  const std::string* device_id = state.FindString("device_id");
++  const std::string* role = state.FindString("role");
++  const std::string* phase = state.FindString("phase");
++  const std::string* active_key_id = state.FindString("active_key_id");
++  const base::DictValue* keys = state.FindDict("keys");
++  if (!device_id || device_id->empty() || !role ||
++      (*role != "seed" && *role != "join") || !phase ||
++      (*phase != "pending" && *phase != "active") ||
++      !active_key_id || active_key_id->empty() || !keys || keys->empty() ||
++      !keys->Find(*active_key_id) || (*role == "seed" && *device_id != "d") ||
++      (*role == "join" && *device_id == "d")) {
++    return std::nullopt;
++  }
++  for (const auto [key_id, encoded] : *keys) {
++    if (key_id.empty() || !encoded.is_string()) {
++      return std::nullopt;
++    }
++    std::optional<std::vector<uint8_t>> decoded =
++        base::Base64Decode(encoded.GetString());
++    if (!decoded || decoded->size() != 32) {
++      return std::nullopt;
 +    }
 +  }
-+  return std::nullopt;
-+}
-+
-+GURL ReadBaseUrl(Profile* profile) {
-+  std::string base_url =
-+      ReadFirstConfigValue(profile, kBaseUrlFile).value_or(kDefaultBaseUrl);
-+  GURL url(base_url);
-+  return url.is_valid() ? url : GURL(kDefaultBaseUrl);
-+}
-+
-+std::string ReadDeviceName(Profile* profile) {
-+  if (std::optional<std::string> device_name =
-+          ReadFirstConfigValue(profile, kDeviceNameFile)) {
-+    return *device_name;
-+  }
-+
-+  return "helium-" + base::SysInfo::OperatingSystemName() + "-" +
-+         profile->GetPath().BaseName().AsUTF8Unsafe();
++  return *device_id;
 +}
 +
 +}  // namespace
 +
 +HeliumSyncService::HeliumSyncService(Profile* profile) {
++  const base::FilePath config_dir = profile->GetPath().AppendASCII(kConfigDir);
 +  if (std::optional<std::string> export_path =
-+          ReadFirstConfigValue(profile, kTabSnapshotExportPathFile)) {
++          ReadConfigValue(config_dir, kTabSnapshotExportPathFile)) {
 +    tab_snapshot_bridge_ =
 +        std::make_unique<helium_sync::HeliumTabSnapshotBridge>(
 +            profile, base::FilePath::FromUTF8Unsafe(*export_path));
 +    tab_snapshot_bridge_->Start();
 +  }
 +
-+  std::optional<std::string> token = ReadFirstConfigValue(profile, kTokenFile);
-+  if (!token) {
-+    LOG(WARNING) << "Helium sync inactive: no token config for profile "
-+                 << profile->GetPath();
-+    AndroidStatusLog("inactive: no token config for profile " +
-+                     profile->GetPath().AsUTF8Unsafe());
++  std::optional<std::string> token = ReadConfigValue(config_dir, kTokenFile);
++  std::optional<std::string> base_url_value =
++      ReadConfigValue(config_dir, kBaseUrlFile);
++  const base::FilePath client_state_path =
++      config_dir.AppendASCII(kClientStateFile);
++  std::optional<std::string> device_id = ReadClientDeviceId(client_state_path);
++  GURL base_url(base_url_value.value_or(""));
++  if (!token || !device_id || !base_url.is_valid() ||
++      !base_url.SchemeIs(url::kHttpsScheme) || base_url.host().empty() ||
++      base_url.has_username() || base_url.has_password()) {
++    LOG(WARNING) << "Helium sync inactive: profile-local enrollment config is "
++                    "missing or invalid";
++    AndroidStatusLog("inactive: profile-local enrollment config invalid");
 +    return;
 +  }
 +
-+  std::string device_name = ReadDeviceName(profile);
-+  LOG(WARNING) << "Helium sync starting for device " << device_name
-+               << " profile " << profile->GetPath();
-+  AndroidStatusLog("starting for device " + device_name);
-+  if (std::optional<base::FilePath> policies_path =
-+          FindFirstConfigPath(profile, kCookiePoliciesFile)) {
-+    auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
-+        profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
-+        device_name);
-+    cookie_bridge_ = std::make_unique<helium_sync::HeliumCookieSyncBridge>(
-+        profile, std::move(cookie_client), device_name,
-+        std::move(*policies_path),
-+        profile->GetPath()
-+            .AppendASCII(kConfigDir)
-+            .AppendASCII(kCookieStateFile));
-+    cookie_bridge_->Start();
-+  }
++  LOG(WARNING) << "Helium sync starting from profile-local enrollment";
++  AndroidStatusLog("starting from profile-local enrollment");
++  auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
++      profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
++  cookie_bridge_ = std::make_unique<helium_sync::HeliumCookieSyncBridge>(
++      profile, std::move(cookie_client),
++      config_dir.AppendASCII(kCookieStateFile),
++      config_dir.AppendASCII(kCookieRollbackFile),
++      config_dir.AppendASCII(kCookieReauthSignalFile));
++  cookie_bridge_->Start();
 +
 +  scoped_refptr<password_manager::PasswordStoreInterface> password_store =
 +      ProfilePasswordStoreFactory::GetForProfile(
 +          profile, ServiceAccessType::EXPLICIT_ACCESS);
 +  if (!password_store) {
-+    LOG(WARNING) << "Helium sync inactive: no password store for profile "
-+                 << profile->GetPath();
-+    AndroidStatusLog("inactive: no password store for profile " +
-+                     profile->GetPath().AsUTF8Unsafe());
++    LOG(WARNING) << "Helium password sync inactive: password store unavailable";
++    AndroidStatusLog("password sync inactive: password store unavailable");
 +    return;
 +  }
 +
 +  auto client = std::make_unique<helium_sync::HeliumSyncClient>(
-+      profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
-+      device_name);
++      profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
 +  password_bridge_ = std::make_unique<helium_sync::HeliumPasswordSyncBridge>(
-+      password_store, std::move(client), device_name,
-+      profile->GetPath()
-+          .AppendASCII(kConfigDir)
-+          .AppendASCII(kPasswordStateFile));
++      password_store, std::move(client), *device_id,
++      config_dir.AppendASCII(kPasswordStateFile));
 +  password_bridge_->Start();
 +}
 +
@@ -1663,10 +2292,10 @@ index 0000000..9747ead
 +}
 diff --git a/components/helium_sync/helium_password_sync_bridge.cc b/components/helium_sync/helium_password_sync_bridge.cc
 new file mode 100644
-index 0000000..6342c7b
+index 0000000..237bf1f
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.cc
-@@ -0,0 +1,693 @@
+@@ -0,0 +1,805 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_password_sync_bridge.h"
@@ -1706,28 +2335,27 @@ index 0000000..6342c7b
 +namespace {
 +
 +constexpr char kPasswordKind[] = "passwords";
-+constexpr char kLegacySimplePayloadFormat[] = "helium-password-v1";
 +constexpr char kChromiumSpecificsPayloadFormat[] =
 +    "chromium-password-specifics-data-v1";
-+constexpr int kPasswordStateSchema = 2;
++constexpr int kPasswordStateSchema = 3;
 +
 +#if BUILDFLAG(IS_ANDROID)
-+void AndroidStatusLog(const std::string& message) {
++void AndroidStatusLog(const std::string &message) {
 +  __android_log_write(ANDROID_LOG_WARN, "HeliumSync", message.c_str());
 +}
 +#else
-+void AndroidStatusLog(const std::string&) {}
++void AndroidStatusLog(const std::string &) {}
 +#endif
 +
 +using Credential = password_manager::PasswordForm;
 +
-+const Credential& ChangeCredential(
-+    const password_manager::PasswordStoreChange& change) {
++const Credential &
++ChangeCredential(const password_manager::PasswordStoreChange &change) {
 +  return change.form();
 +}
 +
-+Credential CredentialFromSpecifics(
-+    const sync_pb::PasswordSpecificsData& specifics) {
++Credential
++CredentialFromSpecifics(const sync_pb::PasswordSpecificsData &specifics) {
 +  Credential credential = password_manager::PasswordFromSpecifics(specifics);
 +  credential.in_store = password_manager::PasswordForm::Store::kProfileStore;
 +  return credential;
@@ -1735,7 +2363,7 @@ index 0000000..6342c7b
 +
 +std::string PasswordRecordKeyForValues(std::string_view signon_realm,
 +                                       std::string_view url,
-+                                       const std::u16string& username) {
++                                       const std::u16string &username) {
 +  std::string material;
 +  material.append(signon_realm);
 +  material.push_back('\0');
@@ -1747,7 +2375,7 @@ index 0000000..6342c7b
 +}
 +
 +template <typename CredentialLike>
-+std::string SignonRealmForCredential(const CredentialLike& credential) {
++std::string SignonRealmForCredential(const CredentialLike &credential) {
 +  if (!credential.signon_realm.empty()) {
 +    return credential.signon_realm;
 +  }
@@ -1758,30 +2386,30 @@ index 0000000..6342c7b
 +}
 +
 +template <typename CredentialLike>
-+std::string UrlForCredential(const CredentialLike& credential) {
++std::string UrlForCredential(const CredentialLike &credential) {
 +  if (credential.url.is_valid()) {
 +    return credential.url.spec();
 +  }
 +  return SignonRealmForCredential(credential);
 +}
 +
-+std::string PasswordRecordKey(const Credential& credential) {
++std::string PasswordRecordKey(const Credential &credential) {
 +  return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
 +                                    UrlForCredential(credential),
 +                                    credential.username_value);
 +}
 +
-+std::string PasswordRecordKeyForForm(
-+    const password_manager::PasswordForm& credential) {
++std::string
++PasswordRecordKeyForForm(const password_manager::PasswordForm &credential) {
 +  return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
 +                                    UrlForCredential(credential),
 +                                    credential.username_value);
 +}
 +
-+std::optional<std::string> PasswordPayloadJSON(const Credential& credential) {
++std::optional<std::string> PasswordPayloadJSON(const Credential &credential) {
 +  sync_pb::PasswordSpecificsData specifics =
-+      password_manager::SpecificsDataFromPassword(
-+          credential, /*base_password_data=*/{});
++      password_manager::SpecificsDataFromPassword(credential,
++                                                  /*base_password_data=*/{});
 +  std::string serialized;
 +  if (!specifics.SerializeToString(&serialized)) {
 +    return std::nullopt;
@@ -1798,50 +2426,15 @@ index 0000000..6342c7b
 +  return payload_json;
 +}
 +
-+std::optional<Credential> PayloadToCredential(const base::DictValue& payload) {
-+  const std::string* format = payload.FindString("format");
++std::optional<Credential> PayloadToCredential(const base::DictValue &payload) {
++  const std::string *format = payload.FindString("format");
 +  if (!format) {
 +    return std::nullopt;
 +  }
-+  if (*format == kLegacySimplePayloadFormat) {
-+    const std::string* url_string = payload.FindString("url");
-+    const std::string* username = payload.FindString("username");
-+    const std::string* password = payload.FindString("password");
-+    if (!url_string || !username || !password) {
-+      return std::nullopt;
-+    }
-+    GURL url(*url_string);
-+    if (!url.is_valid()) {
-+      return std::nullopt;
-+    }
-+
-+    Credential credential;
-+    credential.scheme = password_manager::PasswordForm::Scheme::kHtml;
-+    credential.signon_realm = url.DeprecatedGetOriginAsURL().spec();
-+    if (const std::string* signon_realm = payload.FindString("signon_realm")) {
-+      if (!signon_realm->empty()) {
-+        credential.signon_realm = *signon_realm;
-+      }
-+    }
-+    credential.url = std::move(url);
-+    credential.username_value = base::UTF8ToUTF16(*username);
-+    credential.password_value = base::UTF8ToUTF16(*password);
-+    credential.in_store = password_manager::PasswordForm::Store::kProfileStore;
-+    credential.type = password_manager::PasswordForm::Type::kImported;
-+    credential.date_created = base::Time::Now();
-+    credential.date_password_modified = credential.date_created;
-+    if (const std::string* note = payload.FindString("note");
-+        note && !note->empty()) {
-+      credential.notes.emplace_back(base::UTF8ToUTF16(*note),
-+                                    credential.date_created);
-+    }
-+    return credential;
-+  }
-+
 +  if (*format != kChromiumSpecificsPayloadFormat) {
 +    return std::nullopt;
 +  }
-+  const std::string* encoded =
++  const std::string *encoded =
 +      payload.FindString("password_specifics_data_b64");
 +  if (!encoded) {
 +    return std::nullopt;
@@ -1863,7 +2456,7 @@ index 0000000..6342c7b
 +  return credential;
 +}
 +
-+std::optional<Record> UpsertRecordForCredential(const Credential& credential) {
++std::optional<Record> UpsertRecordForCredential(const Credential &credential) {
 +  std::optional<std::string> payload_json = PasswordPayloadJSON(credential);
 +  if (!payload_json) {
 +    return std::nullopt;
@@ -1879,27 +2472,32 @@ index 0000000..6342c7b
 +  return base::HexEncodeLower(crypto::SHA256HashString(payload_json));
 +}
 +
-+}  // namespace
++} // namespace
 +
 +HeliumPasswordSyncBridge::HeliumPasswordSyncBridge(
 +    scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
-+    std::unique_ptr<HeliumSyncClient> client,
-+    std::string device_name,
++    std::unique_ptr<HeliumSyncClient> client, std::string device_name,
 +    base::FilePath state_path)
-+    : profile_store_(std::move(profile_store)),
-+      client_(std::move(client)),
-+      device_name_(std::move(device_name)),
-+      state_path_(std::move(state_path)) {}
-+
-+HeliumPasswordSyncBridge::~HeliumPasswordSyncBridge() {
-+  Stop();
++    : profile_store_(std::move(profile_store)), client_(std::move(client)),
++      device_name_(std::move(device_name)), state_path_(std::move(state_path)) {
 +}
++
++HeliumPasswordSyncBridge::~HeliumPasswordSyncBridge() { Stop(); }
 +
 +void HeliumPasswordSyncBridge::Start() {
 +  if (!profile_store_ || !client_ || observing_) {
 +    return;
 +  }
 +  state_trusted_ = LoadState();
++  if (!state_trusted_) {
++    if (base::PathExists(state_path_) || !SaveState()) {
++      LOG(WARNING)
++          << "Helium password sync disabled: state is invalid or unwritable";
++      AndroidStatusLog("password state invalid or unwritable; fail closed");
++      return;
++    }
++    state_trusted_ = true;
++  }
 +  pull_timer_.Start(FROM_HERE, base::Seconds(30),
 +                    base::BindRepeating(&HeliumPasswordSyncBridge::PullAndApply,
 +                                        weak_factory_.GetWeakPtr()));
@@ -1921,7 +2519,7 @@ index 0000000..6342c7b
 +  }
 +  pull_in_flight_ = true;
 +  reconciling_ = true;
-+  client_->Latest({kPasswordKind}, /*include_deleted=*/false,
++  client_->Latest({kPasswordKind},
 +                  base::BindOnce(&HeliumPasswordSyncBridge::OnPullComplete,
 +                                 weak_factory_.GetWeakPtr()));
 +}
@@ -1943,17 +2541,22 @@ index 0000000..6342c7b
 +}
 +
 +void HeliumPasswordSyncBridge::OnLoginsChanged(
-+    password_manager::PasswordStoreInterface* store,
-+    const password_manager::PasswordStoreChangeList& changes) {
++    password_manager::PasswordStoreInterface *store,
++    const password_manager::PasswordStoreChangeList &changes) {
 +  if (store != profile_store_.get() || reconciling_ || applying_remote_) {
 +    return;
 +  }
 +
 +  std::vector<Record> records;
-+  for (const auto& change : changes) {
-+    const Credential& credential = ChangeCredential(change);
++  for (const auto &change : changes) {
++    const Credential &credential = ChangeCredential(change);
 +    if (change.type() == password_manager::PasswordStoreChange::REMOVE) {
-+      known_keys_.erase(PasswordRecordKey(credential));
++      Record tombstone;
++      tombstone.kind = kPasswordKind;
++      tombstone.key = PasswordRecordKey(credential);
++      tombstone.deleted = true;
++      tombstone.payload_json = "{}";
++      records.push_back(std::move(tombstone));
 +      continue;
 +    }
 +    std::optional<Record> record = UpsertRecordForCredential(credential);
@@ -1967,21 +2570,21 @@ index 0000000..6342c7b
 +}
 +
 +void HeliumPasswordSyncBridge::OnLoginsRetained(
-+    password_manager::PasswordStoreInterface* store,
-+    const std::vector<password_manager::PasswordForm>& retained_passwords) {
++    password_manager::PasswordStoreInterface *store,
++    const std::vector<password_manager::PasswordForm> &retained_passwords) {
 +  if (store != profile_store_.get() || reconciling_ || applying_remote_) {
 +    return;
 +  }
 +
 +  std::set<std::string> retained_keys;
-+  for (const auto& credential : retained_passwords) {
++  for (const auto &credential : retained_passwords) {
 +    retained_keys.insert(PasswordRecordKeyForForm(credential));
 +  }
 +  known_keys_ = std::move(retained_keys);
 +}
 +
 +void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom(
-+    password_manager::PasswordStoreInterface* store,
++    password_manager::PasswordStoreInterface *store,
 +    password_manager::LoginsResultOrError results_or_error) {
 +  if (store != profile_store_.get()) {
 +    return;
@@ -1989,7 +2592,7 @@ index 0000000..6342c7b
 +  PendingRead pending = pending_read_;
 +  pending_read_ = PendingRead::kNone;
 +
-+  auto* credentials =
++  auto *credentials =
 +      std::get_if<password_manager::LoginsResult>(&results_or_error);
 +  if (!credentials) {
 +    LOG(WARNING) << "Helium password sync read failed for pending "
@@ -2005,131 +2608,260 @@ index 0000000..6342c7b
 +                   base::NumberToString(credentials->size()));
 +
 +  switch (pending) {
-+    case PendingRead::kApplyRemote:
++  case PendingRead::kApplyRemote:
 +#if BUILDFLAG(IS_ANDROID)
-+      if (credentials->empty() && initial_empty_read_retries_ < 3) {
-+        initial_empty_read_retries_++;
-+        AndroidStatusLog("password reconcile empty retry=" +
-+                         base::NumberToString(initial_empty_read_retries_));
-+        base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-+            FROM_HERE,
-+            base::BindOnce(&HeliumPasswordSyncBridge::RequestReconcileRead,
-+                           weak_factory_.GetWeakPtr()),
-+            base::Seconds(1));
-+        return;
-+      }
++    if (credentials->empty() && initial_empty_read_retries_ < 3) {
++      initial_empty_read_retries_++;
++      AndroidStatusLog("password reconcile empty retry=" +
++                       base::NumberToString(initial_empty_read_retries_));
++      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++          FROM_HERE,
++          base::BindOnce(&HeliumPasswordSyncBridge::RequestReconcileRead,
++                         weak_factory_.GetWeakPtr()),
++          base::Seconds(1));
++      return;
++    }
 +#endif
-+      initial_empty_read_retries_ = 0;
-+      ReconcileRemotePasswords(*credentials);
-+      break;
-+    case PendingRead::kPostApply:
++    initial_empty_read_retries_ = 0;
++    ReconcileRemotePasswords(*credentials);
++    break;
++  case PendingRead::kPostApply:
 +#if BUILDFLAG(IS_ANDROID)
-+      if (credentials->empty() && post_apply_empty_read_retries_ < 3) {
-+        post_apply_empty_read_retries_++;
-+        AndroidStatusLog("password post-apply empty retry=" +
-+                         base::NumberToString(post_apply_empty_read_retries_));
-+        base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
-+            FROM_HERE,
-+            base::BindOnce(&HeliumPasswordSyncBridge::RequestPostApplyRead,
-+                           weak_factory_.GetWeakPtr()),
-+            base::Seconds(2));
-+        return;
-+      }
++    if (credentials->empty() && post_apply_empty_read_retries_ < 3) {
++      post_apply_empty_read_retries_++;
++      AndroidStatusLog("password post-apply empty retry=" +
++                       base::NumberToString(post_apply_empty_read_retries_));
++      base::SequencedTaskRunner::GetCurrentDefault()->PostDelayedTask(
++          FROM_HERE,
++          base::BindOnce(&HeliumPasswordSyncBridge::RequestPostApplyRead,
++                         weak_factory_.GetWeakPtr()),
++          base::Seconds(2));
++      return;
++    }
 +#endif
-+      post_apply_empty_read_retries_ = 0;
-+      PublishLocalMutations(*credentials);
-+      FinishReconcile();
-+      break;
-+    case PendingRead::kNone:
-+      break;
++    post_apply_empty_read_retries_ = 0;
++    if (!VerifyRemoteWrites(*credentials)) {
++      LOG(WARNING) << "Helium password sync post-write verification failed";
++      AndroidStatusLog("password post-write verification failed");
++      reconciling_ = false;
++      return;
++    }
++    PublishLocalMutations(*credentials);
++    FinishReconcile();
++    break;
++  case PendingRead::kNone:
++    break;
 +  }
 +}
 +
 +void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
-+    const password_manager::LoginsResult& local_credentials) {
-+  std::map<std::string, const Credential*> local_by_key;
-+  for (const auto& credential : local_credentials) {
++    const password_manager::LoginsResult &local_credentials) {
++  std::map<std::string, const Credential *> local_by_key;
++  for (const auto &credential : local_credentials) {
 +    local_by_key[PasswordRecordKey(credential)] = &credential;
 +  }
 +
-+  applying_remote_ = true;
-+  for (const auto& remote : pending_remote_records_) {
-+    const auto state = credential_state_.find(remote.key);
++  // Validate the complete remote batch and detect conflicts before issuing a
++  // single PasswordStore write. A malformed later record must not leave a
++  // partially applied generation that could then be acknowledged.
++  for (const auto &remote : pending_remote_records_) {
++    const Record &record = remote.record;
++    const auto state = credential_state_.find(record.key);
 +    if (state != credential_state_.end() &&
-+        remote.seq <= state->second.remote_seq) {
++        record.revision <= state->second.revision) {
 +      continue;
 +    }
-+    const auto existing = local_by_key.find(remote.key);
++    const auto existing = local_by_key.find(record.key);
++    if (state != credential_state_.end()) {
++      bool local_matches_baseline = false;
++      if (state->second.deleted) {
++        local_matches_baseline = existing == local_by_key.end();
++      } else if (existing != local_by_key.end()) {
++        std::optional<std::string> local_payload =
++            PasswordPayloadJSON(*existing->second);
++        local_matches_baseline =
++            local_payload &&
++            ContentFingerprint(*local_payload) == state->second.fingerprint;
++      }
++      if (!local_matches_baseline) {
++        blocked_remote_keys_.insert(record.key);
++        continue;
++      }
++    }
++    if (!record.deleted) {
++      std::optional<base::Value> parsed =
++          base::JSONReader::Read(record.payload_json, base::JSON_PARSE_RFC);
++      std::optional<Credential> credential =
++          parsed && parsed->is_dict()
++              ? PayloadToCredential(parsed->GetDict())
++              : std::nullopt;
++      if (!credential || PasswordRecordKey(*credential) != record.key) {
++        blocked_remote_keys_.insert(record.key);
++      }
++    }
++  }
++  if (!blocked_remote_keys_.empty()) {
++    pending_remote_records_.clear();
++    LOG(WARNING) << "Helium password sync blocked a malformed or concurrent "
++                    "remote batch before applying it";
++    AndroidStatusLog("password reconciliation blocked before apply");
++    reconciling_ = false;
++    return;
++  }
++
++  applying_remote_ = true;
++  for (const auto &remote : pending_remote_records_) {
++    const Record &record = remote.record;
++    const auto state = credential_state_.find(record.key);
++    if (state != credential_state_.end() &&
++        record.revision <= state->second.revision) {
++      continue;
++    }
++    const auto existing = local_by_key.find(record.key);
++    if (state != credential_state_.end() &&
++        record.revision > state->second.revision) {
++      bool local_matches_baseline = false;
++      if (state->second.deleted) {
++        local_matches_baseline = existing == local_by_key.end();
++      } else if (existing != local_by_key.end()) {
++        std::optional<std::string> local_payload =
++            PasswordPayloadJSON(*existing->second);
++        local_matches_baseline =
++            local_payload &&
++            ContentFingerprint(*local_payload) == state->second.fingerprint;
++      }
++      if (!local_matches_baseline) {
++        blocked_remote_keys_.insert(record.key);
++        LOG(WARNING) << "Helium password sync stopped a concurrent local and "
++                        "remote mutation for "
++                     << record.key;
++        continue;
++      }
++    }
++    if (record.deleted) {
++      if (existing == local_by_key.end()) {
++        credential_state_[record.key] = {std::string(), record.seq,
++                                         record.revision, true, record.key_id};
++        known_keys_.erase(record.key);
++        continue;
++      }
++      pending_verification_[record.key] = remote;
++      pending_remote_writes_++;
++      profile_store_->RemoveLogin(
++          *existing->second,
++          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
++                         weak_factory_.GetWeakPtr()));
++      continue;
++    }
 +    std::optional<base::Value> parsed =
-+        base::JSONReader::Read(remote.payload_json, base::JSON_PARSE_RFC);
++        base::JSONReader::Read(record.payload_json, base::JSON_PARSE_RFC);
 +    if (!parsed || !parsed->is_dict()) {
-+      blocked_remote_keys_.insert(remote.key);
++      blocked_remote_keys_.insert(record.key);
 +      continue;
 +    }
 +    std::optional<Credential> credential =
 +        PayloadToCredential(parsed->GetDict());
-+    if (!credential || PasswordRecordKey(*credential) != remote.key) {
-+      blocked_remote_keys_.insert(remote.key);
++    if (!credential || PasswordRecordKey(*credential) != record.key) {
++      blocked_remote_keys_.insert(record.key);
 +      continue;
 +    }
 +    std::optional<std::string> canonical_payload =
 +        PasswordPayloadJSON(*credential);
 +    if (!canonical_payload) {
-+      blocked_remote_keys_.insert(remote.key);
++      blocked_remote_keys_.insert(record.key);
 +      continue;
 +    }
-+    const std::string* payload_format =
-+        parsed->GetDict().FindString("format");
-+    const bool needs_payload_migration =
-+        payload_format && *payload_format == kLegacySimplePayloadFormat;
-+    std::string fingerprint = ContentFingerprint(
-+        needs_payload_migration ? remote.payload_json : *canonical_payload);
++    std::string fingerprint = ContentFingerprint(*canonical_payload);
 +
 +    if (existing != local_by_key.end()) {
 +      std::optional<std::string> local_payload =
 +          PasswordPayloadJSON(*existing->second);
-+      if (local_payload &&
-+          ContentFingerprint(*local_payload) ==
-+              ContentFingerprint(*canonical_payload)) {
-+        credential_state_[remote.key] = {fingerprint, remote.seq};
++      if (local_payload && ContentFingerprint(*local_payload) ==
++                               ContentFingerprint(*canonical_payload)) {
++        credential_state_[record.key] = {fingerprint, record.seq,
++                                         record.revision, false, record.key_id};
 +        continue;
 +      }
 +    }
 +
++    RemotePasswordRecord expected = remote;
++    expected.fingerprint = fingerprint;
++    pending_verification_[record.key] = std::move(expected);
 +    pending_remote_writes_++;
 +    if (existing == local_by_key.end()) {
 +      profile_store_->AddLogin(
 +          *credential,
 +          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
-+                         weak_factory_.GetWeakPtr(), remote.key,
-+                         std::move(fingerprint), remote.seq));
++                         weak_factory_.GetWeakPtr()));
 +    } else {
 +      profile_store_->UpdateLogin(
 +          *credential,
 +          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
-+                         weak_factory_.GetWeakPtr(), remote.key,
-+                         std::move(fingerprint), remote.seq));
++                         weak_factory_.GetWeakPtr()));
 +    }
-+    known_keys_.insert(remote.key);
++    known_keys_.insert(record.key);
 +  }
 +  pending_remote_records_.clear();
++  if (!blocked_remote_keys_.empty()) {
++    applying_remote_ = false;
++    reconciling_ = false;
++    LOG(WARNING) << "Helium password sync left the verified cursor unchanged "
++                    "because remote records are blocked";
++    AndroidStatusLog("password reconciliation blocked; cursor unchanged");
++    return;
++  }
 +  if (pending_remote_writes_ == 0) {
 +    applying_remote_ = false;
 +    RequestPostApplyRead();
 +  }
 +}
 +
++bool HeliumPasswordSyncBridge::VerifyRemoteWrites(
++    const password_manager::LoginsResult &local_credentials) {
++  std::map<std::string, const Credential *> local_by_key;
++  for (const auto &credential : local_credentials) {
++    local_by_key[PasswordRecordKey(credential)] = &credential;
++  }
++  for (const auto &[key, expected] : pending_verification_) {
++    const Record &record = expected.record;
++    const auto local = local_by_key.find(key);
++    if (record.deleted) {
++      if (local != local_by_key.end()) {
++        return false;
++      }
++    } else {
++      if (local == local_by_key.end()) {
++        return false;
++      }
++      std::optional<std::string> payload = PasswordPayloadJSON(*local->second);
++      if (!payload || ContentFingerprint(*payload) != expected.fingerprint) {
++        return false;
++      }
++    }
++    credential_state_[key] = {expected.fingerprint, record.seq, record.revision,
++                              record.deleted, record.key_id};
++  }
++  pending_verification_.clear();
++  return SaveState();
++}
++
 +void HeliumPasswordSyncBridge::PublishLocalMutations(
-+    const password_manager::LoginsResult& credentials) {
++    const password_manager::LoginsResult &credentials) {
 +  known_keys_ = KeysFor(credentials);
 +  std::vector<Record> records;
-+  for (const auto& credential : credentials) {
++  for (const auto &credential : credentials) {
 +    std::optional<Record> record = UpsertRecordForCredential(credential);
 +    if (!record || blocked_remote_keys_.contains(record->key)) {
 +      continue;
 +    }
 +    std::string fingerprint = ContentFingerprint(record->payload_json);
 +    const auto state = credential_state_.find(record->key);
++    if (client_->enrollment_phase() == "pending" &&
++        state == credential_state_.end()) {
++      credential_state_[record->key] = {std::move(fingerprint), 0, 0, false,
++                                        std::string()};
++      continue;
++    }
 +    if (!state_trusted_ && state == credential_state_.end()) {
 +      credential_state_[record->key] = {std::move(fingerprint), 0};
 +      continue;
@@ -2152,36 +2884,46 @@ index 0000000..6342c7b
 +  AndroidStatusLog("password pushing count=" +
 +                   base::NumberToString(records.size()));
 +  std::map<std::string, std::string> fingerprints;
-+  for (auto& record : records) {
-+    record.origin_device = device_name_;
++  for (auto &record : records) {
++    const auto state = credential_state_.find(record.key);
++    record.expected_revision =
++        state == credential_state_.end() ? 0 : state->second.revision;
 +    fingerprints[record.key] = ContentFingerprint(record.payload_json);
 +  }
-+  client_->Push(
-+      std::move(records),
-+      base::BindOnce(&HeliumPasswordSyncBridge::OnPushComplete,
-+                     weak_factory_.GetWeakPtr(), std::move(fingerprints)));
++  client_->Push(std::move(records),
++                base::BindOnce(&HeliumPasswordSyncBridge::OnPushComplete,
++                               weak_factory_.GetWeakPtr(),
++                               std::move(fingerprints)));
 +}
 +
 +void HeliumPasswordSyncBridge::OnPushComplete(
-+    std::map<std::string, std::string> fingerprints,
-+    bool ok,
-+    std::string error) {
++    std::map<std::string, std::string> fingerprints, bool ok,
++    RecordsResult result, std::string error) {
 +  if (!ok) {
 +    LOG(WARNING) << "Helium password sync push failed: " << error;
 +    AndroidStatusLog("password push failed " + error);
 +    return;
 +  }
-+  for (auto& [key, fingerprint] : fingerprints) {
-+    CredentialState& state = credential_state_[key];
-+    state.fingerprint = std::move(fingerprint);
++  if (result.records.size() != fingerprints.size()) {
++    LOG(WARNING) << "Helium password sync push returned wrong record count";
++    return;
++  }
++  for (const Record &accepted : result.records) {
++    const auto fingerprint = fingerprints.find(accepted.key);
++    if (fingerprint == fingerprints.end()) {
++      LOG(WARNING) << "Helium password sync push returned an unknown record";
++      return;
++    }
++    credential_state_[accepted.key] = {
++        accepted.deleted ? std::string() : fingerprint->second, accepted.seq,
++        accepted.revision, accepted.deleted, accepted.key_id};
 +  }
 +  SaveState();
 +  LOG(WARNING) << "Helium password sync push completed";
 +  AndroidStatusLog("password push completed");
 +}
 +
-+void HeliumPasswordSyncBridge::OnPullComplete(bool ok,
-+                                              std::string response_json,
++void HeliumPasswordSyncBridge::OnPullComplete(bool ok, RecordsResult result,
 +                                              std::string error) {
 +  pull_in_flight_ = false;
 +  if (!ok) {
@@ -2190,52 +2932,26 @@ index 0000000..6342c7b
 +    reconciling_ = false;
 +    return;
 +  }
-+
-+  std::optional<base::Value> root =
-+      base::JSONReader::Read(response_json, base::JSON_PARSE_RFC);
-+  if (!root || !root->is_dict()) {
-+    reconciling_ = false;
-+    return;
-+  }
-+  const base::ListValue* records = root->GetDict().FindList("records");
-+  if (!records) {
-+    LOG(WARNING) << "Helium password sync pull had no records list";
-+    AndroidStatusLog("password pull missing records");
-+    reconciling_ = false;
-+    return;
-+  }
++  pending_next_seq_ = result.next_seq;
 +
 +  pending_remote_records_.clear();
 +  blocked_remote_keys_.clear();
-+  for (const base::Value& item : *records) {
-+    if (!item.is_dict()) {
++  for (Record &record : result.records) {
++    if (record.kind != kPasswordKind) {
 +      continue;
 +    }
-+    const base::DictValue& dict = item.GetDict();
-+    const std::string* kind = dict.FindString("kind");
-+    const std::string* key = dict.FindString("key");
-+    if (!kind || *kind != kPasswordKind || !key) {
-+      continue;
-+    }
-+    RemotePasswordRecord record;
-+    record.key = *key;
-+    std::optional<int> seq = dict.FindInt("seq");
-+    if (!seq || *seq <= 0) {
-+      blocked_remote_keys_.insert(record.key);
-+      continue;
-+    }
-+    record.seq = *seq;
-+    if (dict.FindBool("deleted").value_or(false)) {
-+      continue;
-+    }
-+    if (const base::DictValue* payload = dict.FindDict("payload")) {
-+      if (!base::JSONWriter::Write(*payload, &record.payload_json)) {
++    RemotePasswordRecord remote;
++    remote.record = std::move(record);
++    if (!remote.record.deleted) {
++      std::optional<base::Value> payload = base::JSONReader::Read(
++          remote.record.payload_json, base::JSON_PARSE_RFC);
++      if (!payload || !payload->is_dict() ||
++          !PayloadToCredential(payload->GetDict())) {
++        blocked_remote_keys_.insert(remote.record.key);
 +        continue;
 +      }
-+    } else {
-+      record.payload_json = "{}";
 +    }
-+    pending_remote_records_.push_back(std::move(record));
++    pending_remote_records_.push_back(std::move(remote));
 +  }
 +
 +  if (pending_remote_records_.empty()) {
@@ -2251,10 +2967,7 @@ index 0000000..6342c7b
 +  RequestReconcileRead();
 +}
 +
-+void HeliumPasswordSyncBridge::OnRemoteRecordComplete(std::string key,
-+                                                      std::string fingerprint,
-+                                                      int64_t remote_seq) {
-+  credential_state_[std::move(key)] = {std::move(fingerprint), remote_seq};
++void HeliumPasswordSyncBridge::OnRemoteRecordComplete() {
 +  if (pending_remote_writes_ > 0) {
 +    pending_remote_writes_--;
 +  }
@@ -2271,7 +2984,19 @@ index 0000000..6342c7b
 +
 +void HeliumPasswordSyncBridge::FinishReconcile() {
 +  state_trusted_ = true;
-+  SaveState();
++  verified_sequence_ = pending_next_seq_;
++  if (!SaveState()) {
++    LOG(WARNING) << "Helium password sync could not persist verified state";
++    reconciling_ = false;
++    return;
++  }
++  std::string error;
++  if (!client_->AcknowledgeApplied(pending_next_seq_, &error)) {
++    LOG(WARNING) << "Helium password sync cursor acknowledgement failed: "
++                 << error;
++    reconciling_ = false;
++    return;
++  }
 +  reconciling_ = false;
 +  if (!observing_ && profile_store_) {
 +    observing_ = true;
@@ -2288,7 +3013,7 @@ index 0000000..6342c7b
 +bool HeliumPasswordSyncBridge::LoadState() {
 +  credential_state_.clear();
 +  if (state_path_.empty() || !base::PathExists(state_path_)) {
-+    return true;
++    return false;
 +  }
 +
 +  std::string raw;
@@ -2304,9 +3029,13 @@ index 0000000..6342c7b
 +    LOG(WARNING) << "Helium password sync state is invalid";
 +    return false;
 +  }
-+  const base::DictValue* credentials =
++  const base::DictValue *credentials =
 +      parsed->GetDict().FindDict("credentials");
-+  if (!credentials) {
++  const std::string *verified_sequence =
++      parsed->GetDict().FindString("verified_sequence");
++  if (!credentials || !verified_sequence ||
++      !base::StringToInt64(*verified_sequence, &verified_sequence_) ||
++      verified_sequence_ < 0) {
 +    LOG(WARNING) << "Helium password sync state has no credentials map";
 +    return false;
 +  }
@@ -2314,15 +3043,23 @@ index 0000000..6342c7b
 +    if (!value.is_dict()) {
 +      return false;
 +    }
-+    const std::string* fingerprint = value.GetDict().FindString("fingerprint");
-+    const std::string* remote_seq = value.GetDict().FindString("remote_seq");
++    const std::string *fingerprint = value.GetDict().FindString("fingerprint");
++    const std::string *remote_seq = value.GetDict().FindString("remote_seq");
++    const std::string *revision = value.GetDict().FindString("revision");
++    const std::string *key_id = value.GetDict().FindString("key_id");
++    std::optional<bool> deleted = value.GetDict().FindBool("deleted");
 +    int64_t parsed_seq = 0;
-+    if (!fingerprint || fingerprint->empty() || !remote_seq ||
-+        !base::StringToInt64(*remote_seq, &parsed_seq) || parsed_seq < 0) {
++    int64_t parsed_revision = 0;
++    if (!fingerprint || !remote_seq || !revision || !key_id || !deleted ||
++        (!*deleted && fingerprint->empty()) ||
++        !base::StringToInt64(*remote_seq, &parsed_seq) || parsed_seq < 0 ||
++        !base::StringToInt64(*revision, &parsed_revision) ||
++        parsed_revision < 0 || (parsed_revision > 0 && key_id->empty())) {
 +      credential_state_.clear();
 +      return false;
 +    }
-+    credential_state_[key] = {*fingerprint, parsed_seq};
++    credential_state_[key] = {*fingerprint, parsed_seq, parsed_revision,
++                              *deleted, *key_id};
 +  }
 +  return true;
 +}
@@ -2334,11 +3071,15 @@ index 0000000..6342c7b
 +  }
 +  base::DictValue root;
 +  root.Set("schema_version", kPasswordStateSchema);
++  root.Set("verified_sequence", base::NumberToString(verified_sequence_));
 +  base::DictValue credentials;
-+  for (const auto& [key, state] : credential_state_) {
++  for (const auto &[key, state] : credential_state_) {
 +    base::DictValue value;
 +    value.Set("fingerprint", state.fingerprint);
 +    value.Set("remote_seq", base::NumberToString(state.remote_seq));
++    value.Set("revision", base::NumberToString(state.revision));
++    value.Set("deleted", state.deleted);
++    value.Set("key_id", state.key_id);
 +    credentials.Set(key, std::move(value));
 +  }
 +  root.Set("credentials", std::move(credentials));
@@ -2351,21 +3092,21 @@ index 0000000..6342c7b
 +}
 +
 +std::set<std::string> HeliumPasswordSyncBridge::KeysFor(
-+    const password_manager::LoginsResult& credentials) const {
++    const password_manager::LoginsResult &credentials) const {
 +  std::set<std::string> keys;
-+  for (const auto& credential : credentials) {
++  for (const auto &credential : credentials) {
 +    keys.insert(PasswordRecordKey(credential));
 +  }
 +  return keys;
 +}
 +
-+}  // namespace helium_sync
++} // namespace helium_sync
 diff --git a/components/helium_sync/helium_password_sync_bridge.h b/components/helium_sync/helium_password_sync_bridge.h
 new file mode 100644
-index 0000000..6fe9fbc
+index 0000000..863cdf3
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.h
-@@ -0,0 +1,114 @@
+@@ -0,0 +1,118 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
@@ -2391,33 +3132,35 @@ index 0000000..6fe9fbc
 +class HeliumPasswordSyncBridge
 +    : public password_manager::PasswordStoreInterface::Observer,
 +      public password_manager::PasswordStoreConsumer {
-+ public:
++public:
 +  HeliumPasswordSyncBridge(
 +      scoped_refptr<password_manager::PasswordStoreInterface> profile_store,
-+      std::unique_ptr<HeliumSyncClient> client,
-+      std::string device_name,
++      std::unique_ptr<HeliumSyncClient> client, std::string device_name,
 +      base::FilePath state_path);
-+  HeliumPasswordSyncBridge(const HeliumPasswordSyncBridge&) = delete;
-+  HeliumPasswordSyncBridge& operator=(const HeliumPasswordSyncBridge&) = delete;
++  HeliumPasswordSyncBridge(const HeliumPasswordSyncBridge &) = delete;
++  HeliumPasswordSyncBridge &
++  operator=(const HeliumPasswordSyncBridge &) = delete;
 +  ~HeliumPasswordSyncBridge() override;
 +
 +  void Start();
 +  void Stop();
 +  void PullAndApply();
 +
-+ private:
++private:
 +  void RequestReconcileRead();
 +  void RequestPostApplyRead();
 +
 +  struct CredentialState {
 +    std::string fingerprint;
 +    int64_t remote_seq = 0;
++    int64_t revision = 0;
++    bool deleted = false;
++    std::string key_id;
 +  };
 +
 +  struct RemotePasswordRecord {
-+    std::string key;
-+    std::string payload_json;
-+    int64_t seq = 0;
++    Record record;
++    std::string fingerprint;
 +  };
 +
 +  enum class PendingRead {
@@ -2428,33 +3171,32 @@ index 0000000..6fe9fbc
 +
 +  // PasswordStoreInterface::Observer:
 +  void OnLoginsChanged(
-+      password_manager::PasswordStoreInterface* store,
-+      const password_manager::PasswordStoreChangeList& changes) override;
-+  void OnLoginsRetained(password_manager::PasswordStoreInterface* store,
-+                        const std::vector<password_manager::PasswordForm>&
-+                            retained_passwords) override;
++      password_manager::PasswordStoreInterface *store,
++      const password_manager::PasswordStoreChangeList &changes) override;
++  void OnLoginsRetained(password_manager::PasswordStoreInterface *store,
++                        const std::vector<password_manager::PasswordForm>
++                            &retained_passwords) override;
 +
 +  // PasswordStoreConsumer:
 +  void OnGetPasswordStoreResultsOrErrorFrom(
-+      password_manager::PasswordStoreInterface* store,
++      password_manager::PasswordStoreInterface *store,
 +      password_manager::LoginsResultOrError results_or_error) override;
 +
 +  void ReconcileRemotePasswords(
-+      const password_manager::LoginsResult& local_credentials);
-+  void PublishLocalMutations(const password_manager::LoginsResult& credentials);
++      const password_manager::LoginsResult &local_credentials);
++  void PublishLocalMutations(const password_manager::LoginsResult &credentials);
 +  void PushRecords(std::vector<Record> records);
-+  void OnPushComplete(std::map<std::string, std::string> fingerprints,
-+                      bool ok,
-+                      std::string error);
-+  void OnPullComplete(bool ok, std::string response_json, std::string error);
-+  void OnRemoteRecordComplete(std::string key,
-+                              std::string fingerprint,
-+                              int64_t remote_seq);
++  void OnPushComplete(std::map<std::string, std::string> fingerprints, bool ok,
++                      RecordsResult result, std::string error);
++  void OnPullComplete(bool ok, RecordsResult result, std::string error);
++  void OnRemoteRecordComplete();
++  bool
++  VerifyRemoteWrites(const password_manager::LoginsResult &local_credentials);
 +  void FinishReconcile();
 +  bool LoadState();
 +  bool SaveState() const;
-+  std::set<std::string> KeysFor(
-+      const password_manager::LoginsResult& credentials) const;
++  std::set<std::string>
++  KeysFor(const password_manager::LoginsResult &credentials) const;
 +
 +  scoped_refptr<password_manager::PasswordStoreInterface> profile_store_;
 +  std::unique_ptr<HeliumSyncClient> client_;
@@ -2471,36 +3213,52 @@ index 0000000..6fe9fbc
 +  std::set<std::string> blocked_remote_keys_;
 +  std::map<std::string, CredentialState> credential_state_;
 +  std::vector<RemotePasswordRecord> pending_remote_records_;
++  std::map<std::string, RemotePasswordRecord> pending_verification_;
 +  int initial_empty_read_retries_ = 0;
 +  int post_apply_empty_read_retries_ = 0;
++  int64_t pending_next_seq_ = 0;
++  int64_t verified_sequence_ = 0;
 +  base::RepeatingTimer pull_timer_;
 +  base::WeakPtrFactory<HeliumPasswordSyncBridge> weak_factory_{this};
 +};
 +
-+}  // namespace helium_sync
++} // namespace helium_sync
 +
-+#endif  // COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
++#endif // COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
 diff --git a/components/helium_sync/helium_sync_client.cc b/components/helium_sync/helium_sync_client.cc
 new file mode 100644
-index 0000000..1ae4560
+index 0000000..6b8bac9
 --- /dev/null
 +++ b/components/helium_sync/helium_sync_client.cc
-@@ -0,0 +1,221 @@
+@@ -0,0 +1,735 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_sync_client.h"
 +
++#include <algorithm>
++#include <array>
++#include <limits>
 +#include <memory>
 +#include <optional>
 +#include <string>
++#include <string_view>
 +#include <utility>
++#include <vector>
 +
++#include "base/base64.h"
++#include "base/files/file_util.h"
++#include "base/files/important_file_writer.h"
++#include "base/functional/bind.h"
 +#include "base/json/json_reader.h"
 +#include "base/json/json_writer.h"
 +#include "base/strings/escape.h"
 +#include "base/strings/string_number_conversions.h"
 +#include "base/values.h"
++#include "crypto/aead.h"
++#include "crypto/random.h"
 +#include "net/base/load_flags.h"
++#include "net/base/net_errors.h"
++#include "net/http/http_response_headers.h"
 +#include "net/traffic_annotation/network_traffic_annotation.h"
 +#include "services/network/public/cpp/resource_request.h"
 +#include "services/network/public/cpp/shared_url_loader_factory.h"
@@ -2511,65 +3269,117 @@ index 0000000..1ae4560
 +
 +constexpr char kContentType[] = "application/json";
 +constexpr int kMaxSyncResponseBytes = 5 * 1024 * 1024;
++constexpr size_t kKeySize = 32;
++constexpr size_t kNonceSize = 12;
++constexpr char kPayloadAADMagic[] = "helium-sync-e2ee-v2\0";
++constexpr char kLocalAADMagic[] = "helium-sync-local-seal-v1\0";
++constexpr char kLocalSealKeyID[] = "device-local-v1";
 +
 +constexpr net::NetworkTrafficAnnotationTag kTrafficAnnotation =
-+    net::DefineNetworkTrafficAnnotation("helium_sync_local_daemon", R"(
++    net::DefineNetworkTrafficAnnotation("helium_sync_e2ee_daemon", R"(
 +      semantics {
-+        sender: "Helium sync local daemon client"
++        sender: "Helium end-to-end encrypted sync client"
 +        description:
-+          "Sends user-enabled Helium browser sync records to a local daemon."
++          "Sends authenticated ciphertext records to the configured Helium "
++          "sync daemon. Plaintext is encrypted inside the browser process."
 +        trigger:
-+          "The user has enabled helium-sync integration in their Helium fork."
++          "The user has enrolled this Helium profile for private sync."
 +        data:
-+          "Browser records serialized by Chromium APIs. Payload encryption is "
-+          "performed by the local daemon."
-+        destination: LOCAL
++          "Opaque AES-256-GCM ciphertext and a per-device bearer credential."
++        destination: OTHER
 +        internal {
-+          contacts {
-+            email: "security@imput.net"
-+          }
++          contacts { email: "security@imput.net" }
 +        }
 +        user_data {
 +          type: ACCESS_TOKEN
-+          type: SENSITIVE_URL
 +          type: WEB_CONTENT
 +        }
-+        last_reviewed: "2026-06-06"
++        last_reviewed: "2026-07-21"
 +      }
 +      policy {
 +        cookies_allowed: NO
 +        setting:
-+          "This client is only active when the user enables helium-sync in the "
-+          "Helium fork and configures the local daemon token."
++          "Active only after explicit Helium sync enrollment and daemon "
++          "configuration."
 +        policy_exception_justification:
 +          "Not implemented as an enterprise policy."
 +      })");
 +
-+std::optional<base::DictValue> RecordToValue(const Record& record) {
-+  std::optional<base::Value> payload = base::JSONReader::Read(
-+      record.payload_json.empty() ? "{}" : record.payload_json,
-+      base::JSON_PARSE_RFC);
-+  if (!payload) {
-+    return std::nullopt;
-+  }
-+
-+  base::DictValue value;
-+  value.Set("kind", record.kind);
-+  value.Set("key", record.key);
-+  if (record.deleted) {
-+    value.Set("deleted", true);
-+  }
-+  if (!record.origin_device.empty()) {
-+    value.Set("origin_device", record.origin_device);
-+  }
-+  value.Set("payload", std::move(*payload));
-+  return value;
++void AppendU32(uint32_t value, std::vector<uint8_t> *out) {
++  out->push_back(static_cast<uint8_t>(value >> 24));
++  out->push_back(static_cast<uint8_t>(value >> 16));
++  out->push_back(static_cast<uint8_t>(value >> 8));
++  out->push_back(static_cast<uint8_t>(value));
 +}
 +
-+std::string RecordsPath(std::string_view path,
-+                        int64_t since,
-+                        const std::vector<std::string>& kinds,
-+                        bool include_deleted) {
++void AppendU64(uint64_t value, std::vector<uint8_t> *out) {
++  for (int shift = 56; shift >= 0; shift -= 8) {
++    out->push_back(static_cast<uint8_t>(value >> shift));
++  }
++}
++
++bool AppendField(std::string_view value, std::vector<uint8_t> *out,
++                 std::string *error) {
++  if (value.size() > std::numeric_limits<uint32_t>::max()) {
++    *error = "authenticated metadata field is too large";
++    return false;
++  }
++  AppendU32(static_cast<uint32_t>(value.size()), out);
++  out->insert(out->end(), value.begin(), value.end());
++  return true;
++}
++
++std::optional<std::vector<uint8_t>>
++PayloadAAD(std::string_view kind, std::string_view key, int64_t revision,
++           bool deleted, std::string_view device_id, std::string_view key_id,
++           std::string *error) {
++  if (revision <= 0) {
++    *error = "revision must be positive";
++    return std::nullopt;
++  }
++  std::vector<uint8_t> out(std::begin(kPayloadAADMagic),
++                           std::end(kPayloadAADMagic) - 1);
++  for (std::string_view field : {kind, key, device_id, key_id}) {
++    if (!AppendField(field, &out, error)) {
++      return std::nullopt;
++    }
++  }
++  AppendU64(static_cast<uint64_t>(revision), &out);
++  out.push_back(deleted ? 1 : 0);
++  return out;
++}
++
++std::optional<std::vector<uint8_t>> LocalAAD(std::string_view purpose,
++                                             std::string_view device_id,
++                                             std::string_view key_id,
++                                             std::string *error) {
++  if (purpose.empty()) {
++    *error = "local seal purpose is required";
++    return std::nullopt;
++  }
++  std::vector<uint8_t> out(std::begin(kLocalAADMagic),
++                           std::end(kLocalAADMagic) - 1);
++  for (std::string_view field : {purpose, device_id, key_id}) {
++    if (!AppendField(field, &out, error)) {
++      return std::nullopt;
++    }
++  }
++  return out;
++}
++
++std::vector<uint8_t> Bytes(std::string_view value) {
++  return std::vector<uint8_t>(value.begin(), value.end());
++}
++
++bool ParseCounter(const base::DictValue &dict, std::string_view name,
++                  bool positive, int64_t *out) {
++  const std::string *encoded = dict.FindString(name);
++  return encoded && base::StringToInt64(*encoded, out) &&
++         (positive ? *out > 0 : *out >= 0);
++}
++
++std::string RecordsPath(std::string_view path, int64_t since,
++                        const std::vector<std::string> &kinds) {
 +  std::string out(path);
 +  bool first = true;
 +  auto append_param = [&](std::string_view key, std::string_view value) {
@@ -2582,117 +3392,561 @@ index 0000000..1ae4560
 +  if (since > 0) {
 +    append_param("since", base::NumberToString(since));
 +  }
-+  for (const auto& kind : kinds) {
++  for (const auto &kind : kinds) {
 +    if (!kind.empty()) {
 +      append_param("kind", kind);
 +    }
 +  }
-+  if (include_deleted) {
-+    append_param("include_deleted", "true");
-+  }
 +  return out;
 +}
 +
-+}  // namespace
++} // namespace
 +
 +HeliumSyncClient::HeliumSyncClient(
 +    scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-+    GURL base_url,
-+    std::string bearer_token,
-+    std::string device_name)
++    GURL base_url, std::string bearer_token, base::FilePath client_state_path)
 +    : url_loader_factory_(std::move(url_loader_factory)),
-+      base_url_(std::move(base_url)),
-+      bearer_token_(std::move(bearer_token)),
-+      device_name_(std::move(device_name)) {}
++      base_url_(std::move(base_url)), bearer_token_(std::move(bearer_token)),
++      client_state_path_(std::move(client_state_path)) {
++  if (!LoadClientState(client_state_path_) && state_error_.empty()) {
++    state_error_ = "client state is invalid";
++  }
++}
 +
 +HeliumSyncClient::~HeliumSyncClient() = default;
 +
 +void HeliumSyncClient::Push(std::vector<Record> records,
-+                            PushCallback callback) {
-+  base::DictValue body;
-+  body.Set("device", device_name_);
-+  base::ListValue values;
-+  for (const auto& record : records) {
-+    std::optional<base::DictValue> value = RecordToValue(record);
-+    if (!value) {
-+      std::move(callback).Run(false, "failed to encode record payload JSON");
-+      return;
-+    }
-+    values.Append(std::move(*value));
-+  }
-+  body.Set("records", std::move(values));
-+
-+  std::string body_json;
-+  if (!base::JSONWriter::Write(body, &body_json)) {
-+    std::move(callback).Run(false, "failed to encode push JSON");
++                            RecordsCallback callback) {
++  if (records.empty()) {
++    std::move(callback).Run(true, RecordsResult(), std::string());
 +    return;
 +  }
-+
-+  auto loader = MakeJSONRequest(base_url_.Resolve("/v1/records/push"), "POST",
++  if (!state_error_.empty()) {
++    std::move(callback).Run(false, RecordsResult(), state_error_);
++    return;
++  }
++  if (state_.phase != "active") {
++    std::move(callback).Run(false, RecordsResult(),
++                            "pending enrollment may not publish");
++    return;
++  }
++  base::ListValue mutations;
++  for (const Record &record : records) {
++    base::DictValue encrypted;
++    std::string error;
++    if (!EncryptRecord(record, &encrypted, &error)) {
++      std::move(callback).Run(false, RecordsResult(), std::move(error));
++      return;
++    }
++    mutations.Append(std::move(encrypted));
++  }
++  base::DictValue body;
++  body.Set("mutations", std::move(mutations));
++  std::string body_json;
++  if (!base::JSONWriter::Write(body, &body_json)) {
++    std::move(callback).Run(false, RecordsResult(),
++                            "failed to encode push JSON");
++    return;
++  }
++  auto loader = MakeJSONRequest(base_url_.Resolve("/v2/records/push"), "POST",
 +                                std::move(body_json));
-+  auto* loader_ptr = loader.get();
++  auto *loader_ptr = loader.get();
 +  loaders_.push_back(std::move(loader));
 +  loader_ptr->DownloadToString(
 +      url_loader_factory_.get(),
-+      base::BindOnce(&HeliumSyncClient::OnPushComplete,
-+                     weak_factory_.GetWeakPtr(), std::move(callback)),
-+      1024 * 1024);
++      base::BindOnce(&HeliumSyncClient::OnRecordsComplete,
++                     weak_factory_.GetWeakPtr(), loader_ptr, std::move(records),
++                     std::move(callback)),
++      kMaxSyncResponseBytes);
 +}
 +
-+void HeliumSyncClient::Pull(int64_t since,
-+                            std::vector<std::string> kinds,
-+                            PullCallback callback) {
++void HeliumSyncClient::Pull(int64_t since, std::vector<std::string> kinds,
++                            RecordsCallback callback) {
++  if (since < 0) {
++    std::move(callback).Run(false, RecordsResult(),
++                            "pull sequence must be non-negative");
++    return;
++  }
++  if (!state_error_.empty()) {
++    std::move(callback).Run(false, RecordsResult(), state_error_);
++    return;
++  }
 +  auto loader = MakeJSONRequest(
-+      base_url_.Resolve(RecordsPath("/v1/records/pull", since, kinds,
-+                                    /*include_deleted=*/false)),
-+      "GET", std::string());
-+  auto* loader_ptr = loader.get();
++      base_url_.Resolve(RecordsPath("/v2/records/pull", since, kinds)), "GET",
++      std::string());
++  auto *loader_ptr = loader.get();
 +  loaders_.push_back(std::move(loader));
 +  loader_ptr->DownloadToString(
 +      url_loader_factory_.get(),
-+      base::BindOnce(&HeliumSyncClient::OnPullComplete,
-+                     weak_factory_.GetWeakPtr(), std::move(callback)),
++      base::BindOnce(&HeliumSyncClient::OnRecordsComplete,
++                     weak_factory_.GetWeakPtr(), loader_ptr,
++                     std::vector<Record>(), std::move(callback)),
 +      kMaxSyncResponseBytes);
 +}
 +
 +void HeliumSyncClient::Latest(std::vector<std::string> kinds,
-+                              bool include_deleted,
-+                              PullCallback callback) {
-+  auto loader =
-+      MakeJSONRequest(base_url_.Resolve(RecordsPath("/v1/records/latest", 0,
-+                                                    kinds, include_deleted)),
-+                      "GET", std::string());
-+  auto* loader_ptr = loader.get();
++                              RecordsCallback callback) {
++  if (!state_error_.empty()) {
++    std::move(callback).Run(false, RecordsResult(), state_error_);
++    return;
++  }
++  auto loader = MakeJSONRequest(
++      base_url_.Resolve(RecordsPath("/v2/records/latest", 0, kinds)), "GET",
++      std::string());
++  auto *loader_ptr = loader.get();
 +  loaders_.push_back(std::move(loader));
 +  loader_ptr->DownloadToString(
 +      url_loader_factory_.get(),
-+      base::BindOnce(&HeliumSyncClient::OnPullComplete,
-+                     weak_factory_.GetWeakPtr(), std::move(callback)),
++      base::BindOnce(&HeliumSyncClient::OnRecordsComplete,
++                     weak_factory_.GetWeakPtr(), loader_ptr,
++                     std::vector<Record>(), std::move(callback)),
 +      kMaxSyncResponseBytes);
 +}
 +
-+void HeliumSyncClient::OnPushComplete(PushCallback callback,
-+                                      std::optional<std::string> body) {
-+  if (!body) {
-+    std::move(callback).Run(false, "push failed");
++bool HeliumSyncClient::AcknowledgeApplied(int64_t next_seq,
++                                          std::string *error) {
++  if (!error || next_seq < state_.sequence) {
++    if (error) {
++      *error = "cannot move the verified sync cursor backwards";
++    }
++    return false;
++  }
++  if (!PersistStateProgress(next_seq, std::nullopt, error)) {
++    return false;
++  }
++  state_.sequence = next_seq;
++  return true;
++}
++
++void HeliumSyncClient::CompleteEnrollment(int64_t acknowledged_seq,
++                                          StatusCallback callback) {
++  if (!state_error_.empty()) {
++    std::move(callback).Run(false, state_error_);
 +    return;
 +  }
++  if (state_.role == "seed" || state_.phase == "active") {
++    std::move(callback).Run(true, std::string());
++    return;
++  }
++  if (acknowledged_seq != state_.sequence) {
++    std::move(callback).Run(false,
++                            "enrollment cursor was not durably acknowledged");
++    return;
++  }
++  base::DictValue body;
++  body.Set("acknowledged_seq", base::NumberToString(acknowledged_seq));
++  std::string body_json;
++  if (!base::JSONWriter::Write(body, &body_json)) {
++    std::move(callback).Run(false, "failed to encode enrollment completion");
++    return;
++  }
++  auto loader = MakeJSONRequest(base_url_.Resolve("/v2/enrollment/complete"),
++                                "POST", std::move(body_json));
++  auto *loader_ptr = loader.get();
++  loaders_.push_back(std::move(loader));
++  loader_ptr->DownloadToString(
++      url_loader_factory_.get(),
++      base::BindOnce(&HeliumSyncClient::OnEnrollmentComplete,
++                     weak_factory_.GetWeakPtr(), loader_ptr, acknowledged_seq,
++                     std::move(callback)),
++      64 * 1024);
++}
++
++bool HeliumSyncClient::SealLocalPayload(std::string_view purpose,
++                                        std::string_view plaintext,
++                                        SealedPayload *sealed,
++                                        std::string *error) const {
++  if (!sealed || !error) {
++    return false;
++  }
++  if (!state_error_.empty()) {
++    *error = state_error_;
++    return false;
++  }
++  if (state_.local_seal_key.size() != kKeySize) {
++    *error = "device-local seal key is missing";
++    return false;
++  }
++  std::optional<std::vector<uint8_t>> aad =
++      LocalAAD(purpose, state_.device_id, kLocalSealKeyID, error);
++  if (!aad) {
++    return false;
++  }
++  std::array<uint8_t, kNonceSize> nonce;
++  crypto::RandBytes(nonce);
++  std::vector<uint8_t> ciphertext =
++      crypto::aead::Seal(crypto::aead::AES_256_GCM, state_.local_seal_key,
++                         Bytes(plaintext), nonce, *aad);
++  sealed->key_id = kLocalSealKeyID;
++  sealed->nonce = base::Base64Encode(nonce);
++  sealed->ciphertext = base::Base64Encode(ciphertext);
++  return true;
++}
++
++bool HeliumSyncClient::OpenLocalPayload(std::string_view purpose,
++                                        const SealedPayload &sealed,
++                                        std::string *plaintext,
++                                        std::string *error) const {
++  if (!plaintext || !error) {
++    return false;
++  }
++  if (!state_error_.empty()) {
++    *error = state_error_;
++    return false;
++  }
++  if (sealed.key_id != kLocalSealKeyID ||
++      state_.local_seal_key.size() != kKeySize) {
++    *error = "device-local seal key id is invalid";
++    return false;
++  }
++  std::optional<std::vector<uint8_t>> nonce = base::Base64Decode(sealed.nonce);
++  std::optional<std::vector<uint8_t>> ciphertext =
++      base::Base64Decode(sealed.ciphertext);
++  if (!nonce || nonce->size() != kNonceSize || !ciphertext) {
++    *error = "local sealed payload encoding is invalid";
++    return false;
++  }
++  std::optional<std::vector<uint8_t>> aad =
++      LocalAAD(purpose, state_.device_id, sealed.key_id, error);
++  if (!aad) {
++    return false;
++  }
++  std::optional<std::vector<uint8_t>> opened =
++      crypto::aead::Open(crypto::aead::AES_256_GCM, state_.local_seal_key,
++                         *ciphertext, *nonce, *aad);
++  if (!opened) {
++    *error = "local sealed payload authentication failed";
++    return false;
++  }
++  plaintext->assign(opened->begin(), opened->end());
++  return true;
++}
++
++bool HeliumSyncClient::LoadClientState(const base::FilePath &path) {
++  if (path.empty()) {
++    state_error_ = "client state path is required";
++    return false;
++  }
++  std::string raw;
++  if (!base::ReadFileToString(path, &raw)) {
++    state_error_ = "client state is missing or unreadable";
++    return false;
++  }
++  std::optional<base::Value> parsed =
++      base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
++  if (!parsed || !parsed->is_dict()) {
++    state_error_ = "client state is malformed";
++    return false;
++  }
++  const base::DictValue &root = parsed->GetDict();
++  const std::string *device_id = root.FindString("device_id");
++  const std::string *role = root.FindString("role");
++  const std::string *phase = root.FindString("phase");
++  const std::string *active_key_id = root.FindString("active_key_id");
++  const std::string *local_seal_key = root.FindString("local_seal_key");
++  const std::string *sequence = root.FindString("sequence");
++  int64_t parsed_sequence = -1;
++  const base::DictValue *keys = root.FindDict("keys");
++  if (root.FindInt("version").value_or(0) != 1 || !device_id ||
++      device_id->empty() || !role || (*role != "seed" && *role != "join") ||
++      !phase || (*phase != "pending" && *phase != "active") || !active_key_id ||
++      active_key_id->empty() || !local_seal_key || !sequence ||
++      !base::StringToInt64(*sequence, &parsed_sequence) ||
++      parsed_sequence < 0 || !keys || keys->empty()) {
++    state_error_ = "client state has invalid enrollment metadata";
++    return false;
++  }
++  ClientState candidate;
++  candidate.device_id = *device_id;
++  candidate.role = *role;
++  candidate.phase = *phase;
++  candidate.active_key_id = *active_key_id;
++  candidate.sequence = parsed_sequence;
++  std::optional<std::vector<uint8_t>> decoded_local =
++      base::Base64Decode(*local_seal_key);
++  if (!decoded_local || decoded_local->size() != kKeySize) {
++    state_error_ = "client device-local seal key is invalid";
++    return false;
++  }
++  candidate.local_seal_key = std::move(*decoded_local);
++  for (const auto [key_id, encoded_value] : *keys) {
++    if (!encoded_value.is_string()) {
++      state_error_ = "client keyring contains a non-string key";
++      return false;
++    }
++    std::optional<std::vector<uint8_t>> decoded =
++        base::Base64Decode(encoded_value.GetString());
++    if (!decoded || decoded->size() != kKeySize || key_id.empty()) {
++      state_error_ = "client keyring contains an invalid key";
++      return false;
++    }
++    candidate.keys.emplace(key_id, std::move(*decoded));
++  }
++  if (!candidate.keys.contains(candidate.active_key_id) ||
++      (candidate.role == "seed" &&
++       (candidate.device_id != "d" || candidate.phase != "active")) ||
++      (candidate.role == "join" && candidate.device_id == "d")) {
++    state_error_ = "client state violates enrollment role invariants";
++    return false;
++  }
++  state_ = std::move(candidate);
++  return true;
++}
++
++bool HeliumSyncClient::PersistStateProgress(
++    int64_t sequence, std::optional<std::string_view> phase,
++    std::string *error) {
++  std::string raw;
++  if (!base::ReadFileToString(client_state_path_, &raw)) {
++    *error = "client state disappeared before progress could be persisted";
++    return false;
++  }
++  std::optional<base::Value> parsed =
++      base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
++  const std::string *persisted_device =
++      parsed && parsed->is_dict() ? parsed->GetDict().FindString("device_id")
++                                  : nullptr;
++  if (!persisted_device || *persisted_device != state_.device_id) {
++    *error = "client state changed identity while sync was running";
++    return false;
++  }
++  base::DictValue &root = parsed->GetDict();
++  int64_t persisted_sequence = -1;
++  const std::string *encoded_sequence = root.FindString("sequence");
++  if (!encoded_sequence ||
++      !base::StringToInt64(*encoded_sequence, &persisted_sequence) ||
++      persisted_sequence < 0 || sequence < persisted_sequence) {
++    *error = "client state cursor would regress";
++    return false;
++  }
++  root.Set("sequence", base::NumberToString(sequence));
++  if (phase) {
++    root.Set("phase", std::string(*phase));
++  }
++  if (!base::JSONWriter::Write(*parsed, &raw) ||
++      !base::ImportantFileWriter::WriteFileAtomically(client_state_path_, raw,
++                                                      "HeliumSync")) {
++    *error = "failed to atomically persist client sync progress";
++    return false;
++  }
++  return true;
++}
++
++bool HeliumSyncClient::EncryptRecord(const Record &plain,
++                                     base::DictValue *opaque,
++                                     std::string *error) const {
++  if (!opaque || !error || plain.expected_revision < 0 || plain.kind.empty() ||
++      plain.key.empty() ||
++      plain.expected_revision == std::numeric_limits<int64_t>::max()) {
++    if (error) {
++      *error = "outgoing record metadata is invalid";
++    }
++    return false;
++  }
++  if (!base::JSONReader::Read(plain.payload_json, base::JSON_PARSE_RFC)) {
++    *error = "outgoing payload is not valid JSON";
++    return false;
++  }
++  const auto key = state_.keys.find(state_.active_key_id);
++  if (key == state_.keys.end()) {
++    *error = "active content key is missing";
++    return false;
++  }
++  const int64_t revision = plain.expected_revision + 1;
++  std::optional<std::vector<uint8_t>> aad =
++      PayloadAAD(plain.kind, plain.key, revision, plain.deleted,
++                 state_.device_id, state_.active_key_id, error);
++  if (!aad) {
++    return false;
++  }
++  std::array<uint8_t, kNonceSize> nonce;
++  crypto::RandBytes(nonce);
++  std::vector<uint8_t> ciphertext =
++      crypto::aead::Seal(crypto::aead::AES_256_GCM, key->second,
++                         Bytes(plain.payload_json), nonce, *aad);
++  opaque->Set("kind", plain.kind);
++  opaque->Set("key", plain.key);
++  opaque->Set("expected_revision",
++              base::NumberToString(plain.expected_revision));
++  opaque->Set("deleted", plain.deleted);
++  opaque->Set("key_id", state_.active_key_id);
++  opaque->Set("nonce", base::Base64Encode(nonce));
++  opaque->Set("ciphertext", base::Base64Encode(ciphertext));
++  return true;
++}
++
++std::optional<RecordsResult>
++HeliumSyncClient::ParseRecordsResponse(std::string_view body,
++                                       std::string *error) const {
++  std::optional<base::Value> parsed =
++      base::JSONReader::Read(body, base::JSON_PARSE_RFC);
++  if (!parsed || !parsed->is_dict()) {
++    *error = "sync response is not a JSON object";
++    return std::nullopt;
++  }
++  const base::DictValue &root = parsed->GetDict();
++  const base::ListValue *values = root.FindList("records");
++  RecordsResult result;
++  if (!values || !ParseCounter(root, "next_seq", false, &result.next_seq)) {
++    *error = "sync response lacks an int64 cursor or records list";
++    return std::nullopt;
++  }
++  for (const base::Value &value : *values) {
++    if (!value.is_dict()) {
++      *error = "sync response contains a non-object record";
++      return std::nullopt;
++    }
++    const base::DictValue &opaque = value.GetDict();
++    const std::string *kind = opaque.FindString("kind");
++    const std::string *key = opaque.FindString("key");
++    const std::string *device_id = opaque.FindString("device_id");
++    const std::string *key_id = opaque.FindString("key_id");
++    const std::string *encoded_nonce = opaque.FindString("nonce");
++    const std::string *encoded_ciphertext = opaque.FindString("ciphertext");
++    std::optional<bool> deleted = opaque.FindBool("deleted");
++    Record record;
++    if (!kind || kind->empty() || !key || key->empty() || !device_id ||
++        device_id->empty() || !key_id || key_id->empty() || !encoded_nonce ||
++        !encoded_ciphertext || !deleted ||
++        !ParseCounter(opaque, "seq", true, &record.seq) ||
++        !ParseCounter(opaque, "revision", true, &record.revision) ||
++        record.seq > result.next_seq) {
++      *error = "sync response record metadata is invalid";
++      return std::nullopt;
++    }
++    const auto content_key = state_.keys.find(*key_id);
++    if (content_key == state_.keys.end()) {
++      *error = "sync response uses an unknown content key epoch";
++      return std::nullopt;
++    }
++    std::optional<std::vector<uint8_t>> nonce =
++        base::Base64Decode(*encoded_nonce);
++    std::optional<std::vector<uint8_t>> ciphertext =
++        base::Base64Decode(*encoded_ciphertext);
++    if (!nonce || nonce->size() != kNonceSize || !ciphertext) {
++      *error = "sync response ciphertext encoding is invalid";
++      return std::nullopt;
++    }
++    std::optional<std::vector<uint8_t>> aad = PayloadAAD(
++        *kind, *key, record.revision, *deleted, *device_id, *key_id, error);
++    if (!aad) {
++      return std::nullopt;
++    }
++    std::optional<std::vector<uint8_t>> plaintext =
++        crypto::aead::Open(crypto::aead::AES_256_GCM, content_key->second,
++                           *ciphertext, *nonce, *aad);
++    if (!plaintext) {
++      *error = "sync response payload authentication failed";
++      return std::nullopt;
++    }
++    record.payload_json.assign(plaintext->begin(), plaintext->end());
++    if (!base::JSONReader::Read(record.payload_json, base::JSON_PARSE_RFC)) {
++      *error = "authenticated sync payload is not JSON";
++      return std::nullopt;
++    }
++    record.expected_revision = record.revision - 1;
++    record.kind = *kind;
++    record.key = *key;
++    record.deleted = *deleted;
++    record.device_id = *device_id;
++    record.key_id = *key_id;
++    result.records.push_back(std::move(record));
++  }
++  return result;
++}
++
++void HeliumSyncClient::OnRecordsComplete(network::SimpleURLLoader *loader,
++                                         std::vector<Record> expected,
++                                         RecordsCallback callback,
++                                         std::optional<std::string> body) {
++  const int net_error = loader->NetError();
++  int response_code = 0;
++  if (loader->ResponseInfo() && loader->ResponseInfo()->headers) {
++    response_code = loader->ResponseInfo()->headers->response_code();
++  }
++  if (net_error != net::OK || !body || response_code < 200 ||
++      response_code >= 300) {
++    std::string error =
++        "sync HTTP request failed: net=" + base::NumberToString(net_error) +
++        " status=" + base::NumberToString(response_code);
++    RemoveLoader(loader);
++    std::move(callback).Run(false, RecordsResult(), std::move(error));
++    return;
++  }
++  std::string error;
++  std::optional<RecordsResult> result = ParseRecordsResponse(*body, &error);
++  if (!result) {
++    RemoveLoader(loader);
++    std::move(callback).Run(false, RecordsResult(), std::move(error));
++    return;
++  }
++  if (!expected.empty()) {
++    if (expected.size() != result->records.size()) {
++      RemoveLoader(loader);
++      std::move(callback).Run(false, RecordsResult(),
++                              "push result record count mismatch");
++      return;
++    }
++    for (size_t i = 0; i < expected.size(); ++i) {
++      const Record &request = expected[i];
++      const Record &accepted = result->records[i];
++      if (accepted.kind != request.kind || accepted.key != request.key ||
++          accepted.deleted != request.deleted ||
++          accepted.revision != request.expected_revision + 1 ||
++          accepted.device_id != state_.device_id ||
++          accepted.key_id != state_.active_key_id ||
++          accepted.payload_json != request.payload_json) {
++        RemoveLoader(loader);
++        std::move(callback).Run(false, RecordsResult(),
++                                "push result failed authenticated comparison");
++        return;
++      }
++    }
++  }
++  RemoveLoader(loader);
++  std::move(callback).Run(true, std::move(*result), std::string());
++}
++
++void HeliumSyncClient::OnEnrollmentComplete(network::SimpleURLLoader *loader,
++                                            int64_t acknowledged_seq,
++                                            StatusCallback callback,
++                                            std::optional<std::string> body) {
++  const int net_error = loader->NetError();
++  int response_code = 0;
++  if (loader->ResponseInfo() && loader->ResponseInfo()->headers) {
++    response_code = loader->ResponseInfo()->headers->response_code();
++  }
++  if (net_error != net::OK || !body || response_code < 200 ||
++      response_code >= 300) {
++    RemoveLoader(loader);
++    std::move(callback).Run(false, "enrollment completion HTTP request failed");
++    return;
++  }
++  std::optional<base::Value> parsed =
++      base::JSONReader::Read(*body, base::JSON_PARSE_RFC);
++  const std::string *phase = parsed && parsed->is_dict()
++                                 ? parsed->GetDict().FindString("phase")
++                                 : nullptr;
++  if (!phase || *phase != "active") {
++    RemoveLoader(loader);
++    std::move(callback).Run(false, "server did not confirm active enrollment");
++    return;
++  }
++  std::string error;
++  if (!PersistStateProgress(acknowledged_seq, "active", &error)) {
++    RemoveLoader(loader);
++    std::move(callback).Run(false, std::move(error));
++    return;
++  }
++  state_.phase = "active";
++  state_.sequence = acknowledged_seq;
++  RemoveLoader(loader);
 +  std::move(callback).Run(true, std::string());
 +}
 +
-+void HeliumSyncClient::OnPullComplete(PullCallback callback,
-+                                      std::optional<std::string> body) {
-+  if (!body) {
-+    std::move(callback).Run(false, std::string(), "pull failed");
-+    return;
-+  }
-+  std::move(callback).Run(true, *body, std::string());
-+}
-+
-+std::unique_ptr<network::SimpleURLLoader> HeliumSyncClient::MakeJSONRequest(
-+    GURL url,
-+    std::string method,
-+    std::string body) {
++std::unique_ptr<network::SimpleURLLoader>
++HeliumSyncClient::MakeJSONRequest(GURL url, std::string method,
++                                  std::string body) {
 +  auto request = std::make_unique<network::ResourceRequest>();
 +  request->url = std::move(url);
 +  request->method = std::move(method);
@@ -2706,84 +3960,143 @@ index 0000000..1ae4560
 +  return loader;
 +}
 +
-+}  // namespace helium_sync
++void HeliumSyncClient::RemoveLoader(network::SimpleURLLoader *loader) {
++  std::erase_if(loaders_,
++                [loader](const auto &owned) { return owned.get() == loader; });
++}
++
++} // namespace helium_sync
 diff --git a/components/helium_sync/helium_sync_client.h b/components/helium_sync/helium_sync_client.h
 new file mode 100644
-index 0000000..a31f0d4
+index 0000000..73a1e0c
 --- /dev/null
 +++ b/components/helium_sync/helium_sync_client.h
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,125 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
 +#define COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
 +
++#include <cstdint>
++#include <map>
 +#include <memory>
 +#include <optional>
 +#include <string>
++#include <string_view>
 +#include <vector>
 +
++#include "base/files/file_path.h"
 +#include "base/functional/callback.h"
 +#include "base/memory/scoped_refptr.h"
 +#include "base/memory/weak_ptr.h"
++#include "base/values.h"
 +#include "url/gurl.h"
 +
 +namespace network {
 +class SharedURLLoaderFactory;
 +class SimpleURLLoader;
-+}  // namespace network
++} // namespace network
 +
 +namespace helium_sync {
 +
++// Records are plaintext only inside the browser process. The HTTP client maps
++// them to/from authenticated ciphertext and never sends device_id or payload.
 +struct Record {
++  int64_t seq = 0;
++  int64_t revision = 0;
++  int64_t expected_revision = 0;
 +  std::string kind;
 +  std::string key;
 +  bool deleted = false;
-+  std::string origin_device;
++  std::string device_id;
++  std::string key_id;
 +  std::string payload_json;
 +};
 +
++struct RecordsResult {
++  std::vector<Record> records;
++  int64_t next_seq = 0;
++};
++
++struct SealedPayload {
++  std::string key_id;
++  std::string nonce;
++  std::string ciphertext;
++};
++
 +class HeliumSyncClient {
-+ public:
-+  using PushCallback = base::OnceCallback<void(bool ok, std::string error)>;
-+  using PullCallback = base::OnceCallback<
-+      void(bool ok, std::string response_json, std::string error)>;
++public:
++  using RecordsCallback = base::OnceCallback<void(bool ok, RecordsResult result,
++                                                  std::string error)>;
++  using StatusCallback = base::OnceCallback<void(bool ok, std::string error)>;
 +
 +  HeliumSyncClient(
 +      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory,
-+      GURL base_url,
-+      std::string bearer_token,
-+      std::string device_name);
-+  HeliumSyncClient(const HeliumSyncClient&) = delete;
-+  HeliumSyncClient& operator=(const HeliumSyncClient&) = delete;
++      GURL base_url, std::string bearer_token,
++      base::FilePath client_state_path);
++  HeliumSyncClient(const HeliumSyncClient &) = delete;
++  HeliumSyncClient &operator=(const HeliumSyncClient &) = delete;
 +  ~HeliumSyncClient();
 +
-+  void Push(std::vector<Record> records, PushCallback callback);
-+  void Pull(int64_t since,
-+            std::vector<std::string> kinds,
-+            PullCallback callback);
-+  void Latest(std::vector<std::string> kinds,
-+              bool include_deleted,
-+              PullCallback callback);
++  void Push(std::vector<Record> records, RecordsCallback callback);
++  void Pull(int64_t since, std::vector<std::string> kinds,
++            RecordsCallback callback);
++  void Latest(std::vector<std::string> kinds, RecordsCallback callback);
++  std::string_view device_id() const { return state_.device_id; }
++  std::string_view enrollment_phase() const { return state_.phase; }
++  bool AcknowledgeApplied(int64_t next_seq, std::string *error);
++  void CompleteEnrollment(int64_t acknowledged_seq, StatusCallback callback);
 +
-+ private:
-+  void OnPushComplete(PushCallback callback, std::optional<std::string> body);
-+  void OnPullComplete(PullCallback callback, std::optional<std::string> body);
-+  std::unique_ptr<network::SimpleURLLoader> MakeJSONRequest(GURL url,
-+                                                            std::string method,
-+                                                            std::string body);
++  // Cookie rollback and other local durable data use the content keyring with a
++  // separate AAD domain. The resulting value is safe to persist; plaintext is
++  // never written by this helper.
++  bool SealLocalPayload(std::string_view purpose, std::string_view plaintext,
++                        SealedPayload *sealed, std::string *error) const;
++  bool OpenLocalPayload(std::string_view purpose, const SealedPayload &sealed,
++                        std::string *plaintext, std::string *error) const;
++
++private:
++  struct ClientState {
++    std::string device_id;
++    std::string role;
++    std::string phase;
++    std::string active_key_id;
++    std::map<std::string, std::vector<uint8_t>> keys;
++    std::vector<uint8_t> local_seal_key;
++    int64_t sequence = 0;
++  };
++
++  bool LoadClientState(const base::FilePath &path);
++  bool PersistStateProgress(int64_t sequence,
++                            std::optional<std::string_view> phase,
++                            std::string *error);
++  bool EncryptRecord(const Record &plain, base::DictValue *opaque,
++                     std::string *error) const;
++  std::optional<RecordsResult> ParseRecordsResponse(std::string_view body,
++                                                    std::string *error) const;
++  void OnRecordsComplete(network::SimpleURLLoader *loader,
++                         std::vector<Record> expected, RecordsCallback callback,
++                         std::optional<std::string> body);
++  void OnEnrollmentComplete(network::SimpleURLLoader *loader,
++                            int64_t acknowledged_seq, StatusCallback callback,
++                            std::optional<std::string> body);
++  std::unique_ptr<network::SimpleURLLoader>
++  MakeJSONRequest(GURL url, std::string method, std::string body);
++  void RemoveLoader(network::SimpleURLLoader *loader);
 +
 +  scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory_;
 +  GURL base_url_;
 +  std::string bearer_token_;
-+  std::string device_name_;
++  base::FilePath client_state_path_;
++  ClientState state_;
++  std::string state_error_;
 +  std::vector<std::unique_ptr<network::SimpleURLLoader>> loaders_;
 +  base::WeakPtrFactory<HeliumSyncClient> weak_factory_{this};
 +};
 +
-+}  // namespace helium_sync
++} // namespace helium_sync
 +
-+#endif  // COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
++#endif // COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
 diff --git a/components/password_manager/core/browser/password_store/BUILD.gn b/components/password_manager/core/browser/password_store/BUILD.gn
 new file mode 100644
 index 0000000..e7796dc

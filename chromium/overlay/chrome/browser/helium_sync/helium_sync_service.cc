@@ -2,27 +2,28 @@
 
 #include "chrome/browser/helium_sync/helium_sync_service.h"
 
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
 
-#include "base/base_paths.h"
+#include "base/base64.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
+#include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/path_service.h"
 #include "base/strings/string_util.h"
-#include "base/system/sys_info.h"
+#include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
 #include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/common/chrome_paths.h"
 #include "components/helium_sync/helium_password_sync_bridge.h"
 #include "components/helium_sync/helium_sync_client.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "url/gurl.h"
+#include "url/url_constants.h"
 
 #if BUILDFLAG(IS_ANDROID)
 #include <android/log.h>
@@ -42,12 +43,12 @@ namespace {
 constexpr char kConfigDir[] = "helium-sync";
 constexpr char kTokenFile[] = "token";
 constexpr char kBaseUrlFile[] = "base_url";
-constexpr char kDeviceNameFile[] = "device_name";
+constexpr char kClientStateFile[] = "client.json";
 constexpr char kPasswordStateFile[] = "password-state.json";
-constexpr char kCookiePoliciesFile[] = "cookie-policies.json";
 constexpr char kCookieStateFile[] = "cookie-state.json";
+constexpr char kCookieRollbackFile[] = "cookie-rollback.json";
+constexpr char kCookieReauthSignalFile[] = "cookie-reauth-required.json";
 constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
-constexpr char kDefaultBaseUrl[] = "http://127.0.0.1:44719";
 
 #if BUILDFLAG(IS_ANDROID)
 void AndroidStatusLog(const std::string& message) {
@@ -57,133 +58,109 @@ void AndroidStatusLog(const std::string& message) {
 void AndroidStatusLog(const std::string&) {}
 #endif
 
-std::vector<base::FilePath> CandidateConfigPaths(Profile* profile,
-                                                 const char* leaf) {
-  std::vector<base::FilePath> paths;
-  paths.push_back(profile->GetPath().AppendASCII(kConfigDir).AppendASCII(leaf));
-
-  base::FilePath user_data_dir;
-  if (base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir)) {
-    paths.push_back(user_data_dir.AppendASCII(kConfigDir).AppendASCII(leaf));
+std::optional<std::string> ReadConfigValue(const base::FilePath& config_dir,
+                                           const char* leaf) {
+  std::string value;
+  if (!base::ReadFileToString(config_dir.AppendASCII(leaf), &value)) {
+    return std::nullopt;
   }
-
-  base::FilePath home_dir;
-  if (base::PathService::Get(base::DIR_HOME, &home_dir)) {
-    paths.push_back(home_dir.AppendASCII(".local")
-                        .AppendASCII("share")
-                        .AppendASCII(kConfigDir)
-                        .AppendASCII(leaf));
-  }
-
-#if BUILDFLAG(IS_ANDROID)
-  base::FilePath app_data_dir;
-  if (base::PathService::Get(base::DIR_ANDROID_APP_DATA, &app_data_dir)) {
-    paths.push_back(app_data_dir.AppendASCII(kConfigDir).AppendASCII(leaf));
-  }
-#endif
-
-  return paths;
+  value = std::string(base::TrimWhitespaceASCII(value, base::TRIM_ALL));
+  return value.empty() ? std::nullopt
+                       : std::optional<std::string>(std::move(value));
 }
 
-std::optional<std::string> ReadFirstConfigValue(Profile* profile,
-                                                const char* leaf) {
-  for (const base::FilePath& path : CandidateConfigPaths(profile, leaf)) {
-    std::string value;
-    if (!base::ReadFileToString(path, &value)) {
-      continue;
-    }
-    value = std::string(base::TrimWhitespaceASCII(value, base::TRIM_ALL));
-    if (!value.empty()) {
-      return value;
-    }
+std::optional<std::string> ReadClientDeviceId(
+    const base::FilePath& client_state_path) {
+  std::string raw;
+  if (!base::ReadFileToString(client_state_path, &raw)) {
+    return std::nullopt;
   }
-  return std::nullopt;
-}
-
-std::optional<base::FilePath> FindFirstConfigPath(Profile* profile,
-                                                  const char* leaf) {
-  for (const base::FilePath& path : CandidateConfigPaths(profile, leaf)) {
-    if (base::PathExists(path)) {
-      return path;
+  std::optional<base::Value> parsed =
+      base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
+  if (!parsed || !parsed->is_dict() ||
+      parsed->GetDict().FindInt("version").value_or(0) != 1) {
+    return std::nullopt;
+  }
+  const base::DictValue& state = parsed->GetDict();
+  const std::string* device_id = state.FindString("device_id");
+  const std::string* role = state.FindString("role");
+  const std::string* phase = state.FindString("phase");
+  const std::string* active_key_id = state.FindString("active_key_id");
+  const base::DictValue* keys = state.FindDict("keys");
+  if (!device_id || device_id->empty() || !role ||
+      (*role != "seed" && *role != "join") || !phase ||
+      (*phase != "pending" && *phase != "active") ||
+      !active_key_id || active_key_id->empty() || !keys || keys->empty() ||
+      !keys->Find(*active_key_id) || (*role == "seed" && *device_id != "d") ||
+      (*role == "join" && *device_id == "d")) {
+    return std::nullopt;
+  }
+  for (const auto [key_id, encoded] : *keys) {
+    if (key_id.empty() || !encoded.is_string()) {
+      return std::nullopt;
+    }
+    std::optional<std::vector<uint8_t>> decoded =
+        base::Base64Decode(encoded.GetString());
+    if (!decoded || decoded->size() != 32) {
+      return std::nullopt;
     }
   }
-  return std::nullopt;
-}
-
-GURL ReadBaseUrl(Profile* profile) {
-  std::string base_url =
-      ReadFirstConfigValue(profile, kBaseUrlFile).value_or(kDefaultBaseUrl);
-  GURL url(base_url);
-  return url.is_valid() ? url : GURL(kDefaultBaseUrl);
-}
-
-std::string ReadDeviceName(Profile* profile) {
-  if (std::optional<std::string> device_name =
-          ReadFirstConfigValue(profile, kDeviceNameFile)) {
-    return *device_name;
-  }
-
-  return "helium-" + base::SysInfo::OperatingSystemName() + "-" +
-         profile->GetPath().BaseName().AsUTF8Unsafe();
+  return *device_id;
 }
 
 }  // namespace
 
 HeliumSyncService::HeliumSyncService(Profile* profile) {
+  const base::FilePath config_dir = profile->GetPath().AppendASCII(kConfigDir);
   if (std::optional<std::string> export_path =
-          ReadFirstConfigValue(profile, kTabSnapshotExportPathFile)) {
+          ReadConfigValue(config_dir, kTabSnapshotExportPathFile)) {
     tab_snapshot_bridge_ =
         std::make_unique<helium_sync::HeliumTabSnapshotBridge>(
             profile, base::FilePath::FromUTF8Unsafe(*export_path));
     tab_snapshot_bridge_->Start();
   }
 
-  std::optional<std::string> token = ReadFirstConfigValue(profile, kTokenFile);
-  if (!token) {
-    LOG(WARNING) << "Helium sync inactive: no token config for profile "
-                 << profile->GetPath();
-    AndroidStatusLog("inactive: no token config for profile " +
-                     profile->GetPath().AsUTF8Unsafe());
+  std::optional<std::string> token = ReadConfigValue(config_dir, kTokenFile);
+  std::optional<std::string> base_url_value =
+      ReadConfigValue(config_dir, kBaseUrlFile);
+  const base::FilePath client_state_path =
+      config_dir.AppendASCII(kClientStateFile);
+  std::optional<std::string> device_id = ReadClientDeviceId(client_state_path);
+  GURL base_url(base_url_value.value_or(""));
+  if (!token || !device_id || !base_url.is_valid() ||
+      !base_url.SchemeIs(url::kHttpsScheme) || base_url.host().empty() ||
+      base_url.has_username() || base_url.has_password()) {
+    LOG(WARNING) << "Helium sync inactive: profile-local enrollment config is "
+                    "missing or invalid";
+    AndroidStatusLog("inactive: profile-local enrollment config invalid");
     return;
   }
 
-  std::string device_name = ReadDeviceName(profile);
-  LOG(WARNING) << "Helium sync starting for device " << device_name
-               << " profile " << profile->GetPath();
-  AndroidStatusLog("starting for device " + device_name);
-  if (std::optional<base::FilePath> policies_path =
-          FindFirstConfigPath(profile, kCookiePoliciesFile)) {
-    auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
-        profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
-        device_name);
-    cookie_bridge_ = std::make_unique<helium_sync::HeliumCookieSyncBridge>(
-        profile, std::move(cookie_client), device_name,
-        std::move(*policies_path),
-        profile->GetPath()
-            .AppendASCII(kConfigDir)
-            .AppendASCII(kCookieStateFile));
-    cookie_bridge_->Start();
-  }
+  LOG(WARNING) << "Helium sync starting from profile-local enrollment";
+  AndroidStatusLog("starting from profile-local enrollment");
+  auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
+      profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
+  cookie_bridge_ = std::make_unique<helium_sync::HeliumCookieSyncBridge>(
+      profile, std::move(cookie_client),
+      config_dir.AppendASCII(kCookieStateFile),
+      config_dir.AppendASCII(kCookieRollbackFile),
+      config_dir.AppendASCII(kCookieReauthSignalFile));
+  cookie_bridge_->Start();
 
   scoped_refptr<password_manager::PasswordStoreInterface> password_store =
       ProfilePasswordStoreFactory::GetForProfile(
           profile, ServiceAccessType::EXPLICIT_ACCESS);
   if (!password_store) {
-    LOG(WARNING) << "Helium sync inactive: no password store for profile "
-                 << profile->GetPath();
-    AndroidStatusLog("inactive: no password store for profile " +
-                     profile->GetPath().AsUTF8Unsafe());
+    LOG(WARNING) << "Helium password sync inactive: password store unavailable";
+    AndroidStatusLog("password sync inactive: password store unavailable");
     return;
   }
 
   auto client = std::make_unique<helium_sync::HeliumSyncClient>(
-      profile->GetURLLoaderFactory(), ReadBaseUrl(profile), *token,
-      device_name);
+      profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
   password_bridge_ = std::make_unique<helium_sync::HeliumPasswordSyncBridge>(
-      password_store, std::move(client), device_name,
-      profile->GetPath()
-          .AppendASCII(kConfigDir)
-          .AppendASCII(kPasswordStateFile));
+      password_store, std::move(client), *device_id,
+      config_dir.AppendASCII(kPasswordStateFile));
   password_bridge_->Start();
 }
 
