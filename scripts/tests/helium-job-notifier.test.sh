@@ -44,6 +44,17 @@ case "${command_name}" in
         exit 64
         ;;
     queue-event)
+        key=
+        for next_argument in "$@"; do
+            if [ "${key}" = next ]; then
+                key=${next_argument}
+                break
+            fi
+            [ "${next_argument}" != --key ] || key=next
+        done
+        if [ "${key}" = "${FAKE_MAIL_CONFLICT_KEY:-}" ]; then
+            exit 2
+        fi
         if [ -n "${FAKE_MAIL_FAIL_ONCE:-}" ] && [ ! -e "${FAKE_MAIL_FAIL_ONCE}" ]; then
             touch "${FAKE_MAIL_FAIL_ONCE}"
             exit 75
@@ -221,6 +232,30 @@ jq -e '.status == "analysis-queued" and .result == "success"' \
 [ "$(wc -l <"${FAKE_EVENT_CALLS}")" -eq 5 ]
 [ "$(sha256sum "${HELIUM_JOB_NOTIFY_STATE_ROOT}/events/${retry_job}.txt" |
     awk '{print $1}')" = "${retry_digest}" ]
+"${notifier}" poll
+[ "$(wc -l <"${FAKE_EVENT_CALLS}")" -eq 5 ]
+
+# An immutable Mailbridge conflict fails closed without inventing another key
+# or falling back to a template.
+conflict_job=test-conflict
+"${notifier}" register "${conflict_job}" "Helium Sync" \
+    "Synthetic immutable event conflict" "Inspect the conflict." \
+    "${source_info}" >/dev/null
+cat >"${FAKE_REMOTE_ROOT}/${conflict_job}.env" <<'EOF'
+state=terminal
+result=failure
+exit_code=125
+started_at_epoch=1
+finished_at_epoch=62
+duration_seconds=61
+reason=synthetic immutable conflict
+EOF
+export FAKE_MAIL_CONFLICT_KEY="helium-build:${conflict_job}:terminal"
+"${notifier}" poll
+jq -e '.status == "analysis-conflict" and
+       .last_poll_error == "mailbridge rejected immutable event input"' \
+    "${HELIUM_JOB_NOTIFY_STATE_ROOT}/jobs/${conflict_job}.json" >/dev/null
+[ "$(wc -l <"${FAKE_EVENT_CALLS}")" -eq 5 ]
 "${notifier}" poll
 [ "$(wc -l <"${FAKE_EVENT_CALLS}")" -eq 5 ]
 

@@ -215,24 +215,39 @@ write_event_prompt() {
 
 queue_terminal_analysis() {
     local path=$1
-    local job key event
+    local job key event queue_status
     job=$(jq -r .job_id "${path}")
     key=$(jq -r .analysis_key "${path}")
     if ! event=$(write_event_prompt "${path}"); then
         return
     fi
 
-    if "${mailbridge_cli}" --config "${mailbridge_config}" queue-event \
+    set +e
+    "${mailbridge_cli}" --config "${mailbridge_config}" queue-event \
         --key "${key}" --conversation "${conversation}" \
-        --prompt-file "${event}" --json >/dev/null 2>&1; then
-        replace_json "${path}" \
-            --argjson now "$(date +%s)" \
-            '.status = "analysis-queued" | .analysis_queued_at = $now |
-             .last_poll_error = null'
-        printf 'analysis-queued job=%s\n' "${job}"
-    else
-        record_poll_error "${path}" "mailbridge event queue unavailable"
-    fi
+        --prompt-file "${event}" --json >/dev/null 2>&1
+    queue_status=$?
+    set -e
+    case "${queue_status}" in
+        0)
+            replace_json "${path}" \
+                --argjson now "$(date +%s)" \
+                '.status = "analysis-queued" | .analysis_queued_at = $now |
+                 .last_poll_error = null'
+            printf 'analysis-queued job=%s\n' "${job}"
+            ;;
+        2)
+            replace_json "${path}" \
+                --argjson now "$(date +%s)" \
+                '.status = "analysis-conflict" |
+                 .last_poll_error = "mailbridge rejected immutable event input" |
+                 .analysis_conflict_at = $now'
+            printf 'job=%s analysis-conflict=mailbridge-rejected-input\n' "${job}" >&2
+            ;;
+        *)
+            record_poll_error "${path}" "mailbridge event queue unavailable"
+            ;;
+    esac
 }
 
 sync_analysis_status() {
