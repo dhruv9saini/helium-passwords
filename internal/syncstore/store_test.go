@@ -786,6 +786,56 @@ func TestStoreRecoversOpaqueJournalFromSnapshot(t *testing.T) {
 	}
 }
 
+func TestFailedJournalTransactionLeavesPriorGenerationUntouched(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("permission failure injection is ineffective as root")
+	}
+	dir := t.TempDir()
+	store, err := OpenStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := bytes.Repeat([]byte{6}, clientKeyLength)
+	first := mustEncrypt(t, key, "d", "epoch", PlainMutation{
+		Kind: KindPassword, Key: "atomic", Payload: json.RawMessage(`{"value":1}`),
+	}, 1)
+	if _, err := store.Put("d", acceptedKeys("epoch"), []OpaqueMutation{first}); err != nil {
+		t.Fatal(err)
+	}
+	journalPath := filepath.Join(dir, recordsFile)
+	before, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshotDir := filepath.Join(dir, "snapshots")
+	if err := os.Chmod(snapshotDir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = os.Chmod(dir, 0700)
+		_ = os.Chmod(snapshotDir, 0700)
+	}()
+	second := mustEncrypt(t, key, "d", "epoch", PlainMutation{
+		Kind: KindPassword, Key: "atomic", Payload: json.RawMessage(`{"value":2}`),
+	}, 2)
+	if _, err := store.Put("d", acceptedKeys("epoch"), []OpaqueMutation{second}); err == nil {
+		t.Fatal("journal transaction unexpectedly succeeded without directory write access")
+	}
+	after, err := os.ReadFile(journalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("failed journal transaction changed the prior durable generation")
+	}
+	if records := store.Latest(nil).Records; len(records) != 1 || records[0].Revision != 1 {
+		t.Fatalf("failed journal transaction changed in-memory revisions: %+v", records)
+	}
+}
+
 func mustEncrypt(t *testing.T, key []byte, deviceID, keyID string, mutation PlainMutation, revision Counter) OpaqueMutation {
 	t.Helper()
 	record, err := encryptClientPayload(key, deviceID, keyID, mutation, revision)
