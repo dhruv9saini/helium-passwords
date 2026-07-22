@@ -71,6 +71,8 @@ test("probe page contains the codec and browser-observable streaming gates", asy
   assert.match(page, /vp09\.00\.10\.08, opus/);
   assert.match(page, /MediaSource\.isTypeSupported/);
   assert.match(page, /mediaCapabilities\.decodingInfo/);
+  assert.match(page, /requestMediaKeySystemAccess/);
+  assert.match(page, /com\.widevine\.alpha/);
   assert.match(page, /getVideoPlaybackQuality/);
   assert.match(page, /audio_decoded_bytes/);
   assert.match(page, /interaction_ticks/);
@@ -114,6 +116,14 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
       webm_vp9_opus: "probably",
       mse_mp4_h264_aac: true,
     },
+    drm: {
+      widevine: {
+        api_available: true,
+        key_system: "com.widevine.alpha",
+        key_system_available: false,
+        error: "synthetic expected unavailability",
+      },
+    },
     runtime: {
       browser_product: "Chrome/148",
       browser_protocol_version: "1.3",
@@ -136,6 +146,10 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     ...result,
     fetch_gzip: { ...stream, arrivals: [1] },
   }), /did not arrive progressively/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    drm: {},
+  }), /Widevine EME availability was not recorded/);
   assert.throws(() => validateProbeResult({
     ...result,
     playback: [{ name: "mp4", ok: false }],

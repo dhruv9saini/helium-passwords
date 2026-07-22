@@ -153,7 +153,7 @@ audio presence, dropped frames, and `chrome://media-internals`/logcat outcome.
 | WebM/MP4 + AV1 | Matches OnePlus hardware/software capability and is recorded |
 | MSE segmented H.264/AAC | Appends and plays to completion |
 | HLS/DASH test manifest | Plays only through the explicitly supported web/MSE path |
-| Widevine DRM fixture | Expected failure until CDM provisioning is deliberately implemented |
+| Widevine DRM fixture | EME API and `com.widevine.alpha` availability are recorded separately; protected playback is expected to fail until CDM provisioning is deliberately implemented |
 
 Run the matrix on an upstream Chromium control APK and Helium Sync APK from the
 same Chromium commit. The artifact-carried probe must record the browser
@@ -161,7 +161,9 @@ product, CDP protocol/WebKit metadata, and fixture origin, verify all three
 media fixture hashes, observe completed playback and nonzero duration, and
 record video dimensions and decoded-audio bytes for MP4, WebM, and MSE. Missing
 media manifest entries or unavailable audio evidence fail the automated gate
-rather than silently reducing the matrix.
+rather than silently reducing the matrix. The probe's Widevine key-system
+observation is evidence only about EME/CDM availability; ordinary MP4 playback
+does not count as DRM support, and no protected content is required or fetched.
 
 ## Gate 6: Streaming Responses
 

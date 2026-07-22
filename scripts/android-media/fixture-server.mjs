@@ -310,6 +310,30 @@ async function decodingInfo(type, videoContentType, audioContentType) {
     });
   } catch (error) { return {supported:false,error:String(error)}; }
 }
+async function widevineSupport() {
+  const keySystem = 'com.widevine.alpha';
+  if (!navigator.requestMediaKeySystemAccess) {
+    return {api_available:false,key_system:keySystem,key_system_available:false,error:'EME API unavailable'};
+  }
+  try {
+    const access = await navigator.requestMediaKeySystemAccess(keySystem, [{
+      initDataTypes:['cenc'],
+      distinctiveIdentifier:'optional',
+      persistentState:'optional',
+      sessionTypes:['temporary'],
+      videoCapabilities:[{contentType:mp4Mime}],
+      audioCapabilities:[{contentType:'audio/mp4; codecs="mp4a.40.2"'}],
+    }]);
+    return {
+      api_available:true,
+      key_system:keySystem,
+      key_system_available:true,
+      configuration:access.getConfiguration(),
+    };
+  } catch (error) {
+    return {api_available:true,key_system:keySystem,key_system_available:false,error:String(error)};
+  }
+}
 (async () => {
   const probeVideo = document.createElement('video');
   results.capabilities = {
@@ -323,6 +347,7 @@ async function decodingInfo(type, videoContentType, audioContentType) {
     webm_file: await decodingInfo('file','video/webm; codecs="vp09.00.10.08"','audio/webm; codecs="opus"'),
     mp4_mse: await decodingInfo('media-source','video/mp4; codecs="avc1.42E01E"','audio/mp4; codecs="mp4a.40.2"'),
   };
+  results.drm = {widevine:await widevineSupport()};
   for (const encoding of ['identity','gzip','br']) {
     try { results['fetch_' + encoding] = await stream('/stream/fetch?encoding=' + encoding); }
     catch (error) { results['fetch_' + encoding] = {error:String(error)}; }

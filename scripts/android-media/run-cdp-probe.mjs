@@ -83,6 +83,12 @@ export function validateProbeResult(result) {
       result.capabilities?.mse_mp4_h264_aac !== true) {
     throw new Error("required MP4/WebM/MSE codec capability was not reported");
   }
+  const widevine = result.drm?.widevine;
+  if (typeof widevine?.api_available !== "boolean" ||
+      typeof widevine?.key_system_available !== "boolean" ||
+      widevine?.key_system !== "com.widevine.alpha") {
+    throw new Error("Widevine EME availability was not recorded separately from codec playback");
+  }
   if (!result.runtime?.browser_product || !result.runtime?.browser_protocol_version ||
       !result.runtime?.browser_webkit_version || !result.runtime?.fixture_origin) {
     throw new Error("runtime browser and fixture provenance was not recorded");
