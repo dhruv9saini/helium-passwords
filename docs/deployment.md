@@ -379,8 +379,29 @@ activation never silently replaces another service.
 scripts/install-lm-sync-service.sh install-source
 ```
 
-This installs `helium-syncd.service` but does not initialize, enable, or start
-it. Production has no cleartext listener and does not use Tailscale Serve.
+Run that command from a clean private worktree as the ordinary lm operator; it
+crosses one sudo boundary and performs both Go builds as that invoking user.
+It refuses dirty or untracked source. The immutable release below
+`/usr/local/libexec/helium-sync-releases/generations/` contains both binaries,
+their Go build metadata, the health and backup helpers, every production unit,
+and an exact-field `source.env`. The SHA-256 of that canonical receipt is the
+generation ID. The receipt binds the private commit and tree, its merged public
+backbone commit, Go/module identity, build command and target, and every
+installed byte. One `current` symlink selects the complete generation; stable
+systemd unit symlinks also resolve through it. The command does not initialize,
+enable, or start the service.
+
+Source rollback is an inactive, state-preserving symlink transaction:
+
+```sh
+scripts/install-lm-sync-service.sh rollback-source SOURCE_GENERATION
+scripts/install-lm-sync-service.sh verify-source
+```
+
+The rollback refuses while the daemon or either backup service is active,
+revalidates the complete target generation before switching, reloads systemd,
+and never removes another generation or `/var/lib/helium-sync`.
+Production has no cleartext listener and does not use Tailscale Serve.
 Record lm's current identity without changing Tailscale state:
 
 ```sh
@@ -427,14 +448,19 @@ Installation verifies the exact live Tailscale identity, CA constraints,
 signature, certificate/key match, SANs, purpose, permissions, and at least 30
 days of remaining lifetime. It writes a new immutable generation below
 `/etc/helium-sync/tls/generations/`, atomically switches `current`, and keeps
-older generations for rollback. It neither starts the service nor changes
-Tailscale. Verification requires both Tailscale Serve and Funnel to remain
-empty. The hardened unit re-verifies the generation at every start, binds only
-`100.100.105.47:44719`, permits only tailnet IPv4 peers, and requires TLS 1.3.
-No `:443` capability is needed. A CA private key in the installed generation
-is a hard start failure. Live verification bypasses proxy environment
-variables, resolves the authenticated name to the exact current tailnet IPv4,
-and permits only TLS 1.3.
+older generations for rollback. The same generation contains `endpoint.env`,
+the public CA, leaf, root-owned service-group-readable private key, and a strict
+provenance receipt bound to the active source release. Thus endpoint identity
+and TLS material cannot be mixed by a crash between two renames. The service
+account can read but cannot modify the private key. Installation neither starts
+the service nor changes Tailscale. Verification requires both Tailscale Serve
+and Funnel to remain empty. The hardened unit re-verifies the generation at
+every start, binds only `100.100.105.47:44719`, permits only tailnet IPv4 peers,
+and requires TLS 1.3. `systemctl start` does not succeed until an unprivileged
+authenticated `/v2/health` request succeeds. No `:443` capability is needed. A
+CA private key in the installed generation is a hard start failure. Live
+verification bypasses proxy environment variables, resolves the authenticated
+name to the exact current tailnet IPv4, and permits only TLS 1.3.
 
 Before a client receives a URL or credential, authenticate the printed
 `ca_sha256` through a route independent of lm and explicitly enroll that exact
@@ -475,6 +501,18 @@ previous generation until all three disposable clients have completed a new
 TLS connection and the prior leaf has expired. Leaf renewal does not change the
 enrolled root; a changed root is a separate, explicitly coordinated client
 trust rotation.
+
+If a newly selected endpoint must be reverted before activation, keep the
+daemon inactive and run:
+
+```sh
+scripts/install-lm-sync-service.sh rollback-endpoint TLS_GENERATION
+scripts/install-lm-sync-service.sh verify-endpoint
+```
+
+This revalidates the selected bundle and its source-release provenance, moves
+only `/etc/helium-sync/tls/current`, preserves every TLS generation and server
+record, and refuses a target issued for another source release.
 
 ## 4. Create d seed and recovery material
 
@@ -567,14 +605,28 @@ previously active, and require direct-TLS health. A concurrent operator action
 fails immediately. Do not invoke low-level `server-enroll` or `server-revoke`
 against the production registry.
 
-The backup helper also validates the source without snapshot creation or
-automatic journal recovery. It archives only `devices.json`, `records.jsonl`,
-`snapshots/`, and an optional opaque `quarantine/`; all backup directories,
-archives, manifests, receipts, and locks are private. d's age recipients and
-both recovery identities remain a separate client-side flow and are never
-members of the lm/NAS opaque archive. The production backup unit has no
-network access, a read-only server-state view, one writable NAS namespace, an
-empty capability set, and bounded CPU, memory, swap, and tasks.
+The timer starts a narrow root coordinator, not the archive helper. The
+coordinator cannot see `/var/lib/helium-sync` or `/srv/nas`; it can only use
+systemd over `AF_UNIX` to quiesce the daemon and supervise the separately
+bounded `helium-sync-server-backup-archive.service`. A root-owned mode-0600
+restart marker survives a controller failure. Recovery always stops and waits
+for the archive worker before restarting the daemon, and removes that marker
+only after the daemon's authenticated health gate succeeds. A failed restart
+leaves both the daemon stopped and marker present for explicit `resume`.
+
+The archive worker runs as `helium-sync`, has a read-only server-state view,
+one writable NAS namespace, no network or capabilities, and bounded wall time,
+CPU, memory, swap, and tasks. It validates source state without snapshot
+creation or automatic journal recovery and archives only `devices.json`,
+`records.jsonl`, `snapshots/`, and optional opaque `quarantine/`. Before an
+archive and its exact-field manifest become a generation, the worker checks
+member types and inventory, checksum and byte count, extracts into disposable
+state, and runs `server-verify`. All backup directories, archives, manifests,
+receipts, and locks are private. d's age recipients and both recovery identities
+remain a separate client-side flow and are never members of the lm/NAS opaque
+archive. `backup-drill` is intentionally allowed only while the daemon is
+inactive; use `systemctl start helium-sync-server-backup.service` for a
+supervised backup of an active service.
 
 The nondestructive production stop is:
 

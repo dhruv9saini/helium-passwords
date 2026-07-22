@@ -1,29 +1,29 @@
 [Unit]
-Description=Quiesce Helium Sync and supervise its sandboxed archive
-After=srv-nas.mount
-RequiresMountsFor=/srv/nas
+Description=Archive verified opaque Helium Sync state as the service account
 
 [Service]
 Type=oneshot
-RuntimeDirectory=helium-sync-server-backup
-RuntimeDirectoryMode=0700
-ExecStart=/usr/local/libexec/helium-sync-releases/current/helium-sync-server-backup-control run
-ExecStopPost=/usr/local/libexec/helium-sync-releases/current/helium-sync-server-backup-control resume
-TimeoutStartSec=20min
+User=helium-sync
+Group=helium-sync
+Environment=HELIUM_SERVER_SERVICE=none
+Environment=HELIUM_SYNC_CLI=/usr/local/libexec/helium-sync-releases/current/helium-sync
+ExecStart=/usr/local/libexec/helium-sync-releases/current/helium-sync-server-backup backup /srv/nas/helium-sync-server
+TimeoutStartSec=15min
 TimeoutStopSec=30s
 UMask=0077
 Nice=10
 IOSchedulingClass=idle
 CPUQuota=25%
-MemoryMax=64M
+MemoryMax=256M
 MemorySwapMax=0
-TasksMax=16
+TasksMax=32
 NoNewPrivileges=yes
 PrivateTmp=yes
 PrivateDevices=yes
 ProtectSystem=strict
 ProtectHome=yes
-InaccessiblePaths=/var/lib/helium-sync /srv/nas
+ReadOnlyPaths=/var/lib/helium-sync
+ReadWritePaths=/srv/nas/helium-sync-server
 ProtectHostname=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

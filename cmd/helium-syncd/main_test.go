@@ -67,7 +67,28 @@ func TestServerTLSConfigLoadsExactTailnetIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, err := serverTLSConfig(address+":44719", certificate, weakKey); err == nil ||
-		!strings.Contains(err.Error(), "mode 0600") {
+		!strings.Contains(err.Error(), "service-owned 0600") {
 		t.Fatalf("weak key permissions were not rejected: %v", err)
+	}
+}
+
+func TestTLSKeyPermissionsPermitImmutableServiceReadableKey(t *testing.T) {
+	if !tlsKeyPermissions(0600, 1000, 1000, 1000, 1000) {
+		t.Fatal("service-owned private key was rejected")
+	}
+	if !tlsKeyPermissions(0640, 0, 900, 900, 900) {
+		t.Fatal("root-owned service-group private key was rejected")
+	}
+	for name, accepted := range map[string]bool{
+		"service writable group": tlsKeyPermissions(0660, 0, 900, 900, 900),
+		"other readable":         tlsKeyPermissions(0644, 0, 900, 900, 900),
+		"wrong group":            tlsKeyPermissions(0640, 0, 901, 900, 900),
+		"service owns 0640":      tlsKeyPermissions(0640, 900, 900, 900, 900),
+		"root consumes 0640":     tlsKeyPermissions(0640, 0, 0, 0, 0),
+		"foreign 0600":           tlsKeyPermissions(0600, 0, 900, 900, 900),
+	} {
+		if accepted {
+			t.Fatalf("unsafe TLS key mode accepted: %s", name)
+		}
 	}
 }

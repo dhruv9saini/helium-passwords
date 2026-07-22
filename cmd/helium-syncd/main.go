@@ -107,8 +107,10 @@ func serverTLSConfig(listen, certificatePath, keyPath string) (*tls.Config, bool
 	if err != nil {
 		return nil, false, err
 	}
-	if !keyInfo.Mode().IsRegular() || keyInfo.Mode().Perm()&0077 != 0 {
-		return nil, false, errors.New("TLS private key must be a regular file with mode 0600 or stricter")
+	keyStat, ok := keyInfo.Sys().(*syscall.Stat_t)
+	if !keyInfo.Mode().IsRegular() || !ok || !tlsKeyPermissions(
+		keyInfo.Mode().Perm(), keyStat.Uid, keyStat.Gid, uint32(os.Geteuid()), uint32(os.Getegid())) {
+		return nil, false, errors.New("TLS private key must be service-owned 0600 or root-owned service-group 0640")
 	}
 	certificateInfo, err := os.Lstat(certificatePath)
 	if err != nil {
@@ -139,6 +141,13 @@ func serverTLSConfig(listen, certificatePath, keyPath string) (*tls.Config, bool
 		Certificates: []tls.Certificate{pair},
 		MinVersion:   tls.VersionTLS13,
 	}, true, nil
+}
+
+func tlsKeyPermissions(mode os.FileMode, owner, group, effectiveUID, effectiveGID uint32) bool {
+	if mode == 0600 {
+		return owner == effectiveUID
+	}
+	return mode == 0640 && owner == 0 && effectiveUID != 0 && group == effectiveGID
 }
 
 func defaultDataDir() string {

@@ -64,4 +64,32 @@ if HELIUM_SERVER_DATA_DIR="$test_root/server" HELIUM_SERVER_SERVICE=none \
   exit 1
 fi
 
+original_manifest=$(cat "$manifest")
+printf '%s\narchive_sha256=deadbeef\n' "$original_manifest" >"$manifest"
+if HELIUM_SERVER_DATA_DIR="$test_root/server" HELIUM_SERVER_SERVICE=none \
+  HELIUM_SYNC_CLI="$test_root/helium-sync" \
+  "$repo_root/scripts/helium-sync-server-backup.sh" restore-drill \
+  "$archive" "/tmp/helium-sync-restore.duplicate-$$" >/dev/null 2>&1; then
+  echo "duplicate manifest field passed restore" >&2
+  exit 1
+fi
+printf '%s\nunknown=value\n' "$original_manifest" >"$manifest"
+if HELIUM_SERVER_DATA_DIR="$test_root/server" HELIUM_SERVER_SERVICE=none \
+  HELIUM_SYNC_CLI="$test_root/helium-sync" \
+  "$repo_root/scripts/helium-sync-server-backup.sh" restore-drill \
+  "$archive" "/tmp/helium-sync-restore.unknown-$$" >/dev/null 2>&1; then
+  echo "unknown manifest field passed restore" >&2
+  exit 1
+fi
+printf '%s\n' "$original_manifest" | \
+  sed 's/^archive_bytes=.*/archive_bytes=1/' >"$manifest"
+if HELIUM_SERVER_DATA_DIR="$test_root/server" HELIUM_SERVER_SERVICE=none \
+  HELIUM_SYNC_CLI="$test_root/helium-sync" \
+  "$repo_root/scripts/helium-sync-server-backup.sh" restore-drill \
+  "$archive" "/tmp/helium-sync-restore.bytes-$$" >/dev/null 2>&1; then
+  echo "incorrect manifest byte count passed restore" >&2
+  exit 1
+fi
+printf '%s\n' "$original_manifest" >"$manifest"
+
 echo "server_backup_restore=passed"
