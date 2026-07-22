@@ -148,7 +148,10 @@ func TestStoreOpaqueCASAndTombstones(t *testing.T) {
 	if _, err := store.Put("d", acceptedKeys("epoch"), []OpaqueMutation{tombstone}); err != nil {
 		t.Fatal(err)
 	}
-	latest := store.Latest(map[Kind]struct{}{KindPassword: {}})
+	latest, err := store.LatestPage("", maxPageRecords, map[Kind]struct{}{KindPassword: {}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(latest.Records) != 1 || !latest.Records[0].Deleted || latest.Records[0].Revision != 2 {
 		t.Fatalf("latest omitted or changed tombstone: %+v", latest)
 	}
@@ -788,7 +791,11 @@ func TestStoreRecoversOpaqueJournalFromSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if records := recovered.Pull(0, nil).Records; len(records) != 1 || records[0].Key != "fixture" {
+	recoveredPage, err := recovered.PullPage(0, "", maxPageRecords, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if records := recoveredPage.Records; len(records) != 1 || records[0].Key != "fixture" {
 		t.Fatalf("unexpected recovered records: %+v", records)
 	}
 }
@@ -907,7 +914,11 @@ func TestFailedJournalTransactionLeavesPriorGenerationUntouched(t *testing.T) {
 	if !bytes.Equal(before, after) {
 		t.Fatal("failed journal transaction changed the prior durable generation")
 	}
-	if records := store.Latest(nil).Records; len(records) != 1 || records[0].Revision != 1 {
+	latest, latestErr := store.LatestPage("", maxPageRecords, nil)
+	if latestErr != nil {
+		t.Fatal(latestErr)
+	}
+	if records := latest.Records; len(records) != 1 || records[0].Revision != 1 {
 		t.Fatalf("failed journal transaction changed in-memory revisions: %+v", records)
 	}
 }

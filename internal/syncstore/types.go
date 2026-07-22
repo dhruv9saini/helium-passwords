@@ -127,8 +127,30 @@ type PushResponse struct {
 }
 
 type PullResponse struct {
-	Records []OpaqueRecord `json:"records"`
-	NextSeq Counter        `json:"next_seq"`
+	PageVersion int            `json:"page_version"`
+	PageCursor  string         `json:"page_cursor"`
+	Records     []OpaqueRecord `json:"records"`
+	NextSeq     Counter        `json:"next_seq"`
+}
+
+func (response *PullResponse) UnmarshalJSON(raw []byte) error {
+	var wire struct {
+		PageVersion *int            `json:"page_version"`
+		PageCursor  *string         `json:"page_cursor"`
+		Records     *[]OpaqueRecord `json:"records"`
+		NextSeq     *Counter        `json:"next_seq"`
+	}
+	if err := strictDecode(raw, &wire); err != nil {
+		return err
+	}
+	if wire.PageVersion == nil || wire.PageCursor == nil || wire.Records == nil || wire.NextSeq == nil {
+		return errors.New("page response is missing a required field")
+	}
+	response.PageVersion = *wire.PageVersion
+	response.PageCursor = *wire.PageCursor
+	response.Records = *wire.Records
+	response.NextSeq = *wire.NextSeq
+	return nil
 }
 
 type KeyTransitionRequest struct {

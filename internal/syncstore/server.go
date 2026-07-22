@@ -110,12 +110,17 @@ func (server server) pull(w http.ResponseWriter, r *http.Request, _ DevicePrinci
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
 		return
 	}
-	since, kinds, err := parseQuery(r)
+	since, cursor, limit, kinds, err := parsePageQuery(r, pullPageMode)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, server.store.Pull(since, kinds))
+	response, err := server.store.PullPage(since, cursor, limit, kinds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_page", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (server server) latest(w http.ResponseWriter, r *http.Request, _ DevicePrincipal) {
@@ -123,12 +128,17 @@ func (server server) latest(w http.ResponseWriter, r *http.Request, _ DevicePrin
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", errors.New("method not allowed"))
 		return
 	}
-	_, kinds, err := parseQuery(r)
+	_, cursor, limit, kinds, err := parsePageQuery(r, latestPageMode)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_query", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, server.store.Latest(kinds))
+	response, err := server.store.LatestPage(cursor, limit, kinds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_page", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (server server) stageKey(w http.ResponseWriter, r *http.Request, principal DevicePrincipal) {
@@ -314,21 +324,53 @@ func decodeRequestBody(w http.ResponseWriter, r *http.Request, value any) error 
 	return nil
 }
 
-func parseQuery(r *http.Request) (Counter, map[Kind]struct{}, error) {
+func parsePageQuery(r *http.Request, mode pageMode) (Counter, string, int, map[Kind]struct{}, error) {
 	query := r.URL.Query()
+	for key := range query {
+		if key != "since" && key != "cursor" && key != "limit" && key != "kind" {
+			return 0, "", 0, nil, fmt.Errorf("unknown query parameter %q", key)
+		}
+	}
+	if len(query["limit"]) != 1 {
+		return 0, "", 0, nil, errors.New("limit must appear exactly once")
+	}
+	limit, err := parsePageLimit(query["limit"][0])
+	if err != nil {
+		return 0, "", 0, nil, err
+	}
+	if len(query["since"]) > 1 || len(query["cursor"]) > 1 {
+		return 0, "", 0, nil, errors.New("since and cursor may appear at most once")
+	}
+	cursor := ""
+	if len(query["cursor"]) == 1 {
+		cursor = query["cursor"][0]
+		if cursor == "" {
+			return 0, "", 0, nil, errors.New("cursor cannot be empty")
+		}
+		if len(query["since"]) != 0 {
+			return 0, "", 0, nil, errors.New("continuation cursor and since are mutually exclusive")
+		}
+	}
+	if mode == pullPageMode && cursor == "" && len(query["since"]) != 1 {
+		return 0, "", 0, nil, errors.New("initial pull requires since exactly once")
+	}
 	var since Counter
-	if raw := query.Get("since"); raw != "" {
+	if len(query["since"]) == 1 {
+		if mode != pullPageMode {
+			return 0, "", 0, nil, errors.New("since is valid only for pull")
+		}
+		raw := query["since"][0]
 		value, err := strconv.ParseInt(raw, 10, 64)
-		if err != nil || value < 0 {
-			return 0, nil, errors.New("since must be a non-negative int64")
+		if err != nil || value < 0 || strconv.FormatInt(value, 10) != raw {
+			return 0, "", 0, nil, errors.New("since must be a canonical non-negative int64")
 		}
 		since = Counter(value)
 	}
 	kinds, err := ParseKinds(query["kind"])
 	if err != nil {
-		return 0, nil, err
+		return 0, "", 0, nil, err
 	}
-	return since, kinds, nil
+	return since, cursor, limit, kinds, nil
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

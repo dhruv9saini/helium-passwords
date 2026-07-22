@@ -15,6 +15,8 @@ import (
 
 const recordsFile = "records.jsonl"
 
+const maxOpaqueMutationBytes = 1024 * 1024
+
 type Store struct {
 	mu           sync.Mutex
 	dataDir      string
@@ -126,6 +128,13 @@ func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mut
 		if err := mutation.validate(); err != nil {
 			return PushResponse{}, err
 		}
+		raw, err := json.Marshal(mutation)
+		if err != nil {
+			return PushResponse{}, err
+		}
+		if len(raw) > maxOpaqueMutationBytes {
+			return PushResponse{}, fmt.Errorf("opaque mutation exceeds %d-byte limit", maxOpaqueMutationBytes)
+		}
 		if _, accepted := acceptedKeyIDs[mutation.KeyID]; !accepted {
 			return PushResponse{}, fmt.Errorf("key_id %q is not write-active", mutation.KeyID)
 		}
@@ -232,40 +241,6 @@ func (store *Store) replaceJournal(encoded []byte) (bool, error) {
 		return true, fmt.Errorf("sync committed records directory: %w", err)
 	}
 	return true, nil
-}
-
-func (store *Store) Pull(since Counter, kinds map[Kind]struct{}) PullResponse {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	out := make([]OpaqueRecord, 0)
-	for _, record := range store.records {
-		if record.Seq > since && record.matches(kinds) {
-			out = append(out, record)
-		}
-	}
-	return PullResponse{Records: out, NextSeq: store.cursorLocked()}
-}
-
-// Latest always returns tombstones. Omitting them can resurrect deleted data on
-// a new or stale device.
-func (store *Store) Latest(kinds map[Kind]struct{}) PullResponse {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-
-	latest := make(map[string]OpaqueRecord)
-	for _, record := range store.records {
-		if record.matches(kinds) {
-			latest[recordIdentity(record.Kind, record.Key)] = record
-		}
-	}
-	out := make([]OpaqueRecord, 0, len(latest))
-	for _, record := range store.records {
-		if current, ok := latest[recordIdentity(record.Kind, record.Key)]; ok && current.Seq == record.Seq {
-			out = append(out, record)
-		}
-	}
-	return PullResponse{Records: out, NextSeq: store.cursorLocked()}
 }
 
 func (store *Store) Cursor() Counter {

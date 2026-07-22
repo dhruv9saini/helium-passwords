@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,6 +14,14 @@ import (
 	"strings"
 	"sync"
 	"time"
+)
+
+const (
+	clientPageRecords      = 128
+	maxClientResponseBytes = 5 * 1024 * 1024
+	maxClientPullPages     = 512
+	maxClientPullRecords   = clientPageRecords * maxClientPullPages
+	maxClientPullBytes     = 128 * 1024 * 1024
 )
 
 type Client struct {
@@ -148,12 +157,65 @@ func (client *Client) Latest(ctx context.Context, kinds []string) (PlainPullResp
 }
 
 func (client *Client) pullAt(ctx context.Context, path string, since Counter, kinds []string) (PlainPullResponse, error) {
-	var response PullResponse
-	if err := client.doJSON(ctx, http.MethodGet, recordsPath(path, since, kinds), nil, &response); err != nil {
-		return PlainPullResponse{}, err
+	var opaque []OpaqueRecord
+	var snapshot Counter
+	var previousSeq Counter
+	totalBytes := 0
+	cursor := ""
+	seenCursors := make(map[string]struct{})
+	for page := 0; page < maxClientPullPages; page++ {
+		var response PullResponse
+		requestSince := Counter(0)
+		if page == 0 {
+			requestSince = since
+		}
+		if err := client.doJSON(ctx, http.MethodGet,
+			recordsPath(path, requestSince, cursor, kinds), nil, &response); err != nil {
+			return PlainPullResponse{}, err
+		}
+		if response.PageVersion != pageProtocolVersion {
+			return PlainPullResponse{}, fmt.Errorf("unsupported page version %d", response.PageVersion)
+		}
+		if len(response.Records) > clientPageRecords {
+			return PlainPullResponse{}, errors.New("server exceeded the requested page record budget")
+		}
+		totalBytes += encodedPageSize(response.Records, response.PageCursor, response.NextSeq)
+		if totalBytes > maxClientPullBytes {
+			return PlainPullResponse{}, errors.New("pull exceeds the aggregate byte budget")
+		}
+		if page == 0 {
+			snapshot = response.NextSeq
+			if snapshot < since {
+				return PlainPullResponse{}, errors.New("server page snapshot precedes the requested sequence")
+			}
+		} else if response.NextSeq != snapshot {
+			return PlainPullResponse{}, errors.New("server changed the page snapshot during a pull")
+		}
+		for _, record := range response.Records {
+			if record.Seq <= previousSeq || record.Seq > snapshot || (path == "/v2/records/pull" && record.Seq <= since) {
+				return PlainPullResponse{}, errors.New("server returned records outside strict page sequence order")
+			}
+			previousSeq = record.Seq
+			opaque = append(opaque, record)
+			if len(opaque) > maxClientPullRecords {
+				return PlainPullResponse{}, errors.New("pull exceeds the aggregate record budget")
+			}
+		}
+		if response.PageCursor == "" {
+			break
+		}
+		if _, duplicate := seenCursors[response.PageCursor]; duplicate {
+			return PlainPullResponse{}, errors.New("server repeated a page cursor")
+		}
+		seenCursors[response.PageCursor] = struct{}{}
+		cursor = response.PageCursor
+		if page == maxClientPullPages-1 {
+			return PlainPullResponse{}, errors.New("pull exceeds the page-count budget")
+		}
 	}
-	plain := make([]PlainRecord, 0, len(response.Records))
-	for _, record := range response.Records {
+
+	plain := make([]PlainRecord, 0, len(opaque))
+	for _, record := range opaque {
 		key, err := client.state.decodedKey(record.KeyID)
 		if err != nil {
 			return PlainPullResponse{}, err
@@ -164,7 +226,7 @@ func (client *Client) pullAt(ctx context.Context, path string, since Counter, ki
 		}
 		plain = append(plain, plainRecord(record, payload))
 	}
-	return PlainPullResponse{Records: plain, NextSeq: response.NextSeq}, nil
+	return PlainPullResponse{Records: plain, NextSeq: snapshot}, nil
 }
 
 // AcknowledgeApplied advances durable client state only after the browser bridge
@@ -408,9 +470,13 @@ func plainRecord(record OpaqueRecord, payload json.RawMessage) PlainRecord {
 	}
 }
 
-func recordsPath(path string, since Counter, kinds []string) string {
+func recordsPath(path string, since Counter, cursor string, kinds []string) string {
 	query := url.Values{}
-	if since > 0 {
+	query.Set("limit", strconv.Itoa(clientPageRecords))
+	if cursor != "" {
+		query.Set("cursor", cursor)
+	}
+	if cursor == "" && path == "/v2/records/pull" {
 		query.Set("since", strconv.FormatInt(int64(since), 10))
 	}
 	for _, kind := range kinds {
@@ -418,10 +484,7 @@ func recordsPath(path string, since Counter, kinds []string) string {
 			query.Add("kind", kind)
 		}
 	}
-	if encoded := query.Encode(); encoded != "" {
-		return path + "?" + encoded
-	}
-	return path
+	return path + "?" + query.Encode()
 }
 
 func (client *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
@@ -448,6 +511,13 @@ func (client *Client) doJSON(ctx context.Context, method, path string, body any,
 		return err
 	}
 	defer response.Body.Close()
+	raw, readErr := io.ReadAll(io.LimitReader(response.Body, maxClientResponseBytes+1))
+	if readErr != nil {
+		return readErr
+	}
+	if len(raw) > maxClientResponseBytes {
+		return errors.New("server response exceeds the client byte budget")
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		var wire struct {
 			Code            string  `json:"code"`
@@ -456,7 +526,7 @@ func (client *Client) doJSON(ctx context.Context, method, path string, body any,
 			Key             string  `json:"key"`
 			CurrentRevision Counter `json:"current_revision"`
 		}
-		if err := json.NewDecoder(response.Body).Decode(&wire); err != nil {
+		if err := strictDecode(raw, &wire); err != nil {
 			return &ProtocolError{StatusCode: response.StatusCode, Message: response.Status}
 		}
 		return &ProtocolError{
@@ -467,5 +537,5 @@ func (client *Client) doJSON(ctx context.Context, method, path string, body any,
 	if out == nil {
 		return nil
 	}
-	return json.NewDecoder(response.Body).Decode(out)
+	return strictDecode(raw, out)
 }
