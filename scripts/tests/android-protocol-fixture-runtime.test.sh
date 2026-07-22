@@ -5,11 +5,15 @@ umask 077
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
 # shellcheck source=../android-media/protocol-fixture.conf
 source "$repo_root/scripts/android-media/protocol-fixture.conf"
-caddy_bin=${CADDY_BIN:-}
-[[ -n "$caddy_bin" && -x "$caddy_bin" ]] || {
-  echo "set CADDY_BIN to the pinned Caddy executable" >&2
+caddy_bin=${CADDY_BIN:-$HOME/.local/share/helium-media-fixtures/bin/caddy}
+provenance=$HOME/.local/state/helium-media-fixtures/provenance.env
+[[ -x "$caddy_bin" && -f "$provenance" && ! -L "$provenance" ]] || {
+  echo "install the pinned protocol fixture source before running the runtime test" >&2
   exit 1
 }
+[[ "$($caddy_bin version | awk '{print $1}')" == "v$CADDY_VERSION" ]]
+grep -Fqx "caddy_version=$CADDY_VERSION" "$provenance"
+grep -Fqx "caddy_archive_sha256=$CADDY_LINUX_AMD64_TAR_SHA256" "$provenance"
 for command in curl jq node openssl ss tailscale; do
   command -v "$command" >/dev/null
 done
