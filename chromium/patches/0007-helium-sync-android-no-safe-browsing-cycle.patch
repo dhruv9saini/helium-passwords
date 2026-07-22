@@ -1,0 +1,11 @@
+diff --git a/chrome/browser/BUILD.gn b/chrome/browser/BUILD.gn
+--- a/chrome/browser/BUILD.gn
++++ b/chrome/browser/BUILD.gn
+@@ -2767,7 +2767,6 @@ static_library("browser") {
+       "//chrome/browser/profiles:misc",
+       "//chrome/browser/profiles:profiles_extra_parts_impl",
+       "//chrome/browser/push_messaging:impl",
+-      "//chrome/browser/safe_browsing",
+       "//chrome/browser/signin:impl",
+       "//chrome/browser/sync",
+       "//chrome/browser/task_manager:impl",

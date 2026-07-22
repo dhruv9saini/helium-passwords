@@ -40,6 +40,9 @@ grep -qx $'passwords\thelium-passwords/restore-password-autofill.patch' "$plan"
 grep -qx $'passwords\thelium-passwords/restore-password-ui.patch' "$plan"
 grep -qx $'sync\t0001-helium-sync-overlay-files.patch' "$plan"
 grep -qx $'sync\t0006-helium-sync-android-ai-overview-blocker.patch' "$plan"
+grep -qx $'sync\t0007-helium-sync-android-no-safe-browsing-cycle.patch' "$plan"
+grep -Fq -- '-      "//chrome/browser/safe_browsing",' \
+  "$repo_root/chromium/patches/0007-helium-sync-android-no-safe-browsing-cycle.patch"
 
 last_core=$(grep -n '^core' "$plan" | tail -1 | cut -d: -f1)
 first_password=$(grep -n '^passwords' "$plan" | head -1 | cut -d: -f1)
