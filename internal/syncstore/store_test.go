@@ -20,8 +20,9 @@ import (
 )
 
 const (
-	seedToken = "seed-token-00000000000000000000000000000000"
-	joinToken = "join-token-00000000000000000000000000000000"
+	seedToken    = "seed-token-00000000000000000000000000000000"
+	joinToken    = "join-token-00000000000000000000000000000000"
+	oneplusToken = "oneplus-token-00000000000000000000000000000"
 )
 
 func TestCounterRequiresInt64DecimalString(t *testing.T) {
@@ -316,6 +317,260 @@ func TestHTTPDeviceLifecycleNoOpAndStaleCAS(t *testing.T) {
 	}
 	if _, err := joinClient.Pull(context.Background(), nil); !errors.As(err, &protocol) || protocol.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("revoked credential still worked: %v", err)
+	}
+}
+
+func TestTLSThreeDevicePasswordLifecycleAndRotation(t *testing.T) {
+	serverDir := t.TempDir()
+	seedPath := filepath.Join(t.TempDir(), "seed.json")
+	seed, err := CreateSeedState(seedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldKeyID := seed.ActiveKeyID
+	store, err := OpenStore(serverDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registryPath := filepath.Join(serverDir, "devices.json")
+	registry, err := CreateDeviceRegistry(registryPath, seedToken, oldKeyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int64
+	handler := NewHandler(store, registry)
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		handler.ServeHTTP(w, r)
+	}))
+	defer server.Close()
+	newTLSClient := func(token, statePath string) *Client {
+		client, err := NewClient(server.URL, token, statePath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		client.http = server.Client()
+		return client
+	}
+
+	seedClient := newTLSClient(seedToken, seedPath)
+	created, err := seedClient.Push(context.Background(), []PlainMutation{{
+		Kind: KindPassword, Key: "fixture/user",
+		Payload: json.RawMessage(`{"password":"created-fixture"}`),
+	}})
+	if err != nil || len(created.Records) != 1 || created.Records[0].Revision != 1 {
+		t.Fatalf("seed password create failed: response=%+v err=%v", created, err)
+	}
+	requestsAfterCreate := requests.Load()
+	if _, err := seedClient.Push(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if requests.Load() != requestsAfterCreate {
+		t.Fatal("unchanged seed restart published an HTTP request")
+	}
+
+	type joinedDevice struct {
+		statePath string
+		token     string
+		client    *Client
+	}
+	join := func(device, token string) joinedDevice {
+		statePath := filepath.Join(t.TempDir(), device+".json")
+		pendingPath := filepath.Join(t.TempDir(), device+".pending.json")
+		request, err := CreateJoinRequest(pendingPath, device, seed.SeedSigningPublicKey())
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrapped, err := seed.WrapEnrollment(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := CompleteJoinState(statePath, pendingPath, wrapped, []string{oldKeyID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.EnrollPullOnly(device, token); err != nil {
+			t.Fatal(err)
+		}
+		client := newTLSClient(token, statePath)
+		requestsBeforeBlockedPush := requests.Load()
+		if _, err := client.Push(context.Background(), []PlainMutation{{
+			Kind: KindPassword, Key: "fixture/user",
+			Payload: json.RawMessage(`{"password":"must-not-publish"}`),
+		}}); err == nil {
+			t.Fatalf("pending %s published before verified application", device)
+		}
+		if requests.Load() != requestsBeforeBlockedPush {
+			t.Fatalf("pending %s contacted the server for a blocked publication", device)
+		}
+		initial, err := client.Latest(context.Background(), []string{"passwords"})
+		if err != nil || len(initial.Records) != 1 ||
+			string(initial.Records[0].Payload) != `{"password":"created-fixture"}` {
+			t.Fatalf("%s initial verified readback failed: response=%+v err=%v", device, initial, err)
+		}
+		if err := client.AcknowledgeApplied(initial); err != nil {
+			t.Fatal(err)
+		}
+		if err := client.CompleteEnrollment(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		return joinedDevice{statePath: statePath, token: token, client: client}
+	}
+
+	da := join("da", joinToken)
+	oneplus := join("oneplus", oneplusToken)
+	updated, err := da.client.Push(context.Background(), []PlainMutation{{
+		Kind: KindPassword, Key: "fixture/user",
+		Payload: json.RawMessage(`{"password":"updated-fixture"}`),
+	}})
+	if err != nil || updated.Records[0].Revision != 2 || updated.Records[0].DeviceID != "da" {
+		t.Fatalf("da password update failed: response=%+v err=%v", updated, err)
+	}
+	_, err = oneplus.client.Push(context.Background(), []PlainMutation{{
+		Kind: KindPassword, Key: "fixture/user",
+		Payload: json.RawMessage(`{"password":"stale-oneplus"}`),
+	}})
+	var conflict *ProtocolError
+	if !errors.As(err, &conflict) || conflict.Code != "revision_conflict" ||
+		conflict.CurrentRevision != 2 {
+		t.Fatalf("stale oneplus update did not fail closed: %v", err)
+	}
+	oneplusUpdate, err := oneplus.client.Latest(context.Background(), []string{"passwords"})
+	if err != nil || string(oneplusUpdate.Records[0].Payload) != `{"password":"updated-fixture"}` {
+		t.Fatalf("oneplus did not read back the verified update: response=%+v err=%v", oneplusUpdate, err)
+	}
+	if err := oneplus.client.AcknowledgeApplied(oneplusUpdate); err != nil {
+		t.Fatal(err)
+	}
+
+	deleted, err := da.client.Push(context.Background(), []PlainMutation{{
+		Kind: KindPassword, Key: "fixture/user", Deleted: true, Payload: json.RawMessage(`{}`),
+	}})
+	if err != nil || !deleted.Records[0].Deleted || deleted.Records[0].Revision != 3 {
+		t.Fatalf("password tombstone failed: response=%+v err=%v", deleted, err)
+	}
+	for device, client := range map[string]*Client{"d": seedClient, "oneplus": oneplus.client} {
+		latest, err := client.Latest(context.Background(), []string{"passwords"})
+		if err != nil || len(latest.Records) != 1 || !latest.Records[0].Deleted ||
+			latest.Records[0].Revision != 3 {
+			t.Fatalf("%s did not verify the tombstone: response=%+v err=%v", device, latest, err)
+		}
+		if err := client.AcknowledgeApplied(latest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	journal, err := os.ReadFile(filepath.Join(serverDir, recordsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, plaintext := range []string{"created-fixture", "updated-fixture", "stale-oneplus"} {
+		if bytes.Contains(journal, []byte(plaintext)) {
+			t.Fatalf("TLS server journal contains plaintext marker %q", plaintext)
+		}
+	}
+
+	if err := registry.Revoke("da"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := da.client.Pull(context.Background(), nil); !errors.As(err, &conflict) ||
+		conflict.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("revoked da credential still worked: %v", err)
+	}
+	if _, err := oneplus.client.Latest(context.Background(), nil); err != nil {
+		t.Fatalf("revoking da affected oneplus: %v", err)
+	}
+
+	rotatedOneplusToken := "rotated-oneplus-token-000000000000000000000000"
+	if err := oneplus.client.StageCredential(context.Background(), rotatedOneplusToken); err != nil {
+		t.Fatal(err)
+	}
+	rotatedOneplus := newTLSClient(rotatedOneplusToken, oneplus.statePath)
+	if err := rotatedOneplus.ConfirmCredential(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := oneplus.client.Latest(context.Background(), nil); err != nil {
+		t.Fatal("old oneplus credential lost overlap before explicit retirement")
+	}
+	if err := rotatedOneplus.RetireOldCredential(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := oneplus.client.Latest(context.Background(), nil); err == nil {
+		t.Fatal("old oneplus credential survived retirement")
+	}
+	if _, err := rotatedOneplus.Latest(context.Background(), nil); err != nil {
+		t.Fatalf("rotated oneplus credential failed: %v", err)
+	}
+
+	newKeyID, err := seedClient.StageContentKey(context.Background())
+	if err != nil || newKeyID == oldKeyID {
+		t.Fatalf("content-key staging failed: key=%q err=%v", newKeyID, err)
+	}
+	seedWithStage, err := LoadClientState(seedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updatePending := filepath.Join(t.TempDir(), "oneplus-update.pending.json")
+	updateRequest, err := CreateJoinRequest(updatePending, "oneplus", seed.SeedSigningPublicKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	updateWrapped, err := seedWithStage.WrapEnrollment(updateRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oneplusState, err := LoadClientState(oneplus.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := oneplusState.InstallKeyUpdate(updatePending, updateWrapped, []string{oldKeyID, newKeyID}); err != nil {
+		t.Fatal(err)
+	}
+	rotatedOneplus = newTLSClient(rotatedOneplusToken, oneplus.statePath)
+	if err := seedClient.AcknowledgeStagedKey(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rotatedOneplus.AcknowledgeStagedKey(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedClient.ActivateStagedKey(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rotatedOneplus.AdoptServerKeyStatus(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedClient.RekeyAllLatest(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rekeyed, err := rotatedOneplus.Latest(context.Background(), []string{"passwords"})
+	if err != nil || len(rekeyed.Records) != 1 || rekeyed.Records[0].KeyID != newKeyID ||
+		!rekeyed.Records[0].Deleted || rekeyed.Records[0].Revision != 4 {
+		t.Fatalf("oneplus did not verify the rekeyed tombstone: response=%+v err=%v", rekeyed, err)
+	}
+	if err := rotatedOneplus.AcknowledgeApplied(rekeyed); err != nil {
+		t.Fatal(err)
+	}
+	if err := rotatedOneplus.AcknowledgeActiveRekey(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := seedClient.RetireContentKey(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := rotatedOneplus.AdoptServerKeyStatus(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	finalOneplus, err := LoadClientState(oneplus.statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalOneplus.ActiveKeyID != newKeyID || len(finalOneplus.Keys) != 1 ||
+		finalOneplus.Keys[newKeyID] == "" {
+		t.Fatalf("oneplus retained the retired epoch: %+v", finalOneplus)
+	}
+	registryRaw, err := os.ReadFile(registryPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(registryRaw, []byte(rotatedOneplusToken)) {
+		t.Fatal("registry contains the rotated plaintext oneplus credential")
 	}
 }
 
