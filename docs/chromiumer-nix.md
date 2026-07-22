@@ -16,6 +16,11 @@ NixOS runtime libraries. It deliberately omits Chromium's Google Cloud SDK and
 downloaded clangd bundle because Helium does not use remote execution on
 chromiumer and the host's disk reserve is small.
 
+The expression returns the `buildFHSEnv` derivation, whose output contains
+`bin/helium-chromium-148-env`. It does not return that derivation's `.env`
+attribute: `.env` is an interactive `nix-shell` helper and `nix-build` refuses
+to realize it.
+
 ## One-time realization
 
 Realization changes `/nix/store`, outside the worker's job-tree measurement, so
@@ -67,9 +72,10 @@ as part of a Helium job.
 
 The provenance also records realization start/end free bytes, measured delta,
 20 GiB realization budget, 82 GiB post-realization floor, and 102 GiB start
-gate. At the audited 105.7 GiB free, the start gate has only about 3.7 GiB of
-headroom before realization starts; any unrelated growth can correctly refuse
-or stop the operation.
+gate. At the latest capacity check, chromiumer exposed 110,753,861,632 bytes
+(103.15 GiB) to the build user. The start gate therefore has only 1.15 GiB of
+current headroom; always use the live byte check, because any unrelated growth
+can correctly refuse or stop realization.
 
 The environment has not been realized merely because its source and pin checks
 pass. A successful `realise`, a recorded closure, and a fresh production

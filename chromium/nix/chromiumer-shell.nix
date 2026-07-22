@@ -80,8 +80,9 @@ in
     zlib
   ];
 
-  # buildFHSEnv cannot reliably implement nix-shell --run directly. The
-  # checked wrapper supplies one shell-escaped command through this variable.
+  # The checked wrapper supplies one shell-escaped command through this
+  # variable. Return the FHS derivation itself: its `.env` attribute is only
+  # for interactive nix-shell sessions and cannot be realized by nix-build.
   runScript = pkgs.writeShellScript "helium-chromium-148-run" ''
     if [ -n "''${HELIUM_NIX_RUN_COMMAND:+set}" ]; then
       eval "$HELIUM_NIX_RUN_COMMAND"
@@ -89,4 +90,4 @@ in
       exec bash
     fi
   '';
-}).env
+})
