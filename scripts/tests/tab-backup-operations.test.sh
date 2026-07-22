@@ -380,7 +380,7 @@ test -x "${temporary}/home/.local/libexec/helium-tab-exporter"
 test -f "${temporary}/home/.config/systemd/user/helium-tab-cycle.timer"
 grep -q 'ExecCondition=.*tab-backup.sh preflight' \
     "${temporary}/home/.config/systemd/user/helium-tab-cycle.service"
-grep -q 'unshare" -u' "${repo_root}/scripts/tabs/oneplus-tab-cycle-service.sh"
+grep -q 'unshare" -m -u' "${repo_root}/scripts/tabs/oneplus-tab-cycle-service.sh"
 grep -q 'run_in_oneplus_uts cycle' "${repo_root}/scripts/tabs/oneplus-tab-cycle-service.sh"
 
 printf 'tab_backup_operations=passed\ngeneration=%s\n' "${generation}"

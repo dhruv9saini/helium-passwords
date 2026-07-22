@@ -87,19 +87,29 @@ EOF
 cat >"${fixture_bin}/mount" <<'EOF'
 #!/bin/sh
 set -eu
-[ "$1" = -o ] && [ "$2" = bind ]
-[ "$3" = "${HELIUM_TAB_ANDROID_ROOT}/dev" ]
-[ "$4" = "${HELIUM_TAB_ANDROID_ROOT}/data/local/chroots/arch/dev" ]
-printf 'mount-called\n' >"${TAB_TEST_STATE}/mount-called"
-[ "${TAB_TEST_MOUNT_FAIL:-false}" != true ] || exit 1
-[ "${TAB_TEST_MOUNT_INVALID:-false}" = true ] || \
-    printf 'bound\n' >"${TAB_TEST_STATE}/dev-bound"
+case "${2:-}" in
+    rprivate)
+        [ "$1" = -o ] && [ "$3" = / ] && [ "$4" = / ]
+        printf 'private\n' >"${TAB_TEST_STATE}/mount-private-called"
+        [ "${TAB_TEST_PRIVATE_MOUNT_FAIL:-false}" != true ]
+        ;;
+    bind)
+        [ "$1" = -o ]
+        [ "$3" = "${HELIUM_TAB_ANDROID_ROOT}/dev" ]
+        [ "$4" = "${HELIUM_TAB_ANDROID_ROOT}/data/local/chroots/arch/dev" ]
+        printf 'mount-called\n' >"${TAB_TEST_STATE}/mount-called"
+        [ "${TAB_TEST_MOUNT_FAIL:-false}" != true ] || exit 1
+        [ "${TAB_TEST_MOUNT_INVALID:-false}" = true ] || \
+            printf 'bound\n' >"${TAB_TEST_STATE}/dev-bound"
+        ;;
+    *) exit 1 ;;
+esac
 EOF
 cat >"${fixture_bin}/unshare" <<'EOF'
 #!/bin/sh
 set -eu
-[ "$1" = -u ]
-shift
+[ "$1" = -m ] && [ "$2" = -u ]
+shift 2
 exec "$@"
 EOF
 cat >"${fixture_bin}/sh" <<'EOF'
@@ -141,6 +151,7 @@ export TAB_TEST_STATE="${fixture_state}"
 
 fixture_output=$(HELIUM_TAB_ANDROID_ROOT="${fixture_root}" sh "${runner}" preflight)
 grep -q '^scheduler=magisk-service.d$' <<<"${fixture_output}"
+test -f "${fixture_state}/mount-private-called"
 test -f "${fixture_state}/mount-called"
 test -f "${fixture_state}/dev-bound"
 test -f "${fixture_state}/chroot-called"
@@ -148,8 +159,20 @@ test -f "${fixture_state}/chroot-called"
 find "${fixture_state}" -mindepth 1 -maxdepth 1 -type f -delete
 printf 'bound\n' >"${fixture_state}/dev-bound"
 HELIUM_TAB_ANDROID_ROOT="${fixture_root}" sh "${runner}" preflight >/dev/null
+test -f "${fixture_state}/mount-private-called"
 test ! -e "${fixture_state}/mount-called"
 test -f "${fixture_state}/chroot-called"
+
+find "${fixture_state}" -mindepth 1 -maxdepth 1 -type f -delete
+printf 'bound\n' >"${fixture_state}/dev-bound"
+if TAB_TEST_PRIVATE_MOUNT_FAIL=true HELIUM_TAB_ANDROID_ROOT="${fixture_root}" \
+    sh "${runner}" preflight >/dev/null 2>&1; then
+    echo 'oneplus preflight entered the chroot after mount propagation isolation failed' >&2
+    exit 1
+fi
+test -f "${fixture_state}/mount-private-called"
+test ! -e "${fixture_state}/mount-called"
+test ! -e "${fixture_state}/chroot-called"
 
 find "${fixture_state}" -mindepth 1 -maxdepth 1 -type f -delete
 if TAB_TEST_MOUNT_FAIL=true HELIUM_TAB_ANDROID_ROOT="${fixture_root}" \
@@ -158,6 +181,7 @@ if TAB_TEST_MOUNT_FAIL=true HELIUM_TAB_ANDROID_ROOT="${fixture_root}" \
     exit 1
 fi
 test -f "${fixture_state}/mount-called"
+test -f "${fixture_state}/mount-private-called"
 test ! -e "${fixture_state}/chroot-called"
 
 find "${fixture_state}" -mindepth 1 -maxdepth 1 -type f -delete
@@ -167,6 +191,7 @@ if TAB_TEST_MOUNT_INVALID=true HELIUM_TAB_ANDROID_ROOT="${fixture_root}" \
     exit 1
 fi
 test -f "${fixture_state}/mount-called"
+test -f "${fixture_state}/mount-private-called"
 test ! -e "${fixture_state}/chroot-called"
 
 find "${fixture_state}" -mindepth 1 -maxdepth 1 -type f -delete
@@ -176,14 +201,16 @@ if TAB_TEST_INVALID_SOURCE_DEV=true HELIUM_TAB_ANDROID_ROOT="${fixture_root}" \
     exit 1
 fi
 test ! -e "${fixture_state}/mount-called"
+test ! -e "${fixture_state}/mount-private-called"
 test ! -e "${fixture_state}/chroot-called"
 
-grep -q 'unshare" -u' "${runner}"
+grep -q 'unshare" -m -u' "${runner}"
 grep -q 'hostname" oneplus' "${runner}"
 grep -q 'uname" -n).*oneplus' "${runner}"
 grep -q 'mount" -o bind.*android_dev.*chroot_dev' "${runner}"
+grep -q 'mount" -o rprivate / /' "${runner}"
 grep -q 'character device 1:3' "${runner}"
-[ "$(grep -c 'system_bin}/mount"' "${runner}")" -eq 1 ]
+[ "$(grep -c 'system_bin/mount"' "${runner}")" -eq 2 ]
 grep -q 'scheduler=magisk-service.d' "${runner}"
 grep -q 'systemd=not-used' "${runner}"
 grep -q 'proc=not-required' "${runner}"

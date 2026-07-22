@@ -31,18 +31,10 @@ require_android_boundary() {
     done
     [ "$("${system_bin}/id" -u)" -eq 0 ] || { log_failure 'Helium tabs require Magisk root'; return 1; }
     [ -d "${chroot_root}" ] || { log_failure 'Arch chroot is missing'; return 1; }
-}
-
-null_device_is_valid() {
-    null_path=$1
-    [ ! -L "${null_path}" ] || return 1
-    null_identity=$("${system_bin}/stat" -c '%F %t:%T' "${null_path}") || return 1
-    [ "${null_identity}" = 'character device 1:3' ]
-}
-
-ensure_chroot_dev() {
     [ -d "${android_dev}" ] && [ ! -L "${android_dev}" ] && \
-        null_device_is_valid "${android_dev}/null" || {
+        [ ! -L "${android_dev}/null" ] && \
+        [ "$("${system_bin}/stat" -c '%F %t:%T' "${android_dev}/null")" = \
+            'character device 1:3' ] || {
         log_failure 'Android /dev/null is not character device 1:3'
         return 1
     }
@@ -50,36 +42,46 @@ ensure_chroot_dev() {
         log_failure 'Arch chroot /dev is missing or unsafe'
         return 1
     }
-    null_device_is_valid "${chroot_dev}/null" && return 0
-
-    "${system_bin}/mount" -o bind "${android_dev}" "${chroot_dev}" || {
-        log_failure 'failed to bind Android /dev into the Arch chroot'
-        return 1
-    }
-    null_device_is_valid "${chroot_dev}/null" || {
-        log_failure 'Arch chroot /dev/null is not character device 1:3 after bind'
-        return 1
-    }
 }
 
 run_in_oneplus_uts() {
     operation=$1
     target=$2
-    ensure_chroot_dev
-    "${system_bin}/unshare" -u "${system_bin}/sh" -c '
+    "${system_bin}/unshare" -m -u "${system_bin}/sh" -c '
         system_bin=$1
         chroot_root=$2
-        target=$3
-        operation=$4
-        config=$5
+        android_dev=$3
+        chroot_dev=$4
+        target=$5
+        operation=$6
+        config=$7
+        "$system_bin/mount" -o rprivate / / || {
+            echo "failed to make the private mount namespace non-propagating" >&2
+            exit 1
+        }
+        chroot_null=$chroot_dev/null
+        if [ -L "$chroot_null" ] || \
+            [ "$("$system_bin/stat" -c "%F %t:%T" "$chroot_null" 2>/dev/null || :)" != \
+                "character device 1:3" ]; then
+            "$system_bin/mount" -o bind "$android_dev" "$chroot_dev" || {
+                echo "failed to bind Android /dev into the private Arch chroot namespace" >&2
+                exit 1
+            }
+        fi
+        [ ! -L "$chroot_null" ] && \
+            [ "$("$system_bin/stat" -c "%F %t:%T" "$chroot_null" 2>/dev/null || :)" = \
+                "character device 1:3" ] || {
+            echo "Arch chroot /dev/null is not character device 1:3" >&2
+            exit 1
+        }
         "$system_bin/hostname" oneplus
         [ "$("$system_bin/uname" -n)" = oneplus ] || exit 1
         exec "$system_bin/chroot" "$chroot_root" /usr/bin/env -i \
             HOME=/root USER=root \
             PATH=/root/.local/bin:/root/.local/libexec:/usr/local/sbin:/usr/local/bin:/usr/bin:/bin \
             "$target" "$operation" "$config"
-    ' helium-tab-uts "${system_bin}" "${chroot_root}" "${target}" \
-        "${operation}" "${config}"
+    ' helium-tab-uts "${system_bin}" "${chroot_root}" "${android_dev}" \
+        "${chroot_dev}" "${target}" "${operation}" "${config}"
 }
 
 preflight() {
