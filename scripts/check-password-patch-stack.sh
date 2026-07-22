@@ -75,10 +75,12 @@ done
 
 grep -q 'kCredentialsEnableService, true' \
     "${fixture}/components/password_manager/core/browser/password_manager.cc"
-grep -q 'PageActionIconType::kManagePasswords' \
+grep -q 'PageActionIconType::kSaveCard' \
     "${fixture}/chrome/browser/ui/views/location_bar/location_bar_view.cc"
 grep -q 'kActionShowPasswordsBubbleOrPage' \
     "${fixture}/chrome/browser/ui/browser_actions.cc"
+grep -q 'PageActionIconType::kManagePasswords' \
+    "${fixture}/chrome/browser/ui/web_applications/app_browser_controller.cc"
 grep -q 'PasswordsAndAutofillSubMenuModel' \
     "${fixture}/chrome/browser/ui/toolbar/app_menu_model.cc"
 grep -q 'maybeRedirectLegacyPasswordSettingsUrl' \

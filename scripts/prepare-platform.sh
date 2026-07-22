@@ -80,7 +80,14 @@ destination="${1:-${root_dir}/${HELIUM_WORK_DIR}/${platform}}"
 mkdir -p "$(dirname "${destination}")"
 
 if [ ! -d "${destination}/.git" ]; then
-    git clone --depth 1 --branch "${platform_ref}" "${repo_url}" "${destination}" >&2
+    if [[ "${platform_ref}" =~ ^[0-9a-f]{40}$ ]]; then
+        git init --quiet "${destination}"
+        git -C "${destination}" remote add origin "${repo_url}"
+        git -C "${destination}" fetch --depth 1 origin "${platform_ref}" >&2
+        git -C "${destination}" checkout --quiet --detach FETCH_HEAD
+    else
+        git clone --depth 1 --branch "${platform_ref}" "${repo_url}" "${destination}" >&2
+    fi
 else
     echo "using existing platform checkout: ${destination}" >&2
 fi

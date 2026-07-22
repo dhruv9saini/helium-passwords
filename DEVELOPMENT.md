@@ -34,17 +34,23 @@ diverged experiment rather than an update branch.
 
 ## Current Evidence
 
-The state observed on 2026-07-21 is intentionally recorded here so that a smoke
+The state observed on 2026-07-22 is intentionally recorded here so that a smoke
 test is not mistaken for product validation:
 
-- The checked-in `helium-chromium` submodule is Helium `0.12.4`, based on
-  Chromium `148.0.7778.178`.
-- Upstream Helium is already `0.14.7`, based on Chromium `150.0.7871.128`.
+- The checked-in `helium-chromium` submodule is exact Helium `0.14.8` commit
+  `81bb0219ad6df2adefd12f42ca79198f049f1497`, based on Chromium
+  `150.0.7871.181` at exact Chromium commit
+  `24b04c927b23c39cf9c5227cc8dc6f64a744c8e9`.
+- The Linux platform is pinned to exact commit
+  `9fbdff55283c9275f285c49dc054a1ff38dcdc96`, whose gitlink resolves to that
+  Helium core. The commit identifies itself as the `0.14.8.1` update; no release
+  tag existed when it was selected, so preparation fetches the immutable commit
+  directly rather than following moving `main`.
 - Upstream still applies four direct password/autofill removals, plus several UI
   cleanup patches that remove password-manager entry points.
-- The current public patches were refreshed for Chromium 148. A focused
-  official-source replay now proves they apply after the real ordered Helium
-  series; they have not been compiled on 148 or rebased to Chromium 150.
+- The current public patches were refreshed for Chromium 150. A focused
+  official-source replay proves they apply after the real ordered Helium series
+  at `150.0.7871.181`; they have not yet been compiled or exercised in a browser.
 - The six fast CI matrix jobs only prove that wrapper injection produced the
   expected patch filenames. They do not apply the patches to Chromium.
 - The last dispatched full build, from 2026-06-05 through 2026-06-07, packaged
@@ -84,7 +90,7 @@ offline/lightweight:
 scripts/check-password-patch-stack.sh
 ```
 
-The checker replays the Chromium 148 Helium patch order, skips only the
+The checker replays the Chromium 150 Helium patch order, skips only the
 password-disable patch exactly as platform preparation does, applies both
 restoration patches, and asserts the restored preference, native UI actions,
 menu, settings redirect, and importer paths. It is not a compile or runtime
@@ -96,11 +102,11 @@ Treat Helium core plus its three desktop platform repositories as one immutable
 train. Never build an unrecorded mixture of moving `main` branches.
 
 1. Fetch the latest public repo, Helium core tags, and the Linux/macOS/Windows
-   platform refs. Linux uses release label `0.12.4.1` only for retrieval and
-   fails unless `HEAD` is full commit
-   `105d2f4d32f863094eaa27789e82ddc3e42f7106`; the commit, not the tag, is the
-   trusted input and is recorded in the artifact manifest. Record exact commit
-   IDs and the Chromium version for every other platform before building.
+   platform refs. Linux fetches full commit
+   `9fbdff55283c9275f285c49dc054a1ff38dcdc96` directly and fails unless `HEAD`
+   is that value; the commit, not a moving branch or absent tag, is the trusted
+   input and is recorded in the artifact manifest. Record exact commit IDs and
+   the Chromium version for every other platform before building.
 2. Select one Helium release train. Update the submodule and platform refs in a
    single commit.
 3. Materialize each platform and confirm that all three resolve to the same

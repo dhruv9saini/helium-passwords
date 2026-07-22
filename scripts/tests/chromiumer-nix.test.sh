@@ -6,9 +6,9 @@ script="${repo_root}/scripts/chromiumer-nix.sh"
 expression="${repo_root}/chromium/nix/chromiumer-shell.nix"
 
 bash -n "${script}"
-grep -q 'd096af1c9e98c45c3596e59620622b1a049bfecb' "${expression}"
-grep -q 'bd85f316bebe290b96b35ddb5c0be62d1f0c9137' "${expression}"
-grep -q '1qxr70li1biw260rccm6hjvmn1ysgq2h60pmpq1ww9h6fdv4y884' "${expression}"
+grep -q '24b04c927b23c39cf9c5227cc8dc6f64a744c8e9' "${expression}"
+grep -q 'a793ee3962cf3be3d0e9ed1022147ea9cd34eea9' "${expression}"
+grep -q '023d699q0s9rzx87x6fp4jpar7pd2y3h4gjrdmhznxbbg76yhp9b' "${expression}"
 grep -q 'Return the FHS derivation itself' "${expression}"
 if tail -n 1 "${expression}" | grep -q '\.env'; then
     echo "chromiumer Nix expression returned the interactive shell attribute" >&2
@@ -17,6 +17,11 @@ fi
 grep -q 'HELIUM_BUILD_JOBS=2' "${script}"
 grep -q 'helium-job-' "${script}"
 grep -q 'environment is not realised' "${script}"
+grep -q 'helium-chromium-150-env' "${script}"
+if grep -q 'helium-chromium-148-env' "${script}"; then
+    echo "stale Chromium 148 environment entry point survived" >&2
+    exit 1
+fi
 grep -q 'future_build_budget_bytes=.*80' "${script}"
 grep -q 'realise_budget_bytes=.*20' "${script}"
 grep -q 'realise_start_gate_bytes=' "${script}"

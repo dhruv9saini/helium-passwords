@@ -1,6 +1,10 @@
-# One compatible Android source train. Update these values together only after
-# the full Helium + Passwords + Sync patch composition passes on chromiumer.
-HELIUM_ANDROID_CHROMIUM_VERSION=148.0.7778.178
-HELIUM_ANDROID_CHROMIUM_COMMIT=d096af1c9e98c45c3596e59620622b1a049bfecb
-HELIUM_ANDROID_CORE_COMMIT=b4155a785863b8b7ef05b8efd414041c4b49d2c3
+# One immutable Android candidate train. Keep these values together; focused
+# source replay is local evidence, while compile/runtime promotion still needs
+# the isolated chromiumer and disposable-device gates.
+HELIUM_ANDROID_CHROMIUM_VERSION=150.0.7871.181
+HELIUM_ANDROID_CHROMIUM_COMMIT=24b04c927b23c39cf9c5227cc8dc6f64a744c8e9
+HELIUM_ANDROID_CORE_COMMIT=81bb0219ad6df2adefd12f42ca79198f049f1497
 HELIUM_ANDROID_DEPOT_TOOLS_COMMIT=36a464bfe6ef49e0710caf65bfbabc87725720da
+HELIUM_ANDROID_VERSION_NAME=150.0.7871.181
+HELIUM_ANDROID_PREVIOUS_PRODUCTION_VERSION_CODE=787500004
+HELIUM_ANDROID_VERSION_CODE=787500005
