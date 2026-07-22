@@ -226,6 +226,14 @@ BPF policy, 256 MiB memory, no swap, and 64 tasks. The backup unit is
 network-denied, can read only that server directory, and can write only its NAS
 namespace. It stops and restarts the endpoint around each generation.
 
+`helium-sync-synthetic-client` is the protocol-only replacement for browser
+readback in remote fixture tests. It accepts cookies only, requires a private
+file containing exactly `synthetic-only-v1`, verifies the complete expected
+record inventory through authenticated metadata and payload hashes, emits no
+payload, then acknowledges that synthetic readback. It may promote a pending
+fixture client only when explicitly requested. Never stage its marker beside a
+personal client state or use its receipt as native CookieManager evidence.
+
 Rollback is one nondestructive command:
 
 ```sh

@@ -177,6 +177,19 @@ followed by verified rollback. That is executable synthetic proof, not
 browser-runtime proof: the C++ bridge still needs the bounded chromiumer
 compile and a new disposable-profile run before deployment.
 
+The same protocol has run through lm's supervised synthetic TLS endpoint using
+the real da host and oneplus Arch chroot. Four fixture records proved distinct
+host/domain and two partition-key identities, pending pull-only authorization,
+E2EE readback on both architectures, authenticated source metadata, two token
+rotations, stale-CAS rejection, zero-publication restarts, tombstone
+convergence, resurrection rejection, revoked-credential rejection, and an
+opaque journal with no fixture plaintext. A synthetic-only reconciler advances
+the applied cursor only after exact metadata and payload-hash verification and
+requires an explicit private `synthetic-only-v1` marker. All test clients were
+revoked, all live fixture cookies were tombstoned, remote temporary credentials
+were removed, and the post-test NAS restore drill passed. This is still not
+CookieManager or authenticated-site portability evidence.
+
 Chromium device-bound sessions are observed through its device-bound-session
 manager. A cookie proven device-bound, or a cookie rejected on the destination,
 is marked non-clonable for that exact session; the last local session is
