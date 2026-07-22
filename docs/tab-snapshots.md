@@ -16,8 +16,8 @@ helium-tabs capture \
   --input /path/to/browser-api-session.json \
   --device d \
   --profile default \
-  --browser-version 0.14.7 \
-  --chromium-version 150.0.7871.128 \
+  --browser-version 0.14.8 \
+  --chromium-version 150.0.7871.181 \
   --reason scheduled
 
 helium-tabs list \

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+
 if [[ $# -ne 3 ]]; then
   echo "usage: $0 ARCHIVE EXPECTED_PACKAGE EXPECTED_HELIUM_SYNC_COMMIT" >&2
   exit 64
@@ -55,8 +57,14 @@ if [[ "$expected_package" == computer.helium.control.test ]]; then
   }
 fi
 
+cmp -s "$provenance/android-build.lock" "$repo_root/chromium/android-build.lock" || {
+  echo "artifact Android build lock does not match the repository lock" >&2
+  exit 1
+}
+"$repo_root/scripts/chromium/validate-android-build-lock.sh" >/dev/null
+# Source only the repository-owned lock. Artifact metadata is never executable.
 # shellcheck source=../../chromium/android-build.lock
-. "$provenance/android-build.lock"
+. "$repo_root/chromium/android-build.lock"
 [[ "$(tr -d '\r\n' < "$provenance/chromium-source-commit.txt")" == \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]] || {
   echo "artifact Chromium commit does not match its lock" >&2
@@ -84,6 +92,16 @@ grep -qx 'DEPOT_TOOLS_UPDATE=0' \
 grep -qx "chrome_public_manifest_package = \"$expected_package\"" \
   "$provenance/gn-args-resolved.txt" || {
   echo "artifact GN package does not match the expected package" >&2
+  exit 1
+}
+grep -qx "android_override_version_code = \"$HELIUM_ANDROID_VERSION_CODE\"" \
+  "$provenance/gn-args-resolved.txt" || {
+  echo "artifact GN versionCode does not match the build lock" >&2
+  exit 1
+}
+grep -qx "android_override_version_name = \"$HELIUM_ANDROID_VERSION_NAME\"" \
+  "$provenance/gn-args-resolved.txt" || {
+  echo "artifact GN versionName does not match the build lock" >&2
   exit 1
 }
 
@@ -115,15 +133,17 @@ done
   cd "$runtime_kit"
   sha256sum -c SHA256SUMS
 )
-[[ "$(wc -l < "$runtime_kit/kit.env")" -eq 7 ]] || {
+[[ "$(wc -l < "$runtime_kit/kit.env")" -eq 9 ]] || {
   echo "runtime acceptance kit metadata inventory is invalid" >&2
   exit 1
 }
-grep -qx 'schema_version=2' "$runtime_kit/kit.env"
+grep -qx 'schema_version=3' "$runtime_kit/kit.env"
 grep -qx 'probe_schema_version=1' "$runtime_kit/kit.env"
 grep -qx "helium_sync_commit=$expected_sync_commit" "$runtime_kit/kit.env"
 grep -qx "chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT" "$runtime_kit/kit.env"
 grep -qx "manifest_package=$expected_package" "$runtime_kit/kit.env"
+grep -qx "version_code=$HELIUM_ANDROID_VERSION_CODE" "$runtime_kit/kit.env"
+grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$runtime_kit/kit.env"
 grep -qx 'target_cpu=arm64' "$runtime_kit/kit.env"
 grep -qx 'artifact_target=chrome_public_apk' "$runtime_kit/kit.env"
 
@@ -137,9 +157,27 @@ manifest_package=$($aapt2 dump packagename "${apks[0]}")
   echo "APK manifest package does not match GN provenance" >&2
   exit 1
 }
+badging=$($aapt2 dump badging "${apks[0]}")
+[[ "$(grep -c '^package:' <<<"$badging")" -eq 1 ]] || {
+  echo "APK badging does not contain one package record" >&2
+  exit 1
+}
+package_record=$(grep '^package:' <<<"$badging")
+apk_version_code=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$package_record")
+apk_version_name=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$package_record")
+[[ "$apk_version_code" == "$HELIUM_ANDROID_VERSION_CODE" ]] || {
+  echo "APK versionCode does not match the build lock" >&2
+  exit 1
+}
+[[ "$apk_version_name" == "$HELIUM_ANDROID_VERSION_NAME" ]] || {
+  echo "APK versionName does not match the build lock" >&2
+  exit 1
+}
 
 printf 'archive_sha256=%s\n' "$(sha256sum "$archive" | cut -d' ' -f1)"
 printf 'package=%s\n' "$manifest_package"
+printf 'version_code=%s\n' "$apk_version_code"
+printf 'version_name=%s\n' "$apk_version_name"
 printf 'chromium_commit=%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT"
 printf 'helium_sync_commit=%s\n' "$expected_sync_commit"
 printf 'apk_path=%s\n' "${apks[0]#$temporary/}"

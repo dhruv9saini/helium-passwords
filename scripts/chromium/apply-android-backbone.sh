@@ -37,6 +37,7 @@ read_series() {
 }
 
 validate_backbone() {
+  "$repo_root/scripts/chromium/validate-android-build-lock.sh" >/dev/null
   [[ "$HELIUM_ANDROID_CHROMIUM_COMMIT" =~ ^[0-9a-f]{40}$ ]] || {
     echo "Android Chromium lock is not an immutable SHA-1" >&2
     exit 1

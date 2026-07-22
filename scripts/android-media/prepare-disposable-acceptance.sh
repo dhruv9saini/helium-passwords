@@ -7,6 +7,9 @@ if [[ $# -ne 4 ]]; then
 fi
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=../../chromium/android-build.lock
+. "$repo_root/chromium/android-build.lock"
+"$repo_root/scripts/chromium/validate-android-build-lock.sh" >/dev/null
 archive=$(realpath "$1")
 expected_package=$2
 expected_sync_commit=$3
@@ -54,11 +57,13 @@ mkdir -p "$staged/media"
 )
 
 {
-  printf 'schema_version=1\n'
+  printf 'schema_version=2\n'
   printf 'package=%s\n' "$expected_package"
   printf 'helium_sync_commit=%s\n' "$expected_sync_commit"
   printf 'chromium_commit=%s\n' \
     "$(tr -d '\r\n' < "$staged/build-provenance/chromium-source-commit.txt")"
+  printf 'version_code=%s\n' "$HELIUM_ANDROID_VERSION_CODE"
+  printf 'version_name=%s\n' "$HELIUM_ANDROID_VERSION_NAME"
   printf 'source_archive_sha256=%s\n' "$(sha256sum "$archive" | cut -d' ' -f1)"
   printf 'apk_sha256=%s\n' "$(sha256sum "$staged/Browser-test.apk" | cut -d' ' -f1)"
   printf 'runtime_kit_sha256=%s\n' \

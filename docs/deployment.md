@@ -11,11 +11,11 @@ Run from the clean private checkout on lm. The active native compile uses the
 same form:
 
 ```sh
-job=hs-android-148-native-sync-N
+job=hs-android-150-native-sync-N
 scripts/chromiumer-job.sh preflight 80
 scripts/chromiumer-job.sh stage "$job" 80
 scripts/chromiumer-job.sh start "$job" \
-  --summary "Chromium 148 Android native Helium sync compile" \
+  --summary "Chromium 150 Android native Helium sync compile" \
   --next "Fetch and verify the compile proof, then start the bounded APK job." -- \
   scripts/chromiumer-nix.sh run -- env \
     HELIUM_SYNC_REPO=. GITHUB_WORKSPACE=.build \
@@ -93,9 +93,12 @@ AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
 
 The verifier also checks the relocatable provenance manifest, pinned Chromium
 commit, clean tracked source status, exactly one `HeliumSync.apk`, and the
-artifact-carried runtime acceptance kit. It prints the APK and runtime-kit
-SHA-256 values. Prepare a new, immutable disposable test directory from that
-verified archive:
+artifact-carried runtime acceptance kit. It rejects an artifact lock other than
+the repository lock and uses `aapt2 dump badging` to require versionCode
+`787500005` and versionName `150.0.7871.181`; the code is exactly one above the
+observed installed production code `787500004`. It prints those versions plus
+the APK and runtime-kit SHA-256 values. Prepare a new, immutable disposable test
+directory from that verified archive:
 
 ```sh
 AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
@@ -118,7 +121,7 @@ Build the same-commit control through the separate no-patch entry point:
 
 ```sh
 scripts/chromiumer-job.sh start "$control_job" \
-  --summary "Unmodified Chromium 148 Android control APK" \
+  --summary "Unmodified Chromium 150 Android control APK" \
   --next "Fetch, verify, and run the disposable control probe before the Sync APK." -- \
   scripts/chromiumer-nix.sh run -- env \
     HELIUM_SYNC_REPO=. GITHUB_WORKSPACE=.build \
@@ -156,8 +159,9 @@ evidence=/srv/nas/helium-acceptance-evidence/JOB/oneplus-sync-N
 
 The test app must already be the hash-verified `computer.helium.sync.test` APK;
 the local fixture and CDP endpoints stay on loopback. The runner verifies the
-complete prepared-directory inventory, requires an installed disposable
-package, refuses existing evidence, and uses only its two fixed ADB mappings.
+complete prepared-directory inventory, requires the installed package's
+versionCode and versionName to match the admitted artifact, refuses existing
+evidence, and uses only its two fixed ADB mappings.
 It never installs, clears, or uninstalls an app and never uses `--remove-all`.
 The Wi-Fi handoff is allowed only over a non-network ADB transport, requires
 mobile data and Wi-Fi to start enabled, and restores Wi-Fi on every exit. Its

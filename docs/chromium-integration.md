@@ -29,7 +29,7 @@ prevents a stopped browser's old export from satisfying backup health.
 
 ### Passwords
 
-Canonical key material follows Chromium 148's complete login-table unique key:
+Canonical key material follows Chromium 150's complete login-table unique key:
 
 ```text
 length(origin_url) || origin_url
@@ -109,9 +109,11 @@ from its lock.
 omitting only the mandatory password-disable patch, then applies the two public
 Passwords patches, six private Sync patches and overlay, Helium
 transformations/resources, and shared plus Android GN args.
-Contract tests currently count 284 core + 2 Passwords + 6 Sync patches. The
-single-acquisition contract is source-tested, but the complete 292-patch apply
-still needs a prepared checkout and compilation on chromiumer.
+The current plan contains 309 selected patches: 301 Helium core patches after
+deliberately omitting its password-disable patch, two public Passwords
+restorations, and six private Sync patches. The single-acquisition contract is
+source-tested, but the complete apply still needs a prepared checkout and
+compilation on chromiumer.
 
 After chromiumer production preflight passes, the first bounded job combines
 strict source preparation, GN generation, and the smallest media-buildflag
@@ -119,7 +121,7 @@ compile. `CHROMIUM_ANDROID_PROVENANCE_ONLY=true` is explicit: without it, a
 non-APK target fails packaging instead of pretending to be an APK artifact.
 
 ```sh
-job=hs-android-148-media-flags-01
+job=hs-android-150-media-flags-01
 scripts/chromiumer-job.sh preflight 80
 scripts/chromiumer-job.sh stage "$job" 80
 scripts/chromiumer-job.sh start "$job" -- env \

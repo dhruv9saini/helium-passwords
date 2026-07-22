@@ -2,6 +2,8 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+grep -Fq 'validate-android-build-lock.sh' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh"
 test_root=$(mktemp -d /tmp/helium-android-backbone.XXXXXX)
 cleanup() {
   find "$test_root" -depth -delete

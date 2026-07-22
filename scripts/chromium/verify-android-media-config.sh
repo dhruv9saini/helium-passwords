@@ -15,6 +15,7 @@ depot_tools_commit=$6
 gn_bin=${GN:-gn}
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
+"$repo_root/scripts/chromium/validate-android-build-lock.sh" >/dev/null
 
 [[ -f "$chromium_src/$out_dir/args.gn" ]] || {
   echo "missing Android args.gn: $chromium_src/$out_dir/args.gn" >&2
@@ -57,6 +58,10 @@ require_arg '^ffmpeg_branding = "Chrome"$' 'ffmpeg_branding must be Chrome for t
 require_arg '^media_use_ffmpeg = true$' 'media_use_ffmpeg must remain enabled'
 require_arg '^chrome_public_manifest_package = "computer\.helium\.sync(\.test)?"$' \
   'manifest package must be the fixed production or disposable Helium Sync identity'
+require_arg "^android_override_version_code = \"${HELIUM_ANDROID_VERSION_CODE}\"$" \
+  'versionCode must match the monotonic Android build lock'
+require_arg "^android_override_version_name = \"${HELIUM_ANDROID_VERSION_NAME//./\\.}\"$" \
+  'versionName must match the Chromium engine version'
 
 cp "$chromium_src/$out_dir/args.gn" "$provenance_dir/args.gn"
 cp "$repo_root/chromium/android-build.lock" "$provenance_dir/android-build.lock"

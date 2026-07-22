@@ -71,8 +71,11 @@ artifact_sha256=$(metadata source_archive_sha256 "$acceptance/acceptance.env")
 apk_sha256=$(metadata apk_sha256 "$acceptance/acceptance.env")
 chromium_commit=$(metadata chromium_commit "$acceptance/acceptance.env")
 helium_sync_commit=$(metadata helium_sync_commit "$acceptance/acceptance.env")
+version_code=$(metadata version_code "$acceptance/acceptance.env")
+version_name=$(metadata version_name "$acceptance/acceptance.env")
 [[ "$artifact_sha256" =~ ^[0-9a-f]{64}$ && "$apk_sha256" =~ ^[0-9a-f]{64}$ ]]
 [[ "$chromium_commit" =~ ^[0-9a-f]{40}$ && "$helium_sync_commit" =~ ^[0-9a-f]{40}$ ]]
+[[ "$version_code" =~ ^[1-9][0-9]*$ && "$version_name" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]
 
 if [[ "$network_handoff" == wifi-to-cellular && "$serial" == *:* ]]; then
   echo "wifi-to-cellular requires a non-network ADB transport" >&2
@@ -82,6 +85,17 @@ fi
 mapfile -t package_paths < <(adb -s "$serial" shell pm path "$package" | tr -d '\r')
 [[ ${#package_paths[@]} -gt 0 && "${package_paths[0]}" == package:* ]] || {
   echo "disposable browser package is not installed" >&2
+  exit 1
+}
+package_dump=$(adb -s "$serial" shell dumpsys package "$package" | tr -d '\r')
+installed_version_code=$(sed -n 's/^[[:space:]]*versionCode=\([^ ]*\).*/\1/p' <<<"$package_dump" | head -n 1)
+installed_version_name=$(sed -n 's/^[[:space:]]*versionName=//p' <<<"$package_dump" | head -n 1)
+[[ "$installed_version_code" == "$version_code" ]] || {
+  echo "installed package versionCode does not match the admitted artifact" >&2
+  exit 1
+}
+[[ "$installed_version_name" == "$version_name" ]] || {
+  echo "installed package versionName does not match the admitted artifact" >&2
   exit 1
 }
 
@@ -168,6 +182,8 @@ done
   printf 'package=%s\n' "$package"
   printf 'background_foreground=%s\n' "$background_foreground"
   printf 'network_handoff=%s\n' "$network_handoff"
+  printf 'version_code=%s\n' "$installed_version_code"
+  printf 'version_name=%s\n' "$installed_version_name"
   printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
 } > "$action_log"
 

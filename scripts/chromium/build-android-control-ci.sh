@@ -6,6 +6,7 @@ repo_root=$(cd "$repo_root" && pwd)
 github_workspace=$(realpath -m "$GITHUB_WORKSPACE")
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
+"$repo_root/scripts/chromium/validate-android-build-lock.sh" >/dev/null
 
 workspace=${CHROMIUM_WORKSPACE:-"$github_workspace/chromium-android-control"}
 workspace=$(realpath -m "$workspace")
@@ -54,11 +55,13 @@ package_runtime_acceptance() {
     chmod 755 "$destination/$source"
   done
   {
-    printf 'schema_version=2\n'
+    printf 'schema_version=3\n'
     printf 'probe_schema_version=1\n'
     printf 'helium_sync_commit=%s\n' "$sync_commit"
     printf 'chromium_commit=%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT"
     printf 'manifest_package=%s\n' "$manifest_package"
+    printf 'version_code=%s\n' "$HELIUM_ANDROID_VERSION_CODE"
+    printf 'version_name=%s\n' "$HELIUM_ANDROID_VERSION_NAME"
     printf 'target_cpu=arm64\n'
     printf 'artifact_target=%s\n' "$target"
   } > "$destination/kit.env"
@@ -97,6 +100,8 @@ blink_symbol_level = 0
 ffmpeg_branding = "Chrome"
 proprietary_codecs = true
 chrome_public_manifest_package = "$manifest_package"
+android_override_version_code = "$HELIUM_ANDROID_VERSION_CODE"
+android_override_version_name = "$HELIUM_ANDROID_VERSION_NAME"
 EOF
 gn gen "$out_dir" --fail-on-unused-args
 gn args "$out_dir" --list --short \
@@ -112,6 +117,10 @@ grep -qx 'proprietary_codecs = true' \
 grep -qx 'media_use_ffmpeg = true' \
   "$artifact_dir/build-provenance/gn-args-resolved.txt"
 grep -qx "chrome_public_manifest_package = \"$manifest_package\"" \
+  "$artifact_dir/build-provenance/gn-args-resolved.txt"
+grep -qx "android_override_version_code = \"$HELIUM_ANDROID_VERSION_CODE\"" \
+  "$artifact_dir/build-provenance/gn-args-resolved.txt"
+grep -qx "android_override_version_name = \"$HELIUM_ANDROID_VERSION_NAME\"" \
   "$artifact_dir/build-provenance/gn-args-resolved.txt"
 
 provenance="$artifact_dir/build-provenance"

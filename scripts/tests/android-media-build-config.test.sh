@@ -18,13 +18,15 @@ git -C "$test_root/src" config user.name 'Helium Test'
 git -C "$test_root/src" add out/Test/args.gn
 git -C "$test_root/src" commit -qm initial
 
-cat > "$test_root/bin/gn" <<'EOF'
+cat > "$test_root/bin/gn" <<EOF
 #!/usr/bin/env bash
 cat <<'ARGS'
 ffmpeg_branding = "Chrome"
 media_use_ffmpeg = true
 proprietary_codecs = true
 chrome_public_manifest_package = "computer.helium.sync.test"
+android_override_version_code = "$HELIUM_ANDROID_VERSION_CODE"
+android_override_version_name = "$HELIUM_ANDROID_VERSION_NAME"
 target_cpu = "arm64"
 target_os = "android"
 ARGS
@@ -85,7 +87,7 @@ grep -Fq 'package_runtime_acceptance "$staging/runtime-acceptance"' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'run-device-probe.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'schema_version=2' \
+grep -Fq 'schema_version=3' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'probe_schema_version=1' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
@@ -112,6 +114,12 @@ grep -Fq 'show "$sync_commit:scripts/android-media/$source"' \
 grep -Fq 'runtime acceptance kit checksum inventory is invalid' \
   "$repo_root/scripts/chromium/verify-android-artifact.sh"
 grep -Fq 'artifact_target=chrome_public_apk' \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh"
+grep -Fq 'android_override_version_code' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'android_override_version_name' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'dump badging' \
   "$repo_root/scripts/chromium/verify-android-artifact.sh"
 grep -Fq 'status --short --untracked-files=no' \
   "$repo_root/scripts/chromium/verify-android-media-config.sh"

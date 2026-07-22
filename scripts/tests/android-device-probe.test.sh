@@ -12,10 +12,12 @@ touch "$acceptance/runtime-acceptance/fixture-server.mjs"
 touch "$acceptance/runtime-acceptance/run-cdp-probe.mjs"
 printf 'fixture\n' > "$acceptance/media/synthetic"
 cat > "$acceptance/acceptance.env" <<'EOF'
-schema_version=1
+schema_version=2
 package=computer.helium.sync.test
 helium_sync_commit=1111111111111111111111111111111111111111
 chromium_commit=2222222222222222222222222222222222222222
+version_code=787500005
+version_name=150.0.7871.181
 source_archive_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 apk_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 runtime_kit_sha256=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
@@ -33,6 +35,9 @@ printf '%s\n' "$*" >> "$HELIUM_TEST_ADB_LOG"
 case "$*" in
   *' get-state') printf 'device\n' ;;
   *' shell pm path computer.helium.sync.test') printf 'package:/data/app/test/base.apk\n' ;;
+  *' shell dumpsys package computer.helium.sync.test')
+    printf '  versionCode=787500005 minSdk=29 targetSdk=36\n  versionName=150.0.7871.181\n'
+    ;;
   *' shell settings get global wifi_on') printf '1\n' ;;
   *' shell settings get global mobile_data') printf '1\n' ;;
 esac
@@ -76,6 +81,8 @@ grep -qx "evidence_directory=$test_root/evidence" "$test_root/result"
 grep -Eq '^result_sha256=[0-9a-f]{64}$' "$test_root/result"
 grep -qx 'background_foreground=true' "$test_root/evidence/actions.env"
 grep -qx 'network_handoff=wifi-to-cellular' "$test_root/evidence/actions.env"
+grep -qx 'version_code=787500005' "$test_root/evidence/actions.env"
+grep -qx 'version_name=150.0.7871.181' "$test_root/evidence/actions.env"
 (
   cd "$test_root/evidence"
   sha256sum -c EVIDENCE_SHA256SUMS
@@ -84,6 +91,7 @@ grep -q 'shell input keyevent KEYCODE_HOME' "$test_root/adb.log"
 grep -q 'shell monkey -p computer.helium.sync.test' "$test_root/adb.log"
 grep -q 'shell svc wifi disable' "$test_root/adb.log"
 grep -q 'shell svc wifi enable' "$test_root/adb.log"
+grep -q 'shell dumpsys package computer.helium.sync.test' "$test_root/adb.log"
 grep -q 'forward --remove tcp:9222' "$test_root/adb.log"
 grep -q 'reverse --remove tcp:44721' "$test_root/adb.log"
 
