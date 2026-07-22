@@ -217,19 +217,26 @@ async function stream(path) {
   if (!response.ok || !response.body) throw new Error('HTTP ' + response.status);
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  const arrivals = [];
+  const arrivals = [], chunk_milestones = [];
   let text = '';
+  let observedChunks = 0;
   while (true) {
     const item = await reader.read();
     if (item.done) break;
     arrivals.push(Math.round(performance.now() - started));
     text += decoder.decode(item.value, {stream:true});
+    const completeChunks = (text.match(/chunk-\\d{2}\\n/g) || []).length;
+    if (completeChunks > observedChunks) {
+      observedChunks = completeChunks;
+      chunk_milestones.push({count:completeChunks, at_ms:Math.round(performance.now() - started)});
+    }
   }
   text += decoder.decode();
   const timing = performance.getEntriesByName(response.url).at(-1);
   return {
-    text, arrivals,
+    text, arrivals, chunk_milestones,
     headers_ms: Math.round(headersAt - started),
+    completed_ms: Math.round(performance.now() - started),
     interaction_ticks: interactionTicks - ticksBefore,
     protocol: timing?.nextHopProtocol || '',
     response_encoding: response.headers.get('content-encoding') || 'identity',
@@ -280,7 +287,15 @@ async function playMse(src) {
   mediaSource.endOfStream();
   return new Promise(resolve => {
     const timer=setTimeout(() => resolve({name:'mse',ok:false,error:'timeout'}),12000);
-    video.onended=()=>{clearTimeout(timer);resolve({name:'mse',ok:true,duration:video.duration});};
+    video.onended=()=>{
+      clearTimeout(timer);
+      const quality=video.getVideoPlaybackQuality?.();
+      resolve({
+        name:'mse',ok:true,duration:video.duration,width:video.videoWidth,height:video.videoHeight,
+        total_frames:quality?.totalVideoFrames??null,dropped_frames:quality?.droppedVideoFrames??null,
+        audio_decoded_bytes:video.webkitAudioDecodedByteCount??null,
+      });
+    };
     video.onerror=()=>{clearTimeout(timer);resolve({name:'mse',ok:false,error:String(video.error?.code||'media error')});};
     video.play().catch(error=>{clearTimeout(timer);resolve({name:'mse',ok:false,error:String(error)});});
   });

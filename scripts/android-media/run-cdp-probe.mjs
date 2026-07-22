@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 
+import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -25,6 +26,25 @@ export function validateProbeResult(result) {
     if (!Number.isInteger(stream.interaction_ticks) || stream.interaction_ticks < 2) {
       throw new Error(`${encoding} Fetch stream blocked page progress`);
     }
+    if (!Array.isArray(stream.chunk_milestones) || stream.chunk_milestones.length < 3) {
+      throw new Error(`${encoding} Fetch stream did not expose three progressive chunk milestones`);
+    }
+    const milestoneCounts = stream.chunk_milestones.map(item => item?.count);
+    if (milestoneCounts.at(-1) !== result.expected_chunks ||
+        milestoneCounts.slice(0, -1).some((count, index) =>
+          !Number.isInteger(count) || count < 1 || count >= milestoneCounts[index + 1])) {
+      throw new Error(`${encoding} Fetch chunk milestones were invalid or reordered`);
+    }
+    if (!Number.isInteger(stream.headers_ms) || !Number.isInteger(stream.completed_ms) ||
+        stream.headers_ms < 0 || stream.completed_ms <= stream.headers_ms) {
+      throw new Error(`${encoding} Fetch timing evidence was invalid`);
+    }
+    const milestoneTimes = stream.chunk_milestones.map(item => item?.at_ms);
+    if (milestoneTimes.some((time, index) =>
+      !Number.isInteger(time) || time < stream.headers_ms || time > stream.completed_ms ||
+      (index > 0 && time < milestoneTimes[index - 1]))) {
+      throw new Error(`${encoding} Fetch milestone timing evidence was invalid`);
+    }
   }
   if (JSON.stringify(result.sse?.values) !== JSON.stringify(expectedValues)) {
     throw new Error("SSE stream was incomplete or reordered");
@@ -35,9 +55,37 @@ export function validateProbeResult(result) {
   if (!Number.isInteger(result.sse.interaction_ticks) || result.sse.interaction_ticks < 2) {
     throw new Error("SSE stream blocked page progress");
   }
-  for (const [kind, fixture] of Object.entries(result.media_manifest?.files || {})) {
+  const mediaFiles = result.media_manifest?.files || {};
+  const expectedMediaNames = {
+    mp4: "h264-aac.mp4",
+    webm: "vp9-opus.webm",
+    mse: "h264-aac-fragmented.mp4",
+  };
+  for (const kind of ["mp4", "webm", "mse"]) {
+    const fixture = mediaFiles[kind];
+    if (!fixture || fixture.name !== expectedMediaNames[kind] ||
+        !Number.isSafeInteger(fixture.bytes) || fixture.bytes <= 0 ||
+        !/^[0-9a-f]{64}$/.test(fixture.sha256 || "")) {
+      throw new Error(`${kind} media fixture was absent or unverified`);
+    }
     const playback = result.playback?.find(item => item.name === kind);
-    if (!fixture.sha256 || !playback?.ok) throw new Error(`${kind} media fixture did not play to completion`);
+    if (!playback?.ok || !(playback.duration > 0)) {
+      throw new Error(`${kind} media fixture did not play to completion`);
+    }
+    if (!(playback.width > 0) || !(playback.height > 0)) {
+      throw new Error(`${kind} media fixture produced no video dimensions`);
+    }
+    if (!(playback.audio_decoded_bytes > 0)) {
+      throw new Error(`${kind} media fixture produced no decoded audio evidence`);
+    }
+  }
+  if (!result.capabilities?.mp4_h264_aac || !result.capabilities?.webm_vp9_opus ||
+      result.capabilities?.mse_mp4_h264_aac !== true) {
+    throw new Error("required MP4/WebM/MSE codec capability was not reported");
+  }
+  if (!result.runtime?.browser_product || !result.runtime?.browser_protocol_version ||
+      !result.runtime?.browser_webkit_version || !result.runtime?.fixture_origin) {
+    throw new Error("runtime browser and fixture provenance was not recorded");
   }
   return result;
 }
@@ -46,11 +94,13 @@ export async function runProbe(options) {
   if (!options.cdp || !options.fixture || !options.output) {
     throw new Error("cdp, fixture, and output are required");
   }
+  const cdpURL = requireLoopbackHTTP(options.cdp, "CDP");
+  const fixtureURL = requireLoopbackHTTP(options.fixture, "fixture");
   const cdpBase = options.cdp.replace(/\/$/, "");
   const browserInfo = await checkedJSON(`${cdpBase}/json/version`);
   if (!browserInfo.webSocketDebuggerUrl) throw new Error(`no browser CDP target at ${options.cdp}`);
 
-  const browser = new CDP(browserInfo.webSocketDebuggerUrl);
+  const browser = new CDP(requireLoopbackWebSocket(browserInfo.webSocketDebuggerUrl, "browser CDP"));
   await browser.open();
   let targetID = "";
   let browserContextID = "";
@@ -64,7 +114,7 @@ export async function runProbe(options) {
       browserContextId: browserContextID,
     }, 10000));
     const target = await waitForTarget(cdpBase, targetID);
-    page = new CDP(target.webSocketDebuggerUrl);
+    page = new CDP(requireLoopbackWebSocket(target.webSocketDebuggerUrl, "page CDP"));
     await page.open();
     await page.call("Runtime.enable");
     const response = await page.call("Runtime.evaluate", {
@@ -83,7 +133,19 @@ export async function runProbe(options) {
       awaitPromise: true,
       returnByValue: true,
     }, 95000);
-    const result = validateProbeResult(response.result?.value);
+    const rawResult = response.result?.value;
+    if (!rawResult || typeof rawResult !== "object") {
+      throw new Error("browser probe returned no structured result");
+    }
+    rawResult.runtime = {
+      browser_product: browserInfo.Browser || "",
+      browser_protocol_version: browserInfo["Protocol-Version"] || "",
+      browser_revision: browserInfo["Revision"] || "",
+      browser_webkit_version: browserInfo["WebKit-Version"] || "",
+      cdp_origin: cdpURL.origin,
+      fixture_origin: fixtureURL.origin,
+    };
+    const result = validateProbeResult(rawResult);
     await atomicWriteJSON(path.resolve(options.output), result);
     return result;
   } finally {
@@ -154,11 +216,39 @@ async function checkedJSON(url) {
   return response.json();
 }
 
-async function atomicWriteJSON(filePath, value) {
+export async function atomicWriteJSON(filePath, value) {
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
-  const temporary = `${filePath}.tmp-${process.pid}`;
-  await fsp.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
-  await fsp.rename(temporary, filePath);
+  if (await fsp.lstat(filePath).then(() => true).catch(error => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  })) {
+    throw new Error(`refusing to overwrite existing probe evidence: ${filePath}`);
+  }
+  const temporary = `${filePath}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  try {
+    await fsp.writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await fsp.link(temporary, filePath);
+    await fsp.unlink(temporary);
+  } catch (error) {
+    await fsp.rm(temporary, { force: true });
+    throw error;
+  }
+}
+
+function requireLoopbackHTTP(raw, name) {
+  const parsed = new URL(raw);
+  if (parsed.protocol !== "http:" || !new Set(["127.0.0.1", "localhost", "[::1]"]).has(parsed.hostname)) {
+    throw new Error(`${name} URL must use loopback HTTP`);
+  }
+  return parsed;
+}
+
+function requireLoopbackWebSocket(raw, name) {
+  const parsed = new URL(raw);
+  if (parsed.protocol !== "ws:" || !new Set(["127.0.0.1", "localhost", "[::1]"]).has(parsed.hostname)) {
+    throw new Error(`${name} URL must use a loopback WebSocket`);
+  }
+  return parsed.href;
 }
 
 function parseArgs(argv) {

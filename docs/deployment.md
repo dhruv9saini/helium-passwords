@@ -75,7 +75,85 @@ AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
 ```
 
 The verifier also checks the relocatable provenance manifest, pinned Chromium
-commit, clean tracked source status, and exactly one `HeliumSync.apk`.
+commit, clean tracked source status, exactly one `HeliumSync.apk`, and the
+artifact-carried runtime acceptance kit. It prints the APK and runtime-kit
+SHA-256 values. Prepare a new, immutable disposable test directory from that
+verified archive:
+
+```sh
+AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
+  scripts/android-media/prepare-disposable-acceptance.sh \
+  /srv/nas/helium-builds/JOB/chrome_public_apk-arm64.tar.xz \
+  HELIUM_SYNC_COMMIT \
+  /srv/nas/helium-acceptance/JOB
+
+(cd /srv/nas/helium-acceptance/JOB && sha256sum -c PACKAGE_SHA256SUMS)
+```
+
+The preparer refuses an existing destination. It copies the exact test APK,
+build provenance, and artifact-carried probe scripts, generates deterministic
+synthetic media with those scripts, and records hashes for the archive, APK,
+runtime kit, and complete prepared directory. It does not install or launch
+the APK.
+
+After the test package is explicitly installed and launched on disposable
+oneplus state, run the carried probe from the host connected to that device.
+Use a new evidence filename for each APK and never use `--remove-all`, which
+could disrupt unrelated ADB work:
+
+```sh
+set -euo pipefail
+acceptance=/srv/nas/helium-acceptance/JOB
+serial=ONEPLUS_ADB_SERIAL
+evidence_root=/srv/nas/helium-acceptance-evidence/JOB
+mkdir -p "$evidence_root"
+evidence="$evidence_root/result-oneplus.json"
+fixture_log="$evidence.fixture-server.log"
+[[ ! -e "$evidence" && ! -e "$fixture_log" && ! -e "$evidence.receipt.sha256" ]]
+fixture_pid=
+reverse_created=false
+forward_created=false
+cleanup_probe() {
+  if [[ "$forward_created" == true ]]; then
+    adb -s "$serial" forward --remove tcp:9222 || true
+  fi
+  if [[ "$reverse_created" == true ]]; then
+    adb -s "$serial" reverse --remove tcp:44721 || true
+  fi
+  if [[ -n "$fixture_pid" ]]; then
+    kill "$fixture_pid" 2>/dev/null || true
+    wait "$fixture_pid" 2>/dev/null || true
+  fi
+}
+trap cleanup_probe EXIT INT TERM
+
+(cd "$acceptance" && sha256sum -c PACKAGE_SHA256SUMS)
+node "$acceptance/runtime-acceptance/fixture-server.mjs" \
+  --host 127.0.0.1 --port 44721 --media-dir "$acceptance/media" \
+  > "$fixture_log" 2>&1 &
+fixture_pid=$!
+
+adb -s "$serial" reverse --no-rebind tcp:44721 tcp:44721
+reverse_created=true
+adb -s "$serial" forward --no-rebind tcp:9222 localabstract:chrome_devtools_remote
+forward_created=true
+node "$acceptance/runtime-acceptance/run-cdp-probe.mjs" \
+  --cdp http://127.0.0.1:9222 \
+  --fixture http://127.0.0.1:44721/probe \
+  --output "$evidence"
+
+sha256sum "$evidence" "$acceptance/acceptance.env" \
+  > "$evidence.receipt.sha256"
+```
+
+The test app must already be the hash-verified `computer.helium.sync.test` APK;
+the fixture and CDP endpoints stay on loopback. The runner refuses non-loopback
+origins and existing evidence. A passing result requires three observable
+numbered-chunk milestones for identity, gzip, and Brotli Fetch responses,
+ordered SSE, verified MP4/WebM/MSE fixtures, completed playback, video
+dimensions, decoded-audio evidence, required codec capabilities, and browser
+product/protocol provenance. HTTP/2, HTTP/3, background/foreground, network
+handoff, upstream-control A/B, and ChatGPT timing remain separate device gates.
 
 A copied backup never opens a browser.
 

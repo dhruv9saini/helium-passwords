@@ -76,6 +76,32 @@ grep -Fq 'github_workspace=$(realpath -m "$GITHUB_WORKSPACE")' \
 grep -Fq 'compile-proof.env' "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'compile-${artifact_target}-${target_cpu}.tar.xz' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'package_runtime_acceptance "$staging/runtime-acceptance"' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'probe_schema_version=1' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'configure_git_cache_pack_memory' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'GIT_CONFIG_KEY_0=pack.threads' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'GIT_CONFIG_VALUE_1=256m' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'GIT_CONFIG_KEY_2=core.deltaBaseCacheLimit' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'GIT_CONFIG_VALUE_2=128m' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'GIT_CONFIG_KEY_3=pack.deltaCacheSize' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'git config --file "$config" pack.threads 1' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'find "$GIT_CACHE_PATH" -mindepth 2 -maxdepth 2' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'show "$sync_commit:scripts/android-media/$source"' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'runtime acceptance kit checksum inventory is invalid' \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh"
+grep -Fq 'artifact_target=chrome_public_apk' \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh"
 grep -Fq 'status --short --untracked-files=no' \
   "$repo_root/scripts/chromium/verify-android-media-config.sh"
 ! grep -Fq 'status --short --untracked-files=all' \

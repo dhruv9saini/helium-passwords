@@ -5,7 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { createFixtureServer } from "../android-media/fixture-server.mjs";
-import { validateProbeResult } from "../android-media/run-cdp-probe.mjs";
+import { atomicWriteJSON, runProbe, validateProbeResult } from "../android-media/run-cdp-probe.mjs";
 
 test("streams numbered Fetch chunks progressively for identity, gzip, and Brotli", async t => {
   const fixture = await createFixtureServer({ port: 0, chunks: 4, delayMs: 40 });
@@ -90,6 +90,12 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     text: "chunk-01\nchunk-02\nchunk-03\nchunk-04\n",
     arrivals: [1, 2, 3, 4],
     interaction_ticks: 3,
+    chunk_milestones: [
+      { count: 1, at_ms: 10 }, { count: 2, at_ms: 20 },
+      { count: 3, at_ms: 30 }, { count: 4, at_ms: 40 },
+    ],
+    headers_ms: 1,
+    completed_ms: 45,
   };
   const result = {
     schema_version: 1,
@@ -103,8 +109,27 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
       arrivals: [1, 2, 3, 4],
       interaction_ticks: 3,
     },
-    media_manifest: { files: { mp4: { sha256: "a".repeat(64) } } },
-    playback: [{ name: "mp4", ok: true }],
+    capabilities: {
+      mp4_h264_aac: "probably",
+      webm_vp9_opus: "probably",
+      mse_mp4_h264_aac: true,
+    },
+    runtime: {
+      browser_product: "Chrome/148",
+      browser_protocol_version: "1.3",
+      browser_webkit_version: "537.36 (@synthetic)",
+      fixture_origin: "http://127.0.0.1:44721",
+    },
+    media_manifest: { files: {
+      mp4: { name: "h264-aac.mp4", bytes: 10, sha256: "a".repeat(64) },
+      webm: { name: "vp9-opus.webm", bytes: 10, sha256: "b".repeat(64) },
+      mse: { name: "h264-aac-fragmented.mp4", bytes: 10, sha256: "c".repeat(64) },
+    } },
+    playback: [
+      { name: "mp4", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10 },
+      { name: "webm", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10 },
+      { name: "mse", ok: true, duration: 2, width: 320, height: 180, audio_decoded_bytes: 10 },
+    ],
   };
   assert.equal(validateProbeResult(result), result);
   assert.throws(() => validateProbeResult({
@@ -115,4 +140,42 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     ...result,
     playback: [{ name: "mp4", ok: false }],
   }), /did not play/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    media_manifest: { files: { mp4: result.media_manifest.files.mp4 } },
+  }), /webm media fixture was absent/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    fetch_br: { ...stream, chunk_milestones: [{ count: 4, at_ms: 40 }] },
+  }), /three progressive chunk milestones/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    fetch_br: {
+      ...stream,
+      chunk_milestones: [
+        { count: 1, at_ms: 10 }, { count: 2, at_ms: 50 },
+        { count: 3, at_ms: 30 }, { count: 4, at_ms: 40 },
+      ],
+    },
+  }), /milestone timing evidence was invalid/);
+});
+
+test("CDP runner refuses non-loopback origins and existing evidence", async t => {
+  const outputDir = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-media-evidence-"));
+  t.after(() => fsp.rm(outputDir, { recursive: true, force: true }));
+  const output = path.join(outputDir, "result.json");
+  await atomicWriteJSON(output, { schema_version: 1 });
+  await assert.rejects(() => atomicWriteJSON(output, { schema_version: 2 }), /refusing to overwrite/);
+  const racedOutput = path.join(outputDir, "raced.json");
+  const raced = await Promise.allSettled([
+    atomicWriteJSON(racedOutput, { writer: 1 }),
+    atomicWriteJSON(racedOutput, { writer: 2 }),
+  ]);
+  assert.equal(raced.filter(item => item.status === "fulfilled").length, 1);
+  assert.equal(raced.filter(item => item.status === "rejected").length, 1);
+  await assert.rejects(() => runProbe({
+    cdp: "http://example.com:9222",
+    fixture: "http://127.0.0.1:44721/probe",
+    output: path.join(outputDir, "bad.json"),
+  }), /CDP URL must use loopback HTTP/);
 });

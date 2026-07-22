@@ -35,6 +35,10 @@ the browser gates below.
 - Android disposable evidence uses `computer.helium.sync.test`; manifest and GN
   provenance must agree. It must coexist with, and never upgrade or read, the
   existing `computer.helium.sync` app data.
+- The returned Android archive must carry a checksum-verified runtime acceptance
+  kit bound to the same Helium Sync commit, Chromium commit, package, arm64 CPU,
+  and `chrome_public_apk` target. A prepared disposable directory must pass its
+  complete `PACKAGE_SHA256SUMS` inventory before installation or execution.
 
 ## Gate 1: Helium Passwords
 
@@ -138,7 +142,12 @@ audio presence, dropped frames, and `chrome://media-internals`/logcat outcome.
 | Widevine DRM fixture | Expected failure until CDM provisioning is deliberately implemented |
 
 Run the matrix on an upstream Chromium control APK and Helium Sync APK from the
-same Chromium commit.
+same Chromium commit. The artifact-carried probe must record the browser
+product, CDP protocol/WebKit metadata, and fixture origin, verify all three
+media fixture hashes, observe completed playback and nonzero duration, and
+record video dimensions and decoded-audio bytes for MP4, WebM, and MSE. Missing
+media manifest entries or unavailable audio evidence fail the automated gate
+rather than silently reducing the matrix.
 
 ## Gate 6: Streaming Responses
 
@@ -146,7 +155,8 @@ For each HTTP/1.1 chunked, HTTP/2, HTTP/3, SSE, Fetch `ReadableStream`, gzip,
 and Brotli fixture:
 
 - headers arrive within the fixture timeout;
-- at least three numbered chunks become visible before response completion;
+- at least three strictly increasing numbered-chunk milestones become visible
+  before response completion (network read count alone is not evidence);
 - chunk order and final payload are correct;
 - the page remains interactive during the stream;
 - background/foreground and network handoff have a recorded result; and
