@@ -369,23 +369,33 @@ provided Nix shell:
 
 <https://chromium.googlesource.com/chromium/src/+/main/docs/linux/build_instructions.md>
 
-An older Android-oriented expression is realized. The current public Linux
-expression has a different expression-hash-named root and is deliberately not
-treated as realized. The remaining setup gate is:
+The current public Linux expression was realized through bounded job
+`hs-nix-150-a0820646-01`. Its returned provenance is
+`/srv/nas/helium-builds/hs-nix-150-a0820646-01/chromiumer-nix.env` with SHA-256
+`a87f590a5519db58633cd31f99a67d09b4f9e1ea9ac3ffb448fe94f0f4d147b6`.
+It records expression SHA-256
+`a0820646387c653b416b58551893d450319ad22d0537f5b9621fe5c9fd04bf5e`,
+root `chromium-150-a0820646387c653b`, derivation
+`/nix/store/f5ysbgffynhgw2vq8m23ad7imia4iqar-helium-chromium-150-env.drv`,
+output `/nix/store/j8sb2bh7kgcf8a3sfc8bv16z3brcij9g-helium-chromium-150-env`,
+and closure SHA-256
+`a3e8b195d0e69263de2239e5410fc3509de22c8c3ed0657c82d387816bd40d57`
+over 1,853,912,336 bytes. Realization consumed 362,057,728 root bytes and
+stayed above the 82 GiB post-realization floor. Its workspace was cleaned only
+after provenance return; a subsequent 80 GiB preflight passed.
 
-1. Follow [chromiumer-nix.md](chromiumer-nix.md): admit a 20 GiB isolated
-   realization job, require the independent 102 GiB start gate, and record the
-   resulting closure plus root-space delta. The environment provides the
-   bootstrap for the direct public Linux build; do not install or invoke a
-   container daemon as a workaround.
-2. Re-run `preflight 80` after the tool closure is present; if the remaining
-   headroom is insufficient, add a local build disk rather than using the NAS.
-3. Measure the bounded compile under the existing 5 GiB hard memory cap. Host
+The remaining build gates are:
+
+1. Wait for the serialized Android validation train to return its artifacts,
+   clean its final workspace, and explicitly hand off chromiumer admission.
+2. Re-run `connection` and `preflight 80`; unrelated disk growth can still
+   correctly refuse the public job.
+3. Measure the public compile under the existing 5 GiB hard memory cap. Host
    swap cannot help the build because its cgroup has `MemorySwapMax=0`, and
    extra RAM does not raise `MemoryMax=5G`. If the proof hits that cap, record
    the failure before making a separate hardware and cgroup-policy decision.
-4. Re-run `connection`, budgeted `preflight`, and the short wrapper test before
-   staging.
+4. Return and strictly verify the single provenance-bound Linux archive before
+   any disposable browser run.
 
 The simplified harmless wrapper test was executed as
 `wrapper-test-20260721-153235`. It completed with exit code 0 while live systemd
