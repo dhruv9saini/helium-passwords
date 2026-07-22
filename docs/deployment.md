@@ -159,6 +159,58 @@ A copied backup never opens a browser.
 
 ## 3. Prepare lm without activating it
 
+### Synthetic rootless endpoint while lm sudo is unavailable
+
+The production service below remains the required personal-data design because
+its dedicated `helium-sync` account separates the leaf key and opaque state
+from other processes owned by d. For disposable protocol and browser tests
+only, lm can run the separately named lingering user service without sudo:
+
+```sh
+scripts/install-lm-disposable-sync-service.sh install-source
+scripts/install-lm-disposable-sync-service.sh install-endpoint \
+  /secure/incoming/ca-cert.pem \
+  /secure/incoming/server-cert.pem \
+  /secure/incoming/server-key.pem
+scripts/install-lm-disposable-sync-service.sh initialize \
+  /secure/incoming/lm-bootstrap.json
+scripts/install-lm-disposable-sync-service.sh backup-drill
+scripts/install-lm-disposable-sync-service.sh enable
+scripts/install-lm-disposable-sync-service.sh status
+```
+
+The fixed state root is
+`/home/d/.local/state/helium-sync-disposable`; binaries are under
+`/home/d/.local/share/helium-sync-disposable/bin`; backups are namespaced under
+`/srv/nas/helium-sync-server-disposable`. The installer refuses an absent or
+changed `SYNTHETIC_ONLY` marker, a configured Tailscale Serve/Funnel, a stale
+endpoint identity, an existing listener, an active production service, a
+missing linger manager, a weak/incorrect certificate, or activation without a
+fresh backup/restore drill. It waits up to ten seconds for the supervised TLS
+listener instead of treating process creation as readiness.
+
+The user unit masks all of d's home with `ProtectHome=tmpfs`, then exposes only
+its executable and read-only endpoint/TLS directories plus its writable opaque
+server directory. It also enforces an empty capability set, private tmp and
+devices, process hiding, syscall/address-family restrictions, tailnet-only IP
+BPF policy, 256 MiB memory, no swap, and 64 tasks. The backup unit is
+network-denied, can read only that server directory, and can write only its NAS
+namespace. It stops and restarts the endpoint around each generation.
+
+Rollback is one nondestructive command:
+
+```sh
+scripts/install-lm-disposable-sync-service.sh disable
+```
+
+It disables both user units and leaves TLS, opaque state, and all NAS
+generations intact. Run it before enabling the production service. User-scope
+sandboxing cannot stop another process already running as d from reading
+d-owned files, so never enroll personal devices or put personal records into
+this synthetic endpoint.
+
+### Dedicated-account production endpoint
+
 ```sh
 scripts/install-lm-sync-service.sh install-source
 ```

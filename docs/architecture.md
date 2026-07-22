@@ -127,6 +127,17 @@ leaves the cursor unchanged, and stops that batch for explicit resolution.
 Tombstones are retained in latest inventory so a new or stale client cannot
 resurrect a deletion.
 
+The TLS-backed synthetic three-device integration test exercises one complete
+password lifecycle with d, da, and oneplus identities: both joins remain
+pull-only through verified application, an unchanged restart performs no HTTP
+publication, da updates and deletes the fixture while stale oneplus writes are
+rejected, revoking da leaves oneplus usable, oneplus rotates its credential,
+and d rotates and retires the shared content epoch only after oneplus verifies
+the CAS-rekeyed tombstone. It also proves that fixture plaintext never reaches
+the server journal. This is protocol and service proof; native prompts,
+settings, suggestions, and autofill still require the returned browser
+artifact and disposable profiles.
+
 ## Cookie and login-session convergence
 
 Every live, structurally valid, non-expired cookie returned by
@@ -222,6 +233,25 @@ and excluded from opaque server backups. lm's leaf key can authenticate lm and
 decrypt the outer TLS channel, but it cannot issue another endpoint certificate
 or decrypt an E2EE record.
 
+lm also has a deliberately separate `helium-syncd-disposable.service` for
+synthetic testing while root authorization is unavailable. It is a lingering
+user service with a mandatory `SYNTHETIC_ONLY` marker, direct TLS, the same
+tailnet-only BPF rule, no capabilities, strict system and process isolation,
+and `ProtectHome=tmpfs`; only its executable directory, endpoint/TLS state,
+and one writable opaque server directory are bound into the mount namespace.
+Its independent user timer stops the service, writes an opaque generation to
+`/srv/nas/helium-sync-server-disposable`, and restarts it. Activation always
+performs a fresh disposable restore drill and waits for the TLS listener.
+`scripts/install-lm-disposable-sync-service.sh disable` is the complete
+rollback command and preserves every generation.
+
+This rootless service may never receive personal device credentials or browser
+content. Other processes running as user d remain able to read d-owned state,
+which user-service sandboxing cannot change; the dedicated `helium-sync`
+system account and root-owned TLS/state paths remain mandatory before personal
+rollout. Disable the disposable unit before activating the production unit so
+only one process can own port 44719.
+
 Every Chromium compile runs on chromiumer through
 `scripts/chromiumer-job.sh` and the pinned Nix environment. The wrapper
 enforces two build jobs, CPU/memory/I/O/task/disk limits, an eight-hour stop,
@@ -243,8 +273,8 @@ evidence.
 
 | Area | Implemented and source-tested | Still required before personal data |
 | --- | --- | --- |
-| Transport | Opaque v2 E2EE, direct TLS 1.3 server, offline constrained CA issuance/verification, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery | Enroll the public root on disposable clients, start the supervised endpoint, native Chromium compile, live recovery drill |
-| Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations | Execute on disposable profiles, then provision d/da/oneplus |
+| Transport | Opaque v2 E2EE, direct TLS 1.3 server, offline constrained CA issuance/verification, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; synthetic rootless endpoint and scheduled NAS restore proof live on lm | Restore root authorization, install the dedicated-account service, and enroll the public root on disposable browser clients |
+| Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations; consolidated TLS-backed three-device protocol lifecycle passes | Execute native bridge promotion on disposable profiles, then provision personal d/da/oneplus only after backups |
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop | Built-browser prompts, save/update/delete/autofill and three-device restart tests |
 | Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
 | Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; no state values accepted | Disposable-browser evidence collector and safe origin-scoped adapters only where observed necessary |

@@ -98,6 +98,17 @@ verify_live_endpoint() {
   }
 }
 
+wait_live_endpoint() {
+  local attempt
+  for attempt in {1..50}; do
+    if verify_live_endpoint 2>/dev/null; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  verify_live_endpoint
+}
+
 perform_backup_drill() (
   [ -s /var/lib/helium-sync/devices.json ] || {
     echo "server registry is not initialized" >&2
@@ -241,7 +252,7 @@ case "$action" in
     verify_endpoint >/dev/null
     perform_backup_drill >/dev/null
     sudo systemctl enable --now helium-syncd.service
-    if ! verify_live_endpoint; then
+    if ! wait_live_endpoint; then
       sudo systemctl disable --now helium-syncd.service
       echo "helium-syncd was stopped because the direct TLS health gate failed" >&2
       exit 1

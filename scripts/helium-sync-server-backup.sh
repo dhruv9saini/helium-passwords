@@ -3,6 +3,7 @@ set -euo pipefail
 
 data_dir=${HELIUM_SERVER_DATA_DIR:-/var/lib/helium-sync}
 service=${HELIUM_SERVER_SERVICE:-helium-syncd.service}
+service_scope=${HELIUM_SERVER_SERVICE_SCOPE:-system}
 verify_bin=${HELIUM_SYNC_CLI:-/usr/local/libexec/helium-sync}
 command=${1:-}
 
@@ -10,6 +11,14 @@ require_absolute() {
   case "$1" in
     /*) ;;
     *) echo "path must be absolute: $1" >&2; exit 2 ;;
+  esac
+}
+
+service_control() {
+  case "$service_scope" in
+    system) sudo systemctl "$@" "$service" ;;
+    user) systemctl --user "$@" "$service" ;;
+    *) echo "HELIUM_SERVER_SERVICE_SCOPE must be system or user" >&2; exit 2 ;;
   esac
 }
 
@@ -40,13 +49,13 @@ backup() {
     exit 1
   }
   was_active=false
-  if [ "$service" != none ] && systemctl is-active --quiet "$service"; then
-    sudo systemctl stop "$service"
+  if [ "$service" != none ] && service_control is-active --quiet; then
+    service_control stop
     was_active=true
   fi
   restart_service() {
     if [ "$was_active" = true ]; then
-      sudo systemctl start "$service" || true
+      service_control start || true
     fi
   }
   trap restart_service EXIT INT TERM

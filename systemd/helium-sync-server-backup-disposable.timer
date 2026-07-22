@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily synthetic disposable Helium Sync opaque-state backup
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=30m
+Persistent=true
+Unit=helium-sync-server-backup-disposable.service
+
+[Install]
+WantedBy=timers.target
