@@ -20,16 +20,14 @@ restores Chromium's native password manager.
   or cleanup gate. The NAS is an artifact destination, not a live build volume.
 - Keep this repo based on `helium-passwords`; do not turn it back into a plain
   Chromium-only repo.
-- Password sync must use Chromium's native password-manager APIs and the local
-  encrypted daemon. Do not add a password-manager browser extension and do not
-  copy raw profile databases.
-- Password sync is additive/update-only. Do not propagate password deletions
-  between devices unless this policy is explicitly changed.
-- Cookie sync may use the CookieCloud-compatible local bridge for environments
-  that cannot load a CookieCloud extension directly. The CDP bridge is
-  additive/update-only: uploads merge browser cookies into the existing remote
-  payload and downloads skip expired records instead of propagating cookie
-  deletions while the user is browsing.
+- Password sync must use Chromium's native password-manager APIs and the
+  supervised HTTPS service on lm. Do not add a password-manager browser
+  extension, a DevTools writer, or raw profile-database copying. Native
+  deletions publish durable tombstones and use expected revisions so stale
+  devices cannot resurrect a credential.
+- Cookie sync must use Chromium's native `CookieManager` bridge. Do not add a
+  CookieCloud extension/API, DevTools cookie writer, phone-local sync daemon,
+  domain-policy fallback, or raw profile-database copying.
 - Treat synced payloads as sensitive. Avoid logging decrypted cookies,
   passwords, tokens, passphrases, or full cookie/password payloads.
 - Keep `README.md`, `docs/`, and this file current when integration paths or
@@ -60,44 +58,34 @@ restores Chromium's native password manager.
   Chromium marks desktop-Android extension support as experimental and unstable;
   the Android build helper rejects `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true`.
   Use the chroot Helium browser for uBO/extension workflows. The Android main
-  browser uses the Java AI Overview blocker and local sync bridge, not
+  browser uses the Java AI Overview blocker and native sync bridge, not
   command-line extension content scripts.
-  `cdp-password-sync` must create its password-manager CDP target in the
-  background and must not navigate an existing user tab to
-  `chrome://password-manager/passwords`; otherwise the daemon steals focus on
-  every sync interval.
+  Normal launch and installation paths must contain no browser-automation
+  password or cookie writer. The CDP media probe is observation-only acceptance
+  instrumentation and must never gain password/cookie mutation behavior.
 - `cmd/helium-syncd` runs the encrypted record daemon. Production binds only
   lm's exact Tailscale IPv4 address and terminates TLS 1.3 itself with a leaf
   signed by the offline, endpoint-constrained Helium Sync CA. The CA private
   key never belongs on lm; clients explicitly enroll only `ca-cert.pem`.
 - `cmd/helium-sync` initializes local secrets and provides test/push/pull
   commands.
-- `cmd/helium-local-syncd` runs the phone-local CookieCloud-compatible API.
 - `internal/syncstore` stores append-only encrypted records.
 - `scripts/laptop` installs laptop-local sync binaries and a
   `helium-sync-browser` launcher. The launcher uses the current laptop Helium
-  profile, starts the local daemons, writes native sync config into the profile,
-  and exposes CDP on `127.0.0.1:9224` for CookieCloud cookie sync.
-- `scripts/android-local` installs and configures the phone/chroot local sync
-  pieces. The installer places `start-helium-local-sync` in `/usr/local/bin`
-  and the X11 helper path. `configure-android-chromium-sync.sh` also marks
-  Android Chromium first-run complete so DevTools starts in the real browser
-  activity. The chroot launcher prefers a `helium` binary and only falls back
-  to `chromium` for temporary testing. Use
+  profile and requires its one HTTPS enrollment directory; it starts no helper
+  daemon and exposes no debugging port for synchronization.
+- `scripts/android-local` installs and configures the phone/chroot native sync
+  pieces. `configure-android-chromium-sync.sh` places only profile-local native
+  enrollment material and marks Android Chromium first-run complete. The
+  chroot launcher prefers a `helium` binary and only falls back to `chromium`
+  for temporary testing. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium
   Sync artifact to install `/usr/local/bin/helium` in the phone chroot. The
-  launcher defaults to `$HOME/.config/helium-passwords`, starts the CDP
-  password bridge by default for the chroot browser, and only disables it when
-  `HELIUM_CHROOT_CDP_PASSWORD_SYNC=false` is set. The bridge uses Chromium's
-  native `chrome.passwordsPrivate` API; it is not a password extension. The
-  launcher removes stale Chromium singleton files only when their recorded PID
-  is no longer running. The CDP chroot bridge folds records that Chromium's
-  native password API treats as the same origin and username. The
-  `cdp-cookiecloud` bridge uses browser-level `Storage.getCookies` and
-  `Storage.setCookies` when CDP exposes a browser websocket, because chroot
-  page targets can be missing or still starting. The installer places the
-  CookieCloud extension and the Google AI Overview blocker under both
-  `/root/.local/share` and
+  launcher defaults to `$HOME/.config/helium-passwords`, requires that
+  profile's native HTTPS enrollment, and starts no password/cookie sidecar. It
+  removes stale Chromium singleton files only when their recorded PID is no
+  longer running. The installer places the Google AI Overview blocker under
+  both `/root/.local/share` and
   `/home/dhruv/.local/share`; the launcher loads whichever copies live under
   the invoking user's `$HOME`. The installer also places the blank-new-tab and
   tab-pin helper extensions under both chroot users and installs
@@ -368,10 +356,9 @@ restores Chromium's native password manager.
   retries instead of queueing another full start.
 - Arch Desktop startup also keeps Android Helium Sync
   (`computer.helium.sync`) out of inactive/idle background states and sticky
-  unfreezes the running native browser process when present. CookieCloud uses
-  that app's DevTools socket through the local `socat` bridge on `127.0.0.1:9222`,
-  and Android can otherwise freeze the native browser as soon as Termux:X11 is
-  foregrounded.
+  unfreezes the running native browser process when present; Android can
+  otherwise freeze it as soon as Termux:X11 is foregrounded. This is process
+  liveness only and must not start a sync sidecar or debugging bridge.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 - Android APKs intended for local phone use should be release-style,
@@ -417,5 +404,5 @@ Run Go checks after changing daemon or bridge tooling:
 
 ```bash
 go test ./...
-go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-local-syncd
+go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-tabs
 ```

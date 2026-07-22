@@ -199,25 +199,38 @@ test("native source is whole-profile, partition-complete, rollback-first, and na
   assert.doesNotMatch(service, /cookie-policies/);
 });
 
-test("normal launch and seed paths do not invoke historical CookieCloud tooling", () => {
+test("normal composition contains only the native password and cookie path", () => {
+  const forbidden =
+    /CookieCloud|cdp-cookiecloud|cdp-password-sync|helium-local-syncd|cookiecloud-extension|start-helium-local-sync|seed-chroot-profile/i;
   for (const script of [
+    ".github/workflows/go-sync.yml",
+    "scripts/laptop/install-laptop-sync.sh",
     "scripts/laptop/start-helium-sync-local.sh",
+    "scripts/android-local/install-phone-sync.sh",
+    "scripts/android-local/configure-android-chromium-sync.sh",
+    "scripts/android-local/install-chroot-helium.sh",
     "scripts/android-local/chromium-helium-local-root.sh",
+    "scripts/android-local/start-arch-xmonad-root.sh",
+    "scripts/android-local/arch-desktop-resume-root.sh",
+    "scripts/android-local/arch-desktop-attach-root.sh",
+    "scripts/android-local/restart-chroot-helium-browser-root.sh",
+    "scripts/android-local/stop-arch-x11-root.sh",
+  ]) {
+    assert.doesNotMatch(repoFile(script), forbidden, script);
+  }
+  for (const obsolete of [
+    "cmd/helium-local-syncd/main.go",
+    "cmd/helium-local-syncd/main_test.go",
+    "scripts/android-local/cdp-cookiecloud.mjs",
+    "scripts/android-local/cdp-password-sync.mjs",
+    "scripts/android-local/cookie-replication.mjs",
+    "scripts/android-local/password-reconcile.mjs",
+    "scripts/android-local/fetch-cookiecloud-extension.sh",
     "scripts/android-local/start-helium-local-sync-root.sh",
     "scripts/android-local/seed-chroot-profile-root.sh",
   ]) {
-    const source = repoFile(script);
-    assert.doesNotMatch(source, /cdp-cookiecloud|helium-local-syncd|COOKIECLOUD/);
-  }
-  assert.match(repoFile("scripts/android-local/cdp-cookiecloud.mjs"),
-    /cdp-cookiecloud\.mjs/);
-  for (const installer of [
-    "scripts/laptop/install-laptop-sync.sh",
-    "scripts/android-local/install-phone-sync.sh",
-  ]) {
-    const source = repoFile(installer);
-    assert.doesNotMatch(source,
-      /cdp-cookiecloud|cdp-password-sync|helium-local-syncd|cookiecloud-extension/);
+    assert.equal(fs.existsSync(new URL(`../../${obsolete}`, import.meta.url)),
+      false, obsolete);
   }
 });
 
@@ -240,6 +253,4 @@ test("native sync has one fail-closed profile-local enrollment source", () => {
     assert.doesNotMatch(source, />"\$sync_config_dir\/base_url"/);
     assert.doesNotMatch(source, />"\$sync_config_dir\/device_name"/);
   }
-  assert.match(repoFile("scripts/android-local/seed-chroot-profile-root.sh"),
-    /CDP password seeding has been removed/);
 });

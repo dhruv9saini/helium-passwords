@@ -4,10 +4,11 @@
 
 Helium Sync has one native browser path. Chromium's password store is the
 password authority and Chromium's `CookieManager` is the cookie authority.
-The old CDP password writer, CookieCloud bridge, phone-local sync daemon, and
-raw SQLite/profile copying are not installed or started by normal launch or
-installation scripts. Their source remains only as isolated historical test
-material.
+There is no alternate password/cookie writer, CookieCloud bridge,
+phone-local sync daemon, domain-policy replica model, or raw SQLite/profile
+copy path in the product repository. Normal launch, installation, shutdown,
+and CI composition tests fail if one is reintroduced. The Android media CDP
+probe is read-only acceptance instrumentation and is outside sync composition.
 
 Tabs are not sync data. The wire kinds are exactly `passwords` and `cookies`;
 the server rejects every other kind. No endpoint, credential, or record schema

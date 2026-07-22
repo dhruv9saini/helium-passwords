@@ -27,4 +27,4 @@ jobs:
         run: go test ./...
 
       - name: Build commands
-        run: go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-local-syncd
+        run: go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-tabs

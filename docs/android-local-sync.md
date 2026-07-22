@@ -8,7 +8,10 @@ sync daemon and no shared server state inside the chroot.
 Normal installation does not fetch, install, or launch CookieCloud; expose a
 DevTools port for synchronization; install a CDP password writer; copy a sync
 server journal; or copy one profile's enrollment state into another profile.
-Historical CDP scripts remain repository test material only.
+The obsolete CookieCloud server and browser-automation password/cookie writers
+are not retained as runnable repository utilities. The CDP media probe carried
+in disposable acceptance kits is read-only and has no sync or storage mutation
+methods.
 
 ## Android app profile
 
@@ -41,10 +44,9 @@ an existing HTTPS enrollment directory and launches only the native bridge.
 
 `scripts/android-local/install-phone-sync.sh` installs the enrollment CLI,
 local tab tool, launcher, and unrelated desktop helpers. It does not install a
-server, CookieCloud, or CDP writers. The two old launcher entry points
-`start-helium-local-sync-root.sh` and `seed-chroot-profile-root.sh` now exit
-fail-closed so a stale installed launcher cannot silently recreate the old
-architecture.
+server, CookieCloud, or CDP writers. The launcher requires the profile's native
+HTTPS enrollment and starts Helium directly; there is no sidecar or secondary
+writer to enable as a fallback.
 
 ## Cookies and origin state
 
