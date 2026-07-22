@@ -36,6 +36,15 @@ After success, fetch the named compile tarball to the NAS, verify its automatic
 receipt, then clean the remote workspace. Use a new job ID for
 `chrome_public_apk`; never mutate or resume a terminal job.
 
+Accept the focused compile only after its carried provenance and exact target
+pass the independent verifier:
+
+```sh
+scripts/chromium/verify-android-compile-proof.sh \
+  /srv/nas/helium-builds/JOB/compile-chrome_browser_helium_sync_helium_sync-arm64.tar.xz \
+  chrome/browser/helium_sync:helium_sync HELIUM_SYNC_COMMIT
+```
+
 ## 2. Prove disposable behavior
 
 Use synthetic credentials, fixture cookies, and new disposable profiles on d,
