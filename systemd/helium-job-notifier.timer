@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll chromiumer for terminal Helium jobs
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=helium-job-notifier.service
+
+[Install]
+WantedBy=timers.target

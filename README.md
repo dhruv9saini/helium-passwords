@@ -8,7 +8,8 @@ developer commands, upstream update train, and acceptance gates. The current
 public work inventory is in [ISSUES.md](ISSUES.md). Large Linux and Android
 builds use the enforced lm-to-chromiumer workflow in
 [docs/chromiumer-builds.md](docs/chromiumer-builds.md); never build Chromium on
-lm.
+lm. Terminal build results are delivered through the lm-only durable path in
+[docs/job-notifications.md](docs/job-notifications.md).
 
 This is no longer a Linux packaging fork. The repo only keeps the password
 patches plus a small wrapper that clones the official Helium platform repo,
