@@ -25,11 +25,13 @@ in
   targetPkgs = packages: with packages; [
     # Helium/depot_tools bootstrap and source preparation.
     bash
+    bison
     cacert
     coreutils
     curl
     file
     findutils
+    flex
     gawk
     git
     gnugrep
@@ -39,6 +41,9 @@ in
     gzip
     heliumPython
     jq
+    imagemagick
+    ninja
+    nodejs_22
     openssh
     patch
     perl
@@ -49,6 +54,7 @@ in
     util-linux
     which
     xz
+    yasm
     zip
     zstd
 

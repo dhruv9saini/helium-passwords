@@ -195,15 +195,30 @@ what the job tests or produces; `--next` is the useful action included in a
 success notification. Both are mandatory and must describe the particular
 job, not a generic build class.
 
-For public Linux x86_64, the prepared platform wrapper forwards the enforced
-two-job limit into its Dockerized Ninja invocation:
+Public Linux x86_64 does not use the platform's Docker wrapper on chromiumer.
+A daemon-launched container would sit outside the transient user service's
+process tree and job-tree disk accounting, and chromiumer has no Docker daemon.
+The public driver instead enters the pinned Nix FHS environment and calls the
+prepared platform's native build script directly. It independently requires
+the two-job environment, job cgroup, job-owned `TMPDIR`, exact Linux/core/
+Chromium commits, and a clean staged source before compilation:
 
 ```sh
 scripts/chromiumer-job.sh start "$job" \
     --summary "Linux x86_64 browser artifact and password acceptance input" \
     --next "Fetch and verify the packaged artifact, then run the disposable password gate." -- \
-    bash scripts/build.sh linux x86_64
+    scripts/chromiumer-nix.sh run -- \
+      bash scripts/build-chromiumer-linux.sh x86_64
 ```
+
+The driver writes exactly one return artifact at
+`.build/artifacts/helium-passwords-linux-x86_64.tar.xz`. It contains the raw
+runtime plus the source/tree, Helium core, Chromium, Linux platform, resolved
+GN arguments, Passwords patch hashes, Nix closure, and complete runtime hash
+inventory. This command is not ready until the current Nix expression's
+expression-hash-named GC root has been realized and a fresh 80 GiB preflight
+passes. An older `chromium-150-*` root is not accepted as evidence for a
+changed expression.
 
 Android source acquisition has one public backbone entry point:
 
@@ -246,12 +261,10 @@ scripts/chromiumer-job.sh start "$job" \
 
 Linux/Android jobs additionally need a reproducible chromiumer build
 environment. The pinned, cgroup-gated environment and its separate Nix-store
-disk arithmetic are in [chromiumer-nix.md](chromiumer-nix.md). Helium Linux
-currently expects Docker; that daemon is not provided by the Android Nix
-environment. Chromium's NixOS guidance requires running depot tools in its Nix
-shell. Record the Nix system closure, Docker image ID when applicable, exact
-command, GN args, patch hashes, and Chromium commit alongside the source
-manifest before accepting an artifact.
+disk arithmetic are in [chromiumer-nix.md](chromiumer-nix.md). Chromium's
+NixOS guidance requires running build tools in its Nix shell. The public Linux
+driver deliberately bypasses Docker and returns the Nix closure, exact command,
+GN args, patch hashes, and Chromium commit inside its artifact.
 
 ## Status, Logs, Cancellation, and Artifacts
 
@@ -294,12 +307,27 @@ when intentionally returning to another `lm` directory:
 
 ```sh
 scripts/chromiumer-job.sh fetch "$job" \
-    build/platforms/linux/build/<artifact>.tar.xz
+    .build/artifacts/helium-passwords-linux-x86_64.tar.xz
 
 scripts/chromiumer-job.sh fetch "$job" \
     .build/android-artifacts/chrome_public_apk-arm64.tar.xz \
     /srv/nas/helium-builds/"$job"
 ```
+
+Transport checksum verification is necessary but not sufficient. Before a
+Linux runtime reaches da, validate its internal source and file inventories
+from the same public commit that was staged:
+
+```sh
+scripts/verify-linux-runtime.sh \
+  /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.tar.xz \
+  /srv/nas/helium-builds/"$job"/verified
+```
+
+The destination must not exist. Verification rejects an unexpected source
+train, field/file inventory, symlink, patch, GN args, Nix environment, or
+runtime hash and writes a mode-0600 `artifact-receipt.env` that admits exactly
+one upstream `runtime/helium-wrapper` entry point to the native password gate.
 
 The wrapper compares remote and returned SHA-256 values and writes an artifact
 receipt. Cleanup refuses to remove a production workspace until that receipt
@@ -328,22 +356,25 @@ passes disk admission with 23.74 GiB of headroom. An empty 100 GiB job requires
 existing SSD therefore supports the bounded proof without repartitioning or an
 OS replacement. A full build remains tight after provisioning the toolchain.
 
-Git, Python 3, Docker, and Chromium tools were absent from the normal login
-`PATH`; `nix` is installed. Chromium's current Linux instructions require at
+Git, Python 3, Docker, Podman, and Chromium tools were absent from the normal
+login `PATH`; `nix` is installed. A read-only check on 2026-07-22 reconfirmed
+that neither container runtime is installed while the isolated Android compile
+remained active. Chromium's current Linux instructions require at
 least 100 GB free, recommend more than 16 GB RAM and substantial swap on an
 8 GB machine, and explicitly direct NixOS users to run depot_tools inside the
 provided Nix shell:
 
 <https://chromium.googlesource.com/chromium/src/+/main/docs/linux/build_instructions.md>
 
-The pinned environment is implemented but deliberately not realized. The
-remaining setup gate is:
+An older Android-oriented expression is realized. The current public Linux
+expression has a different expression-hash-named root and is deliberately not
+treated as realized. The remaining setup gate is:
 
 1. Follow [chromiumer-nix.md](chromiumer-nix.md): admit a 20 GiB isolated
    realization job, require the independent 102 GiB start gate, and record the
    resulting closure plus root-space delta. The environment provides the
-   bootstrap for source-managed depot_tools. Add Docker only for the public
-   Linux wrapper that actually calls it.
+   bootstrap for the direct public Linux build; do not install or invoke a
+   container daemon as a workaround.
 2. Re-run `preflight 80` after the tool closure is present; if the remaining
    headroom is insufficient, add a local build disk rather than using the NAS.
 3. Measure the bounded compile under the existing 5 GiB hard memory cap. Host

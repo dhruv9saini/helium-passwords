@@ -19,6 +19,31 @@ const PNG = Buffer.concat([
   Buffer.from("synthetic screenshot bytes"),
 ]);
 
+async function writeLinuxArtifactReceipt(root, artifact) {
+  const artifactHash = crypto.createHash("sha256")
+    .update(await fsp.readFile(artifact)).digest("hex");
+  const receipt = path.join(root, "artifact-receipt.env");
+  await fsp.writeFile(receipt, [
+    "schema_version=1",
+    "product=helium-passwords",
+    "platform=linux",
+    "arch=x86_64",
+    `source_commit=${"1".repeat(40)}`,
+    `helium_core_commit=${"2".repeat(40)}`,
+    "chromium_version=150.0.7871.181",
+    `chromium_commit=${"3".repeat(40)}`,
+    `platform_commit=${"4".repeat(40)}`,
+    `bundle=${path.join(root, "bundle.tar.xz")}`,
+    `bundle_sha256=${"5".repeat(64)}`,
+    `provenance_manifest_sha256=${"6".repeat(64)}`,
+    `browser_executable=${path.relative(root, artifact)}`,
+    `browser_sha256=${artifactHash}`,
+    "verified_at=synthetic-fixture",
+    "",
+  ].join("\n"), {mode: 0o600});
+  return receipt;
+}
+
 async function postForm(url, values) {
   return fetch(url, {
     method: "POST",
@@ -108,8 +133,15 @@ test("artifact-bound receipt requires the complete ordered native UI lifecycle",
   try {
     await fsp.writeFile(artifact, "synthetic browser artifact", {mode: 0o700});
     await fsp.writeFile(screenshot, PNG, {mode: 0o600});
-    const run = await initializeRun({artifact, output: runRoot, platform: "linux"});
+    await assert.rejects(initializeRun({
+      artifact, output: path.join(root, "missing-receipt"), platform: "linux",
+    }), /requires a verified artifact receipt/);
+    const artifactReceipt = await writeLinuxArtifactReceipt(root, artifact);
+    const run = await initializeRun({
+      artifact, artifactReceipt, output: runRoot, platform: "linux",
+    });
     assert.equal(run.profile_path, path.join(runRoot, "profile"));
+    assert.match(run.artifact_receipt_sha256, /^[0-9a-f]{64}$/);
     await assert.rejects(captureStep({
       runRoot,
       step: "save_prompt",
@@ -125,6 +157,7 @@ test("artifact-bound receipt requires the complete ordered native UI lifecycle",
     }
     const receipt = await verifyRun({runRoot, fixtureEvidence: evidence});
     assert.equal(receipt.result, "passed");
+    assert.equal(receipt.artifact_receipt_sha256, run.artifact_receipt_sha256);
     assert.equal(receipt.screenshots.length, NATIVE_PASSWORD_STEPS.length);
     assert.equal((await fsp.stat(path.join(runRoot, "receipt.json"))).mode & 0o777, 0o600);
     const firstScreenshot = path.join(runRoot, "screenshots", `01-${NATIVE_PASSWORD_STEPS[0]}.png`);

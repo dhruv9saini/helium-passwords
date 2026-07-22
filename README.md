@@ -50,6 +50,12 @@ The wrapper clones platform repos under `build/platforms/` by default. Override
 repo URLs, clone ref, or the work directory in `helium-passwords.conf` or by
 exporting the same variables before running a script.
 
+On chromiumer, do not use the Docker-backed local command. Use the isolated
+Nix entry point and `scripts/build-chromiumer-linux.sh x86_64` exactly as shown
+in [docs/chromiumer-builds.md](docs/chromiumer-builds.md). The driver returns
+one provenance-bound archive; `scripts/verify-linux-runtime.sh` must admit it
+before the executable can enter the disposable native-password gate.
+
 ## Releases
 
 Dispatch **Build Helium Passwords** with `create-release` enabled to run the

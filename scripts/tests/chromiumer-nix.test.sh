@@ -18,6 +18,11 @@ grep -q 'HELIUM_BUILD_JOBS=2' "${script}"
 grep -q 'helium-job-' "${script}"
 grep -q 'environment is not realised' "${script}"
 grep -q 'helium-chromium-150-env' "${script}"
+grep -q 'environment_source_sha256=' "${script}"
+grep -q 'chromium-150-${environment_source_sha256:0:16}' "${script}"
+grep -q 'nix-store --query --outputs' "${script}"
+grep -q 'nodejs_22' "${expression}"
+grep -q 'ninja' "${expression}"
 if grep -q 'helium-chromium-148-env' "${script}"; then
     echo "stale Chromium 148 environment entry point survived" >&2
     exit 1

@@ -23,15 +23,22 @@ immutable and bind it to the admitted browser artifact.
 
 ## Admission
 
-Use a new result directory and the exact returned artifact. For Linux, `init`
-creates the only allowed profile below the result directory. Launch the
-admitted executable with that exact `--user-data-dir`; never substitute an
-existing profile.
+First run `scripts/verify-linux-runtime.sh` on lm as documented in
+`chromiumer-builds.md`. Transfer the resulting verified directory and its
+mode-0600 receipt to da through the existing trusted artifact path without
+changing either file. On da, use a new result directory. `init` requires the
+verifier receipt, rehashes the admitted executable, and creates the only
+allowed profile below the result directory. Launch that exact executable with
+that exact `--user-data-dir`; never substitute an existing profile.
 
 ```sh
-run=/srv/nas/helium-acceptance/PASSWORD_JOB
+verified=/PATH/ON/DA/verified
+browser="$verified/helium-passwords-linux-x86_64/runtime/helium-wrapper"
+artifact_receipt="$verified/artifact-receipt.env"
+run=/home/d/.local/state/helium-password-acceptance/PASSWORD_JOB
 node scripts/password-runtime/acceptance.mjs init \
-  --artifact /srv/nas/helium-acceptance/PASSWORD_JOB/bin/helium \
+  --artifact "$browser" \
+  --artifact-receipt "$artifact_receipt" \
   --platform linux \
   --output "$run"
 
@@ -59,11 +66,13 @@ Start the stateful fixture and keep it running across browser restarts:
 
 ```sh
 node scripts/password-runtime/fixture-server.mjs \
-  --port 44722 \
+  --port 0 \
   --evidence "$run/fixture-evidence.json"
 ```
 
-It binds only `127.0.0.1`. For Android, expose that exact port with one bounded
+Record the emitted loopback origin and use it for every lifecycle step. The
+fixture binds only `127.0.0.1`; port `0` asks the kernel for an unused local
+port instead of colliding with another fixture. For Android, expose that exact port with one bounded
 `adb reverse` entry and remove only that entry during cleanup. The fixture
 stores only SHA-256 comparisons in memory and writes no submitted username or
 password. Its create-new evidence file appears only after the complete ordered
@@ -110,10 +119,11 @@ node scripts/password-runtime/acceptance.mjs verify \
   --fixture-evidence "$run/fixture-evidence.json"
 ```
 
-`verify` rehashes the artifact and every captured screenshot, rechecks the
-Linux synthetic-profile marker or Android test-package admission, and verifies
-the fixture's loopback/no-secret contract. It creates `receipt.json` with mode
-0600 and refuses to replace an existing receipt.
+`verify` rehashes the artifact, the Linux provenance receipt, and every
+captured screenshot; rechecks the Linux synthetic-profile marker or Android
+test-package admission; and verifies the fixture's loopback/no-secret
+contract. It creates `receipt.json` with mode 0600 and refuses to replace an
+existing receipt.
 
 ## Failure and cleanup
 
