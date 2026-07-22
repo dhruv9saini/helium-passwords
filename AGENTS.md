@@ -77,24 +77,23 @@ restores Chromium's native password manager.
 - `scripts/android-local` installs and configures the phone/chroot native sync
   pieces. `configure-android-chromium-sync.sh` places only profile-local native
   enrollment material and marks Android Chromium first-run complete. The
-  chroot launcher prefers a `helium` binary and only falls back to `chromium`
-  for temporary testing. Use
+  chroot launcher requires `/usr/local/bin/helium` backed by the installed
+  `/opt/helium-sync/helium`; it must never fall back to stock Chromium. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium
   Sync artifact to install `/usr/local/bin/helium` in the phone chroot. The
   launcher defaults to `$HOME/.config/helium-passwords`, requires that
   profile's native HTTPS enrollment, and starts no password/cookie sidecar. It
   removes stale Chromium singleton files only when their recorded PID is no
   longer running. The installer places the Google AI Overview blocker under
-  both `/root/.local/share` and
-  `/home/dhruv/.local/share`; the launcher loads whichever copies live under
-  the invoking user's `$HOME`. The installer also places the blank-new-tab and
-  tab-pin helper extensions under both chroot users and installs
-  `helium-prepare-profile` plus `helium-cleanup-startup-tabs` into each X11 bin
-  directory. The launcher runs profile prep before Helium starts, sets Google
-  search, requests Helium vertical layout through `helium.browser.layout = 2`,
-  restores the last session, and loads the helper extensions. The chroot AI
-  Overview blocker is a normal desktop Chromium extension loaded by that
-  launcher. Keep the launcher's `Default/Extensions` force-load list narrow:
+  both `/root/.local/share` and `/home/dhruv/.local/share`; the launcher loads
+  whichever copy lives under the invoking user's `$HOME`. The installer also
+  places the blank-new-tab and tab-pin helper extensions under both chroot
+  users. Normal launch must not rewrite `Preferences` or `Local State`, mark a
+  previous exit clean, close pages through CDP, or auto-load Browserpass or a
+  directory glob of unreviewed extensions. Chromium's own session recovery is
+  the first tab-durability layer. The chroot AI Overview blocker is a normal
+  desktop Chromium extension loaded by that launcher. Keep the launcher's
+  `Default/Extensions` force-load list narrow:
   Dark Reader (`eimadpbcbfnmbkopoojfekhnkhdbieeh`), Open New Tab After Current
   Tab (`mmcgnaachjapbbchcpjihhgjhpfcnoan`), and Tab Position Options Fork
   (`bimiahgcjenkoacmdfggckkaflnnebki`) are intentionally loaded from the
@@ -114,14 +113,20 @@ restores Chromium's native password manager.
   `scripts/android-local/restart-chroot-helium-browser-root.sh` is the helper
   for restarting only the chroot Helium browser with the normal `DISPLAY=:1`
   root desktop environment after changing launcher/browser-profile behavior.
-  The startup tab cleanup helper is intentionally startup-only and closes
-  install/welcome/newtab pages during the first minute after launch without
-  touching normal session tabs later. The launcher and laptop-extension
-  migration both block Pangram
-  (`eakpippijmmohmdlpgcjnipolcgciaga`) so an unpacked extension directory
-  cannot make it reappear after uninstalling it in the browser UI. Use
+  The launcher and laptop-extension migration both block Pangram
+  (`eakpippijmmohmdlpgcjnipolcgciaga`), and migration always blocks Browserpass
+  (`pjmbgaakjkbhpopmakjoedenlfdmcdgm`), so neither can return through an
+  unpacked extension directory. Use
   `scripts/android-local/purge-blocked-helium-extensions-root.sh` to remove
   blocked extension state from live chroot browser profiles.
+- A neutral tab restore may become a browser-readable profile only through
+  `helium-tabs prepare-browser-profile`. The destination must be a new
+  `drill-*` child of a mode-0700 root carrying the exact private disposable
+  marker. Preparation writes startup URLs to a new profile atomically, retains
+  the validated neutral receipt, and never launches Helium or targets an
+  existing profile. `validate-browser-profile` is a pre-launch gate; full
+  window/history/group reconstruction and second-restart runtime proof remain
+  acceptance work.
 - `scripts/android-local/start-arch-xmonad-root.sh` also keeps Android
   Tailscale usable for chroot `ssh`/`mosh`: if `com.tailscale.ipn` is installed
   and `ARCH_X11_TAILSCALE_CONNECT` is not `0`, startup whitelists the app from

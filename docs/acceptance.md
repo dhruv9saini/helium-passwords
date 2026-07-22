@@ -153,10 +153,15 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   generation lacking two verified off-source copies.
 - A restore drill into a disposable profile checks counts and representative
   state, restarts a second time, and records success.
-- Before any browser import, the standalone `validate-restore` command
-  independently rechecks the receipt's source binding,
-  session hash and size, strict schemas, permissions, symlink rejection, and
-  exact two-file inventory.
+- Before any browser preparation, the standalone `validate-restore` command
+  independently rechecks the receipt's source binding, session hash and size,
+  strict schemas, permissions, symlink rejection, and exact two-file
+  inventory. `prepare-browser-profile` accepts only a nonexistent `drill-*`
+  child of an exactly marked mode-0700 disposable root, never a normal profile.
+  Before first launch, `validate-browser-profile` proves the current startup
+  URLs still match the retained neutral restore and that no clean-exit state
+  was forged. Normal launch never rewrites clean-exit state or broadly deletes
+  pages through CDP.
 - Corrupt the newest local session, newest local snapshot, NAS copy, and second
   host copy separately; in every case a different independent recovery path
   succeeds without changing a live profile.

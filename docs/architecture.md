@@ -257,7 +257,12 @@ stale file into a healthy generation. `helium-tabs` validates checksums,
 commits immutable generations, explicitly quarantines corruption without
 deletion, applies 24-hourly/14-daily/12-weekly retention without deleting the
 last known-good copy, and restores only to a nonexistent disposable state
-directory.
+directory. A separate consumer converts a validated neutral restore into a
+new `drill-*` browser profile only under an explicitly marked private
+disposable root. It retains the neutral receipt, writes current URLs as
+Chromium startup URLs, validates staging, and atomically publishes without
+launching a browser, mutating clean-exit state, or accepting an existing
+profile.
 
 The operations design assigns every source device its own hostname-bound
 scheduler and device-specific age key namespace. One validated generation is
@@ -274,13 +279,15 @@ off-device copy. Recovery identities stay outside all source and destination
 stores except while explicitly attached for a disposable restore drill.
 
 The independent store, stale-export boundary, fixed topology, pinned dedicated
-SSH transport, encryption/copy logic, health proof, retention, quarantine, and
-disposable restore are implemented and synthetic-tested. The native tab
-producer is source-complete but not yet compile/runtime validated. da currently
-has only a disabled user timer; oneplus has only source tools and a disabled
-runner template. No source can be enabled until its fresh browser export, two
-offline public recovery recipients, and both exact destination routes pass
-preflight.
+SSH transport, encryption/copy logic, health proof, retention, quarantine,
+neutral restore, and atomic disposable current-URL browser consumer are
+implemented and synthetic-tested. The native tab producer is source-complete
+but not yet compile/runtime validated. Full window, pin, group, navigation
+history, and unloaded-tab reconstruction plus first/second browser-start proof
+remain open. da currently has only a disabled user timer; oneplus has only
+source tools and a disabled runner template. No source can be enabled until its
+fresh browser export, two offline public recovery recipients, and both exact
+destination routes pass preflight.
 
 ## Runtime and build boundaries
 
@@ -349,7 +356,7 @@ evidence.
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop; artifact-bound native fixture/capture/receipt gate | Run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete and three-device restarts |
 | Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
 | Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; no state values accepted | Disposable-browser evidence collector and safe origin-scoped adapters only where observed necessary |
-| Tabs | Local exporter/store, atomic checked generations, standalone content-bound disposable-restore validator, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; authorize da's dedicated key on d; provision independent recovery recipients; enable schedules only after two-route preflight; disposable browser restore on every device |
+| Tabs | Local exporter/store, atomic checked generations, standalone content-bound neutral restore, atomic marked-root current-URL browser consumer, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; authorize da's dedicated key on d; provision independent recovery recipients; enable schedules only after two-route preflight; implement full tab topology reconstruction and prove first/second disposable browser starts on every device |
 | Media/streaming | Reproducible fixtures, strict codec GN provenance, separate no-patch upstream-control builder, and explicit codec-versus-Widevine evidence | Same-commit control/Sync APK A/B on oneplus, HTTP/2+HTTP/3, video/audio/ChatGPT timing; CDM provisioning remains separate |
 | Android source/build | Shared one-request immutable source helper; exact-HEAD, depot pin, cache-disable, and private single-entry contracts | Fresh isolated chromiumer source preparation, 292-patch apply, GN generation, focused compile, then APK |
 | Deployment | Executable d recovery export/import, credential cutover, direct-TLS generation install/start gates, source unit/install gate, and rollback-preserving installers | Create off-device recovery identities/copies and offline TLS CA, enroll its public root, prove live tailnet TLS, d SSH/auth route, artifacts, profile backups, sequential enrollment |
