@@ -194,6 +194,7 @@ export function decideCookieReconcile({
   localFingerprint,
   activeKeyId,
   recordKey = "",
+  pendingEnrollment = false,
 }) {
   if (!localFingerprint) throw new Error("local fingerprint is required");
   if (typeof activeKeyId !== "string" || !activeKeyId) {
@@ -240,7 +241,7 @@ export function decideCookieReconcile({
       if (remote.keyId !== activeKeyId) {
         return { action: "stop", reason: "initial-record-uses-stale-key-epoch" };
       }
-      return localFingerprint === EMPTY_COOKIE_FINGERPRINT
+      return pendingEnrollment || localFingerprint === EMPTY_COOKIE_FINGERPRINT
         ? { action: "apply" }
         : { action: "stop", reason: "uninitialized-local-and-remote-state" };
     }

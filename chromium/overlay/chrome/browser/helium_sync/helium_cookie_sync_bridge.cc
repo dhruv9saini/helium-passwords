@@ -55,6 +55,7 @@ constexpr int kReauthSchema = 2;
 constexpr size_t kMaxCookieRecords = 50000;
 constexpr size_t kMaxCookiePayloadBytes = 64 * 1024;
 constexpr size_t kMaxRollbackPayloadBytes = 32 * 1024 * 1024;
+constexpr size_t kMaxCookiePushRecords = 32;
 constexpr base::TimeDelta kReconcileInterval = base::Minutes(1);
 
 constexpr char kDeletedFingerprint[] = "deleted";
@@ -877,7 +878,8 @@ class HeliumCookieSyncBridge::Impl {
           return;
         }
         if (remote_cookie.effective_deleted ||
-            local_it == local.cookies.end()) {
+            local_it == local.cookies.end() ||
+            client_->enrollment_phase() == "pending") {
           apply_updates.emplace(key, remote_cookie);
         } else if (local_fingerprint == remote_cookie.cookie_fingerprint) {
           AcceptRemoteState(remote_cookie, local_fingerprint);
@@ -969,6 +971,9 @@ class HeliumCookieSyncBridge::Impl {
     }
     std::vector<Record> mutations;
     for (const auto& [key, cookie] : local.cookies) {
+      if (mutations.size() == kMaxCookiePushRecords) {
+        break;
+      }
       auto state_it = state_.records.find(key);
       std::string fingerprint = local.cookie_fingerprints.at(key);
       if (state_it != state_.records.end() &&
@@ -996,6 +1001,9 @@ class HeliumCookieSyncBridge::Impl {
     }
 
     for (auto& [key, record_state] : state_.records) {
+      if (mutations.size() == kMaxCookiePushRecords) {
+        break;
+      }
       if (record_state.remote_revision == 0 || record_state.remote_deleted ||
           local.cookies.contains(key) || record_state.pending) {
         continue;

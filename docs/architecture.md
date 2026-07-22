@@ -248,6 +248,15 @@ the complete cookie store back, and commits only on an exact validated match.
 A rejection restores the saved destination state. Expected revisions,
 authenticated source device IDs, durable pending-publication state, and
 fingerprints stop token-rotation ping-pong and stale overwrites.
+During pending pull-only enrollment, a remote cookie with the same canonical
+identity as a different joiner-local cookie is the seed-authoritative value:
+it follows the same sealed preview/apply/readback/rollback transaction instead
+of blocking enrollment. Active devices retain the stricter concurrent-change
+stop. Joiner-only cookies are recorded as local baselines and are not bulk
+published after promotion. Publications are deterministic batches of at most
+32 cookie records, and the native HTTP client refuses a serialized request
+above 4 MiB before network I/O; this keeps the matching encrypted response
+below its 5 MiB per-response ceiling.
 
 Destination exceptions are exact and temporary. The record-state map scopes
 one exception to the canonical cookie record key, rejected remote revision,
@@ -412,7 +421,7 @@ evidence.
 | Transport | Opaque v2 E2EE, direct TLS 1.3 server, offline constrained CA issuance/verification, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; synthetic rootless endpoint and scheduled NAS restore proof live on lm | Restore root authorization, install the dedicated-account service, and enroll the public root on disposable browser clients |
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations; consolidated TLS-backed three-device protocol lifecycle passes | Execute native bridge promotion on disposable profiles, then provision personal d/da/oneplus only after backups |
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; complete `PasswordForm` unique-key identity; schema-3 preservation/collision stop; durable one-at-a-time publication and pull-verified ambiguous outcomes; artifact-bound native fixture/capture/receipt gate | Compile the bridge, then run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete, rapid observer events, ambiguous-success restarts, and three-device stale conflicts |
-| Cookies | Whole-profile canonical identity, E2EE, active-epoch CAS rekey, preview/apply/readback/rollback, exact revision-scoped rejection evidence and retry model | Compile the bridge; prove destination rejection/readback/rollback, later-revision retry, local reauthentication publication, DBSC evidence scope, and authenticated-site behavior in disposable browsers; automatic password reauth remains open |
+| Cookies | Whole-profile canonical identity, E2EE, active-epoch CAS rekey, authoritative pull-only join replacement under sealed rollback, bounded publication batches, preview/apply/readback/rollback, exact revision-scoped rejection evidence and retry model | Compile the bridge; prove colliding join replacement, multi-batch publication, destination rejection/readback/rollback, later-revision retry, local reauthentication publication, DBSC evidence scope, and authenticated-site behavior in disposable browsers; automatic password reauth remains open |
 | Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; no state values accepted | Disposable-browser evidence collector and safe origin-scoped adapters only where observed necessary |
 | Tabs | Local exporter/store, atomic checked generations, standalone content-bound neutral restore, atomic marked-root current-URL browser consumer, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; authorize da's dedicated key on d; provision independent recovery recipients; enable schedules only after two-route preflight; implement full tab topology reconstruction and prove first/second disposable browser starts on every device |
 | Media/streaming | Reproducible fixtures, strict codec GN provenance, separate no-patch upstream-control builder, explicit codec-versus-Widevine evidence, artifact-carried fail-closed device lifecycle/protocol orchestration, and live rootless tailnet-only H2/H3 origins with exact private-leaf SPKI admission | Resolve da's direct-HTTP/3 return/client failure, then run same-commit control/Sync APK A/B on oneplus for negotiated protocols, lifecycle, video/audio, and content-free ChatGPT timing; CDM provisioning remains separate |

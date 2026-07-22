@@ -153,6 +153,11 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   old site-wide `non_clonable` fields do not.
 - Every apply records a destination preview and sealed rollback first. A
   rejected set or verification mismatch restores the destination snapshot.
+- A pending join with a different local cookie at the same canonical identity
+  transactionally applies d's authoritative value under that rollback; its
+  unrelated local cookies remain unpublished during initial enrollment.
+- More than 32 local cookie changes drain over multiple deterministic
+  publication batches, and no serialized native request exceeds 4 MiB.
 - The same rejected revision is not retried every cycle. A higher active-epoch
   remote revision retries transactionally; a real local cookie change after
   reauthentication may publish the next CAS revision; successful readback
