@@ -136,6 +136,15 @@ A join is explicit:
    same schema/cursor gate with a stopped profile for recovery and diagnosis.
 7. An unchanged active restart emits no records.
 
+The synthetic-only protocol client follows the same global-cursor boundary by
+requesting the unfiltered password-and-cookie inventory and verifying the
+complete expected set before acknowledgement. Kind-filtered fixture admission
+is forbidden: page filters affect returned records but not the global snapshot
+cursor, so acknowledging a cookie-only response could otherwise advance past
+an unseen password record. Its schema-2 receipt binds every hashed key to its
+record kind. This is fixture protocol evidence and never substitutes for the
+native two-bridge readback gate.
+
 Credentials are per-device, hash-verified, scoped, independently rotatable with
 an overlap/confirm/retire sequence, and revocable. d cannot be revoked because
 it is the sole recovery authority; loss of d must be handled from separately
@@ -273,8 +282,9 @@ host/domain and two partition-key identities, pending pull-only authorization,
 E2EE readback on both architectures, authenticated source metadata, two token
 rotations, stale-CAS rejection, zero-publication restarts, tombstone
 convergence, resurrection rejection, revoked-credential rejection, and an
-opaque journal with no fixture plaintext. A synthetic-only reconciler advances
-the applied cursor only after exact metadata and payload-hash verification and
+opaque journal with no fixture plaintext. A synthetic-only reconciler requests
+the complete unfiltered password-and-cookie inventory and advances the applied
+cursor only after exact kind, metadata, and payload-hash verification. It
 requires an explicit private `synthetic-only-v1` marker. All test clients were
 revoked, all live fixture cookies were tombstoned, remote temporary credentials
 were removed, and the post-test NAS restore drill passed. This is still not

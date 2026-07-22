@@ -38,6 +38,7 @@ type expectedInventory struct {
 }
 
 type receiptRecord struct {
+	Kind      syncstore.Kind    `json:"kind"`
 	KeySHA256 string            `json:"key_sha256"`
 	Revision  syncstore.Counter `json:"revision"`
 	Deleted   bool              `json:"deleted"`
@@ -104,9 +105,9 @@ func run(args []string) error {
 	}
 	var response syncstore.PlainPullResponse
 	if *latest {
-		response, err = client.Latest(context.Background(), []string{"cookies"})
+		response, err = client.Latest(context.Background(), nil)
 	} else {
-		response, err = client.Pull(context.Background(), []string{"cookies"})
+		response, err = client.Pull(context.Background(), nil)
 	}
 	if err != nil {
 		return err
@@ -128,7 +129,7 @@ func run(args []string) error {
 		return err
 	}
 	receipt := reconcileReceipt{
-		SchemaVersion:        1,
+		SchemaVersion:        2,
 		DeviceID:             stateAfter.DeviceID,
 		PhaseBefore:          string(stateBefore.Phase),
 		PhaseAfter:           string(stateAfter.Phase),
@@ -201,10 +202,11 @@ func (expected expectedInventory) validate() error {
 	seen := make(map[string]struct{}, len(expected.Records))
 	for _, record := range expected.Records {
 		identity := string(record.Kind) + "\x00" + record.Key
-		if record.Kind != syncstore.KindCookie || strings.TrimSpace(record.Key) == "" ||
+		if (record.Kind != syncstore.KindPassword && record.Kind != syncstore.KindCookie) ||
+			strings.TrimSpace(record.Key) == "" ||
 			record.Revision <= 0 || strings.TrimSpace(record.DeviceID) == "" ||
 			len(record.PayloadSHA256) != sha256.Size*2 {
-			return errors.New("expected cookie record metadata is invalid")
+			return errors.New("expected record metadata is invalid")
 		}
 		if _, err := hex.DecodeString(record.PayloadSHA256); err != nil {
 			return errors.New("expected payload_sha256 is invalid")
@@ -242,7 +244,7 @@ func verifyResponse(response syncstore.PlainPullResponse, expected expectedInven
 		}
 		keyHash := sha256.Sum256([]byte(record.Key))
 		receipt = append(receipt, receiptRecord{
-			KeySHA256: hex.EncodeToString(keyHash[:]), Revision: record.Revision,
+			Kind: record.Kind, KeySHA256: hex.EncodeToString(keyHash[:]), Revision: record.Revision,
 			Deleted: record.Deleted, DeviceID: record.DeviceID,
 		})
 		delete(wanted, identity)
@@ -251,6 +253,9 @@ func verifyResponse(response syncstore.PlainPullResponse, expected expectedInven
 		return nil, errors.New("response omitted an expected record")
 	}
 	sort.Slice(receipt, func(left, right int) bool {
+		if receipt[left].Kind != receipt[right].Kind {
+			return receipt[left].Kind < receipt[right].Kind
+		}
 		return receipt[left].KeySHA256 < receipt[right].KeySHA256
 	})
 	return receipt, nil

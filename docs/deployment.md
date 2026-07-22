@@ -334,12 +334,16 @@ network-denied, can read only that server directory, and can write only its NAS
 namespace. It stops and restarts the endpoint around each generation.
 
 `helium-sync-synthetic-client` is the protocol-only replacement for browser
-readback in remote fixture tests. It accepts cookies only, requires a private
-file containing exactly `synthetic-only-v1`, verifies the complete expected
-record inventory through authenticated metadata and payload hashes, emits no
-payload, then acknowledges that synthetic readback. It may promote a pending
-fixture client only when explicitly requested. Never stage its marker beside a
-personal client state or use its receipt as native CookieManager evidence.
+readback in remote fixture tests. It always requests the unfiltered password
+and cookie inventory, requires a private file containing exactly
+`synthetic-only-v1`, verifies every expected record through authenticated kind,
+metadata, and payload hashes, emits no payload, then acknowledges that
+synthetic readback. An enrollment receipt uses schema 2 and binds each hashed
+key to its record kind. The helper may promote a pending fixture client only
+when explicitly requested; filtering either kind is intentionally unsupported
+because a filtered page still carries the server's full snapshot cursor. Never
+stage its marker beside a personal client state or use its receipt as native
+PasswordStore or CookieManager evidence.
 
 Rollback is one nondestructive command:
 

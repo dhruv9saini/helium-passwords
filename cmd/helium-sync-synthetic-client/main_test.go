@@ -1,12 +1,21 @@
 package main
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/dhruv9saini/helium-sync/internal/syncstore"
+)
+
+const (
+	testSeedToken = "synthetic-seed-token-00000000000000000000000000"
+	testJoinToken = "synthetic-join-token-00000000000000000000000000"
 )
 
 func TestVerifyResponseMatchesAuthenticatedMetadataAndPayloadHash(t *testing.T) {
@@ -24,7 +33,8 @@ func TestVerifyResponseMatchesAuthenticatedMetadataAndPayloadHash(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(receipt) != 1 || receipt[0].Revision != 2 || receipt[0].DeviceID != "da-fixture" {
+	if len(receipt) != 1 || receipt[0].Kind != syncstore.KindCookie ||
+		receipt[0].Revision != 2 || receipt[0].DeviceID != "da-fixture" {
 		t.Fatalf("unexpected receipt: %+v", receipt)
 	}
 
@@ -39,7 +49,7 @@ func TestVerifyResponseMatchesAuthenticatedMetadataAndPayloadHash(t *testing.T) 
 	}
 }
 
-func TestExpectedInventoryRejectsNonCookieAndDuplicateRecords(t *testing.T) {
+func TestExpectedInventoryAcceptsBothKindsAndRejectsUnknownAndDuplicateRecords(t *testing.T) {
 	hash := sha256.Sum256([]byte(`{}`))
 	record := expectedRecord{Kind: syncstore.KindCookie, Key: "fixture", Revision: 1,
 		DeviceID: "d", PayloadSHA256: hex.EncodeToString(hash[:])}
@@ -53,7 +63,134 @@ func TestExpectedInventoryRejectsNonCookieAndDuplicateRecords(t *testing.T) {
 	}
 	expected.Records = []expectedRecord{record}
 	expected.Records[0].Kind = syncstore.KindPassword
+	if err := expected.validate(); err != nil {
+		t.Fatalf("password record was rejected: %v", err)
+	}
+	expected.Records[0].Kind = syncstore.Kind("unknown")
 	if err := expected.validate(); err == nil {
-		t.Fatal("password record passed cookie-only validation")
+		t.Fatal("unknown record kind passed validation")
+	}
+}
+
+func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testing.T) {
+	root := t.TempDir()
+	seedPath := filepath.Join(root, "d.json")
+	seed, err := syncstore.CreateSeedState(seedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := syncstore.OpenStore(filepath.Join(root, "server"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := syncstore.CreateDeviceRegistry(
+		filepath.Join(root, "server", "devices.json"), testSeedToken, seed.ActiveKeyID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(syncstore.NewHandler(store, registry))
+	defer server.Close()
+	seedClient, err := syncstore.NewClient(server.URL, testSeedToken, seedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passwordPayload := json.RawMessage(`{"credential":"synthetic"}`)
+	cookiePayload := json.RawMessage(`{"cookie":"synthetic"}`)
+	if _, err := seedClient.Push(context.Background(), []syncstore.PlainMutation{
+		{Kind: syncstore.KindPassword, Key: "credential/v2/fixture", Payload: passwordPayload},
+		{Kind: syncstore.KindCookie, Key: "cookie/fixture", Payload: cookiePayload},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	markerPath := filepath.Join(root, "SYNTHETIC_ONLY")
+	if err := os.WriteFile(markerPath, []byte(syntheticMarker+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	expectedPath := filepath.Join(root, "expected.json")
+	passwordHash := sha256.Sum256(passwordPayload)
+	cookieHash := sha256.Sum256(cookiePayload)
+	expected := expectedInventory{SchemaVersion: 1, Records: []expectedRecord{
+		{Kind: syncstore.KindPassword, Key: "credential/v2/fixture", Revision: 1,
+			DeviceID: "d", PayloadSHA256: hex.EncodeToString(passwordHash[:])},
+		{Kind: syncstore.KindCookie, Key: "cookie/fixture", Revision: 1,
+			DeviceID: "d", PayloadSHA256: hex.EncodeToString(cookieHash[:])},
+	}}
+	rawExpected, err := json.Marshal(expected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(expectedPath, rawExpected, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	join := func(device, token string) string {
+		t.Helper()
+		pendingPath := filepath.Join(root, device+".pending.json")
+		request, err := syncstore.CreateJoinRequest(pendingPath, device, seed.SeedSigningPublicKey())
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrapped, err := seed.WrapEnrollment(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		statePath := filepath.Join(root, device+".json")
+		if _, err := syncstore.CompleteJoinState(
+			statePath, pendingPath, wrapped, []string{seed.ActiveKeyID}); err != nil {
+			t.Fatal(err)
+		}
+		if err := registry.EnrollPullOnly(device, token); err != nil {
+			t.Fatal(err)
+		}
+		tokenPath := filepath.Join(root, device+".token")
+		if err := os.WriteFile(tokenPath, []byte(token+"\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		return tokenPath
+	}
+
+	daTokenPath := join("da", testJoinToken)
+	if err := run([]string{
+		"--synthetic-only-marker", markerPath,
+		"--url", server.URL,
+		"--token-file", daTokenPath,
+		"--state-file", filepath.Join(root, "da.json"),
+		"--expected-file", expectedPath,
+		"--latest",
+		"--complete-enrollment",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	principal, err := registry.Authenticate(testJoinToken)
+	if err != nil || principal.Phase != syncstore.PhaseActive {
+		t.Fatalf("verified mixed inventory did not activate da: principal=%+v err=%v", principal, err)
+	}
+
+	partialPath := filepath.Join(root, "partial.json")
+	partial := expectedInventory{SchemaVersion: 1, Records: expected.Records[1:]}
+	rawPartial, err := json.Marshal(partial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(partialPath, rawPartial, 0600); err != nil {
+		t.Fatal(err)
+	}
+	oneplusToken := testJoinToken + "-oneplus"
+	oneplusTokenPath := join("oneplus", oneplusToken)
+	if err := run([]string{
+		"--synthetic-only-marker", markerPath,
+		"--url", server.URL,
+		"--token-file", oneplusTokenPath,
+		"--state-file", filepath.Join(root, "oneplus.json"),
+		"--expected-file", partialPath,
+		"--latest",
+		"--complete-enrollment",
+	}); err == nil {
+		t.Fatal("partial cookie-only inventory activated a mixed-record enrollment")
+	}
+	principal, err = registry.Authenticate(oneplusToken)
+	if err != nil || principal.Phase != syncstore.PhasePending {
+		t.Fatalf("failed mixed inventory did not leave oneplus pending: principal=%+v err=%v", principal, err)
 	}
 }
