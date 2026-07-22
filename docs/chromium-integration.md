@@ -16,31 +16,9 @@ Those files are implementation details. They can contain platform-encrypted blob
 
 ## Record Payloads
 
-The payloads should be JSON because the daemon remains browser-agnostic.
-
-### Tabs
-
-Suggested key:
-
-```text
-<device-id>/window/<window-id>
-```
-
-Suggested payload:
-
-```json
-{
-  "active_index": 0,
-  "tabs": [
-    {
-      "url": "https://example.com",
-      "title": "Example",
-      "pinned": false,
-      "last_active_unix_ms": 1760000000000
-    }
-  ]
-}
-```
+The wire kinds are exactly `passwords` and `cookies`. Tabs are prohibited from
+the transport, endpoint filters, server store, and client credentials. The
+native tab exporter writes only to the device-local snapshot path.
 
 ### Passwords
 
