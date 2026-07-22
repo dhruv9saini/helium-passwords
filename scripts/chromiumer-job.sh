@@ -103,19 +103,30 @@ stage() {
     remote_exec "${remote_worker}" stage-init "${job}" "${disk_budget_gib}"
     stage_initialized=true
 
-    local archive manifest archive_sha
+    local archive submodule_archive manifest archive_sha helium_submodule
     temp_dir=$(mktemp -d /tmp/helium-source.XXXXXX)
     archive="${temp_dir}/source.tar"
+    submodule_archive="${temp_dir}/helium-chromium.tar"
     manifest="${temp_dir}/source.manifest.incoming"
 
+    helium_submodule=$(git -C "${repository}" rev-parse HEAD:helium-chromium)
+    [ "$(git -C "${repository}/helium-chromium" rev-parse HEAD)" = \
+        "${helium_submodule}" ] || {
+        echo "helium-chromium checkout does not match the committed gitlink" >&2
+        exit 1
+    }
     git -C "${repository}" archive --format=tar --output="${archive}" HEAD
+    git -C "${repository}/helium-chromium" archive --format=tar \
+        --prefix=helium-chromium/ --output="${submodule_archive}" \
+        "${helium_submodule}"
+    tar --concatenate --file="${archive}" "${submodule_archive}"
     archive_sha=$(sha256sum "${archive}" | awk '{ print $1 }')
     {
         printf 'repository=%s\n' "$(basename "${repository}")"
         printf 'origin=%s\n' "$(git -C "${repository}" remote get-url origin)"
         printf 'commit=%s\n' "$(git -C "${repository}" rev-parse HEAD)"
         printf 'tree=%s\n' "$(git -C "${repository}" rev-parse HEAD^{tree})"
-        printf 'helium_submodule=%s\n' "$(git -C "${repository}" rev-parse HEAD:helium-chromium)"
+        printf 'helium_submodule=%s\n' "${helium_submodule}"
         printf 'chromium_version=%s\n' \
             "$(tr -d '\r\n' <"${repository}/helium-chromium/chromium_version.txt")"
         if [ -f "${repository}/chromium/android-build.lock" ]; then
