@@ -793,7 +793,7 @@ func TestStoreRecoversOpaqueJournalFromSnapshot(t *testing.T) {
 	}
 }
 
-func TestAuthorizedPutHoldsRegistryEpochThroughJournalCommit(t *testing.T) {
+func TestAuthorizedPutOrdersEnrollmentPromotionAfterJournalCommit(t *testing.T) {
 	seed, err := CreateSeedState(filepath.Join(t.TempDir(), "seed.json"))
 	if err != nil {
 		t.Fatal(err)
@@ -805,6 +805,9 @@ func TestAuthorizedPutHoldsRegistryEpochThroughJournalCommit(t *testing.T) {
 	}
 	principal, err := registry.Authenticate(seedToken)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.EnrollPullOnly("da", joinToken); err != nil {
 		t.Fatal(err)
 	}
 	store, err := OpenStore(t.TempDir())
@@ -840,9 +843,22 @@ func TestAuthorizedPutHoldsRegistryEpochThroughJournalCommit(t *testing.T) {
 		store.mu.Unlock()
 		t.Fatal("authorized put did not hold the registry read lock while blocked on the journal")
 	}
+	promoteDone := make(chan error, 1)
+	go func() {
+		_, err := registry.PromoteAtCursor(store, "da", 0)
+		promoteDone <- err
+	}()
 	store.mu.Unlock()
 	if err := <-putDone; err != nil {
 		t.Fatal(err)
+	}
+	if err := <-promoteDone; err == nil ||
+		!strings.Contains(err.Error(), "acknowledged sequence 0 is not current sequence 1") {
+		t.Fatalf("promotion crossed a concurrent durable write: %v", err)
+	}
+	pending, err := registry.Authenticate(joinToken)
+	if err != nil || pending.Phase != PhasePending || pending.Allows(ScopePush) {
+		t.Fatalf("cursor-conflicted join did not remain pull-only: principal=%+v err=%v", pending, err)
 	}
 }
 

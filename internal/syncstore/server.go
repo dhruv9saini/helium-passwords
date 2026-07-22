@@ -285,13 +285,13 @@ func (server server) completeEnrollment(w http.ResponseWriter, r *http.Request, 
 		writeError(w, http.StatusBadRequest, "invalid_request", err)
 		return
 	}
-	current := server.store.Cursor()
-	if request.AcknowledgedSeq != current {
-		writeError(w, http.StatusConflict, "enrollment_cursor_conflict",
-			fmt.Errorf("acknowledged sequence %d is not current sequence %d", request.AcknowledgedSeq, current))
+	current, err := server.registry.PromoteAtCursor(
+		server.store, principal.ID, request.AcknowledgedSeq)
+	if err != nil && request.AcknowledgedSeq != current {
+		writeError(w, http.StatusConflict, "enrollment_cursor_conflict", err)
 		return
 	}
-	if err := server.registry.Promote(principal.ID); err != nil {
+	if err != nil {
 		writeError(w, http.StatusConflict, "enrollment_conflict", err)
 		return
 	}

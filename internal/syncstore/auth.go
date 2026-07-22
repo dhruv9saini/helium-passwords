@@ -296,6 +296,31 @@ func NewDeviceEnrollmentRequest(deviceID, token string) (DeviceEnrollmentRequest
 func (registry *DeviceRegistry) Promote(deviceID string) error {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
+	return registry.promoteLocked(deviceID)
+}
+
+// PromoteAtCursor makes the verified enrollment cursor and the scope change
+// one admission decision. Its registry-then-store lock order matches
+// PutAuthorized, so a write is durably either before the checked cursor or
+// after the pending join becomes active, never between those operations.
+func (registry *DeviceRegistry) PromoteAtCursor(
+	store *Store, deviceID string, acknowledged Counter) (Counter, error) {
+	if store == nil {
+		return 0, errors.New("sync store is not configured")
+	}
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	current := store.cursorLocked()
+	if acknowledged != current {
+		return current, fmt.Errorf("acknowledged sequence %d is not current sequence %d",
+			acknowledged, current)
+	}
+	return current, registry.promoteLocked(deviceID)
+}
+
+func (registry *DeviceRegistry) promoteLocked(deviceID string) error {
 	if registry.document.StagedKeyID != "" || registry.document.RetiringKeyID != "" {
 		return errors.New("join promotion is blocked during content-key transition")
 	}
