@@ -1,0 +1,12 @@
+[Unit]
+Description=Schedule durable Helium tab generations
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=15min
+RandomizedDelaySec=1min
+Persistent=true
+Unit=helium-tab-cycle.service
+
+[Install]
+WantedBy=timers.target

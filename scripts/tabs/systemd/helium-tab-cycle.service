@@ -1,0 +1,17 @@
+[Unit]
+Description=Capture and replicate one durable Helium tab generation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecCondition=%h/.local/libexec/helium-tab-ops/tab-backup.sh preflight %h/.config/helium-sync/tab-ops.conf
+ExecStart=%h/.local/libexec/helium-tab-ops/tab-snapshot-scheduler.sh cycle %h/.config/helium-sync/tab-ops.conf
+Nice=10
+IOSchedulingClass=idle
+MemoryMax=256M
+TasksMax=64
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=default.target
