@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <string>
 #include <vector>
@@ -42,6 +43,20 @@ public:
 private:
   void RequestReconcileRead();
   void RequestPostApplyRead();
+  void RequestPublicationRead();
+
+  struct PendingPublication {
+    int64_t expected_revision = 0;
+    int64_t target_revision = 0;
+    std::string payload_fingerprint;
+    std::string credential_fingerprint;
+    bool deleted = false;
+  };
+
+  struct QueuedMutation {
+    std::string credential_fingerprint;
+    bool deleted = false;
+  };
 
   struct CredentialState {
     std::string fingerprint;
@@ -49,6 +64,8 @@ private:
     int64_t revision = 0;
     bool deleted = false;
     std::string key_id;
+    std::optional<PendingPublication> pending_publication;
+    std::optional<QueuedMutation> queued_mutation;
   };
 
   struct RemotePasswordRecord {
@@ -60,6 +77,7 @@ private:
     kNone,
     kApplyRemote,
     kPostApply,
+    kPublishLocal,
   };
 
   // PasswordStoreInterface::Observer:
@@ -78,9 +96,13 @@ private:
   void ReconcileRemotePasswords(
       const password_manager::LoginsResult &local_credentials);
   void PublishLocalMutations(const password_manager::LoginsResult &credentials);
-  void PushRecords(std::vector<Record> records);
-  void OnPushComplete(std::map<std::string, std::string> fingerprints, bool ok,
-                      RecordsResult result, std::string error);
+  void
+  QueueLocalMutations(const password_manager::PasswordStoreChangeList &changes);
+  void PublishQueuedMutation(const password_manager::LoginsResult &credentials);
+  void MaybeStartPublication();
+  bool ResolvePendingPublications();
+  bool MigrateLegacyIdentity(const password_manager::LoginsResult &credentials);
+  void OnPushComplete(bool ok, RecordsResult result, std::string error);
   void OnPullComplete(bool ok, RecordsResult result, std::string error);
   void OnRemoteRecordComplete();
   bool
@@ -100,11 +122,13 @@ private:
   bool reconciling_ = false;
   bool applying_remote_ = false;
   bool state_trusted_ = true;
+  bool push_in_flight_ = false;
   int pending_remote_writes_ = 0;
   PendingRead pending_read_ = PendingRead::kNone;
   std::set<std::string> known_keys_;
   std::set<std::string> blocked_remote_keys_;
   std::map<std::string, CredentialState> credential_state_;
+  std::map<std::string, CredentialState> legacy_credential_state_;
   std::vector<RemotePasswordRecord> pending_remote_records_;
   std::map<std::string, RemotePasswordRecord> pending_verification_;
   int initial_empty_read_retries_ = 0;

@@ -22,10 +22,12 @@ test("native remote revision is verified before local mutation publication", () 
   const apply = source.indexOf("void HeliumPasswordSyncBridge::ReconcileRemotePasswords");
   const publish = source.indexOf("void HeliumPasswordSyncBridge::PublishLocalMutations");
   assert.ok(pull >= 0 && reconcileRead > pull && apply > 0 && publish > apply);
-	assert.match(source.slice(apply, publish), /record\.revision <= state->second\.revision/);
-	assert.match(source.slice(apply, publish), /VerifyRemoteWrites/);
-  assert.match(source.slice(publish, source.indexOf("void HeliumPasswordSyncBridge::PushRecords")),
-    /state->second\.fingerprint == fingerprint/);
+  assert.match(source.slice(apply, publish), /record\.revision <= state->second\.revision/);
+  assert.match(source.slice(apply, publish), /ResolvePendingPublications/);
+  assert.match(source.slice(apply, publish), /VerifyRemoteWrites/);
+  const queue = source.indexOf("void HeliumPasswordSyncBridge::QueueLocalMutations");
+  assert.ok(queue > publish);
+  assert.match(source.slice(publish, queue), /state->second\.fingerprint == fingerprint/);
 });
 
 test("native records emit Chromium's complete password specifics schema", () => {
@@ -49,7 +51,7 @@ test("greenfield records reject legacy simple payloads", () => {
   assert.match(parse, /PasswordSpecificsData specifics/);
   assert.match(parse, /CredentialFromSpecifics/);
   assert.match(source, /PasswordFromSpecifics/);
-	assert.doesNotMatch(source, /kLegacySimplePayloadFormat|helium-password-v1/);
+  assert.doesNotMatch(source, /kLegacySimplePayloadFormat|helium-password-v1/);
 });
 
 test("pinned Chromium PasswordForm APIs are used without version fallbacks", () => {
@@ -63,7 +65,7 @@ test("remote writes validate identity and choose one add-or-update operation", (
     source.indexOf("void HeliumPasswordSyncBridge::ReconcileRemotePasswords"),
     source.indexOf("void HeliumPasswordSyncBridge::PublishLocalMutations"),
   );
-	assert.match(reconcile, /PasswordRecordKey\(\*credential\) != record\.key/);
+  assert.match(reconcile, /PasswordRecordKey\(\*credential\) != record\.key/);
   assert.match(reconcile, /profile_store_->AddLogin/);
   assert.match(reconcile, /profile_store_->UpdateLogin/);
   assert.doesNotMatch(source, /AddRemoteLoginAfterUpdate/);

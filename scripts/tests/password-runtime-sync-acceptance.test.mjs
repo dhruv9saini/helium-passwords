@@ -19,7 +19,7 @@ import {
   verifySyncRun,
 } from "../password-runtime/sync-acceptance.mjs";
 
-const credentialKey = `credential/${"c".repeat(64)}`;
+const credentialKey = `credential/v2/${"c".repeat(64)}`;
 const keyID = "a1b2c3d4e5f60708";
 const PNG = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
@@ -28,7 +28,10 @@ const PNG = Buffer.concat([
 
 function state(revision, fingerprint, deleted, sequence = revision) {
   return {
-    schema_version: 3,
+    schema_version: 4,
+    identity_schema: "password-form-unique-key-v2",
+    migration_status: "complete",
+    legacy_credentials: {},
     verified_sequence: String(sequence),
     credentials: {
       [credentialKey]: {
@@ -169,7 +172,10 @@ test("Sync metadata must be captured at its matching public UI step", async () =
 
 test("private metadata parsers reject plaintext-shaped or unexpected fields", async () => {
   assert.throws(() => summarizePasswordState({
-    schema_version: 3,
+    schema_version: 4,
+    identity_schema: "password-form-unique-key-v2",
+    migration_status: "complete",
+    legacy_credentials: {},
     verified_sequence: "1",
     credentials: {"https://secret.example/user": {}},
   }), /invalid credential key|field inventory/);

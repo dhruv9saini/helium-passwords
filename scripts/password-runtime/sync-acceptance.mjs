@@ -70,18 +70,32 @@ async function writeJSON(filePath, value, {exclusive = false} = {}) {
 }
 
 export function summarizePasswordState(state) {
-  exactKeys(state, ["schema_version", "verified_sequence", "credentials"], "password state");
-  if (state.schema_version !== 3) throw new Error("password state schema must be 3");
+  exactKeys(state, [
+    "schema_version", "identity_schema", "migration_status",
+    "verified_sequence", "credentials", "legacy_credentials",
+  ], "password state");
+  if (state.schema_version !== 4 ||
+      state.identity_schema !== "password-form-unique-key-v2") {
+    throw new Error("password state must use canonical identity schema 4");
+  }
+  if (state.migration_status !== "complete" ||
+      !state.legacy_credentials ||
+      typeof state.legacy_credentials !== "object" ||
+      Array.isArray(state.legacy_credentials) ||
+      Object.keys(state.legacy_credentials).length !== 0) {
+    throw new Error("runtime acceptance requires completed empty legacy migration state");
+  }
   int64String(state.verified_sequence, "verified_sequence");
   if (!state.credentials || typeof state.credentials !== "object" || Array.isArray(state.credentials)) {
     throw new Error("password state credentials must be an object");
   }
   const credentials = Object.entries(state.credentials).sort(([left], [right]) => left.localeCompare(right));
   return {
-    schema_version: 3,
+    schema_version: 4,
+    identity_schema: state.identity_schema,
     verified_sequence: state.verified_sequence,
     credentials: credentials.map(([key, entry]) => {
-      if (!/^credential\/[0-9a-f]{64}$/.test(key)) {
+      if (!/^credential\/v2\/[0-9a-f]{64}$/.test(key)) {
         throw new Error("password state contains an invalid credential key");
       }
       exactKeys(entry, ["fingerprint", "remote_seq", "revision", "deleted", "key_id"], `credential ${key}`);
