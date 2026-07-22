@@ -51,13 +51,16 @@ Run on Linux first, then the supported manual subset on macOS and Windows.
 
 Use three disposable profiles named `oneplus-test`, `d-test`, and `da-test`.
 
-- Initial merge imports a credential from each profile without duplicates.
+- d is explicitly created as the sole seed. da and oneplus start pending and
+  pull d's inventory without publishing any pre-existing local credential.
+- Promotion fails unless password state, cookie state, and client state record
+  the same current server cursor while the browser is stopped.
 - Restarting an unchanged profile publishes zero password records.
 - One profile changes a password while a second is offline; reconnecting the
   stale profile does not overwrite the newer value.
 - Independent credentials changed offline converge after reconnect.
-- A local deletion does not propagate and a later remote upsert restores only
-  according to the documented additive policy.
+- A verified local deletion creates a tombstone; a new or stale device cannot
+  resurrect it.
 - Unicode usernames, Android facets, federated credentials, notes, passkeys
   where supported, and multiple credentials for one origin preserve identity.
 - A malformed, oversized, unknown-version, or unauthenticated record is
@@ -75,15 +78,24 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   session/persistent behavior round-trip where CDP/Chromium supports them.
 - Partitioned and unpartitioned cookies with identical domain/path/name remain
   separate across two top-level sites.
-- The configured source rotates a token twice; replicas receive each new
-  generation and never republish the previous token.
-- Expired cookies are not recreated. Replica deletion does not delete source
-  state.
+- All live cookies are selected by default, including session, persistent,
+  HttpOnly, Secure, SameSite, host-only, domain, and partitioned cookies. Only
+  expired/malformed, explicit deny, or observed non-clonable records are absent.
+- One authenticated device rotates a token twice; destinations receive each
+  revision and never ping-pong the previous token. A concurrent local edit and
+  newer remote revision stops without discarding the last good local session.
+- Expired cookies are not recreated. A verified local deletion creates a
+  revisioned tombstone.
 - A device-bound-session fixture or known DBSC test site reports that the
   target device must reauthenticate rather than claiming cookie-sync success.
-- Android browser suspension, DevTools unavailability, and process restart
-  yield bounded retries and recover without overwriting the remote record.
+- Every apply records a destination preview and sealed rollback first. A
+  rejected set or verification mismatch restores the destination snapshot.
+- Android browser suspension and process restart recover without overwriting a
+  newer remote record. No DevTools path participates.
 - Cookie payload corruption is detected before apply.
+- For each target site, audit localStorage, IndexedDB, service-worker storage,
+  and other origin state in disposable profiles. Transfer only an evidenced,
+  origin-scoped export; never live-merge an application database.
 
 ## Gate 4: Durable Tabs
 
@@ -91,17 +103,21 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   back/forward history, and an unloaded tab restores locally after clean exit.
 - The same state restores after a forced crash without pre-marking the profile
   clean.
-- Each device appears as a separate foreign session. Importing a foreign tab
-  never replaces or closes local tabs.
-- Publishing an empty, malformed, oversized, wrong-parent, or unknown-schema
-  generation leaves the previous foreign session available.
+- No server request, record, schema, credential, or normal launch path contains
+  tabs. A backup from one device is never displayed or auto-opened on another.
+- Each source runs its own capture/backup schedule. d and oneplus each copy to
+  lm NAS and da; da copies to lm NAS and d. Destination namespaces never merge.
+- An empty, malformed, oversized, wrong-parent, or unknown-schema local
+  generation leaves the previous known-good local generation available.
 - Snapshot creation while quiescent produces a hash-valid immutable generation.
-- Retention keeps 24 hourly, 14 daily, 12 weekly, and two protected known-good
-  generations and never removes the last valid copy.
+- Retention keeps configured hourly/daily/weekly buckets and protected
+  known-good generations, and never removes the last valid copy or any local
+  generation lacking two verified off-source copies.
 - A restore drill into a disposable profile checks counts and representative
   state, restarts a second time, and records success.
-- Corrupt the newest local session, newest sync generation, and newest snapshot
-  separately; in every case at least one independent recovery path succeeds.
+- Corrupt the newest local session, newest local snapshot, NAS copy, and second
+  host copy separately; in every case a different independent recovery path
+  succeeds without changing a live profile.
 
 ## Gate 5: Android Media
 
@@ -140,9 +156,23 @@ record only timing/status observations, never conversation content or tokens.
 
 | Device | Desktop browser | Android browser | Required manual checks |
 | --- | --- | --- | --- |
-| `d` | Linux x86_64 | N/A | Password lifecycle, daemon restart, tab snapshot/restore |
-| `da` | Confirm OS/arch in artifact manifest | N/A | Password convergence, foreign tabs, source/replica cookie role |
+| `d` | Linux x86_64 | N/A | Authoritative seed, password lifecycle, service restart, local tab restore |
+| `da` | Linux x86_64 | N/A | Pull-only join, password/cookie convergence, independent local tab restore |
 | `oneplus` | Linux ARM64 chroot Helium | Android arm64 Helium Sync | Native Android password store, background sync, codecs, streaming, tab restore |
 
 An artifact is releasable only when every applicable gate has a linked result
 and every expected failure is explicit.
+
+## Gate 8: Rollout and rollback
+
+- Before any install, stop the disposable or personal browser and create a
+  checksum manifest plus two recoverable copies of its complete profile.
+- Prove opaque server backup restore and d recovery-material restore before
+  registering the first join device.
+- Install only a hash-verified artifact returned by chromiumer. Keep the prior
+  application and untouched profile backup until all gates pass.
+- Enroll d first, da second, and oneplus third. After each join, prove zero
+  initial publication and zero unchanged-restart publication before proceeding.
+- Verify the server survives stop/start and restored opaque state; verify each
+  device's tab backup freshness, both off-source hashes, corruption quarantine,
+  and disposable restore.

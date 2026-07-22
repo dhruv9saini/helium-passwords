@@ -3,9 +3,11 @@ set -euxo pipefail
 
 repo_root=${HELIUM_SYNC_REPO:-"$GITHUB_WORKSPACE/helium-sync"}
 repo_root=$(cd "$repo_root" && pwd)
+github_workspace=$(realpath -m "$GITHUB_WORKSPACE")
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
-workspace=${CHROMIUM_WORKSPACE:-"$GITHUB_WORKSPACE/chromium-android"}
+workspace=${CHROMIUM_WORKSPACE:-"$github_workspace/chromium-android"}
+workspace=$(realpath -m "$workspace")
 requested_chromium_ref=${CHROMIUM_REF:-$HELIUM_ANDROID_CHROMIUM_COMMIT}
 if [[ ! "$requested_chromium_ref" =~ ^[0-9a-f]{40}$ ]]; then
   echo "CHROMIUM_REF must be the immutable commit from chromium/android-build.lock" >&2
@@ -22,7 +24,8 @@ target=${CHROMIUM_TARGET:-${TARGET:-chrome_public_apk}}
 out_dir=${OUT_DIR:-out/Default}
 autoninja_jobs=${AUTONINJA_JOBS:-2}
 gclient_jobs=${GCLIENT_JOBS:-}
-artifact_dir=${ARTIFACT_DIR:-"$GITHUB_WORKSPACE/android-artifacts"}
+artifact_dir=${ARTIFACT_DIR:-"$github_workspace/android-artifacts"}
+artifact_dir=$(realpath -m "$artifact_dir")
 provenance_only=${CHROMIUM_ANDROID_PROVENANCE_ONLY:-false}
 use_ccache=${USE_CCACHE:-true}
 ccache_max_size=${CCACHE_MAXSIZE:-5G}
@@ -76,7 +79,7 @@ setup_ccache() {
     return 0
   fi
   command -v ccache >/dev/null
-  export CCACHE_DIR=${CCACHE_DIR:-"$GITHUB_WORKSPACE/chromium-ccache/android-$target_cpu"}
+  export CCACHE_DIR=${CCACHE_DIR:-"$github_workspace/chromium-ccache/android-$target_cpu"}
   export CCACHE_COMPILERCHECK=${CCACHE_COMPILERCHECK:-content}
   export CCACHE_CPP2=${CCACHE_CPP2:-yes}
   export CCACHE_SLOPPINESS=${CCACHE_SLOPPINESS:-time_macros}

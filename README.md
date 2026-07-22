@@ -1,203 +1,100 @@
-# helium-sync
+# Helium Sync
 
-Private fork-of-a-fork for Helium Browser.
+Helium Sync is the private personal-browser layer on top of the public
+[Helium Passwords](https://github.com/dhruv9saini/helium-passwords) backbone.
+The two repositories share normal Git ancestry, patch tooling, the pinned
+Chromium environment, and the chromiumer build workflow. This repository adds
+native end-to-end encrypted password and login-session convergence plus
+device-local tab durability for d, da, and oneplus.
 
-Base lineage:
+The product contract and current implementation boundary are
+[docs/architecture.md](docs/architecture.md). The executable release gates are
+[docs/acceptance.md](docs/acceptance.md), and [TODO.md](TODO.md) is the
+canonical private issue ledger.
 
-1. [`imputnet/helium`](https://github.com/imputnet/helium) removes Google
-   services, browser sync, and the built-in Chromium password manager.
-2. [`dhruv9saini/helium-passwords`](https://github.com/dhruv9saini/helium-passwords)
-   restores the native Chromium password manager.
-3. `dhruv9saini/helium-sync` adds local password-manager sync and cookie sync on
-   top of that restored-password Helium fork.
+## Invariants
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for the shared Passwords/Sync backbone and
-upstream process. [ISSUES.md](ISSUES.md) is the public-backbone ledger; the
-private product ledger is [TODO.md](TODO.md).
+- d is the only initial password seed.
+- da and oneplus join pending and pull-only. They cannot bulk-publish their
+  initial state.
+- Passwords use Chromium's native password store. Cookies use Chromium's native
+  `CookieManager`. Normal installs and launches do not use CDP writers,
+  CookieCloud, a phone-local server, or copied profile databases.
+- The lm server stores opaque authenticated ciphertext and hashed device
+  credentials. Content and recovery keys never belong on lm, its server data,
+  the NAS server backup, chromiumer, or Git.
+- Tabs never enter sync. They remain device-local and are protected by local
+  recovery, atomic versioned snapshots, and two encrypted off-source copies.
+- No personal profile is touched until all compiled disposable gates pass and
+  that profile has a verified recoverable backup.
+- Chromium is never built on lm. Every large build uses the isolated
+  [chromiumer workflow](docs/chromiumer-builds.md) and its durable completion
+  notification.
 
-Large Linux and Android builds use the enforced lm-to-chromiumer workflow in
-[docs/chromiumer-builds.md](docs/chromiumer-builds.md); never build Chromium on
-lm or use the NAS as a live compiler workspace. Terminal build results are
-delivered through the lm-only durable path in
-[docs/job-notifications.md](docs/job-notifications.md).
+## Repository map
 
-The current audit, target architecture, and release gates are in
-[docs/audit-2026-07-21.md](docs/audit-2026-07-21.md),
-[docs/architecture.md](docs/architecture.md), and
-[docs/acceptance.md](docs/acceptance.md). Treat existing sync bridges as
-experimental until the P0 items in `TODO.md` pass those gates.
+- `chromium/overlay/`: native password, cookie, enrollment, and local tab
+  snapshot integration.
+- `chromium/patches/`: generated overlay plus desktop/Android wiring.
+- `internal/syncstore/`: opaque server, client-side E2EE protocol, enrollment,
+  scoped credentials, rotations, CAS conflicts, tombstones, and recovery.
+- `internal/tabsnapshot/` and `scripts/tabs/`: device-local generations,
+  validation, retention, encrypted two-destination backup, quarantine, and
+  disposable restore.
+- `scripts/chromium/`: pinned Android composition, codec/streaming provenance,
+  and remote compile entry points.
+- `systemd/helium-syncd.service`: least-privilege loopback service for lm.
+- `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
+  it does not enable the service unless Tailscale HTTPS Serve is configured.
+- `docs/deployment.md`: exact seed, join, rotation, backup, and rollback
+  sequence.
 
-## What This Repo Adds
+## Lightweight verification
 
-- Native password-manager restoration patches from `helium-passwords`.
-- A local encrypted record daemon, `helium-syncd`, for browser data.
-- A Chromium-side `helium_sync` component that observes Chromium's native
-  password store, serializes passwords through browser APIs, and syncs through
-  the local daemon.
-- A CookieCloud-compatible local cookie bridge for browsers that can expose
-  DevTools Protocol but cannot load the CookieCloud browser extension directly.
-- Android-local helper scripts for sharing the same daemon/token between the
-  Android browser process and the Arch chroot browser environment.
+These checks are safe on lm and use only synthetic data:
 
-Passwords must remain in Chromium's native password manager. Do not use a
-password-sync extension and do not copy raw profile databases.
-
-## Targets
-
-The desktop wrapper supports the official Helium platform repositories:
-
-| OS | Architectures |
-| --- | --- |
-| Linux | `x86_64`, `arm64` |
-| macOS | `x86_64`, `arm64` |
-| Windows | `x86_64`, `arm64` |
-
-Android is handled separately under `scripts/chromium/build-android-ci.sh` until
-a full Android Helium platform repository exists.
-
-## Local Build
-
-Desktop builds must run on the matching host OS. Chromium builds are large, so
-expect a long run and significant disk usage.
-
-```bash
-bash scripts/build.sh linux x86_64
-bash scripts/build.sh linux arm64
-bash scripts/build.sh macos x86_64
-bash scripts/build.sh macos arm64
-bash scripts/build.sh windows x86_64
-bash scripts/build.sh windows arm64
+```sh
+scripts/dev.sh check
 ```
 
-The wrapper clones platform repos under `build/platforms/` by default. Override
-repo URLs, clone ref, or the work directory in `helium-sync.conf` or by
-exporting the same variables before running a script.
+The command validates patch composition, Go protocol and recovery tests,
+password/cookie/tab state-machine tests, media/streaming fixtures, Chromiumer
+isolation arithmetic, notifications, and shared public ancestry. It is not a
+substitute for a native compile or disposable browser run.
 
-Go checks for the local daemon:
+## Chromium builds
 
-```bash
-go test ./...
-go build ./cmd/helium-sync ./cmd/helium-syncd ./cmd/helium-local-syncd ./cmd/helium-tabs
-node --test scripts/tests/*.test.mjs
+The source of truth is the pinned Nix environment and detached wrapper:
+
+```sh
+scripts/chromiumer-job.sh connection
+scripts/chromiumer-job.sh preflight 80
+scripts/chromiumer-job.sh stage JOB 80
+scripts/chromiumer-job.sh start JOB --summary "..." --next "..." -- \
+  scripts/chromiumer-nix.sh run -- COMMAND
+scripts/chromiumer-job.sh status JOB
+scripts/chromiumer-job.sh logs JOB 120
+scripts/chromiumer-job.sh cancel JOB
 ```
 
-`helium-tabs` is the independent tab-recovery store. It accepts only an
-explicit browser-API session JSON file and restores only to a new disposable
-state directory; it never reads or overwrites a Chromium profile. See
-[docs/tab-snapshots.md](docs/tab-snapshots.md).
+The wrapper caps the complete systemd cgroup at two jobs, 200% CPU, 5 GiB
+memory, idle I/O priority, 256 tasks, the declared workspace budget, a 2 GiB
+root floor, and eight hours. Builds are detached, watched, journaled, and
+reported exactly once through lm Mailbridge to `dhruv.codex@gmail.com`.
+Returned artifacts are checksum-verified before a workspace can be cleaned.
 
-## Laptop Install
+## Installation boundary
 
-Install the local daemons, CDP bridges, and a laptop launcher with an optional
-Linux x86_64 Helium Sync tarball:
+`scripts/laptop/install-laptop-sync.sh` installs only the native browser
+artifact, the enrollment client, local tab tool, and launcher. It does not
+create enrollment state or start a daemon. `scripts/android-local/install-phone-sync.sh`
+does not install CookieCloud, CDP writers, or a server into the phone chroot.
 
-```bash
-scripts/laptop/install-laptop-sync.sh /path/to/helium-linux-x64.tar.xz
-```
-
-The launcher is `helium-sync-browser`. Set
-`HELIUM_LAPTOP_REPLACE_DEFAULT=1` when installing to make the existing
-`helium-browser` wrapper start the sync-enabled launcher. The launcher uses the
-current Helium profile, writes the native sync token into the profile, starts
-the local sync daemons, and exposes laptop CDP on `127.0.0.1:9224` for cookie
-sync.
-
-## Patch Flow
-
-`patches/series` is the canonical password-manager restoration list. During
-platform preparation, each listed patch is copied into the platform repo as
-`patches/helium/passwords/` and appended to that platform's `patches/series`.
-
-`chromium/patches/*.patch` is the canonical sync integration list. During
-desktop platform preparation, only the desktop-safe subset is copied into
-`patches/helium/sync/` and appended after the password patches. Android-only
-startup, OSCrypt, branding, and password-store replacement files stay on the
-direct Android Chromium build path.
-
-The first sync patch is generated from `chromium/overlay/` so the full native
-sync component can be applied by Helium platform patch tooling. Desktop
-platform preparation filters the Android password-store replacement file diffs
-out of that patch because current desktop Chromium owns those paths already.
-Keep the overlay and generated patch in sync when editing Chromium-side files.
-Regenerate it with `scripts/chromium/generate-overlay-patch.sh`; the shared
-`scripts/dev.sh check` command fails if the two diverge.
-
-The wrapper also removes `helium/hop/disable-password-manager.patch` from the
-cloned `helium-chromium` submodule before platform builds apply patches.
-
-## Android
-
-The current Android path uses Chromium Android source plus this repo's sync
-patches, Android built-in password-store restoration, and local daemon/token
-configuration. `chromium/patches/0005-helium-sync-android-branding.patch`
-brands the APK as `Helium Sync` and changes the Android package to
-`computer.helium.sync`.
-
-Phone APKs must use the normal Android build path, not Chromium's experimental
-desktop-Android extension path. `scripts/chromium/build-android-ci.sh` rejects
-`CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true` because it writes
-`is_desktop_android = true`, which Chromium documents as unstable prototype
-support. The same helper builds local phone APKs as release-style non-debug
-builds by default: `is_debug = false`, `dcheck_always_on = false`, and
-`is_official_build = false`. This keeps renderer DCHECKs off without paying the
-hours-long local cost of Chromium's official optimized Android build path. Set
-`CHROMIUM_ANDROID_OFFICIAL_BUILD=true` only for deliberate release/CI builds.
-The helper also pins local phone builds to `chrome_pgo_phase = 0`, so they do
-not require Chromium/V8 PGO profiles that are absent from a small local
-checkout, and sets `android_static_analysis = "off"` so local phone APK builds
-do not run Android Error Prone validation during the main app build. It
-configures Android with `ffmpeg_branding = "Chrome"` and
-`proprietary_codecs = true`. Those flags are necessary for the intended
-MP4/H.264/AAC path but have not yet been validated in a post-change APK; they
-also do not add DRM/Widevine support.
-It also defaults `CHROMIUM_ANDROID_USE_SISO=auto`: existing Siso out
-dirs continue using Siso, because Chromium requires `gn clean` before switching
-that same out dir to Ninja, while fresh local out dirs use Ninja unless
-overridden. Use the chroot Helium browser for uBO and other extension workflows.
-When Siso is used locally, the helper defaults
-`CHROMIUM_ANDROID_SISO_GOMEMLIMIT=1536MiB`; this keeps Siso from pushing the
-laptop into sustained swap while still allowing multiple compiler jobs. Override
-that value only after watching `vmstat` for swap-out pressure. Existing Siso
-output dirs may also set `CHROMIUM_ANDROID_SISO_FLAGS="--batch=false"` to keep
-Siso's fast local path enabled in non-interactive resumes, but only keep that
-setting if `vmstat` shows no sustained swap-out.
-
-Override the codec defaults with `CHROMIUM_ANDROID_FFMPEG_BRANDING` or
-`CHROMIUM_ANDROID_PROPRIETARY_CODECS` only when intentionally testing the
-codec-stripped Chromium path. Successful compilation, codec enumeration, and
-playback are separate acceptance checks; see `docs/acceptance.md`.
-
-Google AI Overview blocking for the Android main browser is built into the
-Android fork by `chromium/patches/0006-helium-sync-android-ai-overview-blocker.patch`.
-It injects a small Java-owned isolated-world script on normal Google Search
-pages, so it does not use `udm=14` and does not remove other Google widgets.
-
-For isolated runtime uBO debugging on a rooted phone,
-`scripts/android-local/install-android-ublock.sh` can still stage the pinned
-uBO archive and write `--load-extension` command-line flags, but it refuses to
-run unless `HELIUM_ANDROID_UBLOCK_UNSTABLE_EXPERIMENT=true` is set. Do not use
-that path for the daily phone browser.
-Override them with `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS`, point
-`HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS_FILE` at a newline-delimited filter
-file, or set `HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTERS` empty to skip them.
-`HELIUM_ANDROID_UBLOCK_AI_OVERVIEW_FILTER` remains supported for a single
-legacy override.
-
-See [docs/android-local-sync.md](docs/android-local-sync.md) for the current
-phone/chroot bridge details.
-
-The chroot should run a Linux ARM64 Helium Sync package when one is available.
-Install it with:
-
-```bash
-ADB=/path/to/adb scripts/android-local/install-chroot-helium.sh /path/to/helium-linux-arm64.tar.xz
-```
-
-The existing Chromium fallback is only for temporary bridge testing and should
-not be treated as the completed chroot browser install.
+Actual enrollment is deliberately separate from binary installation. Follow
+[docs/deployment.md](docs/deployment.md) only after the artifact and disposable
+acceptance gates pass.
 
 ## License
 
-All code, patches, modified portions of imported code or patches, and any other
-content that is unique to this repo is licensed under GPL-3.0. See
-[LICENSE](LICENSE). Imported content keeps its original license.
+Repository-original code is GPL-3.0; imported material keeps its original
+license. See [LICENSE](LICENSE).

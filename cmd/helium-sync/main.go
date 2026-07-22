@@ -28,18 +28,28 @@ func main() {
 		err = cmdSeedInit(os.Args[2:])
 	case "server-init":
 		err = cmdServerInit(os.Args[2:])
+	case "seed-public":
+		err = cmdSeedPublic(os.Args[2:])
 	case "join-request":
 		err = cmdJoinRequest(os.Args[2:])
 	case "seed-wrap":
 		err = cmdSeedWrap(os.Args[2:])
 	case "join-install":
 		err = cmdJoinInstall(os.Args[2:])
+	case "key-update-request":
+		err = cmdKeyUpdateRequest(os.Args[2:])
+	case "key-update-install":
+		err = cmdKeyUpdateInstall(os.Args[2:])
 	case "server-enroll":
 		err = cmdServerEnroll(os.Args[2:])
 	case "server-revoke":
 		err = cmdServerRevoke(os.Args[2:])
 	case "enrollment-complete":
 		err = cmdEnrollmentComplete(os.Args[2:])
+	case "key-stage", "key-ack-install", "key-activate", "key-adopt",
+		"key-rekey", "key-ack-rekey", "key-retire", "credential-stage",
+		"credential-confirm", "credential-retire":
+		err = cmdRemoteAction(os.Args[1], os.Args[2:])
 	case "push":
 		err = cmdPush(os.Args[2:])
 	case "pull":
@@ -65,6 +75,13 @@ func cmdSeedInit(args []string) error {
 	}
 	if *bootstrapFile == "" {
 		return errors.New("--bootstrap-file is required")
+	}
+	for _, path := range []string{*stateFile, *tokenFile, *bootstrapFile} {
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("refusing to replace existing seed material: %s", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	if err := ensureSecretFile(*tokenFile, 32); err != nil {
 		return err
@@ -116,6 +133,23 @@ func cmdServerInit(args []string) error {
 	return nil
 }
 
+func cmdSeedPublic(args []string) error {
+	flags := flag.NewFlagSet("seed-public", flag.ExitOnError)
+	stateFile := flags.String("state-file", defaultClientStatePath(), "d seed client state")
+	output := flags.String("output", "", "new public trust-anchor file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *output == "" {
+		return errors.New("--output is required")
+	}
+	state, err := syncstore.LoadClientState(*stateFile)
+	if err != nil {
+		return err
+	}
+	return writeExclusive(*output, []byte(state.SeedSigningPublicKey()+"\n"), 0644)
+}
+
 func cmdJoinRequest(args []string) error {
 	flags := flag.NewFlagSet("join-request", flag.ExitOnError)
 	device := flags.String("device", "", "join device id: da or oneplus")
@@ -130,6 +164,13 @@ func cmdJoinRequest(args []string) error {
 	if *device == "" || *seedPublicFile == "" || *pendingFile == "" ||
 		*requestFile == "" || *authRequestFile == "" {
 		return errors.New("--device, --seed-public-file, --pending-file, --request-file, and --auth-request-file are required")
+	}
+	for _, path := range []string{*pendingFile, *requestFile, *authRequestFile, *tokenFile} {
+		if _, err := os.Lstat(path); err == nil {
+			return fmt.Errorf("refusing to replace existing join material: %s", path)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
 	}
 	if err := ensureSecretFile(*tokenFile, 32); err != nil {
 		return err
@@ -212,6 +253,53 @@ func cmdJoinInstall(args []string) error {
 	return nil
 }
 
+func cmdKeyUpdateRequest(args []string) error {
+	flags := flag.NewFlagSet("key-update-request", flag.ExitOnError)
+	stateFile := flags.String("state-file", defaultClientStatePath(), "active join client state")
+	pendingFile := flags.String("pending-file", "", "new device-local pending X25519 state")
+	requestFile := flags.String("request-file", "", "new public key-update request JSON")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *pendingFile == "" || *requestFile == "" {
+		return errors.New("--pending-file and --request-file are required")
+	}
+	state, err := syncstore.LoadClientState(*stateFile)
+	if err != nil {
+		return err
+	}
+	request, err := syncstore.CreateJoinRequest(
+		*pendingFile, state.DeviceID, state.SeedSigningPublicKey())
+	if err != nil {
+		return err
+	}
+	return writeJSONExclusive(*requestFile, request)
+}
+
+func cmdKeyUpdateInstall(args []string) error {
+	flags := flag.NewFlagSet("key-update-install", flag.ExitOnError)
+	stateFile := flags.String("state-file", defaultClientStatePath(), "active join client state")
+	pendingFile := flags.String("pending-file", "", "device-local pending X25519 state")
+	wrappedFile := flags.String("wrapped-file", "", "d-signed encrypted keyring update")
+	var requiredKeyIDs repeatedFlag
+	flags.Var(&requiredKeyIDs, "required-key-id", "server-observed key id; repeat for every live epoch")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *pendingFile == "" || *wrappedFile == "" || len(requiredKeyIDs) == 0 {
+		return errors.New("--pending-file, --wrapped-file, and at least one --required-key-id are required")
+	}
+	state, err := syncstore.LoadClientState(*stateFile)
+	if err != nil {
+		return err
+	}
+	var wrapped syncstore.WrappedEnrollment
+	if err := readJSONFile(*wrappedFile, &wrapped); err != nil {
+		return err
+	}
+	return state.InstallKeyUpdate(*pendingFile, wrapped, requiredKeyIDs)
+}
+
 func cmdServerEnroll(args []string) error {
 	flags := flag.NewFlagSet("server-enroll", flag.ExitOnError)
 	devicesFile := flags.String("devices-file", filepath.Join(defaultDataDir(), "devices.json"), "hashed device registry")
@@ -257,18 +345,27 @@ func cmdEnrollmentComplete(args []string) error {
 	stateFile := flags.String("state-file", defaultClientStatePath(), "pending client E2EE state")
 	passwordState := flags.String("password-state", filepath.Join(defaultConfigDir(), "password-state.json"), "browser-verified password state")
 	cookieState := flags.String("cookie-state", filepath.Join(defaultConfigDir(), "cookie-state.json"), "browser-verified cookie state")
+	profileDir := flags.String("profile-dir", "", "browser profile root, which must be stopped")
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if *profileDir == "" {
+		return errors.New("--profile-dir is required")
+	}
+	if _, err := os.Lstat(filepath.Join(*profileDir, "SingletonLock")); err == nil {
+		return errors.New("browser profile still has a SingletonLock; stop the browser before promotion")
+	} else if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	clientState, err := syncstore.LoadClientState(*stateFile)
 	if err != nil {
 		return err
 	}
-	passwordSequence, err := readVerifiedSequence(*passwordState)
+	passwordSequence, err := readVerifiedSequence(*passwordState, 3)
 	if err != nil {
 		return fmt.Errorf("password readiness: %w", err)
 	}
-	cookieSequence, err := readVerifiedSequence(*cookieState)
+	cookieSequence, err := readVerifiedSequence(*cookieState, 2)
 	if err != nil {
 		return fmt.Errorf("cookie readiness: %w", err)
 	}
@@ -285,6 +382,69 @@ func cmdEnrollmentComplete(args []string) error {
 		return err
 	}
 	return client.CompleteEnrollment(context.Background())
+}
+
+func cmdRemoteAction(action string, args []string) error {
+	flags := flag.NewFlagSet(action, flag.ExitOnError)
+	baseURL := flags.String("url", envOrDefault("HELIUM_SYNC_URL", ""), "HTTPS daemon URL")
+	tokenFile := flags.String("token-file", defaultTokenPath(), "current per-device credential file")
+	stateFile := flags.String("state-file", defaultClientStatePath(), "client E2EE state")
+	newTokenFile := flags.String("new-token-file", "", "new device-local credential for credential-stage")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	token, err := readSecret(*tokenFile)
+	if err != nil {
+		return err
+	}
+	client, err := syncstore.NewClient(*baseURL, token, *stateFile)
+	if err != nil {
+		return err
+	}
+	ctx := context.Background()
+	switch action {
+	case "key-stage":
+		keyID, err := client.StageContentKey(ctx)
+		if err == nil {
+			fmt.Printf("staged_key_id=%s\n", keyID)
+		}
+		return err
+	case "key-ack-install":
+		return client.AcknowledgeStagedKey(ctx)
+	case "key-activate":
+		return client.ActivateStagedKey(ctx)
+	case "key-adopt":
+		return client.AdoptServerKeyStatus(ctx)
+	case "key-rekey":
+		return client.RekeyAllLatest(ctx)
+	case "key-ack-rekey":
+		return client.AcknowledgeActiveRekey(ctx)
+	case "key-retire":
+		return client.RetireContentKey(ctx)
+	case "credential-stage":
+		if *newTokenFile == "" {
+			return errors.New("--new-token-file is required")
+		}
+		if _, err := os.Lstat(*newTokenFile); err == nil {
+			return fmt.Errorf("refusing to replace existing credential: %s", *newTokenFile)
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		if err := ensureSecretFile(*newTokenFile, 32); err != nil {
+			return err
+		}
+		newToken, err := readSecret(*newTokenFile)
+		if err != nil {
+			return err
+		}
+		return client.StageCredential(ctx, newToken)
+	case "credential-confirm":
+		return client.ConfirmCredential(ctx)
+	case "credential-retire":
+		return client.RetireOldCredential(ctx)
+	default:
+		return fmt.Errorf("unknown remote action %q", action)
+	}
 }
 
 func cmdPush(args []string) error {
@@ -485,7 +645,39 @@ func writeJSONExclusive(path string, value any) (resultErr error) {
 	return dir.Sync()
 }
 
-func readVerifiedSequence(path string) (int64, error) {
+func writeExclusive(path string, contents []byte, mode os.FileMode) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("output path is required")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	complete := false
+	defer func() {
+		if !complete {
+			_ = os.Remove(path)
+		}
+	}()
+	if _, err := file.Write(contents); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	complete = true
+	return nil
+}
+
+func readVerifiedSequence(path string, expectedSchema int) (int64, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
@@ -493,6 +685,11 @@ func readVerifiedSequence(path string) (int64, error) {
 	var state map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &state); err != nil {
 		return 0, err
+	}
+	var schema int
+	if err := json.Unmarshal(state["schema_version"], &schema); err != nil ||
+		schema != expectedSchema {
+		return 0, fmt.Errorf("expected schema_version %d", expectedSchema)
 	}
 	var encoded string
 	if err := json.Unmarshal(state["verified_sequence"], &encoded); err != nil {
@@ -512,7 +709,7 @@ func writePretty(value any) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: helium-sync <seed-init|server-init|join-request|seed-wrap|join-install|server-enroll|server-revoke|enrollment-complete|push|pull|latest> [flags]")
+	fmt.Fprintln(os.Stderr, "usage: helium-sync <seed-init|server-init|seed-public|join-request|seed-wrap|join-install|key-update-request|key-update-install|server-enroll|server-revoke|enrollment-complete|key-*|credential-*|push|pull|latest> [flags]")
 }
 
 func defaultDataDir() string {

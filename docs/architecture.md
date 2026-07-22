@@ -1,258 +1,192 @@
 # Helium Sync Architecture
 
-This document is the target architecture. The audit in
-`audit-2026-07-21.md` distinguishes implemented behavior from design work.
+## Product boundary
 
-## Product and Repository Boundaries
+Helium Sync has one native browser path. Chromium's password store is the
+password authority and Chromium's `CookieManager` is the cookie authority.
+The old CDP password writer, CookieCloud bridge, phone-local sync daemon, and
+raw SQLite/profile copying are not installed or started by normal launch or
+installation scripts. Their source remains only as isolated historical test
+material.
 
-Helium Passwords is the public browser backbone. It owns native Chromium
-password-manager restoration, desktop platform preparation, and the shared
-developer command. Helium Sync is a private downstream Git history for the
-personal browsers on `oneplus`, `d`, and `da`.
+Tabs are not sync data. The wire kinds are exactly `passwords` and `cookies`;
+the server rejects every other kind. No endpoint, credential, or record schema
+can carry a tab. Each device keeps its own Chromium session recovery and local
+tab snapshot repository. A restore can target only a new disposable directory
+and can never auto-open a tab.
 
-The source flow is one-way:
+## Trust and data flow
 
 ```text
-imputnet/helium + platform release train
-                  |
-                  v
-dhruv9saini/helium-passwords (public native password backbone)
-                  |
-                  v  Git merge through the `passwords` remote
-dhruv9saini/helium-sync (private sync + Android + device integration)
+d / da / oneplus browser
+  Chromium PasswordStore + CookieManager
+       |
+       | plaintext exists only in this browser process
+       v
+  profile-local Helium bridge
+  AES-256-GCM, metadata-bound ciphertext
+       |
+       | HTTPS over Tailscale; per-device bearer credential
+       v
+  lm Tailscale Serve :443
+       |
+       v
+  helium-syncd 127.0.0.1:44719
+       |
+       +-- /var/lib/helium-sync/devices.json
+       |     device IDs, roles, scopes, revocation, credential hashes
+       +-- /var/lib/helium-sync/records.jsonl
+       |     kind/key/revision/device/key-id/nonce/ciphertext
+       +-- /var/lib/helium-sync/snapshots/
+             atomic opaque journal generations
 ```
 
-No script copies shared patches from one working tree to the other. The private
-history contains the public commit, and `scripts/dev.sh check` verifies both
-ancestry and byte identity of the password patches.
+lm sees record identity metadata and ciphertext. It has no content key and
+cannot decrypt passwords or cookies. All enrolled browser profiles with a live
+content key can decrypt the shared records. Recovery holders can decrypt only
+if they possess a separately stored, d-signed encrypted key export and its
+recipient private key. Neither belongs in the server data directory, NAS copy
+of that directory, a repository, or chromiumer.
 
-Desktop and Android artifacts must resolve one immutable source manifest:
+The browser reads exactly one enrollment directory:
 
-- public and private repository commits;
-- Helium core and platform commits;
-- Chromium commit/version;
-- ordered patch hashes;
-- complete GN args and target;
-- toolchain/container identity; and
-- artifact hash.
+```text
+<profile>/Default/helium-sync/
+  base_url
+  token
+  client.json
+  password-state.json
+  cookie-state.json
+  cookie-rollback.json
+  cookie-reauth-required.json
+```
 
-Moving `main` is not a build input.
+`base_url` must be HTTPS and must not contain user information. `token` and
+`client.json` are per-profile secrets. The two bridge state files contain
+fingerprints, revisions, and a global `verified_sequence`; they do not contain
+plaintext password or cookie values. Cookie rollback plaintext is sealed with
+a device-local key that is not shared through enrollment.
 
-`lm` is the development control plane, not a Chromium executor. Large Linux
-and Android jobs run on chromiumer through the shared fail-closed wrapper in
-`docs/chromiumer-builds.md`. The lm-side wrapper is only the source-transfer and
-control client; its installed chromiumer worker enforces cgroup limits, a
-declared per-job disk budget, a 2 GiB unprivileged root-filesystem floor, a
-watchdog, and an eight-hour deadline. A separate build mount consumes only its
-job budget while `/` retains its independent floor. That policy is part of
-artifact provenance; a build outside the envelope is not accepted. The NAS
-receives completed, hashed artifacts but is not a compiler workspace.
+## Enrollment and authorization
 
-## Data Ownership
+d is the only seed. `helium-sync seed-init` creates d's content/signing state
+and bearer credential on d, plus a bootstrap document containing only the
+active key ID and credential hash. lm initializes its opaque registry from that
+document.
 
-| Data | Authoritative local interface | Cross-device role | Deletion policy |
-| --- | --- | --- | --- |
-| Passwords | Chromium `PasswordStoreInterface` and native password UI | Encrypted API-level records using complete Chromium credential semantics | Add/update only until deletion is explicitly designed and tested |
-| Cookies | Chromium `CookieManager` or CDP `Storage` with the complete cookie key | Best-effort, per-domain source-to-replica handoff | Expiry is local; replica loss never deletes source state |
-| Open tabs | Chromium session/tab APIs | Per-device foreign-session catalog, not a global merged window | Remote deletion cannot remove local tabs or snapshots |
-| Session snapshots | Immutable versioned snapshot store | Recovery only | Retention removes only validated old generations in the same store |
+A join is explicit:
 
-Raw `Login Data` and cookie databases are never sync inputs. Tests use fresh
-profiles and fixture credentials. Session files may be snapshotted only by the
-dedicated tab recovery layer and are never treated as a cross-version API.
+1. On da or oneplus, `join-request` creates a device-local X25519 private key,
+   a public request, a new bearer credential, and a separate hash-only server
+   authorization request.
+2. d verifies the device ID and wraps the current content-key bundle to that
+   public key, then signs the envelope with d's Ed25519 seed identity.
+3. lm registers only the device ID and credential hash with `pull` scope.
+4. The joining device authenticates d's signature, unwraps locally, and writes
+   `client.json` in `pending` phase.
+5. The native password and cookie bridges pull, validate, apply, read back, and
+   persist the same global verified cursor. Pending bridges baseline unrelated
+   local data and cannot publish.
+6. With the browser stopped, `enrollment-complete` requires both bridge
+   schemas and cursors to equal `client.json`, then asks the server to promote
+   that exact current cursor. The server atomically grants `push` only then.
+7. The restarted browser reloads the now-active state. An unchanged restart
+   emits no records.
 
-## Implementation Boundary (2026-07-21)
+Credentials are per-device, hash-verified, scoped, independently rotatable with
+an overlap/confirm/retire sequence, and revocable. d cannot be revoked because
+it is the sole recovery authority; loss of d must be handled from separately
+proven recovery material, not by giving lm a content key.
 
-| Area | Completed code | Still requires browser/device integration |
+Content-key rotation is staged. d creates and distributes a signed encrypted
+keyring update, every active device acknowledges installation, d activates the
+new epoch, latest records and tombstones are CAS-re-encrypted, every device
+acknowledges the verified rekey cursor, and only then can d retire the old key.
+
+## Password convergence
+
+Startup always requests the latest remote password inventory before installing
+a store observer. Remote writes use Chromium's complete serialized
+`PasswordSpecificsData`, are applied through `PasswordStoreInterface`, and
+are read back before the cursor advances. Joiners baseline local-only entries
+while pending rather than bulk-publishing them. Active local changes use
+expected revisions; a stale mutation receives a conflict. If both the verified
+local baseline and remote revision changed, the bridge preserves local state,
+leaves the cursor unchanged, and stops that batch for explicit resolution.
+Tombstones are retained in latest inventory so a new or stale client cannot
+resurrect a deletion.
+
+## Cookie and login-session convergence
+
+Every live, structurally valid, non-expired cookie returned by
+`CookieManager::GetAllCookies` participates by default. There is no guessed
+authentication-cookie list and no default domain allowlist. Identity is a
+length-framed hash over name, path, exact host/domain form, source scheme,
+source port, and the complete partition key including top-level site and
+cross-site-ancestor bit. Payloads preserve session/no-expiry state, Secure,
+HttpOnly, SameSite, priority, source type, timestamps, and partitioning.
+
+Before any remote apply, the bridge builds a complete target preview, seals the
+destination snapshot with the device-local key, writes a pending rollback
+journal, applies through `SetCanonicalCookie`/`DeleteCanonicalCookie`, reads
+the complete cookie store back, and commits only on an exact validated match.
+A rejection restores the saved destination state. Expected revisions,
+authenticated source device IDs, durable pending-publication state, and
+fingerprints stop token-rotation ping-pong and stale overwrites.
+
+Chromium device-bound sessions are observed through its device-bound-session
+manager. A cookie proven device-bound, or a cookie rejected on the destination,
+is marked non-clonable for that exact session; the last local session is
+preserved and a reauthentication request is recorded. Automatic password-based
+reauthentication is not browser-integrated yet. localStorage, IndexedDB,
+service-worker storage, and other per-origin state are not transferred yet.
+They require site-specific disposable-profile evidence and an export/import
+adapter; arbitrary application databases will never be live-merged.
+
+## Device-local durable tabs
+
+The browser tab bridge exports a bounded neutral snapshot outside the profile
+using create-new, fsync, and atomic rename. `helium-tabs` validates checksums,
+commits immutable generations, quarantines corruption, applies retention
+without deleting the last known-good copy, and restores only to a nonexistent
+disposable state directory.
+
+Every source device runs its own scheduler. One validated generation is age
+encrypted to at least two distinct recipients and copied to exactly two
+off-source hosts with incoming-file verification and atomic promotion.
+Repositories are namespaced by source device and profile and are never merged.
+For d and oneplus the planned destinations are lm NAS and da. For da they are
+lm NAS and d. Local Chromium recovery and local generations are extra layers,
+not either off-device copy. Recovery identities stay outside all source and
+destination stores.
+
+## Runtime and build boundaries
+
+lm is the control plane and hosts only the loopback opaque service. Tailscale
+Serve terminates TLS and applies tailnet access control. The service unit is
+`helium-syncd.service`, runs as the dedicated `helium-sync` account, and is
+hardened by systemd. `scripts/install-lm-sync-service.sh` installs and
+initializes it but refuses activation until Tailscale Serve is visibly
+forwarding to `127.0.0.1:44719`.
+
+Every Chromium compile runs on chromiumer through
+`scripts/chromiumer-job.sh` and the pinned Nix environment. The wrapper
+enforces two build jobs, CPU/memory/I/O/task/disk limits, an eight-hour stop,
+watchdog, detached journald logs, one cancel command, provenance/artifact
+receipts, and exactly-once completion notification to
+`dhruv.codex@gmail.com`. lm and the NAS are never compiler workspaces.
+
+## Verified source versus remaining gates
+
+| Area | Implemented and source-tested | Still required before personal data |
 | --- | --- | --- |
-| Password convergence (HS-001/HS-008) | Native C++ and CDP bridges reconcile remote before local publication with durable hash/server-sequence state. Native output uses complete Chromium `PasswordSpecificsData`; the lossy legacy payload is migration input only. Source and synthetic tests cover restart, stale-device, offline edits, identity, and migration. | Compile on chromiumer and run native disposable-profile save/update/restart/autofill, two-device conflict, and legacy-upgrade tests on Android and desktop. |
-| Cookie identity/authority (HS-002/HS-003) | CDP and new native CookieManager bridges preserve partition/host-domain/scheme/port identity and explicit source-to-replica generations. Replicas cannot publish; device-bound policy sends no value. The server compare-and-swaps concurrent revisions. | Compile the native bridge, unify its wire encoding with CDP schema v2, migrate device policy without values, add server-side device authority, and run built-browser fixtures. |
-| Independent tab snapshots (HS-004) | The native bridge atomically exports the exact bounded Go session model outside the profile. `helium-tabs` commits hashed fsync+rename generations, protects known-good/invalid copies, applies retention safely, and restores only to a new disposable-state directory. | Compile; add unloaded Android tab export, schedule export ingestion, load a disposable browser for a two-restart drill, and implement local-session/foreign-session layers. No code promotes a snapshot into a real profile. |
+| Transport | Opaque v2 E2EE, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery | Native Chromium compile, TLS endpoint, supervised live recovery drill |
+| Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations | Execute on disposable profiles, then provision d/da/oneplus |
+| Passwords | Pull/apply/readback before observe/publish; full native specifics; conflict stop | Built-browser prompts, save/update/delete/autofill and three-device restart tests |
+| Cookies | Whole-profile canonical identity, E2EE, preview/apply/readback/rollback, DBSC/rejection classification | Built-browser destination session tests and automatic password reauth integration |
+| Origin state | Explicitly absent | Per-origin storage audit and safe adapters where observed necessary |
+| Tabs | Local exporter/store, atomic generations, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; deploy independent schedules/routes; disposable browser restore on every device |
+| Media/streaming | Reproducible fixtures and strict codec GN provenance checks | Control/Sync APK A/B on oneplus, HTTP/2+HTTP/3, video/audio/ChatGPT timing |
+| Deployment | Source unit/install gate and rollback-preserving installers | Tailscale HTTPS enablement, d SSH/auth route, artifacts, profile backups, sequential enrollment |
 
-These statuses describe source and synthetic tests only. They are not artifact
-acceptance: no Chromium build or real profile was used for this work.
-
-## Password Convergence
-
-The append-only daemon remains a transport/store. HS-001 persists
-per-credential hashes and last-applied server sequences in the clients and
-removes the export-before-pull startup race. HS-008 now serializes Chromium's
-complete password specifics rather than a hand-picked plaintext subset.
-
-The existing stable record key deliberately remains unchanged: switching to a
-new Chromium-derived client tag without transport retirement would leave two
-active records. Remaining design work is safe key retirement/migration,
-explicit deletion semantics, and built-browser conflict validation.
-
-Implemented startup ordering is reconcile-first:
-
-1. Load durable last-applied metadata.
-2. Pull the latest records and compare each record's server sequence with the
-   durable per-credential sequence.
-3. Validate and merge remote records through native password APIs.
-4. Query the local store and publish only locally changed records.
-5. Persist applied/published metadata atomically.
-
-An unchanged device restart must emit zero credential updates. A local edit and
-a remote edit of the same credential must be resolved using Chromium's native
-password timestamps/merge semantics or surfaced as a conflict; wall-clock
-arrival alone is insufficient.
-
-The daemon token is separate from password encryption. Rotation uses token IDs,
-current+next overlap for a bounded interval, atomic client config replacement,
-explicit revocation, and a recovery token stored outside browser profiles.
-
-## Cookies and Login Sessions
-
-Cookie identity is at least:
-
-```text
-partitionKey(topLevelSite, hasCrossSiteAncestor) /
-domain / path / name / sourceScheme / sourcePort
-```
-
-The former three-field key was invalid for partitioned cookies. Schema v2 keeps
-the partition key, domain, path, name, source scheme, and source port in the
-identity. Host-only versus
-domain cookies, `Secure`, `HttpOnly`, `SameSite`, priority, expiry, source
-scheme/port, and the complete partition key must survive validation and
-round-trip.
-
-Authentication cookies are not symmetric multi-writer data. The CDP bridge
-configuration now assigns one source device per domain and zero or more replicas:
-
-- only the source uploads for that domain;
-- replicas apply newer generations but never upload them;
-- a source-observed rotation supersedes the old generation;
-- expired records are ignored, not re-created;
-- a rejected replica token marks the replica as requiring reauthentication;
-- a replica failure or local deletion never propagates to the source.
-
-The current bridge encrypts one schema-v2 payload for CookieCloud transport.
-Every write includes the revision returned by the preceding read; the local
-server atomically rejects a stale or unconditional update with HTTP 409/428.
-The daemon retries on its next bounded interval, so concurrent domain sources
-cannot silently overwrite one another. Authenticated encryption and independent
-cookie backup generations remain HS-011.
-
-Device Bound Session Credentials cannot be made portable by copying their
-short-lived cookie. They rely on a private key held by the original device and
-Chrome may refresh the cookie by proving possession. Such sites must retain
-per-device login or use a site-supported transfer/login flow. DBSC currently
-does not support partitioned cookies, which is another reason to model the two
-features independently.
-
-Android may suspend the browser and its DevTools socket while the desktop
-browser remains continuously reachable. The stable Android endpoint should be
-a native CookieManager bridge; CDP remains a diagnostic path with bounded
-retries and an explicit unavailable state.
-
-## Durable Tabs: Four Independent Layers
-
-Tabs are durable user data. No layer may have permission to erase all other
-layers.
-
-### 1. Chromium local session restore
-
-Keep Chromium's own session service and restore-last-session preference. Do not
-mark a previously unclean profile clean before Chromium decides whether crash
-recovery is needed. Local session restore is the fastest recovery path, but its
-small rolling set of `Session_*`/`Tabs_*` files is not a backup.
-
-### 2. Cross-device foreign-session catalog
-
-Use Chromium's session/tab models where practical. Each device owns a namespace
-and publishes immutable generations of windows, tabs, navigation entries,
-pinned/group state, and activity timestamps. Other devices show these as
-foreign sessions and copy selected tabs into local state; they do not replace
-the local window automatically.
-
-Remote tab records are schema-checked, size/count bounded, URL-scheme filtered,
-and parent-generation checked before publication. A malformed update is
-quarantined while the previous good generation remains available.
-
-### 3. Independent versioned snapshots
-
-`internal/tabsnapshot` now writes snapshots to a store that is not the live
-profile and is not the sync database. It accepts only a validated browser-API
-JSON model and commits by temp-write, file sync, manifest/hash verification,
-directory sync, and atomic rename. Capturing that model from a quiescent browser
-is still an integration requirement.
-
-The manifest contains device/profile ID, browser/Chromium version, capture
-time, reason, parent generation, file hashes, sizes, and validation status.
-Snapshots never share a deletion namespace across devices.
-
-Initial retention policy:
-
-- 24 hourly generations;
-- 14 daily generations;
-- 12 weekly generations; and
-- two protected known-good restore-drill generations.
-
-Retention runs only after the newest snapshot validates and never deletes the
-last valid generation.
-
-### 4. Restore validation and drills
-
-Restore always targets a new disposable profile first. The drill verifies
-manifest hashes, parses/loads the snapshot with a compatible browser, counts
-windows/tabs, checks representative URLs/pinned/group state, restarts again,
-and records the result. Promotion to the real profile is a separate atomic,
-backed-up operation performed only while the browser is stopped.
-
-Quarterly drills and every browser-major update must validate at least one
-recent and one protected snapshot on every device class.
-
-## Android Media and Streaming
-
-Media and response streaming are separate test dimensions.
-
-The Android build now fails closed unless resolved GN args contain
-`ffmpeg_branding = "Chrome"`, `proprietary_codecs = true`, and
-`media_use_ffmpeg = true`, and packages those args with patch/source provenance.
-This does not prove decoder availability, MSE behavior, or DRM/Widevine.
-
-Deterministic tooling now generates H.264/AAC MP4, fragmented MSE MP4, and
-VP9/Opus WebM fixtures. A loopback server and disposable-CDP driver verify
-HTTP/1.1 progressive Fetch under identity/gzip/Brotli, SSE order, byte ranges,
-UI progress, capability reports, playback, frames, and audio observations.
-HTTP/2, HTTP/3, AV1, HLS/DASH, Widevine expected-failure, built-APK A/B, and
-oneplus runtime remain open. ChatGPT stays a final manual timing scenario that
-records no content or tokens.
-
-## Store Durability
-
-`records.jsonl` remains the append-only primary journal, but it is no longer the
-only copy. After each durable write, `internal/syncstore` commits a complete
-encrypted generation under `snapshots/` by file sync, directory sync, and
-atomic rename. Its passphrase-derived authentication covers the schema,
-creation time, last sequence, record count, byte count, and SHA-256 journal
-hash. Every encrypted record is also authenticated and decrypted during
-startup validation.
-
-If the journal is malformed or fails authentication, startup preserves it
-under `quarantine/`, scans generations newest-first, rejects bad hashes,
-manifests, sequences, keys, or ciphertexts, and atomically restores the newest
-valid copy. Retention keeps eight valid generations and never removes invalid
-evidence. Tests use only synthetic records and assert that neither journal nor
-snapshots contain fixture plaintext. An off-host encrypted copy and a recorded
-daemon restart drill remain operational work under HS-012.
-
-## References
-
-- Chromium password manager architecture:
-  <https://chromium.googlesource.com/chromium/src/+/HEAD/components/password_manager/README.md>
-- Chromium password specifics schema:
-  <https://chromium.googlesource.com/chromium/src/+/main/components/sync/protocol/password_specifics.proto>
-- Chromium synced sessions component:
-  <https://chromium.googlesource.com/chromium/src/+/HEAD/components/sync_sessions/>
-- Chromium session restore source:
-  <https://chromium.googlesource.com/chromium/src/+/HEAD/chrome/browser/sessions/session_restore.h>
-- DevTools cookie types and partition keys:
-  <https://chromedevtools.github.io/devtools-protocol/tot/Network/#type-CookiePartitionKey>
-- Device Bound Session Credentials:
-  <https://developer.chrome.com/docs/web-platform/device-bound-session-credentials>
-- OAuth token rotation guidance: <https://www.rfc-editor.org/rfc/rfc9700.html>
-- Chromium media architecture:
-  <https://chromium.googlesource.com/chromium/src/+/HEAD/media/README.md>
+No personal profile, credential, cookie, or tab content is read by source tests.

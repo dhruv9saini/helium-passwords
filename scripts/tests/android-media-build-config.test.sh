@@ -68,6 +68,8 @@ grep -Fq 'cp -a "$artifact_dir/build-provenance" "$staging/"' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'CHROMIUM_ANDROID_PROVENANCE_ONLY:-false' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'github_workspace=$(realpath -m "$GITHUB_WORKSPACE")' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'compile-proof.env' "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'compile-${artifact_target}-${target_cpu}.tar.xz' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
