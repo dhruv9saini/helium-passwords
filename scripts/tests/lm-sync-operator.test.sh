@@ -137,6 +137,8 @@ grep -Fq 'perform_registry_update server-revoke' \
   "$repo_root/scripts/install-lm-sync-service.sh"
 grep -Fq 'exec 8>/run/helium-sync-operator.lock' \
   "$repo_root/scripts/install-lm-sync-service.sh"
+grep -Fq 'install-source|install-endpoint|initialize|backup-drill|enroll-device|revoke-device|enable|disable)' \
+  "$repo_root/scripts/install-lm-sync-service.sh"
 grep -Fq -- "--noproxy '*' --tlsv1.3 --tls-max 1.3" \
   "$repo_root/scripts/install-lm-sync-service.sh"
 grep -Fq 'port $tls_port already has a listener' \

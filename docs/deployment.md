@@ -557,9 +557,9 @@ scripts/install-lm-sync-service.sh enable
 scripts/install-lm-sync-service.sh status
 ```
 
-Endpoint installation, initialization, backup-drill, registry, activation,
-and disable actions automatically cross one sudo boundary, then hold
-`/run/helium-sync-operator.lock` for the complete action.
+Source installation, endpoint installation, initialization, backup-drill,
+registry, activation, and disable actions automatically cross one sudo
+boundary, then hold `/run/helium-sync-operator.lock` for the complete action.
 Enrollment and revocation stop the in-memory registry owner, perform the
 CLI's fsync-and-rename registry transaction, validate the new registry and
 opaque journal without modifying either, restart only if the service was

@@ -10,7 +10,7 @@ endpoint_env=${HELIUM_SYNC_ENDPOINT_ENV:-/etc/helium-sync/endpoint.env}
 tls_port=44719
 
 case "$action" in
-  install-endpoint|initialize|backup-drill|enroll-device|revoke-device|enable|disable)
+  install-source|install-endpoint|initialize|backup-drill|enroll-device|revoke-device|enable|disable)
     if [[ $EUID -ne 0 ]]; then
       exec sudo "$script_path" "$@"
     fi
