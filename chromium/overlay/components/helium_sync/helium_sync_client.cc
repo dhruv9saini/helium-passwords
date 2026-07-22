@@ -36,6 +36,7 @@ namespace {
 
 constexpr char kContentType[] = "application/json";
 constexpr int kMaxSyncResponseBytes = 5 * 1024 * 1024;
+constexpr size_t kMaxSyncRequestBytes = 4 * 1024 * 1024;
 constexpr size_t kRecordsPageSize = 128;
 constexpr size_t kMaxRecordsPages = 512;
 constexpr size_t kMaxRecordsPerSync = kRecordsPageSize * kMaxRecordsPages;
@@ -234,6 +235,11 @@ void HeliumSyncClient::Push(std::vector<Record> records,
   if (!base::JSONWriter::Write(body, &body_json)) {
     std::move(callback).Run(false, RecordsResult(),
                             "failed to encode push JSON");
+    return;
+  }
+  if (body_json.size() > kMaxSyncRequestBytes) {
+    std::move(callback).Run(false, RecordsResult(),
+                            "sync request exceeded the byte limit");
     return;
   }
   auto loader = MakeJSONRequest(base_url_.Resolve("/v2/records/push"), "POST",

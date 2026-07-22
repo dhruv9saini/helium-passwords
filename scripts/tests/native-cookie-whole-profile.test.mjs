@@ -173,6 +173,47 @@ test("fresh profiles never merge unknown local and remote sessions", () => {
   }), { action: "apply" });
 });
 
+test("pending join transactionally replaces a colliding local cookie", () => {
+  assert.deepEqual(reconcile({
+    state: null,
+    remote: { revision: 1, keyId: "key-a", payloadFingerprint: "seed-value" },
+    localFingerprint: "joiner-local-value",
+    pendingEnrollment: true,
+  }), { action: "apply" });
+  assert.deepEqual(reconcile({
+    state: null,
+    remote: { revision: 1, keyId: "key-a", payloadFingerprint: "seed-value" },
+    localFingerprint: "joiner-local-value",
+  }), { action: "stop", reason: "uninitialized-local-and-remote-state" });
+
+  const initial = cookie.slice(
+    cookie.indexOf("if (state_it == state_.records.end()"),
+    cookie.indexOf("RecordState& established"),
+  );
+  assert.match(initial, /client_->enrollment_phase\(\) == "pending"/);
+  assert.ok(initial.indexOf('enrollment_phase() == "pending"') <
+    initial.indexOf("apply_updates.emplace"));
+});
+
+test("whole-profile cookie publication drains in bounded batches", () => {
+  const keys = Array.from({ length: 70 }, (_, index) =>
+    index.toString().padStart(3, "0"));
+  const batches = [];
+  while (keys.length > 0) batches.push(keys.splice(0, 32));
+  assert.deepEqual(batches.map(batch => batch.length), [32, 32, 6]);
+
+  const nonceBytes = 12;
+  const authenticationTagBytes = 16;
+  const maximumPayloadBytes = 64 * 1024;
+  const base64Bytes = bytes => 4 * Math.ceil(bytes / 3);
+  const conservativeRecordMetadataBytes = 1024;
+  const worstBatchBytes = 128 + 32 * (
+    base64Bytes(maximumPayloadBytes + authenticationTagBytes) +
+    base64Bytes(nonceBytes) + conservativeRecordMetadataBytes
+  );
+  assert.ok(worstBatchBytes < 4 * 1024 * 1024);
+});
+
 test("pending cookie enrollment records a verified baseline and publishes zero mutations", () => {
   const pendingStart = cookie.indexOf('if (client_->enrollment_phase() == "pending")');
   const pendingEnd = cookie.indexOf("if (!FinishVerifiedInventory())", pendingStart);
@@ -353,11 +394,15 @@ test("native source is whole-profile, partition-complete, rollback-first, and na
   assert.equal((enrollmentCLI.match(/cookieBridgeStateSchema/g) ?? []).length, 3);
   assert.doesNotMatch(cookie, /device_bound_sites|non_clonable|auxiliary_state/);
   assert.match(cookie, /expected_revision/);
+  assert.match(cookie, /kMaxCookiePushRecords = 32/);
+  assert.equal((cookie.match(/mutations\.size\(\) == kMaxCookiePushRecords/g) ?? []).length, 2);
   assert.match(cookie, /key_id/);
   assert.match(cookie, /enrollment_phase\(\) == "pending"/);
   assert.match(cookie, /verified_sequence/);
   assert.doesNotMatch(cookie, /cookie-policies|CookieCloud|DevTools|CDP/);
   assert.doesNotMatch(service, /cookie-policies/);
+  assert.match(client, /kMaxSyncRequestBytes = 4 \* 1024 \* 1024/);
+  assert.match(client, /body_json\.size\(\) > kMaxSyncRequestBytes/);
 });
 
 test("normal composition contains only the native password and cookie path", () => {

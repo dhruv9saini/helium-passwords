@@ -43,10 +43,10 @@ index 0000000..f30691c
 +}
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
 new file mode 100644
-index 0000000..1325ba6
+index 0000000..e31b01f
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
-@@ -0,0 +1,1609 @@
+@@ -0,0 +1,1617 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
@@ -104,6 +104,7 @@ index 0000000..1325ba6
 +constexpr size_t kMaxCookieRecords = 50000;
 +constexpr size_t kMaxCookiePayloadBytes = 64 * 1024;
 +constexpr size_t kMaxRollbackPayloadBytes = 32 * 1024 * 1024;
++constexpr size_t kMaxCookiePushRecords = 32;
 +constexpr base::TimeDelta kReconcileInterval = base::Minutes(1);
 +
 +constexpr char kDeletedFingerprint[] = "deleted";
@@ -926,7 +927,8 @@ index 0000000..1325ba6
 +          return;
 +        }
 +        if (remote_cookie.effective_deleted ||
-+            local_it == local.cookies.end()) {
++            local_it == local.cookies.end() ||
++            client_->enrollment_phase() == "pending") {
 +          apply_updates.emplace(key, remote_cookie);
 +        } else if (local_fingerprint == remote_cookie.cookie_fingerprint) {
 +          AcceptRemoteState(remote_cookie, local_fingerprint);
@@ -1018,6 +1020,9 @@ index 0000000..1325ba6
 +    }
 +    std::vector<Record> mutations;
 +    for (const auto& [key, cookie] : local.cookies) {
++      if (mutations.size() == kMaxCookiePushRecords) {
++        break;
++      }
 +      auto state_it = state_.records.find(key);
 +      std::string fingerprint = local.cookie_fingerprints.at(key);
 +      if (state_it != state_.records.end() &&
@@ -1045,6 +1050,9 @@ index 0000000..1325ba6
 +    }
 +
 +    for (auto& [key, record_state] : state_.records) {
++      if (mutations.size() == kMaxCookiePushRecords) {
++        break;
++      }
 +      if (record_state.remote_revision == 0 || record_state.remote_deleted ||
 +          local.cookies.contains(key) || record_state.pending) {
 +        continue;
@@ -4050,10 +4058,10 @@ index 0000000..28edcbf
 +#endif // COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
 diff --git a/components/helium_sync/helium_sync_client.cc b/components/helium_sync/helium_sync_client.cc
 new file mode 100644
-index 0000000..6a208ec
+index 0000000..b52110b
 --- /dev/null
 +++ b/components/helium_sync/helium_sync_client.cc
-@@ -0,0 +1,897 @@
+@@ -0,0 +1,903 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_sync_client.h"
@@ -4092,6 +4100,7 @@ index 0000000..6a208ec
 +
 +constexpr char kContentType[] = "application/json";
 +constexpr int kMaxSyncResponseBytes = 5 * 1024 * 1024;
++constexpr size_t kMaxSyncRequestBytes = 4 * 1024 * 1024;
 +constexpr size_t kRecordsPageSize = 128;
 +constexpr size_t kMaxRecordsPages = 512;
 +constexpr size_t kMaxRecordsPerSync = kRecordsPageSize * kMaxRecordsPages;
@@ -4290,6 +4299,11 @@ index 0000000..6a208ec
 +  if (!base::JSONWriter::Write(body, &body_json)) {
 +    std::move(callback).Run(false, RecordsResult(),
 +                            "failed to encode push JSON");
++    return;
++  }
++  if (body_json.size() > kMaxSyncRequestBytes) {
++    std::move(callback).Run(false, RecordsResult(),
++                            "sync request exceeded the byte limit");
 +    return;
 +  }
 +  auto loader = MakeJSONRequest(base_url_.Resolve("/v2/records/push"), "POST",
