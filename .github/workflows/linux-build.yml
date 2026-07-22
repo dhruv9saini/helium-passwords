@@ -368,6 +368,7 @@ jobs:
             printf 'version=%s\n' "${version}"
             printf 'platform=linux\n'
             printf 'arch=%s\n' "${ARCH}"
+            cat .helium-platform-source.env
           } > "${output_dir}/manifest.env"
           printf '%s\n' "${version}" > "${output_dir}/version.txt"
       - uses: actions/upload-artifact@v7

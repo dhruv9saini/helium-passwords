@@ -90,6 +90,7 @@ version="$(
     printf 'version=%s\n' "${version}"
     printf 'platform=%s\n' "${platform}"
     printf 'arch=%s\n' "${arch}"
+    cat "${checkout}/.helium-platform-source.env"
 } > "${output_dir}/manifest.env"
 
 printf '%s\n' "${version}" > "${output_dir}/version.txt"

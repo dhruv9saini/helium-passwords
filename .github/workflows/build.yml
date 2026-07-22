@@ -26,10 +26,10 @@ on:
           - x86_64
           - arm64
       platform-ref:
-        description: Branch or tag to clone from platform repos
+        description: Optional platform ref; Linux must still resolve to its locked full commit
         required: false
         type: string
-        default: main
+        default: ""
       run-build:
         description: Run the selected full platform build after target checks
         required: true
@@ -82,7 +82,7 @@ jobs:
             runner: windows-2025
     runs-on: ${{ matrix.runner }}
     env:
-      HELIUM_PLATFORM_REF: ${{ github.event_name == 'workflow_dispatch' && inputs['platform-ref'] || 'main' }}
+      HELIUM_PLATFORM_REF: ${{ github.event_name == 'workflow_dispatch' && inputs['platform-ref'] || '' }}
       TARGET_SELECTED: >-
         ${{
           github.event_name != 'workflow_dispatch' ||

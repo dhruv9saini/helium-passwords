@@ -48,9 +48,21 @@ fi
 shift || true
 
 case "${platform}" in
-    linux) repo_url="${HELIUM_LINUX_REPO}" ;;
-    macos) repo_url="${HELIUM_MACOS_REPO}" ;;
-    windows) repo_url="${HELIUM_WINDOWS_REPO}" ;;
+    linux)
+        repo_url="${HELIUM_LINUX_REPO}"
+        platform_ref="${HELIUM_PLATFORM_REF:-${HELIUM_LINUX_PLATFORM_REF}}"
+        expected_platform_commit="${HELIUM_LINUX_PLATFORM_COMMIT}"
+        ;;
+    macos)
+        repo_url="${HELIUM_MACOS_REPO}"
+        platform_ref="${HELIUM_PLATFORM_REF:-main}"
+        expected_platform_commit=
+        ;;
+    windows)
+        repo_url="${HELIUM_WINDOWS_REPO}"
+        platform_ref="${HELIUM_PLATFORM_REF:-main}"
+        expected_platform_commit=
+        ;;
     *)
         echo "unknown platform: ${platform}" >&2
         usage
@@ -58,14 +70,34 @@ case "${platform}" in
         ;;
 esac
 
+if [ -n "${expected_platform_commit}" ] && \
+    ! [[ "${expected_platform_commit}" =~ ^[0-9a-f]{40}$ ]]; then
+    echo "expected platform commit is not an immutable SHA-1" >&2
+    exit 1
+fi
+
 destination="${1:-${root_dir}/${HELIUM_WORK_DIR}/${platform}}"
 mkdir -p "$(dirname "${destination}")"
 
 if [ ! -d "${destination}/.git" ]; then
-    git clone --depth 1 --branch "${HELIUM_PLATFORM_REF}" "${repo_url}" "${destination}" >&2
+    git clone --depth 1 --branch "${platform_ref}" "${repo_url}" "${destination}" >&2
 else
     echo "using existing platform checkout: ${destination}" >&2
 fi
+
+actual_platform_commit=$(git -C "${destination}" rev-parse HEAD)
+if [ -n "${expected_platform_commit}" ] && \
+    [ "${actual_platform_commit}" != "${expected_platform_commit}" ]; then
+    echo "${platform} platform checkout does not match its immutable commit lock" >&2
+    exit 1
+fi
+
+cat >"${destination}/.helium-platform-source.env" <<EOF
+platform_source_schema_version=1
+platform_repository=${repo_url}
+platform_requested_ref=${platform_ref}
+platform_commit=${actual_platform_commit}
+EOF
 
 if [ "${skip_submodules}" != true ]; then
     git -C "${destination}" submodule update --init --recursive helium-chromium >&2

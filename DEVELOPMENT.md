@@ -96,7 +96,11 @@ Treat Helium core plus its three desktop platform repositories as one immutable
 train. Never build an unrecorded mixture of moving `main` branches.
 
 1. Fetch the latest public repo, Helium core tags, and the Linux/macOS/Windows
-   platform refs. Record exact commit IDs and the Chromium version.
+   platform refs. Linux uses release label `0.12.4.1` only for retrieval and
+   fails unless `HEAD` is full commit
+   `105d2f4d32f863094eaa27789e82ddc3e42f7106`; the commit, not the tag, is the
+   trusted input and is recorded in the artifact manifest. Record exact commit
+   IDs and the Chromium version for every other platform before building.
 2. Select one Helium release train. Update the submodule and platform refs in a
    single commit.
 3. Materialize each platform and confirm that all three resolve to the same
