@@ -5,6 +5,8 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 builder="$repo_root/scripts/chromium/build-android-control-ci.sh"
 
 [[ "$(grep -Fc 'prepare-android-source.sh" "$workspace"' "$builder")" -eq 1 ]]
+grep -Fq 'ensure_bootstrap' \
+  "$repo_root/scripts/chromium/prepare-android-source.sh"
 grep -Fq 'git diff --quiet HEAD --' "$builder"
 grep -Fq 'git diff --cached --quiet HEAD --' "$builder"
 grep -Fq 'upstream-control' "$builder"

@@ -21,7 +21,7 @@ expected_commit=$2
   exit 1
 }
 
-for tracked_file in gclient gclient.py update_depot_tools; do
+for tracked_file in ensure_bootstrap gclient gclient.py update_depot_tools; do
   expected_blob=$(git -C "$depot_tools" rev-parse \
     "$expected_commit:$tracked_file")
   working_blob=$(git -C "$depot_tools" hash-object "$tracked_file")

@@ -54,6 +54,12 @@ git -C "$(dirname "$0")" checkout --detach "$MUTATED_DEPOT_COMMIT" >/dev/null
 EOF
 chmod +x "$test_root/depot-tools/update_depot_tools"
 
+cat > "$test_root/depot-tools/ensure_bootstrap" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+EOF
+chmod +x "$test_root/depot-tools/ensure_bootstrap"
+
 cat > "$test_root/depot-tools/gclient" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -83,7 +89,7 @@ chmod +x "$test_root/depot-tools/gclient"
 git -C "$test_root/depot-tools" init -q
 git -C "$test_root/depot-tools" config user.email test@helium.invalid
 git -C "$test_root/depot-tools" config user.name 'Helium Test'
-git -C "$test_root/depot-tools" add gclient gclient.py update_depot_tools
+git -C "$test_root/depot-tools" add ensure_bootstrap gclient gclient.py update_depot_tools
 git -C "$test_root/depot-tools" commit -qm pinned
 pinned_depot_commit=$(git -C "$test_root/depot-tools" rev-parse HEAD)
 printf 'mutation\n' > "$test_root/depot-tools/mutation-marker"
@@ -246,6 +252,12 @@ proof_budget_bytes=$((2 * gib_bytes))
 [[ "$((proof_budget_bytes - retained_tree_bytes))" -eq 663654400 ]]
 
 source_helper="$repo_root/scripts/chromium/prepare-android-source.sh"
+grep -Fq 'DEPOT_TOOLS_UPDATE=0 "${depot_tools}/ensure_bootstrap"' \
+  "$source_helper"
+grep -Fq 'python3_reldir=$(<"${depot_tools}/python3_bin_reldir.txt")' \
+  "$source_helper"
+grep -Fq '"${depot_tools}/python-bin/python3" --version' \
+  "$source_helper"
 grep -Fq -- '--revision "src@${chromium_ref}" --nohooks --no-history' \
   "$source_helper"
 grep -Fq 'actual_chromium_ref=$(git -C "${workspace}/src" rev-parse HEAD)' \

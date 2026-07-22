@@ -97,6 +97,8 @@ grep -Fq 'probe_schema_version=1' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'prepare-android-source.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'ensure_bootstrap' \
+  "$repo_root/scripts/chromium/prepare-android-source.sh"
 ! grep -Fq 'gclient-sync-direct.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 ! grep -Fq 'cache_dir = None' \
