@@ -43,10 +43,10 @@ index 0000000..f30691c
 +}
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
 new file mode 100644
-index 0000000..eed7911
+index 0000000..1325ba6
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
-@@ -0,0 +1,1538 @@
+@@ -0,0 +1,1609 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
@@ -95,12 +95,12 @@ index 0000000..eed7911
 +namespace {
 +
 +constexpr char kCookieKind[] = "cookies";
-+constexpr char kCookiePayloadFormat[] = "helium-cookie-v2";
++constexpr char kCookiePayloadFormat[] = "helium-cookie-v3";
 +constexpr char kRollbackPayloadFormat[] = "helium-cookie-rollback-v1";
 +constexpr char kRollbackPurpose[] = "cookie-apply-rollback-v1";
-+constexpr int kStateSchema = 2;
++constexpr int kStateSchema = 3;
 +constexpr int kRollbackSchema = 1;
-+constexpr int kReauthSchema = 1;
++constexpr int kReauthSchema = 2;
 +constexpr size_t kMaxCookieRecords = 50000;
 +constexpr size_t kMaxCookiePayloadBytes = 64 * 1024;
 +constexpr size_t kMaxRollbackPayloadBytes = 32 * 1024 * 1024;
@@ -116,6 +116,14 @@ index 0000000..eed7911
 +  bool deleted = false;
 +};
 +
++struct DestinationException {
++  int64_t remote_revision = 0;
++  std::string remote_payload_fingerprint;
++  std::string reason;
++  std::string site;
++  std::set<std::string> observed_session_ids;
++};
++
 +struct RecordState {
 +  int64_t remote_revision = 0;
 +  std::string key_id;
@@ -123,9 +131,7 @@ index 0000000..eed7911
 +  std::string remote_payload_fingerprint;
 +  std::string baseline_cookie_fingerprint;
 +  bool remote_deleted = false;
-+  bool non_clonable = false;
-+  std::string non_clonable_reason;
-+  std::string site;
++  std::optional<DestinationException> destination_exception;
 +  std::optional<PendingPublish> pending;
 +};
 +
@@ -149,9 +155,10 @@ index 0000000..eed7911
 +  std::string payload_fingerprint;
 +  std::string cookie_fingerprint = kDeletedFingerprint;
 +  bool effective_deleted = false;
-+  bool device_bound = false;
-+  std::string site;
 +};
++
++using DeviceBoundSessionInventory =
++    std::map<std::string, std::set<std::string>>;
 +
 +struct CookieOperation {
 +  bool set = false;
@@ -403,8 +410,7 @@ index 0000000..eed7911
 +}
 +
 +std::optional<std::string> MakeCookiePayload(
-+    const net::CanonicalCookie& cookie,
-+    const std::set<std::string>& device_bound_sites) {
++    const net::CanonicalCookie& cookie) {
 +  std::optional<base::DictValue> serialized = CookieToValue(cookie);
 +  if (!serialized) {
 +    return std::nullopt;
@@ -412,14 +418,6 @@ index 0000000..eed7911
 +  base::DictValue root;
 +  root.Set("format", kCookiePayloadFormat);
 +  root.Set("cookie", std::move(*serialized));
-+  std::string site = SiteForCookie(cookie);
-+  if (!site.empty() && device_bound_sites.contains(site)) {
-+    base::DictValue auxiliary;
-+    auxiliary.Set("kind", "device-bound-session");
-+    auxiliary.Set("site", site);
-+    auxiliary.Set("transfer", "password-reauthentication");
-+    root.Set("auxiliary_state", std::move(auxiliary));
-+  }
 +  std::string raw;
 +  if (!base::JSONWriter::Write(root, &raw) ||
 +      raw.size() > kMaxCookiePayloadBytes) {
@@ -468,19 +466,6 @@ index 0000000..eed7911
 +  if (!key || *key != out.record.key || !fingerprint) {
 +    return std::nullopt;
 +  }
-+  if (const base::DictValue* auxiliary =
-+          parsed->GetDict().FindDict("auxiliary_state")) {
-+    const std::string* kind = auxiliary->FindString("kind");
-+    const std::string* site = auxiliary->FindString("site");
-+    const std::string* transfer = auxiliary->FindString("transfer");
-+    if (!kind || *kind != "device-bound-session" || !site || site->empty() ||
-+        !transfer || *transfer != "password-reauthentication" ||
-+        *site != SiteForCookie(*cookie)) {
-+      return std::nullopt;
-+    }
-+    out.device_bound = true;
-+    out.site = *site;
-+  }
 +  out.payload_fingerprint = Sha256(out.record.payload_json);
 +  out.cookie_fingerprint = std::move(*fingerprint);
 +  out.effective_deleted = cookie->IsExpired(base::Time::Now());
@@ -511,9 +496,23 @@ index 0000000..eed7911
 +  value.Set("remote_payload_fingerprint", state.remote_payload_fingerprint);
 +  value.Set("baseline_cookie_fingerprint", state.baseline_cookie_fingerprint);
 +  value.Set("remote_deleted", state.remote_deleted);
-+  value.Set("non_clonable", state.non_clonable);
-+  value.Set("non_clonable_reason", state.non_clonable_reason);
-+  value.Set("site", state.site);
++  if (state.destination_exception) {
++    base::DictValue exception;
++    exception.Set(
++        "remote_revision",
++        base::NumberToString(state.destination_exception->remote_revision));
++    exception.Set("remote_payload_fingerprint",
++                  state.destination_exception->remote_payload_fingerprint);
++    exception.Set("reason", state.destination_exception->reason);
++    exception.Set("site", state.destination_exception->site);
++    base::ListValue sessions;
++    for (const std::string& session_id :
++         state.destination_exception->observed_session_ids) {
++      sessions.Append(session_id);
++    }
++    exception.Set("observed_session_ids", std::move(sessions));
++    value.Set("destination_exception", std::move(exception));
++  }
 +  if (state.pending) {
 +    base::DictValue pending;
 +    pending.Set("expected_revision",
@@ -547,12 +546,37 @@ index 0000000..eed7911
 +  state.remote_payload_fingerprint = *remote_payload;
 +  state.baseline_cookie_fingerprint = *baseline;
 +  state.remote_deleted = *deleted;
-+  state.non_clonable = value.FindBool("non_clonable").value_or(false);
-+  if (const std::string* reason = value.FindString("non_clonable_reason")) {
-+    state.non_clonable_reason = *reason;
-+  }
-+  if (const std::string* site = value.FindString("site")) {
-+    state.site = *site;
++  if (const base::DictValue* exception =
++          value.FindDict("destination_exception")) {
++    DestinationException parsed;
++    std::optional<int64_t> exception_revision =
++        Int64FromJSON(*exception, "remote_revision");
++    const std::string* exception_payload =
++        exception->FindString("remote_payload_fingerprint");
++    const std::string* reason = exception->FindString("reason");
++    const std::string* site = exception->FindString("site");
++    const base::ListValue* sessions =
++        exception->FindList("observed_session_ids");
++    if (!exception_revision || *exception_revision <= 0 || !exception_payload ||
++        !IsLowerHexDigest(*exception_payload) || !reason || reason->empty() ||
++        !site || site->empty() || !sessions) {
++      return std::nullopt;
++    }
++    parsed.remote_revision = *exception_revision;
++    parsed.remote_payload_fingerprint = *exception_payload;
++    parsed.reason = *reason;
++    parsed.site = *site;
++    for (const base::Value& session : *sessions) {
++      if (!session.is_string() || session.GetString().empty() ||
++          !parsed.observed_session_ids.insert(session.GetString()).second) {
++        return std::nullopt;
++      }
++    }
++    if (parsed.remote_revision != state.remote_revision ||
++        parsed.remote_payload_fingerprint != state.remote_payload_fingerprint) {
++      return std::nullopt;
++    }
++    state.destination_exception = std::move(parsed);
 +  }
 +  if (const base::DictValue* pending = value.FindDict("pending_publish")) {
 +    PendingPublish parsed;
@@ -705,8 +729,15 @@ index 0000000..eed7911
 +      state_.migrated_from_policy_v1 = true;
 +      return true;
 +    }
-+    if (schema != kStateSchema) {
++    const bool migrate_schema_v2 = schema == 2;
++    if (!migrate_schema_v2 && schema != kStateSchema) {
 +      return false;
++    }
++    if (migrate_schema_v2) {
++      base::FilePath backup = state_path_.AddExtensionASCII("schema-v2.bak");
++      if (!base::PathExists(backup) && !WriteSecretFile(backup, raw)) {
++        return false;
++      }
 +    }
 +    if (const std::string* blocked =
 +            parsed->GetDict().FindString("blocked_reason")) {
@@ -734,7 +765,7 @@ index 0000000..eed7911
 +      }
 +      state_.records.emplace(key, std::move(*record));
 +    }
-+    return true;
++    return !migrate_schema_v2 || SaveState();
 +  }
 +
 +  bool SaveState() const {
@@ -815,7 +846,8 @@ index 0000000..eed7911
 +    auto* manager =
 +        profile_->GetDefaultStoragePartition()->GetDeviceBoundSessionManager();
 +    if (!manager) {
-+      ReconcileSnapshots(std::move(remote), std::move(*local), {});
++      ReconcileSnapshots(std::move(remote), std::move(*local),
++                         DeviceBoundSessionInventory());
 +      return;
 +    }
 +    manager->GetAllSessions(
@@ -827,19 +859,21 @@ index 0000000..eed7911
 +      std::map<std::string, RemoteCookie> remote,
 +      CookieSnapshot local,
 +      std::vector<network::mojom::DeviceBoundSessionKeyPtr> sessions) {
-+    std::set<std::string> sites;
++    DeviceBoundSessionInventory inventory;
 +    for (const auto& session : sessions) {
-+      if (!session || session->site.opaque()) {
++      if (!session || session->site.opaque() || session->id.empty()) {
 +        continue;
 +      }
-+      sites.insert(session->site.Serialize());
++      inventory[session->site.Serialize()].insert(session->id);
 +    }
-+    ReconcileSnapshots(std::move(remote), std::move(local), std::move(sites));
++    ReconcileSnapshots(std::move(remote), std::move(local),
++                       std::move(inventory));
 +  }
 +
 +  void ReconcileSnapshots(std::map<std::string, RemoteCookie> remote,
 +                          CookieSnapshot local,
-+                          std::set<std::string> device_bound_sites) {
++                          DeviceBoundSessionInventory session_inventory) {
++    observed_device_bound_sessions_ = std::move(session_inventory);
 +    // First resolve ambiguous successful pushes from the durable pending state.
 +    for (auto& [key, record_state] : state_.records) {
 +      if (!record_state.pending) {
@@ -851,12 +885,19 @@ index 0000000..eed7911
 +              record_state.pending->target_revision &&
 +          found->second.payload_fingerprint ==
 +              record_state.pending->payload_fingerprint &&
-+          found->second.record.deleted == record_state.pending->deleted) {
++          found->second.record.deleted == record_state.pending->deleted &&
++          found->second.record.key_id == client_->active_key_id()) {
 +        AcceptRemoteState(found->second,
-+                          record_state.pending->cookie_fingerprint,
-+                          /*non_clonable=*/false, "");
++                          record_state.pending->cookie_fingerprint);
 +        state_.records[key].pending.reset();
 +        continue;
++      }
++      if (found != remote.end() &&
++          found->second.record.revision ==
++              record_state.pending->target_revision &&
++          found->second.record.key_id != client_->active_key_id()) {
++        Block("cookie-publication-confirmed-under-stale-key-epoch");
++        return;
 +      }
 +      if (found == remote.end() &&
 +          record_state.pending->expected_revision == 0) {
@@ -871,7 +912,6 @@ index 0000000..eed7911
 +    }
 +
 +    std::map<std::string, RemoteCookie> apply_updates;
-+    std::set<std::string> reauth_sites;
 +    for (auto& [key, remote_cookie] : remote) {
 +      auto state_it = state_.records.find(key);
 +      auto local_it = local.cookies.find(key);
@@ -881,16 +921,15 @@ index 0000000..eed7911
 +
 +      if (state_it == state_.records.end() ||
 +          state_it->second.remote_revision == 0) {
-+        if (remote_cookie.device_bound) {
-+          AcceptRemoteState(remote_cookie, local_fingerprint,
-+                            /*non_clonable=*/true, "device-bound-session");
-+          reauth_sites.insert(remote_cookie.site);
-+        } else if (remote_cookie.effective_deleted ||
-+                   local_it == local.cookies.end()) {
++        if (remote_cookie.record.key_id != client_->active_key_id()) {
++          Block("cookie-initial-record-uses-stale-key-epoch");
++          return;
++        }
++        if (remote_cookie.effective_deleted ||
++            local_it == local.cookies.end()) {
 +          apply_updates.emplace(key, remote_cookie);
 +        } else if (local_fingerprint == remote_cookie.cookie_fingerprint) {
-+          AcceptRemoteState(remote_cookie, local_fingerprint,
-+                            /*non_clonable=*/false, "");
++          AcceptRemoteState(remote_cookie, local_fingerprint);
 +        } else {
 +          Block("uninitialized-cookie-has-local-and-remote-values");
 +          return;
@@ -903,11 +942,11 @@ index 0000000..eed7911
 +        Block("cookie-authority-revision-regressed");
 +        return;
 +      }
-+      if (remote_cookie.record.key_id != established.key_id) {
-+        Block("cookie-key-epoch-changed");
-+        return;
-+      }
 +      if (remote_cookie.record.revision == established.remote_revision) {
++        if (remote_cookie.record.key_id != established.key_id) {
++          Block("cookie-same-revision-key-epoch-changed");
++          return;
++        }
 +        if (remote_cookie.payload_fingerprint !=
 +                established.remote_payload_fingerprint ||
 +            remote_cookie.record.deleted != established.remote_deleted) {
@@ -916,20 +955,13 @@ index 0000000..eed7911
 +        }
 +        continue;
 +      }
++      if (remote_cookie.record.key_id != client_->active_key_id()) {
++        Block("cookie-newer-record-uses-stale-key-epoch");
++        return;
++      }
 +      if (local_fingerprint != established.baseline_cookie_fingerprint) {
 +        Block("concurrent-local-and-remote-cookie-change");
 +        return;
-+      }
-+      if (remote_cookie.device_bound || established.non_clonable) {
-+        AcceptRemoteState(remote_cookie, local_fingerprint,
-+                          /*non_clonable=*/true,
-+                          remote_cookie.device_bound
-+                              ? "device-bound-session"
-+                              : established.non_clonable_reason);
-+        if (!remote_cookie.site.empty()) {
-+          reauth_sites.insert(remote_cookie.site);
-+        }
-+        continue;
 +      }
 +      apply_updates.emplace(key, remote_cookie);
 +    }
@@ -937,13 +969,6 @@ index 0000000..eed7911
 +    for (const auto& [key, established] : state_.records) {
 +      if (established.remote_revision > 0 && !remote.contains(key)) {
 +        Block("cookie-authority-record-disappeared");
-+        return;
-+      }
-+    }
-+    if (!reauth_sites.empty()) {
-+      if (!WriteReauthSignal("non-clonable-device-bound-session",
-+                             reauth_sites)) {
-+        Block("cookie-reauth-signal-write-failed");
 +        return;
 +      }
 +    }
@@ -957,14 +982,11 @@ index 0000000..eed7911
 +      return;
 +    }
 +
-+    PublishLocalMutations(std::move(local), std::move(remote),
-+                          std::move(device_bound_sites));
++    PublishLocalMutations(std::move(local));
 +  }
 +
 +  void AcceptRemoteState(const RemoteCookie& remote,
-+                         std::string baseline,
-+                         bool non_clonable,
-+                         std::string reason) {
++                         std::string baseline) {
 +    RecordState& state = state_.records[remote.record.key];
 +    state.remote_revision = remote.record.revision;
 +    state.key_id = remote.record.key_id;
@@ -972,15 +994,11 @@ index 0000000..eed7911
 +    state.remote_payload_fingerprint = remote.payload_fingerprint;
 +    state.baseline_cookie_fingerprint = std::move(baseline);
 +    state.remote_deleted = remote.record.deleted;
-+    state.non_clonable = non_clonable;
-+    state.non_clonable_reason = std::move(reason);
-+    state.site = remote.site;
++    state.destination_exception.reset();
 +    state.pending.reset();
 +  }
 +
-+  void PublishLocalMutations(CookieSnapshot local,
-+                             std::map<std::string, RemoteCookie> remote,
-+                             std::set<std::string> device_bound_sites) {
++  void PublishLocalMutations(CookieSnapshot local) {
 +    if (client_->enrollment_phase() == "pending") {
 +      for (const auto& [key, cookie] : local.cookies) {
 +        if (state_.records.contains(key)) {
@@ -989,7 +1007,6 @@ index 0000000..eed7911
 +        RecordState baseline;
 +        baseline.baseline_cookie_fingerprint =
 +            local.cookie_fingerprints.at(key);
-+        baseline.site = SiteForCookie(cookie);
 +        state_.records.emplace(key, std::move(baseline));
 +      }
 +      FinishVerifiedInventory();
@@ -1004,15 +1021,13 @@ index 0000000..eed7911
 +      auto state_it = state_.records.find(key);
 +      std::string fingerprint = local.cookie_fingerprints.at(key);
 +      if (state_it != state_.records.end() &&
-+          (state_it->second.non_clonable ||
-+           fingerprint == state_it->second.baseline_cookie_fingerprint)) {
++          fingerprint == state_it->second.baseline_cookie_fingerprint) {
 +        continue;
 +      }
 +      int64_t expected = state_it == state_.records.end()
 +                             ? 0
 +                             : state_it->second.remote_revision;
-+      std::optional<std::string> payload =
-+          MakeCookiePayload(cookie, device_bound_sites);
++      std::optional<std::string> payload = MakeCookiePayload(cookie);
 +      if (!payload) {
 +        Block("cookie-payload-not-fully-serializable");
 +        return;
@@ -1031,8 +1046,7 @@ index 0000000..eed7911
 +
 +    for (auto& [key, record_state] : state_.records) {
 +      if (record_state.remote_revision == 0 || record_state.remote_deleted ||
-+          record_state.non_clonable || local.cookies.contains(key) ||
-+          record_state.pending) {
++          local.cookies.contains(key) || record_state.pending) {
 +        continue;
 +      }
 +      Record mutation;
@@ -1126,7 +1140,7 @@ index 0000000..eed7911
 +        std::string baseline = target.cookies.contains(key)
 +                                   ? target.cookie_fingerprints.at(key)
 +                                   : kDeletedFingerprint;
-+        AcceptRemoteState(remote, std::move(baseline), false, "");
++        AcceptRemoteState(remote, std::move(baseline));
 +      }
 +      if (!SaveState()) {
 +        Block("cookie-state-write-failed-after-empty-apply");
@@ -1393,8 +1407,9 @@ index 0000000..eed7911
 +        Block("cookie-rollback-set-rejected");
 +        return;
 +      }
-+      rejected_record_key_ = current_operation_->record_key;
-+      rejected_site_ = SiteForCookie(current_operation_->cookie);
++      rejected_record_keys_.insert(current_operation_->record_key);
++      rejected_sites_[current_operation_->record_key] =
++          SiteForCookie(current_operation_->cookie);
 +      OnOperationFailed("destination-set-rejected");
 +      return;
 +    }
@@ -1411,6 +1426,9 @@ index 0000000..eed7911
 +
 +  void OnOperationFailed(std::string reason) {
 +    LOG(WARNING) << "Helium cookie operation failed: " << reason;
++    if (rejected_record_keys_.empty()) {
++      unscoped_apply_failure_ = true;
++    }
 +    operation_queue_.clear();
 +    current_operation_.reset();
 +    profile_->GetDefaultStoragePartition()
@@ -1451,30 +1469,66 @@ index 0000000..eed7911
 +        Block("cookie-rollback-recovery-state-write-failed");
 +        return;
 +      }
-+      if (!rejected_record_key_.empty()) {
-+        auto remote = apply_updates_.find(rejected_record_key_);
-+        if (remote != apply_updates_.end()) {
-+          std::string baseline =
-+              current->cookies.contains(rejected_record_key_)
-+                  ? current->cookie_fingerprints.at(rejected_record_key_)
-+                  : kDeletedFingerprint;
-+          AcceptRemoteState(remote->second, std::move(baseline), true,
-+                            "destination-set-rejected");
-+          if (!WriteReauthSignal("destination-cookie-rejected",
-+                                 {rejected_site_}) ||
-+              !SaveState()) {
-+            Block("cookie-rejection-state-write-failed");
-+            return;
-+          }
++      std::map<std::string, DestinationException> exceptions;
++      for (const std::string& record_key : rejected_record_keys_) {
++        auto remote = apply_updates_.find(record_key);
++        auto site = rejected_sites_.find(record_key);
++        if (remote == apply_updates_.end() || site == rejected_sites_.end() ||
++            site->second.empty()) {
++          Block("cookie-rejection-scope-invalid");
++          return;
 +        }
++        std::string baseline = current->cookies.contains(record_key)
++                                   ? current->cookie_fingerprints.at(record_key)
++                                   : kDeletedFingerprint;
++        AcceptRemoteState(remote->second, std::move(baseline));
++        DestinationException exception;
++        exception.remote_revision = remote->second.record.revision;
++        exception.remote_payload_fingerprint =
++            remote->second.payload_fingerprint;
++        exception.reason = "destination-set-rejected";
++        exception.site = site->second;
++        auto observed = observed_device_bound_sessions_.find(site->second);
++        if (observed != observed_device_bound_sessions_.end()) {
++          exception.observed_session_ids = observed->second;
++        }
++        state_.records[record_key].destination_exception = exception;
++        exceptions.emplace(record_key, std::move(exception));
 +      }
++      if (!SaveState() ||
++          (!exceptions.empty() && !WriteReauthSignal(exceptions))) {
++        Block("cookie-rejection-state-write-failed");
++        return;
++      }
++      bool block_unscoped = unscoped_apply_failure_;
 +      ResetApply();
++      if (block_unscoped) {
++        Block("cookie-post-apply-unscoped-mismatch");
++        return;
++      }
 +      reconcile_in_flight_ = false;
 +      Reconcile();
 +      return;
 +    }
 +
 +    if (current->fingerprint != apply_target_.fingerprint) {
++      for (const auto& [key, remote] : apply_updates_) {
++        bool matches = remote.effective_deleted
++                           ? !current->cookies.contains(key)
++                           : current->cookies.contains(key) &&
++                                 current->cookie_fingerprints.at(key) ==
++                                     remote.cookie_fingerprint;
++        if (matches) {
++          continue;
++        }
++        rejected_record_keys_.insert(key);
++        if (remote.cookie) {
++          rejected_sites_[key] = SiteForCookie(*remote.cookie);
++        } else if (apply_before_.cookies.contains(key)) {
++          rejected_sites_[key] =
++              SiteForCookie(apply_before_.cookies.at(key));
++        }
++      }
 +      OnOperationFailed("cookie-post-apply-verification-mismatch");
 +      return;
 +    }
@@ -1482,7 +1536,7 @@ index 0000000..eed7911
 +      std::string baseline = current->cookies.contains(key)
 +                                 ? current->cookie_fingerprints.at(key)
 +                                 : kDeletedFingerprint;
-+      AcceptRemoteState(remote, std::move(baseline), false, "");
++      AcceptRemoteState(remote, std::move(baseline));
 +    }
 +    if (!SaveState()) {
 +      Block("cookie-state-write-failed-after-apply");
@@ -1505,25 +1559,40 @@ index 0000000..eed7911
 +    apply_before_ = CookieSnapshot();
 +    apply_target_ = CookieSnapshot();
 +    active_journal_.reset();
-+    rejected_record_key_.clear();
-+    rejected_site_.clear();
++    rejected_record_keys_.clear();
++    rejected_sites_.clear();
++    observed_device_bound_sessions_.clear();
++    unscoped_apply_failure_ = false;
 +    restoring_ = false;
 +  }
 +
-+  bool WriteReauthSignal(std::string reason,
-+                         const std::set<std::string>& sites) const {
-+    base::ListValue list;
-+    for (const std::string& site : sites) {
-+      if (!site.empty()) {
-+        list.Append(site);
++  bool WriteReauthSignal(
++      const std::map<std::string, DestinationException>& exceptions) const {
++    base::ListValue targets;
++    for (const auto& [record_key, exception] : exceptions) {
++      base::ListValue sessions;
++      for (const std::string& session_id : exception.observed_session_ids) {
++        base::DictValue session;
++        session.Set("site", exception.site);
++        session.Set("session_id", session_id);
++        sessions.Append(std::move(session));
 +      }
++      base::DictValue target;
++      target.Set("canonical_cookie_record_key", record_key);
++      target.Set("remote_revision",
++                 base::NumberToString(exception.remote_revision));
++      target.Set("remote_payload_fingerprint",
++                 exception.remote_payload_fingerprint);
++      target.Set("site", exception.site);
++      target.Set("observed_site_sessions", std::move(sessions));
++      targets.Append(std::move(target));
 +    }
 +    base::DictValue root;
 +    root.Set("schema_version", kReauthSchema);
-+    root.Set("action", "automatic-password-reauthentication");
++    root.Set("action", "password-reauthentication-required");
 +    root.Set("status", "pending-browser-integration");
-+    root.Set("reason", std::move(reason));
-+    root.Set("sites", std::move(list));
++    root.Set("reason", "destination-cookie-rejected");
++    root.Set("targets", std::move(targets));
 +    root.Set("created_at", base::TimeToISO8601(base::Time::Now()));
 +    std::string raw;
 +    return base::JSONWriter::Write(root, &raw) &&
@@ -1538,12 +1607,14 @@ index 0000000..eed7911
 +  BridgeState state_;
 +  CookieSnapshot apply_before_;
 +  CookieSnapshot apply_target_;
++  DeviceBoundSessionInventory observed_device_bound_sessions_;
 +  std::map<std::string, RemoteCookie> apply_updates_;
 +  std::deque<CookieOperation> operation_queue_;
 +  std::optional<CookieOperation> current_operation_;
 +  std::optional<RollbackJournal> active_journal_;
-+  std::string rejected_record_key_;
-+  std::string rejected_site_;
++  std::set<std::string> rejected_record_keys_;
++  std::map<std::string, std::string> rejected_sites_;
++  bool unscoped_apply_failure_ = false;
 +  bool restoring_ = false;
 +  bool reconcile_in_flight_ = false;
 +  int64_t pending_next_seq_ = 0;
@@ -2457,14 +2528,16 @@ index 0000000..9747ead
 +}
 diff --git a/components/helium_sync/helium_password_sync_bridge.cc b/components/helium_sync/helium_password_sync_bridge.cc
 new file mode 100644
-index 0000000..8af376f
+index 0000000..b966531
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.cc
-@@ -0,0 +1,824 @@
+@@ -0,0 +1,1365 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_password_sync_bridge.h"
 +
++#include <algorithm>
++#include <limits>
 +#include <map>
 +#include <optional>
 +#include <string>
@@ -2480,6 +2553,7 @@ index 0000000..8af376f
 +#include "base/json/json_writer.h"
 +#include "base/location.h"
 +#include "base/logging.h"
++#include "base/numerics/safe_conversions.h"
 +#include "base/strings/string_number_conversions.h"
 +#include "base/strings/utf_string_conversions.h"
 +#include "base/task/sequenced_task_runner.h"
@@ -2502,7 +2576,12 @@ index 0000000..8af376f
 +constexpr char kPasswordKind[] = "passwords";
 +constexpr char kChromiumSpecificsPayloadFormat[] =
 +    "chromium-password-specifics-data-v1";
-+constexpr int kPasswordStateSchema = 3;
++constexpr char kPasswordIdentitySchema[] = "password-form-unique-key-v2";
++constexpr char kPasswordIdentityPrefix[] = "credential/v2/";
++constexpr char kLegacyPasswordIdentityPrefix[] = "credential/";
++constexpr char kDeletedFingerprint[] = "deleted";
++constexpr int kPasswordStateSchema = 4;
++constexpr int kLegacyPasswordStateSchema = 3;
 +
 +#if BUILDFLAG(IS_ANDROID)
 +void AndroidStatusLog(const std::string &message) {
@@ -2526,16 +2605,36 @@ index 0000000..8af376f
 +  return credential;
 +}
 +
-+std::string PasswordRecordKeyForValues(std::string_view signon_realm,
-+                                       std::string_view url,
-+                                       const std::u16string &username) {
++void AppendU32(uint32_t value, std::string *out) {
++  out->push_back(static_cast<char>((value >> 24) & 0xff));
++  out->push_back(static_cast<char>((value >> 16) & 0xff));
++  out->push_back(static_cast<char>((value >> 8) & 0xff));
++  out->push_back(static_cast<char>(value & 0xff));
++}
++
++void AppendStringField(std::string_view value, std::string *out) {
++  AppendU32(base::checked_cast<uint32_t>(value.size()), out);
++  out->append(value);
++}
++
++void AppendUTF16Field(std::u16string_view value, std::string *out) {
++  AppendU32(base::checked_cast<uint32_t>(value.size()), out);
++  for (char16_t code_unit : value) {
++    out->push_back(static_cast<char>((code_unit >> 8) & 0xff));
++    out->push_back(static_cast<char>(code_unit & 0xff));
++  }
++}
++
++std::string LegacyPasswordRecordKeyForValues(std::string_view signon_realm,
++                                             std::string_view url,
++                                             const std::u16string &username) {
 +  std::string material;
 +  material.append(signon_realm);
 +  material.push_back('\0');
 +  material.append(url);
 +  material.push_back('\0');
 +  material.append(base::UTF16ToUTF8(username));
-+  return "credential/" +
++  return std::string(kLegacyPasswordIdentityPrefix) +
 +         base::HexEncodeLower(crypto::SHA256HashString(material));
 +}
 +
@@ -2558,17 +2657,31 @@ index 0000000..8af376f
 +  return SignonRealmForCredential(credential);
 +}
 +
++std::string PasswordIdentityMaterial(const Credential &credential) {
++  std::string material("helium-password-identity-v2\0", 28);
++  AppendStringField(credential.url.spec(), &material);
++  AppendUTF16Field(credential.username_element, &material);
++  AppendUTF16Field(credential.username_value, &material);
++  AppendUTF16Field(credential.password_element, &material);
++  AppendStringField(credential.signon_realm, &material);
++  return material;
++}
++
 +std::string PasswordRecordKey(const Credential &credential) {
-+  return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
-+                                    UrlForCredential(credential),
-+                                    credential.username_value);
++  return std::string(kPasswordIdentityPrefix) +
++         base::HexEncodeLower(
++             crypto::SHA256HashString(PasswordIdentityMaterial(credential)));
++}
++
++std::string LegacyPasswordRecordKey(const Credential &credential) {
++  return LegacyPasswordRecordKeyForValues(SignonRealmForCredential(credential),
++                                          UrlForCredential(credential),
++                                          credential.username_value);
 +}
 +
 +std::string
 +PasswordRecordKeyForForm(const password_manager::PasswordForm &credential) {
-+  return PasswordRecordKeyForValues(SignonRealmForCredential(credential),
-+                                    UrlForCredential(credential),
-+                                    credential.username_value);
++  return PasswordRecordKey(credential);
 +}
 +
 +std::optional<std::string> PasswordPayloadJSON(const Credential &credential) {
@@ -2664,6 +2777,12 @@ index 0000000..8af376f
 +    }
 +    state_trusted_ = true;
 +  }
++  if (!legacy_credential_state_.empty() && !SaveState()) {
++    LOG(WARNING) << "Helium password sync could not persist the schema-3 "
++                    "identity migration";
++    AndroidStatusLog("password identity migration write failed");
++    return;
++  }
 +  pull_timer_.Start(FROM_HERE, base::Seconds(30),
 +                    base::BindRepeating(&HeliumPasswordSyncBridge::PullAndApply,
 +                                        weak_factory_.GetWeakPtr()));
@@ -2680,7 +2799,8 @@ index 0000000..8af376f
 +}
 +
 +void HeliumPasswordSyncBridge::PullAndApply() {
-+  if (!profile_store_ || !client_ || pull_in_flight_ || reconciling_) {
++  if (!profile_store_ || !client_ || pull_in_flight_ || reconciling_ ||
++      push_in_flight_) {
 +    return;
 +  }
 +  pull_in_flight_ = true;
@@ -2720,39 +2840,27 @@ index 0000000..8af376f
 +  profile_store_->GetAllLogins(weak_factory_.GetWeakPtr());
 +}
 +
++void HeliumPasswordSyncBridge::RequestPublicationRead() {
++  if (!profile_store_ || pending_read_ != PendingRead::kNone) {
++    return;
++  }
++  pending_read_ = PendingRead::kPublishLocal;
++  profile_store_->GetAllLogins(weak_factory_.GetWeakPtr());
++}
++
 +void HeliumPasswordSyncBridge::OnLoginsChanged(
 +    password_manager::PasswordStoreInterface *store,
 +    const password_manager::PasswordStoreChangeList &changes) {
-+  if (store != profile_store_.get() || reconciling_ || applying_remote_) {
++  if (store != profile_store_.get() || applying_remote_) {
 +    return;
 +  }
-+
-+  std::vector<Record> records;
-+  for (const auto &change : changes) {
-+    const Credential &credential = ChangeCredential(change);
-+    if (change.type() == password_manager::PasswordStoreChange::REMOVE) {
-+      Record tombstone;
-+      tombstone.kind = kPasswordKind;
-+      tombstone.key = PasswordRecordKey(credential);
-+      tombstone.deleted = true;
-+      tombstone.payload_json = "{}";
-+      records.push_back(std::move(tombstone));
-+      continue;
-+    }
-+    std::optional<Record> record = UpsertRecordForCredential(credential);
-+    if (!record) {
-+      continue;
-+    }
-+    known_keys_.insert(record->key);
-+    records.push_back(std::move(*record));
-+  }
-+  PushRecords(std::move(records));
++  QueueLocalMutations(changes);
 +}
 +
 +void HeliumPasswordSyncBridge::OnLoginsRetained(
 +    password_manager::PasswordStoreInterface *store,
 +    const std::vector<password_manager::PasswordForm> &retained_passwords) {
-+  if (store != profile_store_.get() || reconciling_ || applying_remote_) {
++  if (store != profile_store_.get() || applying_remote_) {
 +    return;
 +  }
 +
@@ -2760,7 +2868,21 @@ index 0000000..8af376f
 +  for (const auto &credential : retained_passwords) {
 +    retained_keys.insert(PasswordRecordKeyForForm(credential));
 +  }
++  for (const std::string &key : known_keys_) {
++    if (retained_keys.contains(key)) {
++      continue;
++    }
++    const auto state = credential_state_.find(key);
++    if (state != credential_state_.end()) {
++      state->second.queued_mutation = QueuedMutation{kDeletedFingerprint, true};
++    }
++  }
 +  known_keys_ = std::move(retained_keys);
++  if (!SaveState()) {
++    state_trusted_ = false;
++    return;
++  }
++  MaybeStartPublication();
 +}
 +
 +void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom(
@@ -2779,7 +2901,9 @@ index 0000000..8af376f
 +                 << static_cast<int>(pending);
 +    AndroidStatusLog("password read failed pending=" +
 +                     base::NumberToString(static_cast<int>(pending)));
-+    reconciling_ = false;
++    if (pending != PendingRead::kPublishLocal) {
++      reconciling_ = false;
++    }
 +    return;
 +  }
 +  LOG(WARNING) << "Helium password sync read " << credentials->size()
@@ -2831,14 +2955,184 @@ index 0000000..8af376f
 +    break;
 +  case PendingRead::kNone:
 +    break;
++  case PendingRead::kPublishLocal:
++    PublishQueuedMutation(*credentials);
++    break;
 +  }
++}
++
++bool HeliumPasswordSyncBridge::MigrateLegacyIdentity(
++    const password_manager::LoginsResult &credentials) {
++  if (legacy_credential_state_.empty()) {
++    return true;
++  }
++  std::map<std::string, std::vector<const Credential *>> local_by_legacy_key;
++  for (const auto &credential : credentials) {
++    local_by_legacy_key[LegacyPasswordRecordKey(credential)].push_back(
++        &credential);
++  }
++  bool changed = false;
++  for (const auto &[legacy_key, legacy_state] : legacy_credential_state_) {
++    const auto candidates = local_by_legacy_key.find(legacy_key);
++    const size_t count =
++        candidates == local_by_legacy_key.end() ? 0 : candidates->second.size();
++    if (count > 1) {
++      LOG(WARNING) << "Helium password schema-3 identity collision for "
++                   << legacy_key;
++      AndroidStatusLog("password legacy identity collision; fail closed");
++      return false;
++    }
++    if (count == 0) {
++      if (!legacy_state.deleted) {
++        LOG(WARNING) << "Helium password live schema-3 state has no unique "
++                        "local identity";
++        return false;
++      }
++      continue;
++    }
++    const Credential &credential = *candidates->second.front();
++    const std::string canonical_key = PasswordRecordKey(credential);
++    std::optional<std::string> payload = PasswordPayloadJSON(credential);
++    if (!payload) {
++      return false;
++    }
++    const std::string fingerprint = ContentFingerprint(*payload);
++    if (legacy_state.deleted || legacy_state.fingerprint != fingerprint) {
++      LOG(WARNING) << "Helium password schema-3 state does not match its "
++                      "unique local credential";
++      return false;
++    }
++    const auto existing = credential_state_.find(canonical_key);
++    const auto remote = std::find_if(
++        pending_remote_records_.begin(), pending_remote_records_.end(),
++        [&canonical_key](const RemotePasswordRecord &candidate) {
++          return candidate.record.key == canonical_key;
++        });
++    if (existing != credential_state_.end() &&
++        (existing->second.revision > 0 ||
++         existing->second.pending_publication)) {
++      continue;
++    }
++    const bool migration_queued =
++        existing != credential_state_.end() && existing->second.deleted &&
++        existing->second.revision == 0 && existing->second.queued_mutation &&
++        !existing->second.queued_mutation->deleted &&
++        existing->second.queued_mutation->credential_fingerprint == fingerprint;
++    if (remote != pending_remote_records_.end() &&
++        (existing == credential_state_.end() || migration_queued)) {
++      if (remote->record.deleted || remote->fingerprint != fingerprint) {
++        LOG(WARNING) << "Helium password canonical remote conflicts with "
++                        "schema-3 migration source";
++        return false;
++      }
++      credential_state_[canonical_key] = {fingerprint, remote->record.seq,
++                                          remote->record.revision, false,
++                                          remote->record.key_id};
++      changed = true;
++      continue;
++    }
++    if (existing != credential_state_.end()) {
++      if (!migration_queued && (existing->second.deleted ||
++                                existing->second.fingerprint != fingerprint)) {
++        LOG(WARNING) << "Helium password migration would collapse distinct "
++                        "canonical state";
++        return false;
++      }
++      continue;
++    }
++    CredentialState migrated{std::string(), legacy_state.remote_seq, 0, true,
++                             std::string()};
++    if (client_->enrollment_phase() == "active") {
++      migrated.queued_mutation = QueuedMutation{fingerprint, false};
++    }
++    credential_state_.emplace(canonical_key, std::move(migrated));
++    changed = true;
++  }
++  return !changed || SaveState();
++}
++
++bool HeliumPasswordSyncBridge::ResolvePendingPublications() {
++  std::map<std::string, const RemotePasswordRecord *> remote_by_key;
++  for (const auto &remote : pending_remote_records_) {
++    if (!remote_by_key.emplace(remote.record.key, &remote).second) {
++      LOG(WARNING) << "Helium password pull returned duplicate record keys";
++      return false;
++    }
++  }
++  bool changed = false;
++  for (auto &[key, state] : credential_state_) {
++    if (!state.pending_publication) {
++      continue;
++    }
++    const PendingPublication pending = *state.pending_publication;
++    const auto found = remote_by_key.find(key);
++    if (found != remote_by_key.end() &&
++        found->second->record.revision == pending.target_revision &&
++        found->second->record.deleted == pending.deleted &&
++        found->second->fingerprint == pending.payload_fingerprint) {
++      const Record &accepted = found->second->record;
++      state.fingerprint =
++          pending.deleted ? std::string() : pending.credential_fingerprint;
++      state.remote_seq = accepted.seq;
++      state.revision = accepted.revision;
++      state.deleted = accepted.deleted;
++      state.key_id = accepted.key_id;
++      state.pending_publication.reset();
++      changed = true;
++      continue;
++    }
++
++    const bool absent_at_zero =
++        found == remote_by_key.end() && pending.expected_revision == 0;
++    bool unchanged_baseline = false;
++    if (found != remote_by_key.end() &&
++        found->second->record.revision == pending.expected_revision &&
++        found->second->record.deleted == state.deleted) {
++      unchanged_baseline =
++          state.deleted ? found->second->fingerprint == kDeletedFingerprint
++                        : found->second->fingerprint == state.fingerprint;
++    }
++    if (!absent_at_zero && !unchanged_baseline) {
++      LOG(WARNING) << "Helium password pending publication met a stale remote "
++                      "revision for "
++                   << key;
++      return false;
++    }
++    if (!state.queued_mutation) {
++      state.queued_mutation =
++          QueuedMutation{pending.credential_fingerprint, pending.deleted};
++    }
++    state.pending_publication.reset();
++    changed = true;
++  }
++  return !changed || SaveState();
 +}
 +
 +void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
 +    const password_manager::LoginsResult &local_credentials) {
++  if (!ResolvePendingPublications() ||
++      !MigrateLegacyIdentity(local_credentials)) {
++    pending_remote_records_.clear();
++    reconciling_ = false;
++    state_trusted_ = false;
++    LOG(WARNING) << "Helium password identity/publication migration blocked";
++    return;
++  }
 +  std::map<std::string, const Credential *> local_by_key;
++  std::map<std::string, std::string> material_by_key;
 +  for (const auto &credential : local_credentials) {
-+    local_by_key[PasswordRecordKey(credential)] = &credential;
++    const std::string key = PasswordRecordKey(credential);
++    const std::string material = PasswordIdentityMaterial(credential);
++    const auto found = material_by_key.find(key);
++    if (found != material_by_key.end() && found->second != material) {
++      pending_remote_records_.clear();
++      reconciling_ = false;
++      state_trusted_ = false;
++      LOG(WARNING) << "Helium password local identity collision";
++      return;
++    }
++    material_by_key[key] = material;
++    local_by_key[key] = &credential;
 +  }
 +
 +  // Validate the complete remote batch and detect conflicts before issuing a
@@ -2872,9 +3166,8 @@ index 0000000..8af376f
 +      std::optional<base::Value> parsed =
 +          base::JSONReader::Read(record.payload_json, base::JSON_PARSE_RFC);
 +      std::optional<Credential> credential =
-+          parsed && parsed->is_dict()
-+              ? PayloadToCredential(parsed->GetDict())
-+              : std::nullopt;
++          parsed && parsed->is_dict() ? PayloadToCredential(parsed->GetDict())
++                                      : std::nullopt;
 +      if (!credential || PasswordRecordKey(*credential) != record.key) {
 +        blocked_remote_keys_.insert(record.key);
 +      }
@@ -3028,79 +3321,227 @@ index 0000000..8af376f
 +void HeliumPasswordSyncBridge::PublishLocalMutations(
 +    const password_manager::LoginsResult &credentials) {
 +  known_keys_ = KeysFor(credentials);
-+  std::vector<Record> records;
++  std::map<std::string, const Credential *> local_by_key;
++  std::map<std::string, std::string> identity_material_by_key;
 +  for (const auto &credential : credentials) {
 +    std::optional<Record> record = UpsertRecordForCredential(credential);
 +    if (!record || blocked_remote_keys_.contains(record->key)) {
 +      continue;
 +    }
++    std::string material = PasswordIdentityMaterial(credential);
++    const auto material_it = identity_material_by_key.find(record->key);
++    if (material_it != identity_material_by_key.end() &&
++        material_it->second != material) {
++      LOG(WARNING) << "Helium password identity hash collision; fail closed";
++      state_trusted_ = false;
++      return;
++    }
++    identity_material_by_key[record->key] = std::move(material);
++    local_by_key[record->key] = &credential;
 +    std::string fingerprint = ContentFingerprint(record->payload_json);
-+    const auto state = credential_state_.find(record->key);
 +    if (client_->enrollment_phase() == "pending" &&
-+        state == credential_state_.end()) {
++        !credential_state_.contains(record->key)) {
 +      credential_state_[record->key] = {std::move(fingerprint), 0, 0, false,
 +                                        std::string()};
 +      continue;
 +    }
-+    if (!state_trusted_ && state == credential_state_.end()) {
-+      credential_state_[record->key] = {std::move(fingerprint), 0};
++    auto [state, inserted] = credential_state_.try_emplace(
++        record->key, CredentialState{std::string(), 0, 0, true, std::string()});
++    if (!state_trusted_ && inserted) {
++      state->second.fingerprint = std::move(fingerprint);
++      state->second.deleted = false;
 +      continue;
 +    }
-+    if (state != credential_state_.end() &&
-+        state->second.fingerprint == fingerprint) {
-+      continue;
++    QueuedMutation desired{fingerprint, false};
++    if (state->second.pending_publication) {
++      const PendingPublication &pending = *state->second.pending_publication;
++      if (pending.deleted || pending.credential_fingerprint != fingerprint) {
++        state->second.queued_mutation = std::move(desired);
++      } else {
++        state->second.queued_mutation.reset();
++      }
++    } else if (!state->second.deleted &&
++               state->second.fingerprint == fingerprint) {
++      state->second.queued_mutation.reset();
++    } else {
++      state->second.queued_mutation = std::move(desired);
 +    }
-+    records.push_back(std::move(*record));
 +  }
-+  PushRecords(std::move(records));
++
++  if (client_->enrollment_phase() != "pending") {
++    for (auto &[key, state] : credential_state_) {
++      if (local_by_key.contains(key)) {
++        continue;
++      }
++      QueuedMutation desired{kDeletedFingerprint, true};
++      if (state.pending_publication) {
++        if (!state.pending_publication->deleted) {
++          state.queued_mutation = std::move(desired);
++        } else {
++          state.queued_mutation.reset();
++        }
++      } else if (state.deleted) {
++        state.queued_mutation.reset();
++      } else {
++        state.queued_mutation = std::move(desired);
++      }
++    }
++  }
++  if (!SaveState()) {
++    LOG(WARNING) << "Helium password sync could not persist queued mutations";
++    state_trusted_ = false;
++  }
 +}
 +
-+void HeliumPasswordSyncBridge::PushRecords(std::vector<Record> records) {
-+  if (records.empty() || !client_) {
-+    return;
-+  }
-+  LOG(WARNING) << "Helium password sync pushing " << records.size()
-+               << " records as " << device_name_;
-+  AndroidStatusLog("password pushing count=" +
-+                   base::NumberToString(records.size()));
-+  std::map<std::string, std::string> fingerprints;
-+  for (auto &record : records) {
-+    const auto state = credential_state_.find(record.key);
-+    record.expected_revision =
-+        state == credential_state_.end() ? 0 : state->second.revision;
-+    fingerprints[record.key] = ContentFingerprint(record.payload_json);
-+  }
-+  client_->Push(std::move(records),
-+                base::BindOnce(&HeliumPasswordSyncBridge::OnPushComplete,
-+                               weak_factory_.GetWeakPtr(),
-+                               std::move(fingerprints)));
-+}
-+
-+void HeliumPasswordSyncBridge::OnPushComplete(
-+    std::map<std::string, std::string> fingerprints, bool ok,
-+    RecordsResult result, std::string error) {
-+  if (!ok) {
-+    LOG(WARNING) << "Helium password sync push failed: " << error;
-+    AndroidStatusLog("password push failed " + error);
-+    return;
-+  }
-+  if (result.records.size() != fingerprints.size()) {
-+    LOG(WARNING) << "Helium password sync push returned wrong record count";
-+    return;
-+  }
-+  for (const Record &accepted : result.records) {
-+    const auto fingerprint = fingerprints.find(accepted.key);
-+    if (fingerprint == fingerprints.end()) {
-+      LOG(WARNING) << "Helium password sync push returned an unknown record";
++void HeliumPasswordSyncBridge::QueueLocalMutations(
++    const password_manager::PasswordStoreChangeList &changes) {
++  std::map<std::string, std::string> material_by_key;
++  for (const auto &change : changes) {
++    const Credential &credential = ChangeCredential(change);
++    const std::string key = PasswordRecordKey(credential);
++    const std::string material = PasswordIdentityMaterial(credential);
++    const auto material_it = material_by_key.find(key);
++    if (material_it != material_by_key.end() &&
++        material_it->second != material) {
++      LOG(WARNING)
++          << "Helium password observer identity collision; fail closed";
++      state_trusted_ = false;
 +      return;
 +    }
-+    credential_state_[accepted.key] = {
-+        accepted.deleted ? std::string() : fingerprint->second, accepted.seq,
-+        accepted.revision, accepted.deleted, accepted.key_id};
++    material_by_key[key] = material;
++    auto state = credential_state_
++                     .try_emplace(key, CredentialState{std::string(), 0, 0,
++                                                       true, std::string()})
++                     .first;
++    QueuedMutation mutation;
++    if (change.type() == password_manager::PasswordStoreChange::REMOVE) {
++      mutation = {kDeletedFingerprint, true};
++      known_keys_.erase(key);
++    } else {
++      std::optional<Record> record = UpsertRecordForCredential(credential);
++      if (!record) {
++        state_trusted_ = false;
++        return;
++      }
++      mutation = {ContentFingerprint(record->payload_json), false};
++      known_keys_.insert(key);
++    }
++    state->second.queued_mutation = std::move(mutation);
 +  }
-+  SaveState();
-+  LOG(WARNING) << "Helium password sync push completed";
-+  AndroidStatusLog("password push completed");
++  if (!SaveState()) {
++    LOG(WARNING) << "Helium password sync could not persist observer mutations";
++    state_trusted_ = false;
++    return;
++  }
++  MaybeStartPublication();
++}
++
++void HeliumPasswordSyncBridge::MaybeStartPublication() {
++  if (!profile_store_ || !client_ || !state_trusted_ || reconciling_ ||
++      applying_remote_ || push_in_flight_ ||
++      pending_read_ != PendingRead::kNone ||
++      client_->enrollment_phase() != "active") {
++    return;
++  }
++  for (const auto &[key, state] : credential_state_) {
++    if (state.pending_publication) {
++      PullAndApply();
++      return;
++    }
++  }
++  for (const auto &[key, state] : credential_state_) {
++    if (state.queued_mutation) {
++      RequestPublicationRead();
++      return;
++    }
++  }
++}
++
++void HeliumPasswordSyncBridge::PublishQueuedMutation(
++    const password_manager::LoginsResult &credentials) {
++  std::map<std::string, const Credential *> local_by_key;
++  std::map<std::string, std::string> material_by_key;
++  for (const auto &credential : credentials) {
++    const std::string key = PasswordRecordKey(credential);
++    const std::string material = PasswordIdentityMaterial(credential);
++    const auto found = material_by_key.find(key);
++    if (found != material_by_key.end() && found->second != material) {
++      LOG(WARNING) << "Helium password publication identity collision";
++      state_trusted_ = false;
++      return;
++    }
++    material_by_key[key] = material;
++    local_by_key[key] = &credential;
++  }
++
++  auto state = std::find_if(credential_state_.begin(), credential_state_.end(),
++                            [](const auto &entry) {
++                              return entry.second.queued_mutation.has_value();
++                            });
++  if (state == credential_state_.end()) {
++    return;
++  }
++  const std::string key = state->first;
++  Record mutation;
++  mutation.kind = kPasswordKind;
++  mutation.key = key;
++  std::string fingerprint = kDeletedFingerprint;
++  bool deleted = true;
++  const auto local = local_by_key.find(key);
++  if (local != local_by_key.end()) {
++    std::optional<Record> upsert = UpsertRecordForCredential(*local->second);
++    if (!upsert) {
++      state_trusted_ = false;
++      return;
++    }
++    mutation = std::move(*upsert);
++    fingerprint = ContentFingerprint(mutation.payload_json);
++    deleted = false;
++  } else {
++    mutation.deleted = true;
++    mutation.payload_json = "{}";
++  }
++
++  state->second.queued_mutation = QueuedMutation{fingerprint, deleted};
++  const bool matches_baseline =
++      state->second.deleted == deleted &&
++      (deleted || state->second.fingerprint == fingerprint);
++  if (matches_baseline) {
++    state->second.queued_mutation.reset();
++    if (!SaveState()) {
++      state_trusted_ = false;
++      return;
++    }
++    MaybeStartPublication();
++    return;
++  }
++
++  mutation.expected_revision = state->second.revision;
++  state->second.pending_publication = PendingPublication{
++      mutation.expected_revision, mutation.expected_revision + 1,
++      deleted ? kDeletedFingerprint : ContentFingerprint(mutation.payload_json),
++      fingerprint, deleted};
++  state->second.queued_mutation.reset();
++  if (!SaveState()) {
++    LOG(WARNING) << "Helium password pending publication write failed";
++    state_trusted_ = false;
++    return;
++  }
++  push_in_flight_ = true;
++  std::vector<Record> records;
++  records.push_back(std::move(mutation));
++  client_->Push(std::move(records),
++                base::BindOnce(&HeliumPasswordSyncBridge::OnPushComplete,
++                               weak_factory_.GetWeakPtr()));
++}
++
++void HeliumPasswordSyncBridge::OnPushComplete(bool ok, RecordsResult,
++                                              std::string error) {
++  push_in_flight_ = false;
++  LOG(WARNING) << "Helium password push requires pull verification: ok=" << ok
++               << " detail=" << error;
++  AndroidStatusLog("password push pending pull verification");
++  PullAndApply();
 +}
 +
 +void HeliumPasswordSyncBridge::OnPullComplete(bool ok, RecordsResult result,
@@ -3116,6 +3557,7 @@ index 0000000..8af376f
 +
 +  pending_remote_records_.clear();
 +  blocked_remote_keys_.clear();
++  std::vector<RemotePasswordRecord> legacy_live_records;
 +  for (Record &record : result.records) {
 +    if (record.kind != kPasswordKind) {
 +      continue;
@@ -3125,13 +3567,63 @@ index 0000000..8af376f
 +    if (!remote.record.deleted) {
 +      std::optional<base::Value> payload = base::JSONReader::Read(
 +          remote.record.payload_json, base::JSON_PARSE_RFC);
-+      if (!payload || !payload->is_dict() ||
-+          !PayloadToCredential(payload->GetDict())) {
++      std::optional<Credential> credential =
++          payload && payload->is_dict()
++              ? PayloadToCredential(payload->GetDict())
++              : std::nullopt;
++      if (!credential) {
++        blocked_remote_keys_.insert(remote.record.key);
++        continue;
++      }
++      remote.fingerprint = ContentFingerprint(remote.record.payload_json);
++      if (remote.record.key.starts_with(kPasswordIdentityPrefix)) {
++        if (PasswordRecordKey(*credential) != remote.record.key) {
++          blocked_remote_keys_.insert(remote.record.key);
++          continue;
++        }
++      } else if (remote.record.key.starts_with(kLegacyPasswordIdentityPrefix) &&
++                 LegacyPasswordRecordKey(*credential) == remote.record.key) {
++        legacy_live_records.push_back(std::move(remote));
++        continue;
++      } else {
++        blocked_remote_keys_.insert(remote.record.key);
++        continue;
++      }
++    } else {
++      remote.fingerprint = kDeletedFingerprint;
++      if (remote.record.key.starts_with(kLegacyPasswordIdentityPrefix) &&
++          !remote.record.key.starts_with(kPasswordIdentityPrefix)) {
++        continue;
++      }
++      if (!remote.record.key.starts_with(kPasswordIdentityPrefix)) {
 +        blocked_remote_keys_.insert(remote.record.key);
 +        continue;
 +      }
 +    }
 +    pending_remote_records_.push_back(std::move(remote));
++  }
++
++  std::set<std::string> canonical_remote_keys;
++  for (const auto &remote : pending_remote_records_) {
++    canonical_remote_keys.insert(remote.record.key);
++  }
++  for (const auto &legacy : legacy_live_records) {
++    std::optional<base::Value> payload = base::JSONReader::Read(
++        legacy.record.payload_json, base::JSON_PARSE_RFC);
++    std::optional<Credential> credential =
++        payload && payload->is_dict() ? PayloadToCredential(payload->GetDict())
++                                      : std::nullopt;
++    const std::string canonical_key =
++        credential ? PasswordRecordKey(*credential) : std::string();
++    const auto legacy_state = legacy_credential_state_.find(legacy.record.key);
++    const bool preserved_migration_source =
++        legacy_state != legacy_credential_state_.end() &&
++        !legacy_state->second.deleted &&
++        legacy_state->second.fingerprint == legacy.fingerprint;
++    if (!canonical_remote_keys.contains(canonical_key) &&
++        !preserved_migration_source) {
++      blocked_remote_keys_.insert(legacy.record.key);
++    }
 +  }
 +
 +  if (pending_remote_records_.empty()) {
@@ -3178,8 +3670,7 @@ index 0000000..8af376f
 +    return;
 +  }
 +  reconciling_ = false;
-+  if (client_->enrollment_phase() == "pending" &&
-+      verified_baseline_callback_) {
++  if (client_->enrollment_phase() == "pending" && verified_baseline_callback_) {
 +    verified_baseline_callback_.Run(verified_sequence_);
 +  }
 +  if (!observing_ && profile_store_) {
@@ -3192,10 +3683,12 @@ index 0000000..8af376f
 +        base::BindRepeating(&HeliumPasswordSyncBridge::PullAndApply,
 +                            weak_factory_.GetWeakPtr()));
 +  }
++  MaybeStartPublication();
 +}
 +
 +bool HeliumPasswordSyncBridge::LoadState() {
 +  credential_state_.clear();
++  legacy_credential_state_.clear();
 +  if (state_path_.empty() || !base::PathExists(state_path_)) {
 +    return false;
 +  }
@@ -3207,43 +3700,128 @@ index 0000000..8af376f
 +  }
 +  std::optional<base::Value> parsed =
 +      base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
-+  if (!parsed || !parsed->is_dict() ||
-+      parsed->GetDict().FindInt("schema_version").value_or(0) !=
-+          kPasswordStateSchema) {
++  if (!parsed || !parsed->is_dict()) {
 +    LOG(WARNING) << "Helium password sync state is invalid";
 +    return false;
 +  }
-+  const base::DictValue *credentials =
-+      parsed->GetDict().FindDict("credentials");
-+  const std::string *verified_sequence =
-+      parsed->GetDict().FindString("verified_sequence");
++  const base::DictValue &root = parsed->GetDict();
++  const int schema = root.FindInt("schema_version").value_or(0);
++  const base::DictValue *credentials = root.FindDict("credentials");
++  const std::string *verified_sequence = root.FindString("verified_sequence");
 +  if (!credentials || !verified_sequence ||
 +      !base::StringToInt64(*verified_sequence, &verified_sequence_) ||
 +      verified_sequence_ < 0) {
 +    LOG(WARNING) << "Helium password sync state has no credentials map";
 +    return false;
 +  }
-+  for (const auto [key, value] : *credentials) {
-+    if (!value.is_dict()) {
++  int pending_count = 0;
++  auto parse_state_map = [&pending_count](
++                             const base::DictValue &values,
++                             std::map<std::string, CredentialState> *out,
++                             bool allow_publication_state) {
++    for (const auto [key, value] : values) {
++      if (!value.is_dict()) {
++        return false;
++      }
++      const base::DictValue &entry = value.GetDict();
++      const std::string *fingerprint = entry.FindString("fingerprint");
++      const std::string *remote_seq = entry.FindString("remote_seq");
++      const std::string *revision = entry.FindString("revision");
++      const std::string *key_id = entry.FindString("key_id");
++      std::optional<bool> deleted = entry.FindBool("deleted");
++      int64_t parsed_seq = 0;
++      int64_t parsed_revision = 0;
++      if (!fingerprint || !remote_seq || !revision || !key_id || !deleted ||
++          (*deleted ? !fingerprint->empty() : fingerprint->empty()) ||
++          !base::StringToInt64(*remote_seq, &parsed_seq) || parsed_seq < 0 ||
++          !base::StringToInt64(*revision, &parsed_revision) ||
++          parsed_revision < 0 || (parsed_revision > 0 && key_id->empty())) {
++        return false;
++      }
++      CredentialState state{*fingerprint, parsed_seq, parsed_revision, *deleted,
++                            *key_id};
++      if (const base::DictValue *pending =
++              entry.FindDict("pending_publication")) {
++        if (!allow_publication_state) {
++          return false;
++        }
++        const std::string *expected = pending->FindString("expected_revision");
++        const std::string *target = pending->FindString("target_revision");
++        const std::string *payload = pending->FindString("payload_fingerprint");
++        const std::string *credential =
++            pending->FindString("credential_fingerprint");
++        std::optional<bool> pending_deleted = pending->FindBool("deleted");
++        int64_t expected_revision = 0;
++        int64_t target_revision = 0;
++        if (!expected || !target || !payload || payload->empty() ||
++            !credential || credential->empty() || !pending_deleted ||
++            !base::StringToInt64(*expected, &expected_revision) ||
++            !base::StringToInt64(*target, &target_revision) ||
++            expected_revision < 0 ||
++            expected_revision == std::numeric_limits<int64_t>::max() ||
++            target_revision != expected_revision + 1 ||
++            expected_revision != parsed_revision) {
++          return false;
++        }
++        state.pending_publication =
++            PendingPublication{expected_revision, target_revision, *payload,
++                               *credential, *pending_deleted};
++        pending_count++;
++      }
++      if (const base::DictValue *queued = entry.FindDict("queued_mutation")) {
++        if (!allow_publication_state) {
++          return false;
++        }
++        const std::string *queued_fingerprint =
++            queued->FindString("credential_fingerprint");
++        std::optional<bool> queued_deleted = queued->FindBool("deleted");
++        if (!queued_fingerprint || queued_fingerprint->empty() ||
++            !queued_deleted) {
++          return false;
++        }
++        state.queued_mutation =
++            QueuedMutation{*queued_fingerprint, *queued_deleted};
++      }
++      out->emplace(key, std::move(state));
++    }
++    return true;
++  };
++
++  if (schema == kLegacyPasswordStateSchema) {
++    if (!parse_state_map(*credentials, &legacy_credential_state_, false)) {
++      legacy_credential_state_.clear();
 +      return false;
 +    }
-+    const std::string *fingerprint = value.GetDict().FindString("fingerprint");
-+    const std::string *remote_seq = value.GetDict().FindString("remote_seq");
-+    const std::string *revision = value.GetDict().FindString("revision");
-+    const std::string *key_id = value.GetDict().FindString("key_id");
-+    std::optional<bool> deleted = value.GetDict().FindBool("deleted");
-+    int64_t parsed_seq = 0;
-+    int64_t parsed_revision = 0;
-+    if (!fingerprint || !remote_seq || !revision || !key_id || !deleted ||
-+        (!*deleted && fingerprint->empty()) ||
-+        !base::StringToInt64(*remote_seq, &parsed_seq) || parsed_seq < 0 ||
-+        !base::StringToInt64(*revision, &parsed_revision) ||
-+        parsed_revision < 0 || (parsed_revision > 0 && key_id->empty())) {
-+      credential_state_.clear();
++    for (const auto &[key, state] : legacy_credential_state_) {
++      if (!key.starts_with(kLegacyPasswordIdentityPrefix) ||
++          key.starts_with(kPasswordIdentityPrefix)) {
++        legacy_credential_state_.clear();
++        return false;
++      }
++    }
++    return true;
++  }
++  const std::string *identity_schema = root.FindString("identity_schema");
++  const base::DictValue *legacy = root.FindDict("legacy_credentials");
++  if (schema != kPasswordStateSchema || !identity_schema ||
++      *identity_schema != kPasswordIdentitySchema || !legacy ||
++      !parse_state_map(*credentials, &credential_state_, true) ||
++      !parse_state_map(*legacy, &legacy_credential_state_, false) ||
++      pending_count > 1) {
++    credential_state_.clear();
++    legacy_credential_state_.clear();
++    return false;
++  }
++  for (const auto &[key, state] : credential_state_) {
++    if (!key.starts_with(kPasswordIdentityPrefix)) {
 +      return false;
 +    }
-+    credential_state_[key] = {*fingerprint, parsed_seq, parsed_revision,
-+                              *deleted, *key_id};
++  }
++  for (const auto &[key, state] : legacy_credential_state_) {
++    if (!key.starts_with(kLegacyPasswordIdentityPrefix) ||
++        key.starts_with(kPasswordIdentityPrefix)) {
++      return false;
++    }
 +  }
 +  return true;
 +}
@@ -3255,18 +3833,52 @@ index 0000000..8af376f
 +  }
 +  base::DictValue root;
 +  root.Set("schema_version", kPasswordStateSchema);
++  root.Set("identity_schema", kPasswordIdentitySchema);
++  root.Set("migration_status",
++           legacy_credential_state_.empty() ? "complete" : "legacy-preserved");
 +  root.Set("verified_sequence", base::NumberToString(verified_sequence_));
-+  base::DictValue credentials;
-+  for (const auto &[key, state] : credential_state_) {
++  auto state_to_value = [](const CredentialState &state,
++                           bool include_publication_state) {
 +    base::DictValue value;
 +    value.Set("fingerprint", state.fingerprint);
 +    value.Set("remote_seq", base::NumberToString(state.remote_seq));
 +    value.Set("revision", base::NumberToString(state.revision));
 +    value.Set("deleted", state.deleted);
 +    value.Set("key_id", state.key_id);
-+    credentials.Set(key, std::move(value));
++    if (include_publication_state && state.pending_publication) {
++      base::DictValue pending;
++      pending.Set(
++          "expected_revision",
++          base::NumberToString(state.pending_publication->expected_revision));
++      pending.Set(
++          "target_revision",
++          base::NumberToString(state.pending_publication->target_revision));
++      pending.Set("payload_fingerprint",
++                  state.pending_publication->payload_fingerprint);
++      pending.Set("credential_fingerprint",
++                  state.pending_publication->credential_fingerprint);
++      pending.Set("deleted", state.pending_publication->deleted);
++      value.Set("pending_publication", std::move(pending));
++    }
++    if (include_publication_state && state.queued_mutation) {
++      base::DictValue queued;
++      queued.Set("credential_fingerprint",
++                 state.queued_mutation->credential_fingerprint);
++      queued.Set("deleted", state.queued_mutation->deleted);
++      value.Set("queued_mutation", std::move(queued));
++    }
++    return value;
++  };
++  base::DictValue credentials;
++  for (const auto &[key, state] : credential_state_) {
++    credentials.Set(key, state_to_value(state, true));
 +  }
 +  root.Set("credentials", std::move(credentials));
++  base::DictValue legacy;
++  for (const auto &[key, state] : legacy_credential_state_) {
++    legacy.Set(key, state_to_value(state, false));
++  }
++  root.Set("legacy_credentials", std::move(legacy));
 +  std::string raw;
 +  if (!base::JSONWriter::Write(root, &raw)) {
 +    return false;
@@ -3287,10 +3899,10 @@ index 0000000..8af376f
 +} // namespace helium_sync
 diff --git a/components/helium_sync/helium_password_sync_bridge.h b/components/helium_sync/helium_password_sync_bridge.h
 new file mode 100644
-index 0000000..dbc94e4
+index 0000000..28edcbf
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.h
-@@ -0,0 +1,121 @@
+@@ -0,0 +1,145 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
@@ -3299,6 +3911,7 @@ index 0000000..dbc94e4
 +#include <cstdint>
 +#include <map>
 +#include <memory>
++#include <optional>
 +#include <set>
 +#include <string>
 +#include <vector>
@@ -3335,6 +3948,20 @@ index 0000000..dbc94e4
 +private:
 +  void RequestReconcileRead();
 +  void RequestPostApplyRead();
++  void RequestPublicationRead();
++
++  struct PendingPublication {
++    int64_t expected_revision = 0;
++    int64_t target_revision = 0;
++    std::string payload_fingerprint;
++    std::string credential_fingerprint;
++    bool deleted = false;
++  };
++
++  struct QueuedMutation {
++    std::string credential_fingerprint;
++    bool deleted = false;
++  };
 +
 +  struct CredentialState {
 +    std::string fingerprint;
@@ -3342,6 +3969,8 @@ index 0000000..dbc94e4
 +    int64_t revision = 0;
 +    bool deleted = false;
 +    std::string key_id;
++    std::optional<PendingPublication> pending_publication;
++    std::optional<QueuedMutation> queued_mutation;
 +  };
 +
 +  struct RemotePasswordRecord {
@@ -3353,6 +3982,7 @@ index 0000000..dbc94e4
 +    kNone,
 +    kApplyRemote,
 +    kPostApply,
++    kPublishLocal,
 +  };
 +
 +  // PasswordStoreInterface::Observer:
@@ -3371,9 +4001,13 @@ index 0000000..dbc94e4
 +  void ReconcileRemotePasswords(
 +      const password_manager::LoginsResult &local_credentials);
 +  void PublishLocalMutations(const password_manager::LoginsResult &credentials);
-+  void PushRecords(std::vector<Record> records);
-+  void OnPushComplete(std::map<std::string, std::string> fingerprints, bool ok,
-+                      RecordsResult result, std::string error);
++  void
++  QueueLocalMutations(const password_manager::PasswordStoreChangeList &changes);
++  void PublishQueuedMutation(const password_manager::LoginsResult &credentials);
++  void MaybeStartPublication();
++  bool ResolvePendingPublications();
++  bool MigrateLegacyIdentity(const password_manager::LoginsResult &credentials);
++  void OnPushComplete(bool ok, RecordsResult result, std::string error);
 +  void OnPullComplete(bool ok, RecordsResult result, std::string error);
 +  void OnRemoteRecordComplete();
 +  bool
@@ -3393,11 +4027,13 @@ index 0000000..dbc94e4
 +  bool reconciling_ = false;
 +  bool applying_remote_ = false;
 +  bool state_trusted_ = true;
++  bool push_in_flight_ = false;
 +  int pending_remote_writes_ = 0;
 +  PendingRead pending_read_ = PendingRead::kNone;
 +  std::set<std::string> known_keys_;
 +  std::set<std::string> blocked_remote_keys_;
 +  std::map<std::string, CredentialState> credential_state_;
++  std::map<std::string, CredentialState> legacy_credential_state_;
 +  std::vector<RemotePasswordRecord> pending_remote_records_;
 +  std::map<std::string, RemotePasswordRecord> pending_verification_;
 +  int initial_empty_read_retries_ = 0;
@@ -4317,10 +4953,10 @@ index 0000000..6a208ec
 +} // namespace helium_sync
 diff --git a/components/helium_sync/helium_sync_client.h b/components/helium_sync/helium_sync_client.h
 new file mode 100644
-index 0000000..ed73129
+index 0000000..0effc1c
 --- /dev/null
 +++ b/components/helium_sync/helium_sync_client.h
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,140 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_SYNC_CLIENT_H_
@@ -4393,6 +5029,7 @@ index 0000000..ed73129
 +  void Latest(std::vector<std::string> kinds, RecordsCallback callback);
 +  std::string_view device_id() const { return state_.device_id; }
 +  std::string_view enrollment_phase() const { return state_.phase; }
++  std::string_view active_key_id() const { return state_.active_key_id; }
 +  bool AcknowledgeApplied(int64_t next_seq, std::string *error);
 +  bool ReloadEnrollmentState(std::string *error);
 +  void CompleteEnrollment(int64_t acknowledged_seq, StatusCallback callback);
