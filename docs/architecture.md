@@ -145,6 +145,12 @@ A rejection restores the saved destination state. Expected revisions,
 authenticated source device IDs, durable pending-publication state, and
 fingerprints stop token-rotation ping-pong and stale overwrites.
 
+The build-independent disposable model exercises the same identity dimensions,
+exact set/delete preview, successful target verification, and a partial apply
+followed by verified rollback. That is executable synthetic proof, not
+browser-runtime proof: the C++ bridge still needs the bounded chromiumer
+compile and a new disposable-profile run before deployment.
+
 Chromium device-bound sessions are observed through its device-bound-session
 manager. A cookie proven device-bound, or a cookie rejected on the destination,
 is marked non-clonable for that exact session; the last local session is
@@ -167,9 +173,10 @@ deletion, applies 24-hourly/14-daily/12-weekly retention without deleting the
 last known-good copy, and restores only to a nonexistent disposable state
 directory.
 
-Every source device runs its own hostname-bound scheduler and device-specific
-age key namespace. One validated generation is encrypted to at least two
-distinct recovery recipients and copied to exactly two off-source hosts with
+The operations design assigns every source device its own hostname-bound
+scheduler and device-specific age key namespace. One validated generation is
+encrypted to at least two distinct recovery recipients and copied to exactly
+two off-source hosts with
 incoming-file verification and atomic promotion. The enforced topology is lm's
 separately mounted NAS plus da for d and oneplus, and lm's NAS plus d for da.
 A durable health proof binds the current generation, configuration, key
@@ -179,6 +186,15 @@ device and profile and are never opened or merged on a different device. Local
 Chromium recovery and local generations are extra layers, not either
 off-device copy. Recovery identities stay outside all source and destination
 stores except while explicitly attached for a disposable restore drill.
+
+The independent store, stale-export boundary, fixed topology, pinned dedicated
+SSH transport, encryption/copy logic, health proof, retention, quarantine, and
+disposable restore are implemented and synthetic-tested. The native tab
+producer is source-complete but not yet compile/runtime validated. da currently
+has only a disabled user timer; oneplus has only source tools and a disabled
+runner template. No source can be enabled until its fresh browser export, two
+offline public recovery recipients, and both exact destination routes pass
+preflight.
 
 ## Runtime and build boundaries
 

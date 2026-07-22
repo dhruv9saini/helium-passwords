@@ -216,31 +216,46 @@ helium-tabs quarantine --store "$snapshot_store" \
 This atomically moves the entire generation under the store's `quarantine/`
 directory. It never deletes bytes and it never happens automatically.
 
-## Live readiness audit (2026-07-21)
+## Live readiness audit (2026-07-22)
 
 - lm has about 18.8 GiB free. `/srv/nas` is mounted read-write on a separate
-  ext4 disk with about 1.3 TiB free.
+  ext4 disk with about 1.3 TiB free. Mode-0700 destination namespaces now exist
+  for d, da, and oneplus under `/srv/nas/helium-tab-backups`.
 - chromiumer has 105.7 GiB available, but it is a build executor and is not a
   tab-backup destination.
-- da and d are online in Tailscale. Dedicated BatchMode SSH from lm now works
-  for da; d still rejects lm's available keys, so the example's second copy is
-  not deployable yet.
-- da has about 208 GiB free, a running systemd user manager, `jq`, `rsync`, and
-  the standard integrity tools, but no `age`/`age-keygen` yet.
+- da and d are online in Tailscale. d answers TCP/22 but rejects lm's available
+  BatchMode identities; da's new backup identity is likewise not authorized on
+  d. Therefore da's required d replica is not deployable and da must not be
+  enabled.
+- da has about 208 GiB free, a running systemd user manager, `jq`, `rsync`, the
+  standard integrity tools, and age 1.3.1. Its source tools, commit-provenance
+  `helium-tabs`, config, service, and user timer are staged. The timer is both
+  disabled and inactive. Preflight fails closed because the independent public
+  recovery-recipient file has not been provisioned; the native export and d
+  route also remain unsatisfied.
 - oneplus is online and reachable through authorized ADB, with roughly 410 GiB
-  free under `/data`. Port 22 is closed. Its Android shell lacks both `age` and
-  `jq`; its Arch chroot has `jq`, `rsync`, and the integrity tools but lacks
-  `age` and has no running systemd manager. No scheduler or backup service
-  should be deployed until age and two noninteractive destination routes are
-  present.
+  free under `/data`. Its Android shell is not the backup runtime. The Arch
+  chroot has `jq`, `rsync`, the integrity tools, and age 1.3.1, but no running
+  systemd manager. Source tools, the ARM64 `helium-tabs` binary, config template,
+  and disabled Magisk runner template are staged. There is no active config,
+  installed Magisk service, or enable marker.
 - Its Android and chroot hostname is currently `localhost`. The disabled
   Magisk runner's isolated UTS namespace supplies `oneplus` only to the backup
-  process, avoiding any global hostname change. Both lm and da resolve and
-  answer TCP/22 from the chroot, but host trust and public-key authorization
-  are not provisioned.
+  process, avoiding any global hostname change. The chroot's dedicated key now
+  reaches lm and da noninteractively with strict pinned-host-key verification.
+  The source remains disabled until offline public recovery recipients and the
+  native browser export exist.
+- da's dedicated public-key fingerprint is
+  `SHA256:AxzKZUs3u5vVOxzhrHKRXMShn5amwgQxE/zemOtVPV4`; oneplus's is
+  `SHA256:HyHqmUFOnyo5rNWP+OYTq6QM36Sbr+pYc2dd1n7nhCM`. Destinations authorize
+  these dedicated backup keys with OpenSSH `restrict`. The pinned lm and da
+  host-key fingerprints match the servers' own ED25519 public keys. Private
+  keys remain only on their source devices; no age recovery identity was
+  created or copied.
 - The source adapter and native five-minute refresh contract are implemented
   and synthetic-tested. The native bridge still requires a chromiumer compile
-  and disposable-profile run before any scheduler is installed or enabled.
+  and disposable-profile run before any scheduler is enabled or source is
+  promoted beyond disabled staging.
 
 These are deployment gates, not reasons to weaken destination independence or
 copy unencrypted tab data through an intermediary.
