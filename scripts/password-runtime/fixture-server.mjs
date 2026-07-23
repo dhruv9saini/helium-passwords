@@ -8,6 +8,7 @@ import {pathToFileURL} from "node:url";
 
 const LOOPBACK = "127.0.0.1";
 const MAX_BODY_BYTES = 8192;
+const RUN_NONCE = /^[0-9a-f]{64}$/;
 
 const page = (title, body) => `<!doctype html>
 <html lang="en">
@@ -95,6 +96,21 @@ async function readBody(request) {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+async function readExactForm(request, expectedNames) {
+  const contentType = (request.headers["content-type"] || "")
+    .split(";", 1)[0].trim().toLowerCase();
+  if (contentType !== "application/x-www-form-urlencoded") {
+    throw new Error("fixture form has the wrong content type");
+  }
+  const form = new URLSearchParams(await readBody(request));
+  const actualNames = [...form.keys()].sort();
+  const wantedNames = [...expectedNames].sort();
+  if (JSON.stringify(actualNames) !== JSON.stringify(wantedNames)) {
+    throw new Error("fixture form has an unexpected field inventory");
+  }
+  return form;
+}
+
 async function writeJSONExclusive(filePath, value) {
   const resolved = path.resolve(filePath);
   await fsp.mkdir(path.dirname(resolved), {recursive: true, mode: 0o700});
@@ -109,12 +125,15 @@ async function writeJSONExclusive(filePath, value) {
   }
 }
 
-export async function startNativePasswordFixture({port = 0, evidencePath} = {}) {
+export async function startNativePasswordFixture({port = 0, evidencePath, runNonce} = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new TypeError("port must be an integer from 0 through 65535");
   }
   if (!evidencePath || !path.isAbsolute(evidencePath)) {
     throw new Error("evidencePath must be an absolute, nonexistent file");
+  }
+  if (!RUN_NONCE.test(runNonce || "")) {
+    throw new Error("runNonce must be the 64-character nonce from this acceptance run");
   }
   await fsp.lstat(evidencePath).then(
     () => { throw new Error(`refusing existing fixture evidence: ${evidencePath}`); },
@@ -142,7 +161,7 @@ export async function startNativePasswordFixture({port = 0, evidencePath} = {}) 
       return;
     }
     if (request.method === "POST" && url.pathname === "/session") {
-      const form = new URLSearchParams(await readBody(request));
+      const form = await readExactForm(request, ["username", "password"]);
       const username = form.get("username") || "";
       const password = form.get("password") || "";
       if (!username || !password) {
@@ -190,7 +209,9 @@ export async function startNativePasswordFixture({port = 0, evidencePath} = {}) 
         send(response, 409, "text/plain; charset=utf-8", "password update is out of order\n");
         return;
       }
-      const form = new URLSearchParams(await readBody(request));
+      const form = await readExactForm(request, [
+        "username", "current_password", "new_password", "confirm_password",
+      ]);
       const username = form.get("username") || "";
       const current = form.get("current_password") || "";
       const replacement = form.get("new_password") || "";
@@ -228,11 +249,12 @@ export async function startNativePasswordFixture({port = 0, evidencePath} = {}) 
       observations.deleted_restart_empty = true;
       stage = "complete";
       await writeJSONExclusive(evidencePath, {
-        schema_version: 1,
+        schema_version: 2,
         completed_at: new Date().toISOString(),
         fixture_origin: origin,
         observations,
         evidence_contains_submitted_values: false,
+        run_nonce: runNonce,
       });
       send(response, 204, "text/plain; charset=utf-8", "");
       return;
@@ -265,20 +287,30 @@ export async function startNativePasswordFixture({port = 0, evidencePath} = {}) 
 }
 
 function parseArgs(argv) {
-  const result = {port: 0};
+  const result = {};
+  const seen = new Set();
   for (let index = 0; index < argv.length; index += 1) {
     const key = argv[index];
     if (!key.startsWith("--") || index + 1 >= argv.length) throw new Error(`invalid argument: ${key}`);
-    result[key.slice(2)] = argv[++index];
+    const name = key.slice(2);
+    if (!["port", "evidence", "run-nonce"].includes(name) || seen.has(name)) {
+      throw new Error(`invalid or duplicate argument: ${key}`);
+    }
+    seen.add(name);
+    result[name] = argv[++index];
   }
-  result.port = Number(result.port);
+  result.port = Number(result.port ?? 0);
   return result;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     const args = parseArgs(process.argv.slice(2));
-    const fixture = await startNativePasswordFixture({port: args.port, evidencePath: args.evidence});
+    const fixture = await startNativePasswordFixture({
+      port: args.port,
+      evidencePath: args.evidence,
+      runNonce: args["run-nonce"],
+    });
     process.stdout.write(`${JSON.stringify({event: "listening", origin: fixture.origin, pid: process.pid})}\n`);
     const stop = async () => {
       process.removeListener("SIGINT", stop);

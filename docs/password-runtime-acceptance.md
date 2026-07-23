@@ -21,6 +21,11 @@ does not interpret pixels: capture a screenshot only after Codex has visually
 confirmed the named native surface. Hashes make that reviewed evidence
 immutable and bind it to the admitted browser artifact.
 
+Initialization also creates one random, non-secret run nonce. The fixture
+copies that nonce into its create-new evidence file, and final verification
+requires an exact match. Evidence from an older successful fixture lifecycle
+therefore cannot be reused to admit a new artifact or screenshot sequence.
+
 ## Admission
 
 First run `scripts/verify-linux-runtime.sh` on lm as documented in
@@ -65,8 +70,10 @@ Do not read any other app data, `Login Data`, or a personal profile.
 Start the stateful fixture and keep it running across browser restarts:
 
 ```sh
+run_nonce=$(jq -er .run_nonce "$run/run.json")
 node scripts/password-runtime/fixture-server.mjs \
   --port 0 \
+  --run-nonce "$run_nonce" \
   --evidence "$run/fixture-evidence.json"
 ```
 
@@ -76,7 +83,7 @@ port instead of colliding with another fixture. For Android, expose that exact p
 `adb reverse` entry and remove only that entry during cleanup. The fixture
 stores only SHA-256 comparisons in memory and writes no submitted username or
 password. Its create-new evidence file appears only after the complete ordered
-lifecycle.
+lifecycle and is bound to this run's public nonce.
 
 ## Ordered native lifecycle
 
@@ -107,9 +114,10 @@ node scripts/password-runtime/acceptance.mjs capture \
   --run "$run" --step STEP --screenshot /ABSOLUTE/SCREEN.png
 ```
 
-The command rejects non-PNG input, symlinks, unexpected or out-of-order steps,
-duplicate arguments, and a second capture of the same step. No command accepts
-password values or a password-store path.
+The command rejects non-PNG input, truncated or checksum-invalid PNG chunks,
+symlinks, unexpected or out-of-order steps, duplicate arguments, and a second
+capture of the same step. No command accepts password values or a
+password-store path.
 
 After the fixture writes its evidence, finalize once:
 
