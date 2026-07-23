@@ -52,6 +52,7 @@ comm -12 "$temporary_root/inputs.relative" "$temporary_root/pruning.sorted" \
   > "$temporary_root/reachable-pruned.sorted"
 
 cat > "$temporary_root/expected.sorted" <<'EOF'
+components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat
 third_party/r8/custom_d8.jar
 third_party/r8/custom_r8.jar
 EOF
@@ -72,4 +73,4 @@ fi
 while IFS= read -r relative_path; do
   printf 'android_pruned_graph_input=%s\n' "$relative_path"
 done < "$temporary_root/reachable-pruned.sorted"
-printf 'android_pruned_build_graph=verified target=%s count=2\n' "$target"
+printf 'android_pruned_build_graph=verified target=%s count=3\n' "$target"

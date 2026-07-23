@@ -12,6 +12,7 @@ source_root="$test_root/chromium"
 mkdir -p \
   "$source_root/chrome/browser/preferences" \
   "$source_root/chrome/common" \
+  "$source_root/components/privacy_sandbox/privacy_sandbox_attestations/preload" \
   "$source_root/components/safe_browsing/core/common" \
   "$source_root/components/signin/public/base" \
   "$source_root/third_party/r8"
@@ -34,6 +35,8 @@ source_set("browser_preferences") {
 EOF
 printf 'inline constexpr char kHome[] = "home";\n' \
   > "$source_root/chrome/common/pref_names.h"
+printf 'synthetic pinned Privacy Sandbox attestations\n' \
+  > "$source_root/components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat"
 printf 'const char kSafeBrowsing[] = "safe";\n' \
   > "$source_root/components/safe_browsing/core/common/safe_browsing_prefs.cc"
 printf 'inline constexpr char kSafeBrowsingEnabled[] = "safe.enabled";\n' \
@@ -56,6 +59,7 @@ pinned_commit=$(git -C "$source_root" rev-parse HEAD)
 
 pruning_list="$test_root/pruning.list"
 cat > "$pruning_list" <<'EOF'
+components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat
 components/safe_browsing/core/common/safe_browsing_prefs.cc
 components/safe_browsing/core/common/safe_browsing_prefs.h
 components/signin/public/base/signin_pref_names.cc
@@ -65,6 +69,7 @@ third_party/r8/custom_r8.jar
 EOF
 
 for relative_path in \
+  components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat \
   components/safe_browsing/core/common/safe_browsing_prefs.cc \
   components/safe_browsing/core/common/safe_browsing_prefs.h \
   components/signin/public/base/signin_pref_names.cc \
@@ -80,11 +85,15 @@ restore_output=$(
   "$repo_root/scripts/chromium/restore-android-pruned-build-inputs.sh" \
     restore "$source_root" "$pinned_commit" "$pruning_list"
 )
-[[ "$(grep -c '^restore_android_build_input=' <<< "$restore_output")" -eq 6 ]]
+[[ "$(grep -c '^restore_android_build_input=' <<< "$restore_output")" -eq 7 ]]
+attestations_blob=$(git -C "$source_root" rev-parse \
+  "$pinned_commit:components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat")
 d8_blob=$(git -C "$source_root" rev-parse \
   "$pinned_commit:third_party/r8/custom_d8.jar")
 r8_blob=$(git -C "$source_root" rev-parse \
   "$pinned_commit:third_party/r8/custom_r8.jar")
+grep -qx "restore_android_build_input=components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat blob=$attestations_blob" \
+  <<< "$restore_output"
 grep -qx "restore_android_build_input=third_party/r8/custom_d8.jar blob=$d8_blob" \
   <<< "$restore_output"
 grep -qx "restore_android_build_input=third_party/r8/custom_r8.jar blob=$r8_blob" \
@@ -93,6 +102,7 @@ find "$source_root" -type f -name '*BUILD.gn' -print0 | sort -z | \
   xargs -0 sha256sum > "$test_root/build-files.after"
 cmp "$test_root/build-files.before" "$test_root/build-files.after"
 git -C "$source_root" diff --quiet -- \
+  components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat \
   components/safe_browsing/core/common/safe_browsing_prefs.cc \
   components/safe_browsing/core/common/safe_browsing_prefs.h \
   components/signin/public/base/signin_pref_names.cc \
@@ -139,7 +149,9 @@ validate_output=$(
   "$repo_root/scripts/chromium/restore-android-pruned-build-inputs.sh" \
     validate "$source_root" "$pinned_commit" "$pruning_list"
 )
-[[ "$(grep -c '^validate_android_build_input=' <<< "$validate_output")" -eq 6 ]]
+[[ "$(grep -c '^validate_android_build_input=' <<< "$validate_output")" -eq 7 ]]
+grep -qx "validate_android_build_input=components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat blob=$attestations_blob" \
+  <<< "$validate_output"
 grep -qx "validate_android_build_input=third_party/r8/custom_d8.jar blob=$d8_blob" \
   <<< "$validate_output"
 grep -qx "validate_android_build_input=third_party/r8/custom_r8.jar blob=$r8_blob" \
@@ -150,12 +162,12 @@ mkdir -p "$out_dir"
 cat > "$out_dir/build.ninja" <<'EOF'
 rule package
   command = touch $out
-build chrome_public_apk: package ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../chrome/common/pref_names.h
+build chrome_public_apk: package ../../components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../chrome/common/pref_names.h
 EOF
 graph_validator="$repo_root/scripts/chromium/validate-android-pruned-build-graph.sh"
 "$graph_validator" "$source_root" "$out_dir" "$pinned_commit" \
   "$pruning_list" chrome_public_apk | \
-  grep -qx 'android_pruned_build_graph=verified target=chrome_public_apk count=2'
+  grep -qx 'android_pruned_build_graph=verified target=chrome_public_apk count=3'
 
 mkdir -p "$source_root/third_party/angle/third_party/r8"
 printf 'synthetic ANGLE D8\n' \
@@ -164,7 +176,7 @@ printf '%s\n' 'third_party/angle/third_party/r8/custom_d8.jar' >> "$pruning_list
 cat > "$out_dir/build.ninja" <<'EOF'
 rule package
   command = touch $out
-build chrome_public_apk: package ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../third_party/angle/third_party/r8/custom_d8.jar
+build chrome_public_apk: package ../../components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../third_party/angle/third_party/r8/custom_d8.jar
 EOF
 if "$graph_validator" "$source_root" "$out_dir" "$pinned_commit" \
   "$pruning_list" chrome_public_apk > "$test_root/unexpected-graph.out" 2>&1; then

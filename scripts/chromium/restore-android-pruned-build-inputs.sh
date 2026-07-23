@@ -37,6 +37,7 @@ esac
 }
 
 readonly_paths=(
+  components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat
   components/safe_browsing/core/common/safe_browsing_prefs.cc
   components/safe_browsing/core/common/safe_browsing_prefs.h
   components/signin/public/base/signin_pref_names.cc
