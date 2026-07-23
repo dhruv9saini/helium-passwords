@@ -36,12 +36,17 @@ verifier receipt, rehashes the admitted executable, and creates the only
 allowed profile below the result directory. Launch that exact executable with
 that exact `--user-data-dir`; never substitute an existing profile.
 
+The audited da host has Node 24.18.0 installed through mise, but its
+non-interactive SSH `PATH` does not expose `node` directly. Use the verified
+mise entry point for every harness command:
+
 ```sh
+node_runtime=(mise exec node@24.18.0 -- node)
 verified=/PATH/ON/DA/verified
 browser="$verified/helium-passwords-linux-x86_64/runtime/helium-wrapper"
 artifact_receipt="$verified/artifact-receipt.env"
 run=/home/d/.local/state/helium-password-acceptance/PASSWORD_JOB
-node scripts/password-runtime/acceptance.mjs init \
+"${node_runtime[@]}" scripts/password-runtime/acceptance.mjs init \
   --artifact "$browser" \
   --artifact-receipt "$artifact_receipt" \
   --platform linux \
@@ -57,7 +62,7 @@ The package named by both the APK metadata and `--package` must end in `.test`,
 which keeps the acceptance app separate from a production installation:
 
 ```sh
-node scripts/password-runtime/acceptance.mjs init \
+"${node_runtime[@]}" scripts/password-runtime/acceptance.mjs init \
   --artifact /srv/nas/helium-acceptance/JOB/Browser-test.apk \
   --platform android \
   --package computer.helium.passwords.test \
@@ -71,7 +76,7 @@ Start the stateful fixture and keep it running across browser restarts:
 
 ```sh
 run_nonce=$(jq -er .run_nonce "$run/run.json")
-node scripts/password-runtime/fixture-server.mjs \
+"${node_runtime[@]}" scripts/password-runtime/fixture-server.mjs \
   --port 0 \
   --run-nonce "$run_nonce" \
   --evidence "$run/fixture-evidence.json"
@@ -110,7 +115,7 @@ harness copies the screenshot to a mode-0600 step-specific file.
 Capture each step immediately after inspection:
 
 ```sh
-node scripts/password-runtime/acceptance.mjs capture \
+"${node_runtime[@]}" scripts/password-runtime/acceptance.mjs capture \
   --run "$run" --step STEP --screenshot /ABSOLUTE/SCREEN.png
 ```
 
@@ -122,7 +127,7 @@ password-store path.
 After the fixture writes its evidence, finalize once:
 
 ```sh
-node scripts/password-runtime/acceptance.mjs verify \
+"${node_runtime[@]}" scripts/password-runtime/acceptance.mjs verify \
   --run "$run" \
   --fixture-evidence "$run/fixture-evidence.json"
 ```
