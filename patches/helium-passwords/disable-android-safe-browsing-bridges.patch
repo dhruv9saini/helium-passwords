@@ -1,0 +1,880 @@
+diff --git a/chrome/browser/notifications/scheduler/tips_agent_android.cc b/chrome/browser/notifications/scheduler/tips_agent_android.cc
+--- a/chrome/browser/notifications/scheduler/tips_agent_android.cc
++++ b/chrome/browser/notifications/scheduler/tips_agent_android.cc
+@@ -17,7 +17,6 @@
+ #include "components/browsing_data/core/pref_names.h"
+ #include "components/omnibox/browser/omnibox_prefs.h"
+ #include "components/prefs/pref_service.h"
+-#include "components/safe_browsing/core/common/safe_browsing_prefs.h"
+ #include "components/segmentation_platform/public/constants.h"
+ #include "components/segmentation_platform/public/features.h"
+ #include "components/segmentation_platform/public/segmentation_platform_service.h"
+@@ -123,9 +122,7 @@ void TipsAgentAndroid::ScheduleNewNotification(
+ 
+   // V1 Tips: ESB, Quick Delete, Google Lens, Bottom Omnibox
+ 
+-  bool is_enhanced_safe_browsing =
+-      safe_browsing::GetSafeBrowsingState(*pref_service) ==
+-      safe_browsing::SafeBrowsingState::ENHANCED_PROTECTION;
++  bool is_enhanced_safe_browsing = false;
+   input_context->metadata_args.emplace(
+       segmentation_platform::kEnhancedSafeBrowsingStatus,
+       segmentation_platform::processing::ProcessedValue(
+diff --git a/chrome/browser/safe_browsing/android/BUILD.gn b/chrome/browser/safe_browsing/android/BUILD.gn
+--- a/chrome/browser/safe_browsing/android/BUILD.gn
++++ b/chrome/browser/safe_browsing/android/BUILD.gn
+@@ -8,7 +8,6 @@ import("//third_party/jni_zero/jni_zero.gni")
+ generate_jni("jni_headers") {
+   sources = [
+     "java/src/org/chromium/chrome/browser/safe_browsing/AdvancedProtectionStatusManagerAndroidBridge.java",
+-    "java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingBridge.java",
+   ]
+ }
+ 
+diff --git a/chrome/browser/safety_hub/android/java/src/org/chromium/chrome/browser/safety_hub/SafetyHubMagicStackMediator.java b/chrome/browser/safety_hub/android/java/src/org/chromium/chrome/browser/safety_hub/SafetyHubMagicStackMediator.java
+--- a/chrome/browser/safety_hub/android/java/src/org/chromium/chrome/browser/safety_hub/SafetyHubMagicStackMediator.java
++++ b/chrome/browser/safety_hub/android/java/src/org/chromium/chrome/browser/safety_hub/SafetyHubMagicStackMediator.java
+@@ -87,8 +87,8 @@ class SafetyHubMagicStackMediator implements TabModelSelectorObserver, MagicSta
+                 bindRevokedPermissionsView(magicStackEntry.getDescription());
+                 break;
+             case MagicStackEntry.ModuleType.SAFE_BROWSING:
+-                bindSafeBrowsingView(magicStackEntry.getDescription());
+-                break;
++                mModuleDelegate.onDataFetchFailed(ModuleType.SAFETY_HUB);
++                return;
+             case MagicStackEntry.ModuleType.PASSWORDS:
+                 bindCompromisedPasswordsView(magicStackEntry.getDescription());
+                 break;
+@@ -98,10 +98,7 @@ class SafetyHubMagicStackMediator implements TabModelSelectorObserver, MagicSta
+ 
+         // Add observers to dismiss the module if necessary.
+         mMagicStackBridge.addObserver(this);
+-        if (magicStackEntry.getModuleType().equals(MagicStackEntry.ModuleType.SAFE_BROWSING)) {
+-            mPrefChangeRegistrar.addObserver(
+-                    Pref.SAFE_BROWSING_ENABLED, this::onSafeBrowsingChanged);
+-        } else if (magicStackEntry.getModuleType().equals(MagicStackEntry.ModuleType.PASSWORDS)) {
++        if (magicStackEntry.getModuleType().equals(MagicStackEntry.ModuleType.PASSWORDS)) {
+             mPrefChangeRegistrar.addObserver(
+                     Pref.BREACHED_CREDENTIALS_COUNT, this::onCompromisedPasswordsCountChanged);
+         }
+@@ -111,7 +108,6 @@ class SafetyHubMagicStackMediator implements TabModelSelectorObserver, MagicSta
+         mTabModelSelector.removeObserver(this);
+         mMagicStackBridge.removeObserver(this);
+ 
+-        mPrefChangeRegistrar.removeObserver(Pref.SAFE_BROWSING_ENABLED);
+         mPrefChangeRegistrar.removeObserver(Pref.BREACHED_CREDENTIALS_COUNT);
+         mPrefChangeRegistrar.destroy();
+     }
+@@ -133,14 +129,6 @@ class SafetyHubMagicStackMediator implements TabModelSelectorObserver, MagicSta
+         showModule();
+     }
+ 
+-    private void onSafeBrowsingChanged() {
+-        boolean isSafeBrowsingEnabled = mPrefService.getBoolean(Pref.SAFE_BROWSING_ENABLED);
+-        if (isSafeBrowsingEnabled && !mHasBeenDismissed) {
+-            mMagicStackBridge.dismissSafeBrowsingModule();
+-            dismissModule();
+-        }
+-    }
+-
+     private void onCompromisedPasswordsCountChanged() {
+         boolean hasCompromisedPasswords =
+                 mPrefService.getInteger(Pref.BREACHED_CREDENTIALS_COUNT) > 0;
+diff --git a/chrome/browser/signin/services/android/java/src/org/chromium/chrome/browser/signin/services/SigninManagerImpl.java b/chrome/browser/signin/services/android/java/src/org/chromium/chrome/browser/signin/services/SigninManagerImpl.java
+--- a/chrome/browser/signin/services/android/java/src/org/chromium/chrome/browser/signin/services/SigninManagerImpl.java
++++ b/chrome/browser/signin/services/android/java/src/org/chromium/chrome/browser/signin/services/SigninManagerImpl.java
+@@ -25,8 +25,6 @@ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.browser.preferences.ChromePreferenceKeys;
+ import org.chromium.chrome.browser.preferences.ChromeSharedPreferences;
+-import org.chromium.chrome.browser.preferences.Pref;
+ import org.chromium.components.externalauth.ExternalAuthUtils;
+-import org.chromium.components.prefs.PrefChangeRegistrar;
+ import org.chromium.components.prefs.PrefService;
+ import org.chromium.components.signin.AccountManagerFacade;
+ import org.chromium.components.signin.AccountManagerFacadeProvider;
+@@ -77,7 +75,6 @@ class SigninManagerImpl implements SigninManager, AccountsChangeObserver {
+     private final IdentityMutator mIdentityMutator;
+     private final ObserverList<SignInStateObserver> mSignInStateObservers = new ObserverList<>();
+     private final List<Runnable> mCallbacksWaitingForPendingOperation = new ArrayList<>();
+-    private final PrefChangeRegistrar mPrefChangeRegistrar;
+     private final PrefService mPrefService;
+ 
+     /**
+@@ -140,8 +137,6 @@ class SigninManagerImpl implements SigninManager, AccountsChangeObserver {
+                     mAccountManagerFacade.getAccounts().getResult(),
+                     CoreAccountInfo.getIdFrom(identityManager.getPrimaryAccountInfo()));
+         }
+-        mPrefChangeRegistrar = new PrefChangeRegistrar(mPrefService);
+-        mPrefChangeRegistrar.addObserver(Pref.SIGNIN_ALLOWED, this::notifySignInAllowedChanged);
+     }
+ 
+     /**
+@@ -152,7 +147,6 @@ class SigninManagerImpl implements SigninManager, AccountsChangeObserver {
+     @CalledByNative
+     void destroy() {
+         mAccountManagerFacade.removeObserver(this);
+-        mPrefChangeRegistrar.destroy();
+         mNativeSigninManagerAndroid = 0;
+     }
+ 
+@@ -216,10 +210,7 @@ class SigninManagerImpl implements SigninManager, AccountsChangeObserver {
+ 
+     @Override
+     public boolean isSigninAllowed() {
+-        return mSignInState == null
+-                && mPrefService.getBoolean(Pref.SIGNIN_ALLOWED)
+-                && mIdentityManager.getPrimaryAccountInfo() == null
+-                && isSigninSupported(/* requireUpdatedPlayServices= */ false);
++        return false;
+     }
+ 
+     @Override
+@@ -241,10 +231,7 @@ class SigninManagerImpl implements SigninManager, AccountsChangeObserver {
+ 
+     @Override
+     public boolean isSwitchAccountAllowed() {
+-        return mSignInState == null
+-                && mPrefService.getBoolean(Pref.SIGNIN_ALLOWED)
+-                && isSigninSupported(/* requireUpdatedPlayServices= */ false)
+-                && isSignOutAllowed();
++        return false;
+     }
+ 
+     @Override
+@@ -305,15 +291,7 @@ class SigninManagerImpl implements SigninManager, AccountsChangeObserver {
+             throw new IllegalArgumentException("SigninState shouldn't be null!");
+         }
+         if (!isSigninAllowed()) {
+-            throw new IllegalStateException(
+-                    String.format(
+-                            "Sign-in isn't allowed!\n"
+-                                    + "  mSignInState: %s\n"
+-                                    + "  Pref.SIGNIN_ALLOWED: %s\n"
+-                                    + "  Signed-in account: %s",
+-                            mSignInState,
+-                            mPrefService.getBoolean(Pref.SIGNIN_ALLOWED),
+-                            mIdentityManager.getPrimaryAccountInfo()));
++            throw new IllegalStateException("Sign-in isn't allowed!");
+         }
+ 
+         // The mSignInState must be updated prior to the async processing below, as this indicates
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/identity_disc/IdentityDiscController.java b/chrome/android/java/src/org/chromium/chrome/browser/identity_disc/IdentityDiscController.java
+--- a/chrome/android/java/src/org/chromium/chrome/browser/identity_disc/IdentityDiscController.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/identity_disc/IdentityDiscController.java
+@@ -24,7 +24,6 @@ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.R;
+ import org.chromium.chrome.browser.feature_engagement.TrackerFactory;
+ import org.chromium.chrome.browser.ntp.NewTabPage;
+-import org.chromium.chrome.browser.preferences.Pref;
+ import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.chrome.browser.settings.SettingsNavigationFactory;
+ import org.chromium.chrome.browser.signin.SigninAndHistorySyncActivityLauncherImpl;
+@@ -64,5 +63,4 @@ import org.chromium.components.sync.SyncService;
+ import org.chromium.components.sync.UserActionableError;
+-import org.chromium.components.user_prefs.UserPrefs;
+ import org.chromium.google_apis.gaia.CoreAccountId;
+ import org.chromium.ui.base.ActivityResultTracker;
+ import org.chromium.ui.base.WindowAndroid;
+@@ -442,55 +440,17 @@ public class IdentityDiscController
+     @VisibleForTesting
+     void onClick() {
+-        if (mProfile == null) {
++        if (mProfile == null || getSignedInAccountInfo() == null) {
+             return;
+         }
+         recordIdentityDiscUsed();
+ 
+         Profile originalProfile = mProfile.getOriginalProfile();
+-        if (getSignedInAccountInfo() == null
+-                && UserPrefs.get(originalProfile).getBoolean(Pref.SIGNIN_ALLOWED)) {
+-            AccountPickerBottomSheetStrings bottomSheetStrings =
+-                    new AccountPickerBottomSheetStrings.Builder(
+-                                    mContext.getString(
+-                                            R.string.signin_account_picker_bottom_sheet_title))
+-                            .setSubtitleString(
+-                                    mContext.getString(
+-                                            R.string
+-                                                    .signin_account_picker_bottom_sheet_benefits_subtitle))
+-                            .build();
+-            BottomSheetSigninAndHistorySyncConfig config =
+-                    new BottomSheetSigninAndHistorySyncConfig.Builder(
+-                                    bottomSheetStrings,
+-                                    NoAccountSigninMode.BOTTOM_SHEET,
+-                                    WithAccountSigninMode.DEFAULT_ACCOUNT_BOTTOM_SHEET,
+-                                    HistorySyncConfig.OptInMode.OPTIONAL,
+-                                    mContext.getString(R.string.history_sync_title),
+-                                    mContext.getString(R.string.history_sync_subtitle))
+-                            .signinSurveyType(
+-                                    SigninSurveyController.SigninSurveyType.NTP_SIGNIN_BUTTON)
+-                            .build();
+-            if (SigninFeatureMap.getInstance().isActivitylessSigninAllEntryPointEnabled()) {
+-                assumeNonNull(mSigninCoordinator).startSigninFlow(config);
+-            } else {
+-                @Nullable Intent intent =
+-                        SigninAndHistorySyncActivityLauncherImpl.get()
+-                                .createBottomSheetSigninIntentOrShowError(
+-                                        mContext,
+-                                        originalProfile,
+-                                        config,
+-                                        SigninAccessPoint.NTP_SIGNED_OUT_ICON);
+-                if (intent != null) {
+-                    mContext.startActivity(intent);
+-                }
+-            }
+-        } else {
+-            SettingsNavigation settingsNavigation =
+-                    SettingsNavigationFactory.createSettingsNavigation();
+-            settingsNavigation.startSettings(mContext);
+-            SigninSurveyController.registerTrigger(
+-                    originalProfile,
+-                    SigninSurveyController.SigninSurveyType.NTP_ACCOUNT_AVATAR_TAP);
+-        }
++        SettingsNavigation settingsNavigation =
++                SettingsNavigationFactory.createSettingsNavigation();
++        settingsNavigation.startSettings(mContext);
++        SigninSurveyController.registerTrigger(
++                originalProfile,
++                SigninSurveyController.SigninSurveyType.NTP_ACCOUNT_AVATAR_TAP);
+     }
+ 
+     @VisibleForTesting
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/sync/settings/GoogleServicesSettings.java b/chrome/android/java/src/org/chromium/chrome/browser/sync/settings/GoogleServicesSettings.java
+--- a/chrome/android/java/src/org/chromium/chrome/browser/sync/settings/GoogleServicesSettings.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/sync/settings/GoogleServicesSettings.java
+@@ -94,7 +94,6 @@ public class GoogleServicesSettings extends ChromeBaseSettingsFragment
+     private ManagedPreferenceDelegate mManagedPreferenceDelegate;
+     private PrefService mPrefService;
+ 
+-    private ChromeSwitchPreference mAllowSignin;
+     private ChromeSwitchPreference mSearchSuggestions;
+     private ChromeSwitchPreference mUsageAndCrashReporting;
+     private ChromeSwitchPreference mUrlKeyedAnonymizedData;
+@@ -115,16 +114,8 @@ public class GoogleServicesSettings extends ChromeBaseSettingsFragment
+ 
+         SettingsUtils.addPreferencesFromResource(this, R.xml.google_services_preferences);
+ 
+-        mAllowSignin = (ChromeSwitchPreference) findPreference(PREF_ALLOW_SIGNIN);
+-
+-        if (!shouldShowAllowSignIn(getProfile())) {
+-            // Do not display option to allow / disallow sign-in for supervised accounts since
+-            // these require the user to be signed-in and syncing.
+-            mAllowSignin.setVisible(false);
+-        } else {
+-            mAllowSignin.setOnPreferenceChangeListener(this);
+-            mAllowSignin.setManagedPreferenceDelegate(mManagedPreferenceDelegate);
+-        }
++        Preference allowSignin = findPreference(PREF_ALLOW_SIGNIN);
++        removePreference(getPreferenceScreen(), allowSignin);
+ 
+         mSearchSuggestions = (ChromeSwitchPreference) findPreference(PREF_SEARCH_SUGGESTIONS);
+         mSearchSuggestions.setOnPreferenceChangeListener(this);
+@@ -203,33 +193,7 @@ public class GoogleServicesSettings extends ChromeBaseSettingsFragment
+     @Override
+     public boolean onPreferenceChange(Preference preference, Object newValue) {
+         String key = preference.getKey();
+-        if (PREF_ALLOW_SIGNIN.equals(key)) {
+-            assert !getProfile().isChild() : "A supervised account must not update allow sign-in.";
+-
+-            IdentityManager identityManager =
+-                    assumeNonNull(IdentityServicesProvider.get().getIdentityManager(getProfile()));
+-            boolean shouldSignUserOut =
+-                    identityManager.hasPrimaryAccount() && !((boolean) newValue);
+-            if (!shouldSignUserOut) {
+-                mPrefService.setBoolean(Pref.SIGNIN_ALLOWED, (boolean) newValue);
+-                return true;
+-            }
+-
+-            SignOutCoordinator.startSignOutFlow(
+-                    requireContext(),
+-                    getProfile(),
+-                    ((ModalDialogManagerHolder) getActivity()).getModalDialogManager(),
+-                    assertNonNull(assumeNonNull(mSnackbarManagerSupplier).get()),
+-                    SignoutReason.USER_DISABLED_ALLOW_CHROME_SIGN_IN,
+-                    /* showConfirmDialog= */ true,
+-                    () -> {
+-                        mPrefService.setBoolean(Pref.SIGNIN_ALLOWED, false);
+-                        updatePreferences();
+-                    });
+-            // Don't change the preference state yet, it will be updated by SignOutCoordinator if
+-            // the user actually confirms the sign-out.
+-            return false;
+-        } else if (PREF_SEARCH_SUGGESTIONS.equals(key)) {
++        if (PREF_SEARCH_SUGGESTIONS.equals(key)) {
+             mPrefService.setBoolean(Pref.SEARCH_SUGGEST_ENABLED, (boolean) newValue);
+         } else if (PREF_USAGE_AND_CRASH_REPORTING.equals(key)) {
+             UmaSessionStats.changeMetricsReportingState(
+@@ -253,7 +212,6 @@ public class GoogleServicesSettings extends ChromeBaseSettingsFragment
+     }
+ 
+     private void updatePreferences() {
+-        mAllowSignin.setChecked(mPrefService.getBoolean(Pref.SIGNIN_ALLOWED));
+         mSearchSuggestions.setChecked(mPrefService.getBoolean(Pref.SEARCH_SUGGEST_ENABLED));
+         mUsageAndCrashReporting.setChecked(mPrivacyPrefManager.isUsageAndCrashReportingPermitted());
+         mUrlKeyedAnonymizedData.setChecked(
+@@ -295,7 +253,7 @@ public class GoogleServicesSettings extends ChromeBaseSettingsFragment
+     }
+ 
+     private static boolean shouldShowAllowSignIn(Profile profile) {
+-        return !profile.isChild();
++        return false;
+     }
+ 
+     private static boolean shouldShowContextualSearch() {
+@@ -320,9 +278,6 @@ public class GoogleServicesSettings extends ChromeBaseSettingsFragment
+             @Override
+             public boolean isPreferenceControlledByPolicy(Preference preference) {
+                 String key = preference.getKey();
+-                if (PREF_ALLOW_SIGNIN.equals(key)) {
+-                    return mPrefService.isManagedPreference(Pref.SIGNIN_ALLOWED);
+-                }
+                 if (PREF_SEARCH_SUGGESTIONS.equals(key)) {
+                     return mPrefService.isManagedPreference(Pref.SEARCH_SUGGEST_ENABLED);
+                 }
+diff --git a/chrome/android/java/src/org/chromium/chrome/browser/sync/settings/SignInPreference.java b/chrome/android/java/src/org/chromium/chrome/browser/sync/settings/SignInPreference.java
+--- a/chrome/android/java/src/org/chromium/chrome/browser/sync/settings/SignInPreference.java
++++ b/chrome/android/java/src/org/chromium/chrome/browser/sync/settings/SignInPreference.java
+@@ -151,24 +151,8 @@ public class SignInPreference extends ChromeBasePreference
+ 
+     /** Updates the title, summary, and image based on the current sign-in state. */
+     private void update() {
+-        setVisible(!mIsShowingSigninPromo);
+-        if (!mPrefService.getBoolean(Pref.SIGNIN_ALLOWED)) {
+-            if (mPrefService.isManagedPreference(Pref.SIGNIN_ALLOWED)) {
+-                setupSigninDisabledByPolicy();
+-            } else {
+-                setupSigninDisallowed();
+-                assert !mIsShowingSigninPromo
+-                        : "Signin Promo should not be shown when signin is not allowed";
+-                setVisible(false);
+-            }
+-            return;
+-        }
+-
+-        if (isSignedIn(mProfile)) {
+-            setupSignedIn(assumeNonNull(getAccountInfo(mProfile)).getId());
+-        } else {
+-            setupGenericPromo();
+-        }
++        setupSigninDisallowed();
++        setVisible(false);
+     }
+ 
+     /** Returns whether Chrome is signed in. */
+diff --git a/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/SigninAndHistorySyncCoordinator.java b/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/SigninAndHistorySyncCoordinator.java
+--- a/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/SigninAndHistorySyncCoordinator.java
++++ b/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/SigninAndHistorySyncCoordinator.java
+@@ -14,8 +14,6 @@ import androidx.annotation.IntDef;
+ import org.chromium.base.IntentUtils;
+-import org.chromium.base.metrics.RecordHistogram;
+ import org.chromium.build.annotations.NullMarked;
+ import org.chromium.build.annotations.Nullable;
+-import org.chromium.chrome.browser.preferences.Pref;
+ import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.chrome.browser.signin.services.IdentityServicesProvider;
+ import org.chromium.chrome.browser.signin.services.SigninManager;
+@@ -25,6 +23,5 @@ import org.chromium.chrome.browser.signin.services.SigninMetricsUtils.State;
+ import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncConfig;
+ import org.chromium.chrome.browser.ui.signin.history_sync.HistorySyncHelper;
+-import org.chromium.components.browser_ui.settings.ManagedPreferencesUtils;
+ import org.chromium.components.browser_ui.widget.gesture.BackPressHandler.BackPressResult;
+ import org.chromium.components.signin.SigninFeatureMap;
+ import org.chromium.components.signin.SigninFeatures;
+@@ -33,6 +30,5 @@ import org.chromium.components.signin.base.CoreAccountInfo;
+ import org.chromium.components.signin.identitymanager.IdentityManager;
+ import org.chromium.components.signin.metrics.SigninAccessPoint;
+-import org.chromium.components.user_prefs.UserPrefs;
+ import org.chromium.ui.widget.Toast;
+ 
+ import java.lang.annotation.Retention;
+@@ -264,21 +260,11 @@ public abstract class SigninAndHistorySyncCoordinator {
+                 || willShowHistorySyncUi(profile, historyOptInMode, signinFlow, selectedEmail)) {
+             return true;
+         }
+-        // TODO(crbug.com/354912290): Update the UI related to sign-in errors.
+-        if (UserPrefs.get(profile).isManagedPreference(Pref.SIGNIN_ALLOWED)) {
+-            RecordHistogram.recordEnumeratedHistogram(
+-                    "Signin.SigninDisabledNotificationShown",
+-                    accessPoint,
+-                    SigninAccessPoint.MAX_VALUE);
+-            ManagedPreferencesUtils.showManagedByAdministratorToast(context);
+-        } else {
+-            Toast.makeText(
+-                            context,
+-                            context.getString(
+-                                    R.string.signin_account_picker_bottom_sheet_error_title),
+-                            Toast.LENGTH_LONG)
+-                    .show();
+-        }
++        Toast.makeText(
++                        context,
++                        context.getString(R.string.signin_account_picker_bottom_sheet_error_title),
++                        Toast.LENGTH_LONG)
++                .show();
+         return false;
+     }
+ }
+diff --git a/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/fullscreen_signin/FullscreenSigninMediator.java b/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/fullscreen_signin/FullscreenSigninMediator.java
+--- a/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/fullscreen_signin/FullscreenSigninMediator.java
++++ b/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/fullscreen_signin/FullscreenSigninMediator.java
+@@ -26,5 +26,4 @@ import org.chromium.build.annotations.Nullable;
+ import org.chromium.chrome.browser.flags.ChromeFeatureList;
+-import org.chromium.chrome.browser.preferences.Pref;
+ import org.chromium.chrome.browser.privacy.settings.PrivacyPreferencesManager;
+ import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.chrome.browser.profiles.ProfileProvider;
+@@ -63,5 +62,4 @@ import org.chromium.components.sync.SyncService;
+ import org.chromium.components.sync.UserSelectableType;
+-import org.chromium.components.user_prefs.UserPrefs;
+ import org.chromium.ui.modaldialog.ModalDialogManager;
+ import org.chromium.ui.modelutil.PropertyModel;
+ import org.chromium.ui.text.ChromeClickableSpan;
+@@ -369,9 +367,7 @@ public class FullscreenSigninMediator
+     }
+ 
+     private boolean isSigninSupported(Profile profile) {
+-        return ExternalAuthUtils.getInstance().canUseGooglePlayServices()
+-                && UserPrefs.get(profile).getBoolean(Pref.SIGNIN_ALLOWED)
+-                && !mConfig.shouldDisableSignin;
++        return false;
+     }
+ 
+     private String getTitleText() {
+diff --git a/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/FullscreenSigninPromoLauncher.java b/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/FullscreenSigninPromoLauncher.java
+--- a/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/FullscreenSigninPromoLauncher.java
++++ b/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/FullscreenSigninPromoLauncher.java
+@@ -5,28 +5,8 @@ package org.chromium.chrome.browser.ui.signin;
+ 
+ import android.content.Context;
+-import android.content.Intent;
+-import android.text.TextUtils;
+ 
+-import org.chromium.base.DeviceInfo;
+-import org.chromium.base.TimeUtils;
+ import org.chromium.build.annotations.NullMarked;
+-import org.chromium.build.annotations.Nullable;
+-import org.chromium.chrome.browser.preferences.Pref;
+ import org.chromium.chrome.browser.profiles.Profile;
+-import org.chromium.chrome.browser.signin.services.SigninPreferencesManager;
+-import org.chromium.components.signin.AccountManagerFacade;
+-import org.chromium.components.signin.AccountManagerFacadeProvider;
+-import org.chromium.components.signin.AccountUtils;
+-import org.chromium.components.signin.SigninFeatureMap;
+-import org.chromium.components.signin.SigninFeatures;
+-import org.chromium.components.signin.metrics.SigninAccessPoint;
+-import org.chromium.components.user_prefs.UserPrefs;
+-
+-import java.util.HashSet;
+-import java.util.List;
+-import java.util.Random;
+-import java.util.Set;
+-import java.util.concurrent.TimeUnit;
+ 
+ /** Helper class responsible of launching the re-FRE with {@link SigninAndHistorySyncActivity}. */
+ @NullMarked
+@@ -47,27 +27,7 @@ public final class FullscreenSigninPromoLauncher {
+             Profile profile,
+             SigninAndHistorySyncActivityLauncher signinAndHistorySyncActivityLauncher,
+             final int currentMajorVersion) {
+-        final SigninPreferencesManager prefManager = SigninPreferencesManager.getInstance();
+-        if (!shouldLaunchPromo(profile, prefManager, currentMajorVersion)) {
+-            return false;
+-        }
+-
+-        if (!createAndLaunchActivity(
+-                context,
+-                profile,
+-                signinAndHistorySyncActivityLauncher,
+-                SigninAccessPoint.FULLSCREEN_SIGNIN_PROMO)) {
+-            return false;
+-        }
+-
+-        prefManager.setSigninPromoLastShownTimeWithRandomOffset(getCurrentTimeWithRandomOffset());
+-        prefManager.setSigninPromoLastShownVersion(currentMajorVersion);
+-        var accounts =
+-                AccountUtils.getAccountsIfFulfilledOrEmpty(
+-                        AccountManagerFacadeProvider.getInstance().getAccounts());
+-        prefManager.setSigninPromoLastAccountEmails(
+-                new HashSet<>(AccountUtils.toAccountEmails(accounts)));
+-        return true;
++        return false;
+     }
+ 
+     /**
+@@ -83,122 +43,7 @@ public final class FullscreenSigninPromoLauncher {
+             Context context,
+             Profile profile,
+             SigninAndHistorySyncActivityLauncher signinAndHistorySyncActivityLauncher) {
+-        boolean shouldDisplayForForcedSigninPolicy =
+-                ForcedSigninController.shouldDisplayForcedSignin(profile);
+-        if (!SigninFeatureMap.isEnabled(SigninFeatures.FORCE_STARTUP_SIGNIN_PROMO)
+-                && !shouldDisplayForForcedSigninPolicy) {
+-            return false;
+-        }
+-        return createAndLaunchActivity(
+-                context,
+-                profile,
+-                signinAndHistorySyncActivityLauncher,
+-                shouldDisplayForForcedSigninPolicy
+-                        ? SigninAccessPoint.FORCED_SIGNIN
+-                        : SigninAccessPoint.FULLSCREEN_SIGNIN_PROMO);
+-    }
+-
+-    private static boolean createAndLaunchActivity(
+-            Context context,
+-            Profile profile,
+-            SigninAndHistorySyncActivityLauncher signinAndHistorySyncActivityLauncher,
+-            @SigninAccessPoint int accessPoint) {
+-        FullscreenSigninAndHistorySyncConfig config =
+-                new FullscreenSigninAndHistorySyncConfig.Builder(
+-                                context.getString(R.string.signin_fre_title),
+-                                context.getString(R.string.signin_fre_subtitle),
+-                                context.getString(R.string.signin_fre_stay_signed_out_button),
+-                                context.getString(R.string.history_sync_title),
+-                                context.getString(R.string.history_sync_subtitle))
+-                        .build();
+-        @Nullable Intent intent =
+-                signinAndHistorySyncActivityLauncher.createFullscreenSigninIntent(
+-                        context, profile, config, accessPoint);
+-        if (intent == null) {
+-            return false;
+-        }
+-        context.startActivity(intent);
+-        return true;
+-    }
+-
+-    private static boolean shouldLaunchPromo(
+-            Profile profile, SigninPreferencesManager prefManager, final int currentMajorVersion) {
+-        if (DeviceInfo.isAutomotive()) {
+-            return false;
+-        }
+-
+-        final long lastShowTimeWithRandomOffset =
+-                prefManager.getSigninPromoLastShownTimeWithRandomOffset();
+-        boolean useDate =
+-                SigninFeatureMap.isEnabled(SigninFeatures.FULLSCREEN_SIGN_IN_PROMO_USE_DATE);
+-
+-        // Set the last shown time if it was never set before or if it's in the future (in the case
+-        // of device time change).
+-        if (lastShowTimeWithRandomOffset < 0
+-                || lastShowTimeWithRandomOffset > TimeUtils.currentTimeMillis()) {
+-            prefManager.setSigninPromoLastShownTimeWithRandomOffset(
+-                    getCurrentTimeWithRandomOffset());
+-            // Don't show if next show time was never recorded in the past.
+-            if (useDate) {
+-                return false;
+-            }
+-        }
+-        if (useDate) {
+-            int interval =
+-                    SigninFeatureMap.getInstance()
+-                            .getFieldTrialParamByFeatureAsInt(
+-                                    SigninFeatures.FULLSCREEN_SIGN_IN_PROMO_USE_DATE,
+-                                    "interval",
+-                                    -1);
+-            if (interval == -1) {
+-                throw new IllegalStateException(
+-                        "interval param should be available with feature enabled");
+-            }
+-            final long nextShowTime =
+-                    TimeUnit.DAYS.toMillis(interval) + lastShowTimeWithRandomOffset;
+-            if (nextShowTime > TimeUtils.currentTimeMillis()) {
+-                return false;
+-            }
+-        }
+-
+-        final int lastPromoMajorVersion = prefManager.getSigninPromoLastShownVersion();
+-        if (lastPromoMajorVersion == 0) {
+-            prefManager.setSigninPromoLastShownVersion(currentMajorVersion);
+-            if (!useDate) {
+-                return false;
+-            }
+-        }
+-        if (!useDate && currentMajorVersion < lastPromoMajorVersion + 2) {
+-            // Promo can be shown at most once every 2 Chrome major versions.
+-            return false;
+-        }
+-
+-        if (!TextUtils.isEmpty(
+-                UserPrefs.get(profile).getString(Pref.GOOGLE_SERVICES_LAST_SYNCING_USERNAME))) {
+-            // Don't show if user has manually signed out.
+-            return false;
+-        }
+-
+-        final AccountManagerFacade accountManagerFacade =
+-                AccountManagerFacadeProvider.getInstance();
+-        var accounts =
+-                AccountUtils.getAccountsIfFulfilledOrEmpty(accountManagerFacade.getAccounts());
+-        if (accounts.isEmpty()) {
+-            // Don't show if the account list isn't available yet or there are no accounts in it.
+-            return false;
+-        }
+-
+-        final List<String> currentAccountEmails = AccountUtils.toAccountEmails(accounts);
+-        final Set<String> previousAccountEmails = prefManager.getSigninPromoLastAccountEmails();
+-        // Don't show if no new accounts have been added after the last time promo was shown.
+-        return previousAccountEmails == null
+-                || !previousAccountEmails.containsAll(currentAccountEmails);
+-    }
+-
+-    // Returns a random time offset in the past between [0..14) days in milliseconds.
+-    private static long getCurrentTimeWithRandomOffset() {
+-        int days = new Random().nextInt(14);
+-        return TimeUtils.currentTimeMillis() - TimeUnit.DAYS.toMillis(days);
++        return false;
+     }
+ 
+     private FullscreenSigninPromoLauncher() {}
+diff --git a/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/history_sync/HistorySyncHelper.java b/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/history_sync/HistorySyncHelper.java
+--- a/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/history_sync/HistorySyncHelper.java
++++ b/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/history_sync/HistorySyncHelper.java
+@@ -9,28 +9,20 @@ import androidx.annotation.VisibleForTesting;
+ 
+ import org.chromium.base.ResettersForTesting;
+-import org.chromium.base.TimeUtils;
+ import org.chromium.base.metrics.RecordHistogram;
+ import org.chromium.build.annotations.NullMarked;
+ import org.chromium.build.annotations.Nullable;
+-import org.chromium.chrome.browser.preferences.Pref;
+ import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.chrome.browser.sync.SyncServiceFactory;
+-import org.chromium.components.prefs.PrefService;
+ import org.chromium.components.signin.metrics.SigninAccessPoint;
+ import org.chromium.components.sync.SyncService;
+ import org.chromium.components.sync.UserSelectableType;
+-import org.chromium.components.user_prefs.UserPrefs;
+ 
+-import java.time.Duration;
+ import java.util.Set;
+ 
+ /** A helper object that provides history sync opt-in related utilities. */
+ @NullMarked
+ public class HistorySyncHelper {
+-    private static final int MAX_SUCCESSIVE_DECLINES = 2;
+-    private static final long MIN_DAYS_SINCE_LAST_DECLINE = 14;
+     @Nullable private static HistorySyncHelper sInstance;
+     private final SyncService mSyncService;
+-    private final PrefService mPrefService;
+ 
+     public static HistorySyncHelper getForProfile(Profile profile) {
+@@ -50,7 +42,6 @@ public class HistorySyncHelper {
+     @VisibleForTesting
+     HistorySyncHelper(Profile profile) {
+         mSyncService = assumeNonNull(SyncServiceFactory.getForProfile(profile));
+-        mPrefService = UserPrefs.get(profile);
+     }
+ 
+     /** Whether the user has already opted in to sync their history and tabs. */
+@@ -86,22 +77,12 @@ public class HistorySyncHelper {
+ 
+     /** Whether the history sync prompt should be displayed. */
+     public boolean shouldDisplayHistorySync() {
+-        return !didAlreadyOptIn()
+-                && !isHistorySyncDisabledByCustodian()
+-                && !isHistorySyncDisabledByPolicy();
++        return false;
+     }
+ 
+     /** Whether history sync is often declined. */
+     public boolean isDeclinedOften() {
+-        if (mPrefService.getInteger(Pref.HISTORY_SYNC_SUCCESSIVE_DECLINE_COUNT)
+-                >= MAX_SUCCESSIVE_DECLINES) {
+-            // The user has declined two or more opt-ins in a row.
+-            return true;
+-        }
+-        final long lastDecline = mPrefService.getLong(Pref.HISTORY_SYNC_LAST_DECLINED_TIMESTAMP);
+-        // The user has declined in the past two weeks.
+-        return Duration.ofMillis(TimeUtils.currentTimeMillis() - lastDecline).toDays()
+-                < MIN_DAYS_SINCE_LAST_DECLINE;
++        return false;
+     }
+ 
+     /**
+@@ -117,23 +97,15 @@ public class HistorySyncHelper {
+         recordHistorySyncSkipped(accessPoint);
+     }
+ 
+-    public void recordHistorySyncDeclinedPrefs() {
+-        int declineCount = mPrefService.getInteger(Pref.HISTORY_SYNC_SUCCESSIVE_DECLINE_COUNT);
+-        mPrefService.setInteger(Pref.HISTORY_SYNC_SUCCESSIVE_DECLINE_COUNT, declineCount + 1);
+-        mPrefService.setLong(
+-                Pref.HISTORY_SYNC_LAST_DECLINED_TIMESTAMP, TimeUtils.currentTimeMillis());
+-    }
++    public void recordHistorySyncDeclinedPrefs() {}
+ 
+-    public void clearHistorySyncDeclinedPrefs() {
+-        mPrefService.clearPref(Pref.HISTORY_SYNC_LAST_DECLINED_TIMESTAMP);
+-        mPrefService.clearPref(Pref.HISTORY_SYNC_SUCCESSIVE_DECLINE_COUNT);
+-    }
++    public void clearHistorySyncDeclinedPrefs() {}
+ 
+     /** Enables or clears history and tabs sync */
+     public void setHistoryAndTabsSync(boolean turnTypesOn) {
+-        mSyncService.setSelectedType(UserSelectableType.HISTORY, turnTypesOn);
+-        mSyncService.setSelectedType(UserSelectableType.TABS, turnTypesOn);
++        mSyncService.setSelectedType(UserSelectableType.HISTORY, false);
++        mSyncService.setSelectedType(UserSelectableType.TABS, false);
+     }
+ 
+     private void recordUserAlreadyOptedIn(@SigninAccessPoint int accessPoint) {
+         RecordHistogram.recordEnumeratedHistogram(
+diff --git a/chrome/browser/safe_browsing/android/java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingBridge.java b/chrome/browser/safe_browsing/android/java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingBridge.java
+--- a/chrome/browser/safe_browsing/android/java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingBridge.java
++++ b/chrome/browser/safe_browsing/android/java/src/org/chromium/chrome/browser/safe_browsing/SafeBrowsingBridge.java
+@@ -6,26 +6,15 @@ package org.chromium.chrome.browser.safe_browsing;
+ 
+ import android.content.Intent;
+ 
+-import androidx.annotation.VisibleForTesting;
+-
+-import org.jni_zero.JNINamespace;
+-import org.jni_zero.JniType;
+-import org.jni_zero.NativeMethods;
+-
+ import org.chromium.build.annotations.NullMarked;
+ import org.chromium.chrome.browser.profiles.Profile;
+ import org.chromium.content_public.browser.WebContents;
+ 
+ /** Bridge providing access to native-side Safe Browsing data. */
+-@JNINamespace("safe_browsing")
+ @NullMarked
+ public final class SafeBrowsingBridge {
+-    private final Profile mProfile;
+-
+     /** Constructs a {@link SafeBrowsingBridge} associated with the given {@link Profile}. */
+-    public SafeBrowsingBridge(Profile profile) {
+-        mProfile = profile;
+-    }
++    public SafeBrowsingBridge(Profile profile) {}
+ 
+     /**
+      * Reports UMA values based on files' extensions.
+@@ -36,7 +25,7 @@ public final class SafeBrowsingBridge {
+      * @return The UMA value for the file.
+      */
+     public static int umaValueForFile(String path) {
+-        return SafeBrowsingBridgeJni.get().umaValueForFile(path);
++        return 0;
+     }
+ 
+     /**
+@@ -44,20 +33,16 @@ public final class SafeBrowsingBridge {
+      * @return Whether Safe Browsing Extended Reporting is currently enabled.
+      */
+     public boolean isSafeBrowsingExtendedReportingEnabled() {
+-        return SafeBrowsingBridgeJni.get().getSafeBrowsingExtendedReportingEnabled(mProfile);
++        return false;
+     }
+ 
+     /**
+      * @param enabled Whether Safe Browsing Extended Reporting should be enabled.
+      */
+-    public void setSafeBrowsingExtendedReportingEnabled(boolean enabled) {
+-        SafeBrowsingBridgeJni.get().setSafeBrowsingExtendedReportingEnabled(mProfile, enabled);
+-    }
++    public void setSafeBrowsingExtendedReportingEnabled(boolean enabled) {}
+ 
+     /** Set the Safe Browsing setting set locally pref as true. */
+-    public void enableSafeBrowsingSettingSetLocallyPref() {
+-        SafeBrowsingBridgeJni.get().enableSafeBrowsingSettingSetLocallyPref(mProfile);
+-    }
++    public void enableSafeBrowsingSettingSetLocallyPref() {}
+ 
+     /**
+      * @return Whether Safe Browsing Extended Reporting is managed
+@@ -66,6 +51,6 @@ public final class SafeBrowsingBridge {
+      */
+     public boolean isSafeBrowsingExtendedReportingManaged() {
+-        return SafeBrowsingBridgeJni.get().getSafeBrowsingExtendedReportingManaged(mProfile);
++        return false;
+     }
+ 
+     /**
+@@ -75,7 +60,7 @@ public final class SafeBrowsingBridge {
+      *     Protection.
+      */
+     public @SafeBrowsingState int getSafeBrowsingState() {
+-        return SafeBrowsingBridgeJni.get().getSafeBrowsingState(mProfile);
++        return SafeBrowsingState.NO_SAFE_BROWSING;
+     }
+ 
+     /**
+@@ -83,25 +68,23 @@ public final class SafeBrowsingBridge {
+      * @param state Set the Safe Browsing state. It can be Enhanced Protection, Standard Protection,
+      *     or No Protection.
+      */
+-    public void setSafeBrowsingState(@SafeBrowsingState int state) {
+-        SafeBrowsingBridgeJni.get().setSafeBrowsingState(mProfile, state);
+-    }
++    public void setSafeBrowsingState(@SafeBrowsingState int state) {}
+ 
+     /**
+      * @return Whether the Safe Browsing preference is managed. It can be managed by either the
+      *     SafeBrowsingEnabled policy(legacy) or the SafeBrowsingProtectionLevel policy(new).
+      */
+     public boolean isSafeBrowsingManaged() {
+-        return SafeBrowsingBridgeJni.get().isSafeBrowsingManaged(mProfile);
++        return false;
+     }
+ 
+     /**
+      * @return Whether hash real-time lookup is enabled.
+      */
+     public static boolean isHashRealTimeLookupEligibleInSession() {
+-        return SafeBrowsingBridgeJni.get().isHashRealTimeLookupEligibleInSession();
++        return false;
+     }
+ 
+     /**
+      * Report an intent sent to open an external app. This may be summarized and sent to Safe
+      * Browsing.
+@@ -129,49 +112,5 @@ public final class SafeBrowsingBridge {
+      * @param webContents The WebContents that triggered the intent
+      * @param intent The intent Chrome generated
+      */
+-    public static void reportIntent(WebContents webContents, Intent intent) {
+-        String packageName;
+-        if (intent.getComponent() != null) {
+-            packageName = intent.getComponent().getPackageName();
+-        } else if (intent.getPackage() != null) {
+-            packageName = intent.getPackage();
+-        } else {
+-            packageName = "";
+-        }
+-
+-        String uri = "";
+-        if (intent.getData() != null) {
+-            uri = intent.getData().toString();
+-        }
+-
+-        SafeBrowsingBridgeJni.get().reportIntent(webContents, packageName, uri);
+-    }
+-
+-    @NativeMethods
+-    @VisibleForTesting(otherwise = VisibleForTesting.PACKAGE_PRIVATE)
+-    public interface Natives {
+-        int umaValueForFile(String path);
+-
+-        boolean getSafeBrowsingExtendedReportingEnabled(Profile profile);
+-
+-        void setSafeBrowsingExtendedReportingEnabled(Profile profile, boolean enabled);
+-
+-        boolean getSafeBrowsingExtendedReportingManaged(Profile profile);
+-
+-        @SafeBrowsingState
+-        int getSafeBrowsingState(Profile profile);
+-
+-        void setSafeBrowsingState(Profile profile, @SafeBrowsingState int state);
+-
+-        void enableSafeBrowsingSettingSetLocallyPref(Profile profile);
+-
+-        boolean isSafeBrowsingManaged(Profile profile);
+-
+-        boolean isHashRealTimeLookupEligibleInSession();
+-
+-        void reportIntent(
+-                @JniType("content::WebContents*") WebContents webContents,
+-                @JniType("std::string") String packageName,
+-                @JniType("std::string") String uri);
+-    }
++    public static void reportIntent(WebContents webContents, Intent intent) {}
+ }
