@@ -51,10 +51,12 @@ repo URLs, clone ref, or the work directory in `helium-passwords.conf` or by
 exporting the same variables before running a script.
 
 On chromiumer, do not use the Docker-backed local command. Use the isolated
-Nix entry point and `scripts/build-chromiumer-linux.sh x86_64` exactly as shown
-in [docs/chromiumer-builds.md](docs/chromiumer-builds.md). The driver returns
-one provenance-bound archive; `scripts/verify-linux-runtime.sh` must admit it
-before the executable can enter the disposable native-password gate.
+Nix entry point and pass an explicit product, architecture, deployment target,
+and job ID to `scripts/build-chromiumer-linux.sh` exactly as shown in
+[docs/chromiumer-builds.md](docs/chromiumer-builds.md). The driver returns one
+provenance-bound archive plus its strict build-produced deployment receipt;
+`scripts/verify-linux-runtime.sh` must admit both before the executable can
+enter the disposable native-password gate.
 
 ## Releases
 

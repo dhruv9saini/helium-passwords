@@ -2,17 +2,46 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: scripts/verify-linux-runtime.sh ARTIFACT.tar.xz NEW_DESTINATION" >&2
+    cat >&2 <<'EOF'
+usage: scripts/verify-linux-runtime.sh PRODUCT ARCH TARGET ARTIFACT.tar.xz DEPLOYMENT-RECEIPT NEW-DESTINATION
+EOF
 }
 
-[ "$#" -eq 2 ] || {
+[ "$#" -eq 6 ] || {
     usage
     exit 2
 }
 
-artifact=$(realpath -e "$1")
-destination=$(realpath -m "$2")
+product=$1
+arch=$2
+target=$3
+artifact=$(realpath -e "$4")
+deployment_receipt=$(realpath -e "$5")
+destination=$(realpath -m "$6")
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+source_info=$("${root_dir}/scripts/linux-product-provenance.sh" \
+    "${product}" "${arch}" "${target}")
+source_value() {
+    awk -F= -v key="$1" \
+        '$1 == key { print substr($0, length(key) + 2); exit }' \
+        <<<"${source_info}"
+}
+expected_source=$(source_value source_commit)
+expected_tree=$(source_value source_tree)
+expected_passwords=$(source_value helium_passwords_commit)
+expected_sync=$(source_value helium_sync_commit)
+expected_core=$(source_value helium_core_commit)
+expected_version=$(source_value chromium_version)
+expected_chromium=$(source_value chromium_commit)
+deployment_admission=$(
+    "${root_dir}/scripts/verify-deployment-artifact-receipt.sh" \
+        "${artifact}" "${deployment_receipt}" "${target}"
+)
+admission_value() {
+    awk -F= -v key="$1" \
+        '$1 == key { print substr($0, length(key) + 2); exit }' \
+        <<<"${deployment_admission}"
+}
 
 [ -f "${artifact}" ] && [ ! -L "${artifact}" ] || {
     echo "artifact must be a regular non-symlink file" >&2
@@ -24,7 +53,7 @@ root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 }
 archive_root=$(tar -tf "${artifact}" | awk -F/ 'NF { print $1 }' | sort -u)
 [ "$(wc -l <<<"${archive_root}")" -eq 1 ] && \
-    [[ "${archive_root}" =~ ^helium-passwords-linux-x86_64$ ]] || {
+    [ "${archive_root}" = "${product}-linux-${arch}" ] || {
     echo "artifact has an invalid root" >&2
     exit 1
 }
@@ -107,6 +136,8 @@ manifest_keys=(
     chromium_version
     gn_args_sha256
     helium_core_commit
+    helium_passwords_commit
+    helium_sync_commit
     nix_provenance_sha256
     patch_inventory_sha256
     platform
@@ -117,6 +148,8 @@ manifest_keys=(
     schema_version
     source_commit
     source_tree
+    target
+    build_job_id
 )
 mapfile -t actual_keys < <(awk -F= 'NF { print $1 }' "${manifest}" | sort)
 [ "$(printf '%s\n' "${manifest_keys[@]}" | sort)" = "$(printf '%s\n' "${actual_keys[@]}")" ] || {
@@ -130,22 +163,20 @@ value() {
 # shellcheck source=../helium-passwords.conf
 # shellcheck disable=SC1091
 . "${root_dir}/helium-passwords.conf"
-expected_source=$(git -C "${root_dir}" rev-parse HEAD)
-expected_tree=$(git -C "${root_dir}" rev-parse 'HEAD^{tree}')
-expected_core=$(git -C "${root_dir}" rev-parse HEAD:helium-chromium)
-expected_version=$(tr -d '\r\n' <"${root_dir}/helium-chromium/chromium_version.txt")
-expected_chromium=$(awk -F= '$1 == "HELIUM_ANDROID_CHROMIUM_COMMIT" { print $2; exit }' \
-    "${root_dir}/chromium/android-build.lock")
 expected_nix_source=$(sha256sum "${root_dir}/chromium/nix/chromiumer-shell.nix" | awk '{ print $1 }')
-[ "$(value schema_version)" = 1 ] && \
-    [ "$(value product)" = helium-passwords ] && \
+[ "$(value schema_version)" = 2 ] && \
+    [ "$(value product)" = "${product}" ] && \
     [ "$(value platform)" = linux ] && \
-    [ "$(value arch)" = x86_64 ] && \
+    [ "$(value arch)" = "${arch}" ] && \
+    [ "$(value target)" = "${target}" ] && \
     [ "$(value source_commit)" = "${expected_source}" ] && \
     [ "$(value source_tree)" = "${expected_tree}" ] && \
+    [ "$(value helium_passwords_commit)" = "${expected_passwords}" ] && \
+    [ "$(value helium_sync_commit)" = "${expected_sync}" ] && \
     [ "$(value helium_core_commit)" = "${expected_core}" ] && \
     [ "$(value chromium_version)" = "${expected_version}" ] && \
     [ "$(value chromium_commit)" = "${expected_chromium}" ] && \
+    [ "$(value build_job_id)" = "$(admission_value build_job_id)" ] && \
     [ "$(value platform_repository)" = "${HELIUM_LINUX_REPO}" ] && \
     [ "$(value platform_commit)" = "${HELIUM_LINUX_PLATFORM_COMMIT}" ] || {
     echo "artifact manifest does not match this audited source train" >&2
@@ -156,6 +187,15 @@ expected_nix_source=$(sha256sum "${root_dir}/chromium/nix/chromiumer-shell.nix" 
     [ "$(value patch_inventory_sha256)" = "$(sha256sum "${provenance}/patches.sha256" | awk '{ print $1 }')" ] && \
     [ "$(value runtime_inventory_sha256)" = "$(sha256sum "${provenance}/runtime.sha256" | awk '{ print $1 }')" ] || {
     echo "artifact provenance hash mismatch" >&2
+    exit 1
+}
+[ "$(admission_value helium_passwords_commit)" = "${expected_passwords}" ] && \
+    [ "$(admission_value helium_sync_commit)" = "${expected_sync}" ] && \
+    [ "$(admission_value helium_core_commit)" = "${expected_core}" ] && \
+    [ "$(admission_value chromium_commit)" = "${expected_chromium}" ] && \
+    [ "$(admission_value provenance_sha256)" = \
+        "$(sha256sum "${manifest}" | awk '{ print $1 }')" ] || {
+    echo "deployment receipt does not bind the runtime provenance" >&2
     exit 1
 }
 grep -Fqx "chromium_commit=${expected_chromium}" "${provenance}/chromiumer-nix.env"
@@ -178,21 +218,26 @@ mapfile -t actual_runtime < <(cd "${bundle}" && find runtime -type f -print | so
     echo "artifact runtime file inventory is invalid" >&2
     exit 1
 }
-grep -Fqx 'target_cpu = "x64"' "${provenance}/gn-args.txt" || {
-    echo "artifact GN args do not identify x86_64" >&2
+case "${arch}" in
+    x86_64) target_cpu=x64 ;;
+    arm64) target_cpu=arm64 ;;
+    *) exit 2 ;;
+esac
+grep -Fqx "target_cpu = \"${target_cpu}\"" "${provenance}/gn-args.txt" || {
+    echo "artifact GN args do not identify ${arch}" >&2
     exit 1
 }
 
-mv --no-clobber "${temporary}" "${destination}"
-trap - EXIT
 browser_relative="${archive_root}/runtime/helium-wrapper"
-browser="${destination}/${browser_relative}"
-receipt="${destination}/artifact-receipt.env"
+browser="${temporary}/${browser_relative}"
+install -m 0600 "${deployment_receipt}" \
+    "${temporary}/deployment-artifact-receipt.env"
+receipt="${temporary}/artifact-receipt.env"
 cat >"${receipt}" <<EOF
 schema_version=2
-product=helium-passwords
+product=${product}
 platform=linux
-arch=x86_64
+arch=${arch}
 source_commit=${expected_source}
 helium_core_commit=${expected_core}
 chromium_version=${expected_version}
@@ -200,12 +245,15 @@ chromium_commit=${expected_chromium}
 platform_commit=${HELIUM_LINUX_PLATFORM_COMMIT}
 bundle=${artifact}
 bundle_sha256=$(sha256sum "${artifact}" | awk '{ print $1 }')
-provenance_manifest_sha256=$(sha256sum "${destination}/${archive_root}/provenance/manifest.env" | awk '{ print $1 }')
+provenance_manifest_sha256=$(sha256sum "${manifest}" | awk '{ print $1 }')
 browser_executable=${browser_relative}
 browser_sha256=$(sha256sum "${browser}" | awk '{ print $1 }')
 runtime_inventory=${archive_root}/provenance/runtime.sha256
-runtime_inventory_sha256=$(sha256sum "${destination}/${archive_root}/provenance/runtime.sha256" | awk '{ print $1 }')
+runtime_inventory_sha256=$(sha256sum "${provenance}/runtime.sha256" | awk '{ print $1 }')
 verified_at=$(date --iso-8601=seconds)
 EOF
 chmod 600 "${receipt}"
-printf 'browser=%s\nreceipt=%s\n' "${browser}" "${receipt}"
+mv --no-clobber "${temporary}" "${destination}"
+trap - EXIT
+printf 'browser=%s\nreceipt=%s\n' \
+    "${destination}/${browser_relative}" "${destination}/artifact-receipt.env"
