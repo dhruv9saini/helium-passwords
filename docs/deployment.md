@@ -121,6 +121,23 @@ synthetic media with those scripts, and records hashes for the archive, APK,
 runtime kit, and complete prepared directory. It does not install or launch
 the APK.
 
+After the admitted Sync test APK has been installed but while that package is
+stopped, create its one new native-cookie fixture profile:
+
+```sh
+sync_acceptance=/srv/nas/helium-acceptance/SYNC_JOB
+serial=ONEPLUS_ADB_SERIAL
+"$sync_acceptance/runtime-acceptance/prepare-cookie-acceptance-profile.sh" \
+  "$sync_acceptance" "$serial"
+```
+
+The command requires the exact installed APK hash and debuggable
+`computer.helium.sync.test`, refuses a running package, and refuses any
+existing `app_chrome/Default`; it does not clear, stop, install, or inspect
+another app. The next admitted launch runs the fixed native CookieManager
+fixture before normal sync. Do not prepare the control package. The Sync
+device probe requires and collects the passed content-free native report.
+
 Build the same-commit control through the separate no-patch entry point:
 
 ```sh
@@ -288,6 +305,12 @@ The Wi-Fi handoff is allowed only over a non-network ADB transport, requires
 mobile data and Wi-Fi to start enabled, and restores Wi-Fi on every exit. Its
 action evidence contains package/action/timestamp metadata, not SSIDs,
 addresses, page content, or profile data.
+For both Sync and control it also starts `adb logcat` with only the admitted
+package UID, enables CDP's target-scoped `Media` domain before fixture
+navigation, and stores `package-logcat.txt` plus `media-diagnostics.json`. It
+never calls `logcat -c`. On a probe failure the requested new evidence
+directory is still committed with `failure.env` and every diagnostic produced
+before failure; that directory is diagnostic only and the pair gate rejects it.
 
 A passing result requires three observable
 numbered-chunk milestones for identity, gzip, and Brotli Fetch responses,

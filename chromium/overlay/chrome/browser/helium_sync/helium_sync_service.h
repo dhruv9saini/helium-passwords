@@ -14,30 +14,33 @@
 class Profile;
 
 namespace helium_sync {
+class HeliumCookieAcceptanceFixture;
 class HeliumCookieSyncBridge;
 class HeliumPasswordSyncBridge;
 class HeliumSyncClient;
 class HeliumTabJournalBridge;
 class HeliumTabRestoreBridge;
 class HeliumTabSnapshotBridge;
-}  // namespace helium_sync
+} // namespace helium_sync
 
 class HeliumSyncService : public KeyedService {
- public:
-  explicit HeliumSyncService(Profile* profile);
-  HeliumSyncService(const HeliumSyncService&) = delete;
-  HeliumSyncService& operator=(const HeliumSyncService&) = delete;
+public:
+  explicit HeliumSyncService(Profile *profile);
+  HeliumSyncService(const HeliumSyncService &) = delete;
+  HeliumSyncService &operator=(const HeliumSyncService &) = delete;
   ~HeliumSyncService() override;
 
   // KeyedService:
   void Shutdown() override;
 
- private:
+private:
   void OnCookieBaselineVerified(int64_t sequence);
   void OnPasswordBaselineVerified(int64_t sequence);
   void MaybeCompleteEnrollment();
   void OnEnrollmentComplete(bool ok, std::string error);
 
+  std::unique_ptr<helium_sync::HeliumCookieAcceptanceFixture>
+      cookie_acceptance_fixture_;
   std::unique_ptr<helium_sync::HeliumCookieSyncBridge> cookie_bridge_;
   std::unique_ptr<helium_sync::HeliumPasswordSyncBridge> password_bridge_;
   std::unique_ptr<helium_sync::HeliumSyncClient> enrollment_client_;
@@ -51,4 +54,4 @@ class HeliumSyncService : public KeyedService {
   base::WeakPtrFactory<HeliumSyncService> weak_factory_{this};
 };
 
-#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_
+#endif // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_H_

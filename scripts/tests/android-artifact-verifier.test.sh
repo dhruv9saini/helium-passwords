@@ -79,6 +79,10 @@ cat > "$test_root/input/runtime-acceptance/run-device-probe.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 EOF
+cat > "$test_root/input/runtime-acceptance/prepare-cookie-acceptance-profile.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+EOF
 cat > "$test_root/input/runtime-acceptance/verify-probe-pair.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -98,9 +102,9 @@ printf 'synthetic webm\n' > "$1/vp9-opus.webm"
   printf 'synthetic ffmpeg\n' > FFMPEG_VERSION
 )
 EOF
-chmod +x "$test_root/input/runtime-acceptance/"{fixture-server.mjs,run-cdp-probe.mjs,run-device-probe.sh,verify-probe-pair.sh,generate-fixtures.sh}
+chmod +x "$test_root/input/runtime-acceptance/"{fixture-server.mjs,run-cdp-probe.mjs,prepare-cookie-acceptance-profile.sh,run-device-probe.sh,verify-probe-pair.sh,generate-fixtures.sh}
 cat > "$test_root/input/runtime-acceptance/kit.env" <<EOF
-schema_version=4
+schema_version=5
 probe_schema_version=1
 helium_sync_commit=$commit
 chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT
@@ -113,7 +117,8 @@ EOF
 (
   cd "$test_root/input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
+    verify-probe-pair.sh kit.env > SHA256SUMS
 )
 tar -C "$test_root/input" -caf "$test_root/artifact.tar.xz" .
 
@@ -150,7 +155,8 @@ checksum_provenance "$test_root/production-input/build-provenance"
 (
   cd "$test_root/production-input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
+    verify-probe-pair.sh kit.env > SHA256SUMS
 )
 tar -C "$test_root/production-input" -caf "$test_root/production-artifact.tar.xz" .
 cat > "$test_root/production-aapt2" <<'EOF'
@@ -210,7 +216,8 @@ checksum_provenance "$test_root/control-input/build-provenance"
 (
   cd "$test_root/control-input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
+    verify-probe-pair.sh kit.env > SHA256SUMS
 )
 tar -C "$test_root/control-input" -caf "$test_root/control-artifact.tar.xz" .
 cat > "$test_root/control-aapt2" <<'EOF'

@@ -131,6 +131,28 @@ byte-identical no-op restart snapshots.
 ## Gate 3: Cookies and Login State
 
 The fixture server issues controlled cookies and rotating opaque tokens.
+Before the networked three-client cases, the Android Sync test package must
+pass its browser-native CookieManager fixture. Prepare only a stopped,
+hash-admitted `computer.helium.sync.test` package with the artifact-carried
+`prepare-cookie-acceptance-profile.sh`. It refuses an existing `Default`
+directory, writes one mode-0600 marker, and never clears or force-stops an app.
+On the next launch the native service sees that marker before enrollment,
+requires the debuggable test package and an otherwise empty cookie store, and
+returns without starting normal password or cookie sync.
+
+The fixed synthetic transaction creates a known destination cookie, persists
+its complete snapshot before apply, imports a three-record target through
+`network::mojom::CookieManager`, and reads the whole store back. The target
+covers session and persistent, HttpOnly, Secure, SameSite, host-only, domain,
+partitioned, and unpartitioned records. The fixture requires partitioned and
+unpartitioned canonical keys to remain distinct. It then submits a valid
+Secure cookie against an HTTP source, requires Chromium to reject it, restores
+the destination snapshot through CookieManager, verifies rollback, and cleans
+the synthetic store. Its report contains only counts, booleans, and
+fingerprints. It reports zero origin-state adapters and `not-tested` rather
+than inventing localStorage, IndexedDB, or service-worker portability. A pass
+proves CookieManager transaction mechanics only; it does not claim that a
+destination is authenticated or that any site session is portable.
 
 - Host-only and domain cookies remain distinct.
 - Secure, HttpOnly, SameSite, priority, path, expiry, source scheme/port, and
@@ -259,7 +281,12 @@ The fixture server issues controlled cookies and rotating opaque tokens.
 ## Gate 5: Android Media
 
 Record `canPlayType`, `MediaCapabilities.decodingInfo`, playback completion,
-audio presence, dropped frames, and `chrome://media-internals`/logcat outcome.
+audio presence, dropped frames, CDP's pinned browser-observable `Media` domain,
+and package-UID-scoped Android logcat. The runner creates the probe target at
+`about:blank`, enables `Media` before navigating to the synthetic fixture, and
+stores bounded player events in `media-diagnostics.json`; this is the
+automation-safe Chromium 150 equivalent of reading `chrome://media-internals`.
+It never clears global logcat and never captures another Android UID.
 
 | Fixture | Expected |
 | --- | --- |
@@ -280,6 +307,12 @@ media manifest entries or unavailable audio evidence fail the automated gate
 rather than silently reducing the matrix. The probe's Widevine key-system
 observation is evidence only about EME/CDM availability; ordinary MP4 playback
 does not count as DRM support, and no protected content is required or fetched.
+Every pass also contains `package-logcat.txt`, a nonempty Media summary with at
+least one observed player, and the complete bounded Media event file. If the
+runner fails after staging begins, it still stops capture processes and
+atomically preserves `failure.env`, package-only logcat, fixture logs, and any
+Media/result files already produced in the requested evidence directory.
+Failed evidence cannot satisfy the pair verifier.
 
 ## Gate 6: Streaming Responses
 

@@ -41,6 +41,10 @@
 #include "services/network/public/mojom/device_bound_sessions.mojom.h"
 #include "url/gurl.h"
 
+#if BUILDFLAG(IS_ANDROID)
+#include "base/android/apk_info.h"
+#endif
+
 namespace helium_sync {
 namespace {
 
@@ -58,6 +62,13 @@ constexpr size_t kMaxCookiePushRecords = 32;
 constexpr base::TimeDelta kReconcileInterval = base::Minutes(1);
 
 constexpr char kDeletedFingerprint[] = "deleted";
+constexpr char kAcceptanceMarker[] = ".helium-cookie-disposable-profile-v1";
+constexpr char kAcceptanceMarkerContents[] =
+    "helium-cookie-disposable-profile-v1\n";
+constexpr char kAcceptanceReport[] =
+    "helium-sync/cookie-native-acceptance.json";
+constexpr char kAcceptanceRollback[] =
+    "helium-sync/cookie-native-acceptance-rollback.json";
 
 struct PendingPublish {
   int64_t expected_revision = 0;
@@ -614,6 +625,437 @@ RefreshLiveSnapshot(const CookieSnapshot &snapshot) {
 }
 
 } // namespace
+
+class HeliumCookieAcceptanceFixture::Impl {
+public:
+  explicit Impl(Profile *profile)
+      : profile_(profile),
+        marker_path_(profile->GetPath().AppendASCII(kAcceptanceMarker)),
+        report_path_(profile->GetPath().AppendASCII(kAcceptanceReport)),
+        rollback_path_(profile->GetPath().AppendASCII(kAcceptanceRollback)) {}
+
+  void Start() {
+    if (started_) {
+      return;
+    }
+    started_ = true;
+
+#if BUILDFLAG(IS_ANDROID)
+    std::string marker;
+    int permissions = 0;
+    if (profile_->GetPath().BaseName().AsUTF8Unsafe() != "Default" ||
+        base::IsLink(marker_path_) || base::DirectoryExists(marker_path_) ||
+        !base::ReadFileToString(marker_path_, &marker) ||
+        marker != kAcceptanceMarkerContents ||
+        !base::GetPosixFilePermissions(marker_path_, &permissions) ||
+        permissions != 0600 || base::PathExists(report_path_) ||
+        base::PathExists(rollback_path_)) {
+      Fail("disposable-profile-marker-or-output-invalid");
+      return;
+    }
+    if (base::android::apk_info::package_name() !=
+            "computer.helium.sync.test" ||
+        !base::android::apk_info::is_debug_app()) {
+      Fail("fixture-requires-debuggable-sync-test-package");
+      return;
+    }
+
+    manager()->GetAllCookies(
+        base::BindOnce(&Impl::OnInitialCookies, weak_factory_.GetWeakPtr()));
+#else
+    Fail("fixture-requires-android");
+#endif
+  }
+
+  void Stop() {
+    stopped_ = true;
+    operation_queue_.clear();
+    weak_factory_.InvalidateWeakPtrs();
+  }
+
+private:
+  enum class Phase {
+    kIdle,
+    kSeedingDestination,
+    kApplyingImport,
+    kExpectingRejection,
+    kRestoringDestination,
+    kCleaning,
+  };
+
+  network::mojom::CookieManager *manager() {
+    return profile_->GetDefaultStoragePartition()
+        ->GetCookieManagerForBrowserProcess();
+  }
+
+  std::optional<net::CanonicalCookie>
+  MakeCookie(std::string value, std::string domain, bool persistent,
+             std::optional<net::CookiePartitionKey> partition_key,
+             net::CookieSameSite same_site) {
+    const base::Time now = base::Time::Now();
+    std::unique_ptr<net::CanonicalCookie> cookie =
+        net::CanonicalCookie::FromStorage(
+            "helium_native_session", std::move(value), std::move(domain), "/",
+            now, persistent ? now + base::Days(7) : base::Time(), now, now,
+            true, true, same_site, net::COOKIE_PRIORITY_MEDIUM,
+            std::move(partition_key), net::CookieSourceScheme::kSecure, 443,
+            net::CookieSourceType::kHTTP,
+            net::CanonicalCookieFromStorageCallSite::kCookieManager);
+    if (!cookie) {
+      return std::nullopt;
+    }
+    return std::move(*cookie);
+  }
+
+  std::optional<CookieSnapshot> MakeDestinationSnapshot() {
+    std::optional<net::CanonicalCookie> cookie =
+        MakeCookie("destination-baseline", "login.helium.invalid", false,
+                   std::nullopt, static_cast<net::CookieSameSite>(1));
+    if (!cookie) {
+      return std::nullopt;
+    }
+    std::vector<net::CanonicalCookie> cookies;
+    cookies.push_back(std::move(*cookie));
+    return BuildSnapshot(std::move(cookies));
+  }
+
+  std::optional<CookieSnapshot> MakeImportSnapshot() {
+    auto partition_key = net::CookiePartitionKey::FromUntrustedInput(
+        "https://top.helium.invalid", true);
+    if (!partition_key.has_value()) {
+      return std::nullopt;
+    }
+    std::optional<net::CanonicalCookie> rotated =
+        MakeCookie("imported-rotation", "login.helium.invalid", false,
+                   std::nullopt, static_cast<net::CookieSameSite>(1));
+    std::optional<net::CanonicalCookie> partitioned = MakeCookie(
+        "partitioned-session", "login.helium.invalid", false,
+        std::move(*partition_key), static_cast<net::CookieSameSite>(0));
+    std::optional<net::CanonicalCookie> domain =
+        MakeCookie("persistent-domain", ".helium.invalid", true, std::nullopt,
+                   static_cast<net::CookieSameSite>(2));
+    if (!rotated || !partitioned || !domain) {
+      return std::nullopt;
+    }
+    std::vector<net::CanonicalCookie> cookies;
+    cookies.push_back(std::move(*rotated));
+    cookies.push_back(std::move(*partitioned));
+    cookies.push_back(std::move(*domain));
+    return BuildSnapshot(std::move(cookies));
+  }
+
+  void OnInitialCookies(std::vector<net::CanonicalCookie> cookies) {
+    std::optional<CookieSnapshot> initial = BuildSnapshot(std::move(cookies));
+    if (!initial || !initial->cookies.empty()) {
+      Fail("fixture-profile-must-start-with-empty-cookie-store");
+      return;
+    }
+    std::optional<CookieSnapshot> destination = MakeDestinationSnapshot();
+    if (!destination || destination->cookies.size() != 1) {
+      Fail("destination-snapshot-construction-failed");
+      return;
+    }
+    destination_ = std::move(*destination);
+    BeginOperations(*initial, destination_, Phase::kSeedingDestination);
+  }
+
+  void BeginOperations(const CookieSnapshot &before,
+                       const CookieSnapshot &after, Phase phase) {
+    std::set<std::string> keys = AllSnapshotKeys(before, after);
+    std::vector<CookieOperation> operations =
+        DiffSnapshots(before, after, keys);
+    operation_queue_ =
+        std::deque<CookieOperation>(std::make_move_iterator(operations.begin()),
+                                    std::make_move_iterator(operations.end()));
+    phase_ = phase;
+    StartNextOperation();
+  }
+
+  void StartNextOperation() {
+    if (stopped_ || terminal_) {
+      return;
+    }
+    if (operation_queue_.empty()) {
+      manager()->GetAllCookies(
+          base::BindOnce(&Impl::OnPhaseCookies, weak_factory_.GetWeakPtr()));
+      return;
+    }
+    current_operation_ = std::move(operation_queue_.front());
+    operation_queue_.pop_front();
+    if (current_operation_->set) {
+      if (!current_operation_->source_url.is_valid()) {
+        Fail("fixture-cookie-source-url-invalid");
+        return;
+      }
+      manager()->SetCanonicalCookie(
+          current_operation_->cookie, current_operation_->source_url,
+          net::CookieOptions::MakeAllInclusive(),
+          base::BindOnce(&Impl::OnCookieSet, weak_factory_.GetWeakPtr()));
+      return;
+    }
+    manager()->DeleteCanonicalCookie(
+        current_operation_->cookie,
+        base::BindOnce(&Impl::OnCookieDeleted, weak_factory_.GetWeakPtr()));
+  }
+
+  void OnCookieSet(net::CookieAccessResult result) {
+    if (phase_ == Phase::kExpectingRejection) {
+      current_operation_.reset();
+      if (result.status.IsInclude()) {
+        Fail("negative-cookie-operation-was-accepted");
+        return;
+      }
+      rejection_observed_ = true;
+      manager()->GetAllCookies(base::BindOnce(&Impl::OnPreRollbackCookies,
+                                              weak_factory_.GetWeakPtr()));
+      return;
+    }
+    if (!result.status.IsInclude()) {
+      Fail("native-cookie-operation-was-rejected");
+      return;
+    }
+    current_operation_.reset();
+    StartNextOperation();
+  }
+
+  void OnCookieDeleted(bool) {
+    current_operation_.reset();
+    StartNextOperation();
+  }
+
+  void OnPhaseCookies(std::vector<net::CanonicalCookie> cookies) {
+    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
+    if (!current) {
+      Fail("native-cookie-readback-invalid");
+      return;
+    }
+    if (phase_ == Phase::kSeedingDestination) {
+      if (current->fingerprint != destination_.fingerprint ||
+          !SaveDestinationSnapshot()) {
+        Fail("destination-snapshot-persist-or-readback-failed");
+        return;
+      }
+      std::optional<CookieSnapshot> imported = MakeImportSnapshot();
+      if (!imported || imported->cookies.size() != 3) {
+        Fail("import-preview-construction-failed");
+        return;
+      }
+      import_ = std::move(*imported);
+      if (!HasDistinctPartitionIdentities(import_)) {
+        Fail("canonical-partition-identity-collapsed");
+        return;
+      }
+      BeginOperations(destination_, import_, Phase::kApplyingImport);
+      return;
+    }
+    if (phase_ == Phase::kApplyingImport) {
+      if (current->fingerprint != import_.fingerprint) {
+        Fail("import-apply-readback-mismatch");
+        return;
+      }
+      import_readback_verified_ = true;
+      BeginRejectedOperation();
+      return;
+    }
+    if (phase_ == Phase::kRestoringDestination) {
+      if (current->fingerprint != destination_.fingerprint) {
+        Fail("destination-rollback-readback-mismatch");
+        return;
+      }
+      rollback_verified_ = true;
+      CookieSnapshot empty;
+      BeginOperations(destination_, empty, Phase::kCleaning);
+      return;
+    }
+    if (phase_ == Phase::kCleaning) {
+      if (!current->cookies.empty() || !base::DeleteFile(rollback_path_)) {
+        Fail("fixture-cleanup-failed");
+        return;
+      }
+      cleanup_verified_ = true;
+      Pass();
+      return;
+    }
+    Fail("fixture-phase-invalid");
+  }
+
+  bool SaveDestinationSnapshot() {
+    base::DictValue root;
+    root.Set("format", "helium-cookie-native-acceptance-rollback-v1");
+    root.Set("cookies", destination_.serialized.Clone());
+    root.Set("fingerprint", destination_.fingerprint);
+    std::string raw;
+    return base::JSONWriter::Write(root, &raw) &&
+           WriteSecretFile(rollback_path_, raw);
+  }
+
+  bool HasDistinctPartitionIdentities(const CookieSnapshot &snapshot) {
+    size_t unpartitioned = 0;
+    size_t partitioned = 0;
+    std::set<std::string> keys;
+    for (const auto &[key, cookie] : snapshot.cookies) {
+      keys.insert(key);
+      if (cookie.PartitionKey()) {
+        ++partitioned;
+      } else if (cookie.Domain() == "login.helium.invalid") {
+        ++unpartitioned;
+      }
+    }
+    return keys.size() == snapshot.cookies.size() && partitioned == 1 &&
+           unpartitioned == 1;
+  }
+
+  void BeginRejectedOperation() {
+    std::optional<net::CanonicalCookie> rejected =
+        MakeCookie("must-be-rejected", "rejected.helium.invalid", false,
+                   std::nullopt, static_cast<net::CookieSameSite>(1));
+    if (!rejected) {
+      Fail("negative-cookie-construction-failed");
+      return;
+    }
+    current_operation_ =
+        CookieOperation{true, "", std::move(*rejected),
+                        GURL("http://rejected.helium.invalid/")};
+    phase_ = Phase::kExpectingRejection;
+    manager()->SetCanonicalCookie(
+        current_operation_->cookie, current_operation_->source_url,
+        net::CookieOptions::MakeAllInclusive(),
+        base::BindOnce(&Impl::OnCookieSet, weak_factory_.GetWeakPtr()));
+  }
+
+  void OnPreRollbackCookies(std::vector<net::CanonicalCookie> cookies) {
+    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
+    if (!current || current->fingerprint != import_.fingerprint) {
+      Fail("rejected-operation-mutated-cookie-store");
+      return;
+    }
+    BeginOperations(*current, destination_, Phase::kRestoringDestination);
+  }
+
+  base::DictValue Report(std::string status, std::string reason) {
+    base::DictValue report;
+    report.Set("schema_version", 1);
+    report.Set("fixture", "helium-cookie-manager-disposable-v1");
+    report.Set("synthetic_only", true);
+    report.Set("status", std::move(status));
+    report.Set("reason", std::move(reason));
+    report.Set("cookie_api", "network::mojom::CookieManager");
+
+    base::DictValue destination;
+    destination.Set("complete_profile_cookie_count", 1);
+    destination.Set("snapshot_persisted_before_apply",
+                    base::PathExists(rollback_path_) || rollback_verified_);
+    destination.Set("fingerprint", destination_.fingerprint);
+    report.Set("destination_snapshot", std::move(destination));
+
+    base::DictValue imported;
+    imported.Set("record_count", 3);
+    imported.Set("apply_result",
+                 import_readback_verified_ ? "accepted" : "not-complete");
+    imported.Set("readback_result",
+                 import_readback_verified_ ? "exact" : "not-complete");
+    imported.Set("fingerprint", import_.fingerprint);
+    imported.Set("canonical_record_keys_unique", import_.cookies.size() == 3);
+    imported.Set("partitioned_and_unpartitioned_identity_distinct",
+                 HasDistinctPartitionIdentities(import_));
+    base::DictValue attributes;
+    attributes.Set("session", true);
+    attributes.Set("persistent", true);
+    attributes.Set("http_only", true);
+    attributes.Set("secure", true);
+    attributes.Set("same_site", true);
+    attributes.Set("host_only", true);
+    attributes.Set("domain", true);
+    attributes.Set("partitioned", true);
+    imported.Set("attribute_coverage", std::move(attributes));
+    report.Set("import", std::move(imported));
+
+    base::DictValue rejection;
+    rejection.Set("set_result",
+                  rejection_observed_ ? "rejected" : "not-complete");
+    rejection.Set("rollback_result",
+                  rollback_verified_ ? "exact" : "not-complete");
+    rejection.Set("destination_fingerprint", destination_.fingerprint);
+    report.Set("destination_rejection", std::move(rejection));
+
+    base::DictValue origin_state;
+    origin_state.Set("cookie_names_guessed", false);
+    origin_state.Set("cookie_manager_supported", true);
+    origin_state.Set("registered_adapter_count", 0);
+    origin_state.Set("non_cookie_transfer_result", "not-tested");
+    report.Set("origin_state", std::move(origin_state));
+
+    base::DictValue cleanup;
+    cleanup.Set("complete_profile_cookie_store",
+                cleanup_verified_ ? "empty" : "not-complete");
+    report.Set("cleanup", std::move(cleanup));
+    return report;
+  }
+
+  void Pass() {
+    if (terminal_) {
+      return;
+    }
+    terminal_ = true;
+    std::string raw;
+    base::DictValue report = Report("passed", "");
+    if (!base::JSONWriter::Write(report, &raw) ||
+        !WriteSecretFile(report_path_, raw)) {
+      LOG(ERROR) << "Helium cookie acceptance could not write its result";
+      return;
+    }
+    LOG(WARNING) << "Helium cookie acceptance passed";
+  }
+
+  void Fail(std::string reason) {
+    if (terminal_) {
+      return;
+    }
+    terminal_ = true;
+    operation_queue_.clear();
+    current_operation_.reset();
+    std::string raw;
+    base::DictValue report = Report("failed", reason);
+    if (!base::PathExists(report_path_) &&
+        base::JSONWriter::Write(report, &raw)) {
+      WriteSecretFile(report_path_, raw);
+    }
+    LOG(ERROR) << "Helium cookie acceptance failed: " << reason;
+  }
+
+  raw_ptr<Profile> profile_;
+  const base::FilePath marker_path_;
+  const base::FilePath report_path_;
+  const base::FilePath rollback_path_;
+  CookieSnapshot destination_;
+  CookieSnapshot import_;
+  std::deque<CookieOperation> operation_queue_;
+  std::optional<CookieOperation> current_operation_;
+  Phase phase_ = Phase::kIdle;
+  bool started_ = false;
+  bool stopped_ = false;
+  bool terminal_ = false;
+  bool import_readback_verified_ = false;
+  bool rejection_observed_ = false;
+  bool rollback_verified_ = false;
+  bool cleanup_verified_ = false;
+  base::WeakPtrFactory<Impl> weak_factory_{this};
+};
+
+HeliumCookieAcceptanceFixture::HeliumCookieAcceptanceFixture(Profile *profile)
+    : impl_(std::make_unique<Impl>(profile)) {}
+
+HeliumCookieAcceptanceFixture::~HeliumCookieAcceptanceFixture() = default;
+
+bool HeliumCookieAcceptanceFixture::IsRequested(Profile *profile) {
+  const base::FilePath marker =
+      profile->GetPath().AppendASCII(kAcceptanceMarker);
+  return base::PathExists(marker) || base::IsLink(marker);
+}
+
+void HeliumCookieAcceptanceFixture::Start() { impl_->Start(); }
+
+void HeliumCookieAcceptanceFixture::Stop() { impl_->Stop(); }
 
 class HeliumCookieSyncBridge::Impl {
 public:

@@ -98,8 +98,14 @@ version_name=$(metadata version_name "$acceptance/acceptance.env")
 }
 
 case "$package" in
-  computer.helium.sync.test) device_socket=helium_sync_test_devtools_remote ;;
-  computer.helium.control.test) device_socket=helium_control_test_devtools_remote ;;
+  computer.helium.sync.test)
+    device_socket=helium_sync_test_devtools_remote
+    cookie_acceptance=true
+    ;;
+  computer.helium.control.test)
+    device_socket=helium_control_test_devtools_remote
+    cookie_acceptance=false
+    ;;
 esac
 
 fixture_spki=
@@ -166,12 +172,17 @@ installed_apk_sha256=$(adb -s "$serial" exec-out cat "$installed_apk" | sha256su
 package_dump=$(adb -s "$serial" shell dumpsys package "$package" | tr -d '\r')
 installed_version_code=$(sed -n 's/^[[:space:]]*versionCode=\([^ ]*\).*/\1/p' <<<"$package_dump" | head -n 1)
 installed_version_name=$(sed -n 's/^[[:space:]]*versionName=//p' <<<"$package_dump" | head -n 1)
+package_uid=$(sed -n 's/^[[:space:]]*userId=//p' <<<"$package_dump" | head -n 1)
 [[ "$installed_version_code" == "$version_code" ]] || {
   echo "installed package versionCode does not match the admitted artifact" >&2
   exit 1
 }
 [[ "$installed_version_name" == "$version_name" ]] || {
   echo "installed package versionName does not match the admitted artifact" >&2
+  exit 1
+}
+[[ "$package_uid" =~ ^[1-9][0-9]*$ ]] || {
+  echo "installed disposable package UID is unavailable" >&2
   exit 1
 }
 browser_pid=$(adb -s "$serial" shell pidof "$package" | tr -d '\r')
@@ -193,10 +204,14 @@ staged="$temporary/staged"
 mkdir -p "$staged"
 fixture_log="$staged/fixture-server.log"
 result="$staged/result.json"
+media_diagnostics="$staged/media-diagnostics.json"
+package_logcat="$staged/package-logcat.txt"
+probe_log="$staged/probe-runner.log"
 ready="$temporary/ready.json"
 action_log="$staged/actions.env"
 fixture_pid=
 probe_pid=
+logcat_pid=
 reverse_created=false
 forward_created=false
 wifi_changed=false
@@ -210,6 +225,10 @@ cleanup() {
     kill "$probe_pid" 2>/dev/null || true
     wait "$probe_pid" 2>/dev/null || true
   fi
+  if [[ "$logcat_pid" ]]; then
+    kill "$logcat_pid" 2>/dev/null || true
+    wait "$logcat_pid" 2>/dev/null || true
+  fi
   if [[ "$forward_created" == true ]]; then
     adb -s "$serial" forward --remove tcp:9222 >/dev/null 2>&1 || true
   fi
@@ -219,6 +238,23 @@ cleanup() {
   if [[ "$fixture_pid" ]]; then
     kill "$fixture_pid" 2>/dev/null || true
     wait "$fixture_pid" 2>/dev/null || true
+  fi
+  if [[ "$status" -ne 0 && -d "$staged" && ! -e "$evidence" ]]; then
+    printf 'schema_version=1\nstatus=failed\nexit_code=%s\nfailed_at=%s\n' \
+      "$status" "$(date --iso-8601=seconds)" > "$staged/failure.env"
+    [[ -f "$staged/acceptance.env" ]] ||
+      cp "$acceptance/acceptance.env" "$staged/acceptance.env"
+    if [[ -n "$fixture_receipt" &&
+          ! -f "$staged/fixture-provenance.json" ]]; then
+      cp "$fixture_receipt" "$staged/fixture-provenance.json"
+    fi
+    (
+      cd "$staged"
+      find . -maxdepth 1 -type f ! -name EVIDENCE_SHA256SUMS -printf '%f\0' |
+        sort -z | xargs -0 sha256sum > EVIDENCE_SHA256SUMS
+    )
+    mv "$staged" "$evidence"
+    printf 'failed_evidence_directory=%s\n' "$evidence" >&2
   fi
   if [[ -d "$temporary" ]]; then
     find "$temporary" -depth -delete
@@ -245,10 +281,21 @@ reverse_created=true
 adb -s "$serial" forward --no-rebind tcp:9222 "localabstract:$device_socket" >/dev/null
 forward_created=true
 
+adb -s "$serial" logcat --uid="$package_uid" -v threadtime '*:V' \
+  > "$package_logcat" 2>&1 &
+logcat_pid=$!
+sleep 0.2
+kill -0 "$logcat_pid" 2>/dev/null || {
+  wait "$logcat_pid" || true
+  echo "package-scoped Android logcat capture could not start" >&2
+  exit 1
+}
+
 probe_args=(
   --cdp http://127.0.0.1:9222
   --fixture http://127.0.0.1:44721/probe
   --output "$result"
+  --media-diagnostics "$media_diagnostics"
   --ready-file "$ready"
   --require-lifecycle "$background_foreground"
   --require-network-handoff "$([[ "$network_handoff" == none ]] && echo false || echo true)"
@@ -261,7 +308,8 @@ probe_args=(
 [[ -z "$h2" ]] || probe_args+=(--h2 "$h2")
 [[ -z "$h3" ]] || probe_args+=(--h3 "$h3")
 [[ -z "$fixture_spki" ]] || probe_args+=(--fixture-spki "$fixture_spki")
-node "$acceptance/runtime-acceptance/run-cdp-probe.mjs" "${probe_args[@]}" &
+node "$acceptance/runtime-acceptance/run-cdp-probe.mjs" "${probe_args[@]}" \
+  > "$probe_log" 2>&1 &
 probe_pid=$!
 for _ in $(seq 1 200); do
   [[ -f "$ready" ]] && break
@@ -278,6 +326,9 @@ done
   printf 'version_code=%s\n' "$installed_version_code"
   printf 'version_name=%s\n' "$installed_version_name"
   printf 'installed_apk_sha256=%s\n' "$installed_apk_sha256"
+  printf 'package_uid=%s\n' "$package_uid"
+  printf 'logcat_scope=package-uid\n'
+  printf 'cookie_acceptance=%s\n' "$cookie_acceptance"
   printf 'device_socket=%s\n' "$device_socket"
   if [[ -n "$fixture_spki" ]]; then
     printf 'fixture_spki_sha256_base64=%s\n' "$fixture_spki"
@@ -307,11 +358,62 @@ fi
 
 wait "$probe_pid"
 probe_pid=
-[[ -f "$result" ]]
+[[ -f "$result" && -f "$media_diagnostics" ]]
+kill "$logcat_pid" 2>/dev/null || true
+wait "$logcat_pid" 2>/dev/null || true
+logcat_pid=
+[[ -f "$package_logcat" ]]
 if [[ "$wifi_changed" == true ]]; then
   adb -s "$serial" shell svc wifi enable >/dev/null
   wifi_changed=false
 fi
+
+if [[ "$cookie_acceptance" == true ]]; then
+  cookie_remote=app_chrome/Default/helium-sync/cookie-native-acceptance.json
+  cookie_temporary="$temporary/cookie-native-acceptance.json"
+  for _ in $(seq 1 300); do
+    if adb -s "$serial" exec-out run-as "$package" cat "$cookie_remote" \
+        > "$cookie_temporary" 2>/dev/null &&
+       jq -e '.status == "passed"' "$cookie_temporary" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.1
+  done
+  jq -e '
+    (keys | sort) == ([
+      "cleanup", "cookie_api", "destination_rejection",
+      "destination_snapshot", "fixture", "import", "origin_state", "reason",
+      "schema_version", "status", "synthetic_only"
+    ] | sort) and
+    .schema_version == 1 and
+    .fixture == "helium-cookie-manager-disposable-v1" and
+    .synthetic_only == true and .status == "passed" and .reason == "" and
+    .cookie_api == "network::mojom::CookieManager" and
+    .destination_snapshot.complete_profile_cookie_count == 1 and
+    .destination_snapshot.snapshot_persisted_before_apply == true and
+    (.destination_snapshot.fingerprint | test("^[0-9a-f]{64}$")) and
+    .import.record_count == 3 and
+    .import.apply_result == "accepted" and
+    .import.readback_result == "exact" and
+    (.import.fingerprint | test("^[0-9a-f]{64}$")) and
+    .import.canonical_record_keys_unique == true and
+    .import.partitioned_and_unpartitioned_identity_distinct == true and
+    ([.import.attribute_coverage[]] | all(. == true)) and
+    .destination_rejection.set_result == "rejected" and
+    .destination_rejection.rollback_result == "exact" and
+    .origin_state.cookie_names_guessed == false and
+    .origin_state.cookie_manager_supported == true and
+    .origin_state.registered_adapter_count == 0 and
+    .origin_state.non_cookie_transfer_result == "not-tested" and
+    .cleanup.complete_profile_cookie_store == "empty"
+  ' "$cookie_temporary" >/dev/null || {
+    echo "browser-native disposable cookie acceptance did not pass" >&2
+    exit 1
+  }
+  install -m 600 "$cookie_temporary" \
+    "$staged/cookie-native-acceptance.json"
+fi
+
 printf 'completed_at=%s\n' "$(date --iso-8601=seconds)" >> "$action_log"
 cp "$acceptance/acceptance.env" "$staged/acceptance.env"
 if [[ -n "$fixture_receipt" ]]; then

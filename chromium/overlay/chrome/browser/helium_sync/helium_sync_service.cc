@@ -34,7 +34,7 @@
 #include "base/base_paths_android.h"
 #endif
 
-#if __has_include( \
+#if __has_include(                                                             \
     "chrome/browser/password_manager/factories/profile_password_store_factory.h")
 #include "chrome/browser/password_manager/factories/profile_password_store_factory.h"
 #else
@@ -55,15 +55,15 @@ constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
 constexpr char kTabJournalRootFile[] = "tab_journal_root";
 
 #if BUILDFLAG(IS_ANDROID)
-void AndroidStatusLog(const std::string& message) {
+void AndroidStatusLog(const std::string &message) {
   __android_log_write(ANDROID_LOG_WARN, "HeliumSync", message.c_str());
 }
 #else
-void AndroidStatusLog(const std::string&) {}
+void AndroidStatusLog(const std::string &) {}
 #endif
 
-std::optional<std::string> ReadConfigValue(const base::FilePath& config_dir,
-                                           const char* leaf) {
+std::optional<std::string> ReadConfigValue(const base::FilePath &config_dir,
+                                           const char *leaf) {
   std::string value;
   if (!base::ReadFileToString(config_dir.AppendASCII(leaf), &value)) {
     return std::nullopt;
@@ -78,8 +78,8 @@ struct ClientEnrollment {
   std::string phase;
 };
 
-std::optional<ClientEnrollment> ReadClientEnrollment(
-    const base::FilePath& client_state_path) {
+std::optional<ClientEnrollment>
+ReadClientEnrollment(const base::FilePath &client_state_path) {
   std::string raw;
   if (!base::ReadFileToString(client_state_path, &raw)) {
     return std::nullopt;
@@ -90,12 +90,12 @@ std::optional<ClientEnrollment> ReadClientEnrollment(
       parsed->GetDict().FindInt("version").value_or(0) != 1) {
     return std::nullopt;
   }
-  const base::DictValue& state = parsed->GetDict();
-  const std::string* device_id = state.FindString("device_id");
-  const std::string* role = state.FindString("role");
-  const std::string* phase = state.FindString("phase");
-  const std::string* active_key_id = state.FindString("active_key_id");
-  const base::DictValue* keys = state.FindDict("keys");
+  const base::DictValue &state = parsed->GetDict();
+  const std::string *device_id = state.FindString("device_id");
+  const std::string *role = state.FindString("role");
+  const std::string *phase = state.FindString("phase");
+  const std::string *active_key_id = state.FindString("active_key_id");
+  const base::DictValue *keys = state.FindDict("keys");
   if (!device_id || device_id->empty() || !role ||
       (*role != "seed" && *role != "join") || !phase ||
       (*phase != "pending" && *phase != "active") || !active_key_id ||
@@ -117,9 +117,18 @@ std::optional<ClientEnrollment> ReadClientEnrollment(
   return ClientEnrollment{*device_id, *phase};
 }
 
-}  // namespace
+} // namespace
 
-HeliumSyncService::HeliumSyncService(Profile* profile) {
+HeliumSyncService::HeliumSyncService(Profile *profile) {
+  if (helium_sync::HeliumCookieAcceptanceFixture::IsRequested(profile)) {
+    cookie_acceptance_fixture_ =
+        std::make_unique<helium_sync::HeliumCookieAcceptanceFixture>(profile);
+    cookie_acceptance_fixture_->Start();
+    // A marked cookie fixture profile is a dedicated disposable process. A
+    // malformed marker or failed fixture must never fall through to sync.
+    return;
+  }
+
   if (helium_sync::HeliumTabRestoreBridge::IsRequested()) {
     tab_restore_bridge_ =
         std::make_unique<helium_sync::HeliumTabRestoreBridge>(profile);
@@ -208,6 +217,10 @@ HeliumSyncService::~HeliumSyncService() = default;
 
 void HeliumSyncService::Shutdown() {
   weak_factory_.InvalidateWeakPtrs();
+  if (cookie_acceptance_fixture_) {
+    cookie_acceptance_fixture_->Stop();
+    cookie_acceptance_fixture_.reset();
+  }
   if (cookie_bridge_) {
     cookie_bridge_->Stop();
     cookie_bridge_.reset();

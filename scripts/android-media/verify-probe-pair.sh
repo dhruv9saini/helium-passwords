@@ -40,10 +40,13 @@ verify_generation() {
   local evidence_env="$evidence/acceptance.env"
   local actions="$evidence/actions.env"
   local result="$evidence/result.json"
+  local media_diagnostics="$evidence/media-diagnostics.json"
+  local package_logcat="$evidence/package-logcat.txt"
   local package apk_sha chromium_commit sync_commit version_code version_name
 
   [[ -f "$acceptance/PACKAGE_SHA256SUMS" && -f "$evidence/EVIDENCE_SHA256SUMS" &&
       -f "$acceptance_env" && -f "$evidence_env" && -f "$actions" && -f "$result" &&
+      -f "$media_diagnostics" && -f "$package_logcat" &&
       -f "$evidence/fixture-provenance.json" &&
       -f "$acceptance/runtime-acceptance/SHA256SUMS" ]] || {
     echo "acceptance or evidence generation is incomplete" >&2
@@ -77,6 +80,8 @@ verify_generation() {
       "$(metadata "$actions" device_socket)" == "$expected_socket" &&
       "$(metadata "$actions" version_code)" == "$version_code" &&
       "$(metadata "$actions" version_name)" == "$version_name" &&
+      "$(metadata "$actions" package_uid)" =~ ^[1-9][0-9]*$ &&
+      "$(metadata "$actions" logcat_scope)" == package-uid &&
       "$(metadata "$actions" background_foreground)" == true &&
       "$(metadata "$actions" network_handoff)" == wifi-to-cellular ]] || {
     echo "device actions do not prove the full admitted lifecycle gate" >&2
@@ -99,6 +104,10 @@ verify_generation() {
       .service_worker.supported == true and
       .service_worker.controlled == true and
       .service_worker.script_url == "/service-worker.js" and
+      .media_diagnostics.source == "CDP Media domain" and
+      .media_diagnostics.enabled == true and
+      .media_diagnostics.event_count > 0 and
+      .media_diagnostics.player_count > 0 and
       (.drm.widevine.api_available | type) == "boolean" and
       (.drm.widevine.key_system_available | type) == "boolean" and
       .drm.widevine.key_system == "com.widevine.alpha"
@@ -106,6 +115,53 @@ verify_generation() {
     echo "probe result is not source-bound full Android evidence" >&2
     exit 1
   }
+
+  jq -e --slurpfile result "$result" '
+    .schema_version == 1 and .synthetic_fixture_only == true and
+    .source == "CDP Media domain" and .enabled == true and
+    .event_count > 0 and .player_count > 0 and
+    (.events | length) == .event_count and
+    .event_count == $result[0].media_diagnostics.event_count and
+    .player_count == $result[0].media_diagnostics.player_count and
+    .method_counts == $result[0].media_diagnostics.method_counts
+  ' "$media_diagnostics" >/dev/null || {
+    echo "CDP Media diagnostics are incomplete or not result-bound" >&2
+    exit 1
+  }
+
+  if [[ "$expected_package" == computer.helium.sync.test ]]; then
+    [[ "$(metadata "$actions" cookie_acceptance)" == true &&
+        -f "$evidence/cookie-native-acceptance.json" ]] || {
+      echo "Sync evidence is missing browser-native cookie acceptance" >&2
+      exit 1
+    }
+    jq -e '
+      .schema_version == 1 and
+      .fixture == "helium-cookie-manager-disposable-v1" and
+      .synthetic_only == true and .status == "passed" and
+      .cookie_api == "network::mojom::CookieManager" and
+      .destination_snapshot.snapshot_persisted_before_apply == true and
+      .import.apply_result == "accepted" and
+      .import.readback_result == "exact" and
+      .import.canonical_record_keys_unique == true and
+      .import.partitioned_and_unpartitioned_identity_distinct == true and
+      .destination_rejection.set_result == "rejected" and
+      .destination_rejection.rollback_result == "exact" and
+      .origin_state.cookie_names_guessed == false and
+      .origin_state.registered_adapter_count == 0 and
+      .origin_state.non_cookie_transfer_result == "not-tested" and
+      .cleanup.complete_profile_cookie_store == "empty"
+    ' "$evidence/cookie-native-acceptance.json" >/dev/null || {
+      echo "browser-native cookie acceptance evidence is invalid" >&2
+      exit 1
+    }
+  else
+    [[ "$(metadata "$actions" cookie_acceptance)" == false &&
+        ! -e "$evidence/cookie-native-acceptance.json" ]] || {
+      echo "control evidence must not contain the Sync cookie fixture" >&2
+      exit 1
+    }
+  fi
 
   local fixture_sha
   fixture_sha=$(sha256sum "$evidence/fixture-provenance.json" | cut -d' ' -f1)
@@ -123,7 +179,8 @@ verify_generation \
   computer.helium.control.test helium_control_test_devtools_remote
 
 for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-  run-device-probe.sh verify-probe-pair.sh; do
+  prepare-cookie-acceptance-profile.sh run-device-probe.sh \
+  verify-probe-pair.sh; do
   cmp -s "$sync_acceptance/runtime-acceptance/$name" \
     "$control_acceptance/runtime-acceptance/$name" || {
     echo "Sync and control used different acceptance code: $name" >&2

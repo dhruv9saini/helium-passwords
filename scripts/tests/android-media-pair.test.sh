@@ -32,14 +32,16 @@ make_generation() {
   local evidence="$test_root/$role-evidence"
   mkdir -p "$acceptance/runtime-acceptance" "$evidence"
   for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    run-device-probe.sh verify-probe-pair.sh; do
+    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
+    verify-probe-pair.sh; do
     cp "$repo_root/scripts/android-media/$name" "$acceptance/runtime-acceptance/$name"
   done
   printf 'package=%s\n' "$package" > "$acceptance/runtime-acceptance/kit.env"
   (
     cd "$acceptance/runtime-acceptance"
     sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-      run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+      prepare-cookie-acceptance-profile.sh run-device-probe.sh \
+      verify-probe-pair.sh kit.env > SHA256SUMS
   )
   local runtime_sha
   runtime_sha=$(sha256sum "$acceptance/runtime-acceptance/SHA256SUMS" | cut -d' ' -f1)
@@ -73,6 +75,9 @@ network_handoff=wifi-to-cellular
 version_code=787500005
 version_name=150.0.7871.181
 installed_apk_sha256=$apk_sha
+package_uid=10123
+logcat_scope=package-uid
+cookie_acceptance=$([[ "$role" == sync ]] && echo true || echo false)
 device_socket=$socket
 fixture_receipt_sha256=$fixture_sha
 EOF
@@ -85,16 +90,44 @@ EOF
         required_transport_protocols:["h2","h3"],
         required_lifecycle:{background_foreground:true,network_handoff:true},
         service_worker:{supported:true,controlled:true,script_url:"/service-worker.js"},
+        media_diagnostics:{source:"CDP Media domain",enabled:true,event_count:1,
+          player_count:1,method_counts:{"Media.playerEventsAdded":1}},
         drm:{widevine:{api_available:true,key_system_available:false,
           key_system:"com.widevine.alpha"}},
         media_manifest:{schema_version:1,files:{mp4:{name:"h264-aac.mp4",bytes:10,
           sha256:("e" * 64)}}}
       }
     ' > "$evidence/result.json"
+  jq -n '{
+    schema_version:1,synthetic_fixture_only:true,source:"CDP Media domain",
+    enabled:true,event_count:1,player_count:1,
+    method_counts:{"Media.playerEventsAdded":1},
+    events:[{method:"Media.playerEventsAdded",params:{playerId:"synthetic"}}]
+  }' > "$evidence/media-diagnostics.json"
+  printf 'synthetic package-scoped logcat\n' > "$evidence/package-logcat.txt"
+  if [[ "$role" == sync ]]; then
+    jq -n '{
+      schema_version:1,fixture:"helium-cookie-manager-disposable-v1",
+      synthetic_only:true,status:"passed",reason:"",
+      cookie_api:"network::mojom::CookieManager",
+      destination_snapshot:{complete_profile_cookie_count:1,
+        snapshot_persisted_before_apply:true,fingerprint:("a" * 64)},
+      import:{record_count:3,apply_result:"accepted",readback_result:"exact",
+        fingerprint:("b" * 64),canonical_record_keys_unique:true,
+        partitioned_and_unpartitioned_identity_distinct:true,
+        attribute_coverage:{session:true,persistent:true,http_only:true,
+          secure:true,same_site:true,host_only:true,domain:true,partitioned:true}},
+      destination_rejection:{set_result:"rejected",rollback_result:"exact",
+        destination_fingerprint:("a" * 64)},
+      origin_state:{cookie_names_guessed:false,cookie_manager_supported:true,
+        registered_adapter_count:0,non_cookie_transfer_result:"not-tested"},
+      cleanup:{complete_profile_cookie_store:"empty"}
+    }' > "$evidence/cookie-native-acceptance.json"
+  fi
   (
     cd "$evidence"
-    sha256sum acceptance.env actions.env fixture-provenance.json result.json \
-      > EVIDENCE_SHA256SUMS
+    find . -maxdepth 1 -type f ! -name EVIDENCE_SHA256SUMS -printf '%f\0' |
+      sort -z | xargs -0 sha256sum > EVIDENCE_SHA256SUMS
   )
 }
 
@@ -121,8 +154,8 @@ sed -i 's/1111111111111111111111111111111111111111/33333333333333333333333333333
 )
 (
   cd "$test_root/control-evidence"
-  sha256sum acceptance.env actions.env fixture-provenance.json result.json \
-    > EVIDENCE_SHA256SUMS
+  find . -maxdepth 1 -type f ! -name EVIDENCE_SHA256SUMS -printf '%f\0' |
+    sort -z | xargs -0 sha256sum > EVIDENCE_SHA256SUMS
 )
 if "$repo_root/scripts/android-media/verify-probe-pair.sh" \
   "$test_root/sync-acceptance" "$test_root/sync-evidence" \

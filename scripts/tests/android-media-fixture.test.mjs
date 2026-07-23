@@ -194,6 +194,8 @@ test("probe page contains the codec and browser-observable streaming gates", asy
   const runner = await fsp.readFile(new URL("../android-media/run-cdp-probe.mjs", import.meta.url), "utf8");
   assert.match(runner, /Target\.createBrowserContext/);
   assert.match(runner, /Target\.disposeBrowserContext/);
+  assert.match(runner, /Media\.enable/);
+  assert.match(runner, /mediaDiagnostics\(\)/);
   const worker = await fetch(`${fixture.origin}/service-worker.js`);
   assert.equal(worker.headers.get("service-worker-allowed"), "/");
   assert.match(await worker.text(), /event\.respondWith\(fetch/);
@@ -297,6 +299,13 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
         { event: "completed", at_ms: 1000, visibility: "visible", online: true },
       ],
     },
+    media_diagnostics: {
+      source: "CDP Media domain",
+      enabled: true,
+      event_count: 7,
+      player_count: 5,
+      method_counts: { "Media.playerEventsAdded": 7 },
+    },
   };
   assert.equal(validateProbeResult(result), result);
   assert.throws(() => validateProbeResult({
@@ -369,6 +378,10 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     ...result,
     required_lifecycle: { background_foreground: false, network_handoff: true },
   }), /network handoff was not observed/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    media_diagnostics: { source: "CDP Media domain", enabled: true },
+  }), /Media diagnostics were absent/);
   assert.equal(validateProbeResult({
     ...result,
     required_transport_protocols: ["h2"],
@@ -409,12 +422,14 @@ test("CDP runner refuses non-loopback origins and existing evidence", async t =>
     cdp: "http://example.com:9222",
     fixture: "http://127.0.0.1:44721/probe",
     output: path.join(outputDir, "bad.json"),
+    mediaDiagnostics: path.join(outputDir, "bad-media.json"),
   }), /CDP URL must use loopback HTTP/);
   await assert.rejects(() => runProbe({
     cdp: "http://127.0.0.1:9222",
     fixture: "http://127.0.0.1:44721/probe",
     h2: "https://example.com/private?token=secret",
     output: path.join(outputDir, "bad-h2.json"),
+    mediaDiagnostics: path.join(outputDir, "bad-h2-media.json"),
   }), /fixed identity Fetch endpoint/);
 });
 

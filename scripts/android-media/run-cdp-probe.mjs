@@ -290,6 +290,14 @@ export function validateProbeResult(result) {
       !lifecycleEvents.some(event => event.event === "connectionchange")) {
     throw new Error("required network handoff was not observed");
   }
+  if (result.media_diagnostics?.source !== "CDP Media domain" ||
+      result.media_diagnostics?.enabled !== true ||
+      !Number.isSafeInteger(result.media_diagnostics?.event_count) ||
+      result.media_diagnostics.event_count < 1 ||
+      !Number.isSafeInteger(result.media_diagnostics?.player_count) ||
+      result.media_diagnostics.player_count < 1) {
+    throw new Error("browser-observable CDP Media diagnostics were absent");
+  }
   return result;
 }
 
@@ -337,8 +345,9 @@ function validateProgressiveTimes(times, label, expectedDelayMs) {
 }
 
 export async function runProbe(options) {
-  if (!options.cdp || !options.fixture || !options.output) {
-    throw new Error("cdp, fixture, and output are required");
+  if (!options.cdp || !options.fixture || !options.output ||
+      !options.mediaDiagnostics) {
+    throw new Error("cdp, fixture, output, and media-diagnostics are required");
   }
   const cdpURL = requireLoopbackHTTP(options.cdp, "CDP");
   const fixtureURL = requireLoopbackHTTP(options.fixture, "fixture");
@@ -380,13 +389,17 @@ export async function runProbe(options) {
       "Target.createBrowserContext", { disposeOnDetach: true }, 10000,
     ));
     ({ targetId: targetID } = await browser.call("Target.createTarget", {
-      url: targetFixtureURL.href,
+      url: "about:blank",
       browserContextId: browserContextID,
     }, 10000));
     const target = await waitForTarget(cdpBase, targetID);
     page = new CDP(requireLoopbackWebSocket(target.webSocketDebuggerUrl, "page CDP"));
     await page.open();
+    await page.call("Page.enable");
     await page.call("Runtime.enable");
+    await page.call("Media.enable");
+    await page.call("Page.navigate", { url: targetFixtureURL.href });
+    await waitForPageURL(page, targetFixtureURL.href);
     if (options.readyFile) {
       await atomicWriteJSON(path.resolve(options.readyFile), {
         schema_version: 1,
@@ -435,6 +448,11 @@ export async function runProbe(options) {
       fixture_spki_sha256_base64: options.fixtureSpki || "",
       fixture_certificate_override: admittedFixtureSwitch,
     };
+    const mediaDiagnostics = page.mediaDiagnostics();
+    rawResult.media_diagnostics = mediaDiagnostics.summary;
+    await atomicWriteJSON(
+      path.resolve(options.mediaDiagnostics), mediaDiagnostics.evidence,
+    );
     const result = validateProbeResult(rawResult);
     await atomicWriteJSON(path.resolve(options.output), result);
     return result;
@@ -454,12 +472,25 @@ class CDP {
     this.url = url;
     this.nextID = 0;
     this.pending = new Map();
+    this.mediaEvents = [];
+    this.mediaOverflow = false;
   }
 
   open() {
     this.socket = new WebSocket(this.url);
     this.socket.onmessage = event => {
       const message = JSON.parse(event.data);
+      if (!message.id && message.method?.startsWith("Media.")) {
+        if (this.mediaEvents.length >= 4096) {
+          this.mediaOverflow = true;
+          return;
+        }
+        this.mediaEvents.push({
+          method: message.method,
+          params: boundedJSON(message.params || {}, 0),
+        });
+        return;
+      }
       const pending = this.pending.get(message.id);
       if (!pending) return;
       clearTimeout(pending.timer);
@@ -488,6 +519,62 @@ class CDP {
   close() {
     this.socket?.close();
   }
+
+  mediaDiagnostics() {
+    if (this.mediaOverflow) {
+      throw new Error("CDP Media diagnostics exceeded the event bound");
+    }
+    const players = new Set();
+    const methodCounts = {};
+    for (const event of this.mediaEvents) {
+      const playerID = event.params?.playerId;
+      if (typeof playerID === "string" && playerID) players.add(playerID);
+      methodCounts[event.method] = (methodCounts[event.method] || 0) + 1;
+    }
+    const summary = {
+      source: "CDP Media domain",
+      enabled: true,
+      event_count: this.mediaEvents.length,
+      player_count: players.size,
+      method_counts: methodCounts,
+    };
+    return {
+      summary,
+      evidence: {
+        schema_version: 1,
+        synthetic_fixture_only: true,
+        ...summary,
+        events: this.mediaEvents,
+      },
+    };
+  }
+}
+
+function boundedJSON(value, depth) {
+  if (depth > 8) throw new Error("CDP Media diagnostic nesting exceeded");
+  if (value === null || typeof value === "boolean" ||
+      (typeof value === "number" && Number.isFinite(value))) {
+    return value;
+  }
+  if (typeof value === "string") {
+    return value.length > 4096 ? `${value.slice(0, 4096)}[truncated]` : value;
+  }
+  if (Array.isArray(value)) {
+    if (value.length > 512) {
+      throw new Error("CDP Media diagnostic array exceeded");
+    }
+    return value.map(item => boundedJSON(item, depth + 1));
+  }
+  if (typeof value === "object") {
+    const entries = Object.entries(value);
+    if (entries.length > 512) {
+      throw new Error("CDP Media diagnostic object exceeded");
+    }
+    return Object.fromEntries(entries.map(
+      ([key, item]) => [key, boundedJSON(item, depth + 1)],
+    ));
+  }
+  throw new Error("CDP Media diagnostic contained an unsupported value");
 }
 
 async function waitForTarget(cdpBase, targetID) {
@@ -498,6 +585,18 @@ async function waitForTarget(cdpBase, targetID) {
     await new Promise(resolve => setTimeout(resolve, 100));
   }
   throw new Error(`CDP target did not become available: ${targetID}`);
+}
+
+async function waitForPageURL(page, expectedURL) {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    const response = await page.call("Runtime.evaluate", {
+      expression: "location.href",
+      returnByValue: true,
+    }).catch(() => null);
+    if (response?.result?.value === expectedURL) return;
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+  throw new Error(`CDP page did not navigate to the admitted fixture: ${expectedURL}`);
 }
 
 async function checkedJSON(url) {

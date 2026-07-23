@@ -69,6 +69,19 @@ other profile stores is not copied. Each target origin needs a disposable audit
 and a narrow export/import adapter if cookies plus password reauthentication
 are insufficient. Raw application databases are never merged.
 
+The Sync test APK also contains one explicit browser-native acceptance fixture.
+It activates only when a new empty `Default` profile carries the exact
+mode-0600 marker created by the artifact's
+`prepare-cookie-acceptance-profile.sh`, and only in debuggable
+`computer.helium.sync.test`. The service returns before normal sync, uses the
+same native snapshot and canonical-identity helpers plus CookieManager to prove
+destination snapshot, synthetic import/apply/readback, partition identity,
+native rejection, rollback, and cleanup, then writes a content-free fixed-path
+report. A malformed marker or failed fixture never falls through to enrollment.
+The preparer cannot select a production package or existing profile. A fixture
+pass does not claim authenticated-session success: the origin-state adapter
+count remains zero and non-cookie transfer remains `not-tested`.
+
 ## Streaming and media
 
 The codec and streaming fixtures live under `scripts/android-media/`.
@@ -101,6 +114,11 @@ controlled disposable Service Worker to relay a progressive Fetch response;
 the final pair receipt proves that Sync and control used the same private
 source commit, Chromium commit, runtime harness, media bytes, protocol fixture,
 and lifecycle matrix. Two standalone pass files are insufficient.
+The runner enables Chromium 150's target-scoped CDP `Media` domain before
+navigating to the synthetic page and records bounded player events. In
+parallel it captures Android logcat with the exact disposable package UID; it
+never clears or reads global logcat. Both files are mandatory pair evidence,
+and partial diagnostics are retained under `failure.env` when a probe fails.
 
 The rootless lm protocol fixture service is enabled with a repository-external
 private CA/leaf and its credential-free HTTP/2-only/HTTP/3 behavior passes lm
