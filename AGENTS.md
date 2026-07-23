@@ -73,6 +73,12 @@ restores Chromium's native password manager.
   Normal launch and installation paths must contain no browser-automation
   password or cookie writer. The CDP media probe is observation-only acceptance
   instrumentation and must never gain password/cookie mutation behavior.
+  `scripts/android-media/disposable-browser.sh` is the sole disposable Android
+  APK install/launch boundary: it admits only checksum-bound `.test` packages,
+  derives their fixed DevTools sockets, and restores the two global Android
+  Chromium command-line files and debug-app selection on every exit. Never add
+  normal package identities, caller-supplied flags, package clearing, or
+  uninstall behavior to it.
 - `cmd/helium-syncd` runs the encrypted record daemon. Production binds only
   lm's exact Tailscale IPv4 address and terminates TLS 1.3 itself with a leaf
   signed by the offline Helium Sync CA. The path-zero root has an

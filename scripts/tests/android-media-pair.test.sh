@@ -32,16 +32,16 @@ make_generation() {
   local evidence="$test_root/$role-evidence"
   mkdir -p "$acceptance/runtime-acceptance" "$evidence"
   for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-    verify-probe-pair.sh; do
+    disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+    run-device-probe.sh verify-probe-pair.sh; do
     cp "$repo_root/scripts/android-media/$name" "$acceptance/runtime-acceptance/$name"
   done
   printf 'package=%s\n' "$package" > "$acceptance/runtime-acceptance/kit.env"
   (
     cd "$acceptance/runtime-acceptance"
     sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-      prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-      verify-probe-pair.sh kit.env > SHA256SUMS
+      disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+      run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
   )
   local runtime_sha
   runtime_sha=$(sha256sum "$acceptance/runtime-acceptance/SHA256SUMS" | cut -d' ' -f1)

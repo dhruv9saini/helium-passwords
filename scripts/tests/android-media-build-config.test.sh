@@ -96,7 +96,9 @@ grep -Fq 'run-device-probe.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'verify-probe-pair.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'schema_version=5' \
+grep -Fq 'disposable-browser.sh' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'schema_version=6' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'prepare-cookie-acceptance-profile.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"

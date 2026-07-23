@@ -179,8 +179,8 @@ verify_generation \
   computer.helium.control.test helium_control_test_devtools_remote
 
 for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-  prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-  verify-probe-pair.sh; do
+  disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+  run-device-probe.sh verify-probe-pair.sh; do
   cmp -s "$sync_acceptance/runtime-acceptance/$name" \
     "$control_acceptance/runtime-acceptance/$name" || {
     echo "Sync and control used different acceptance code: $name" >&2

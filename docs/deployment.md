@@ -121,12 +121,27 @@ synthetic media with those scripts, and records hashes for the archive, APK,
 runtime kit, and complete prepared directory. It does not install or launch
 the APK.
 
-After the admitted Sync test APK has been installed but while that package is
-stopped, create its one new native-cookie fixture profile:
+Install only that checksum-admitted disposable identity through the repository
+boundary:
 
 ```sh
 sync_acceptance=/srv/nas/helium-acceptance/SYNC_JOB
 serial=ONEPLUS_ADB_SERIAL
+"$sync_acceptance/runtime-acceptance/disposable-browser.sh" \
+  install "$sync_acceptance" "$serial"
+```
+
+The boundary rechecks the complete prepared-directory inventory before any ADB
+call, streams only its exact `Browser-test.apk` to user 0, and then re-reads the
+installed monolithic `base.apk` to require the same SHA-256, version, and
+package identity. It admits only `computer.helium.sync.test` and
+`computer.helium.control.test`; it has no normal-package selector, uninstall,
+or profile-clearing operation.
+
+While the installed Sync test package is stopped, create its one new
+native-cookie fixture profile:
+
+```sh
 "$sync_acceptance/runtime-acceptance/prepare-cookie-acceptance-profile.sh" \
   "$sync_acceptance" "$serial"
 ```
@@ -259,6 +274,34 @@ a missing/different/multiple certificate override, and stores the receipt and
 hash in evidence. Never put this override into a normal launcher or a global
 Android flag file.
 
+Use the repository boundary to stage that exact command line and launch the
+admitted test package:
+
+```sh
+fixture_receipt="$HOME/.local/state/helium-media-fixtures/config/fixture-provenance.json"
+"$sync_acceptance/runtime-acceptance/disposable-browser.sh" \
+  launch "$sync_acceptance" "$serial" \
+  --fixture-receipt "$fixture_receipt"
+```
+
+The launch has exactly `--enable-automation`, the package-specific DevTools
+socket, and, only when supplied, the receipt's exact SPKI override. Before
+writing anything it snapshots both `/data/local/tmp/chrome-command-line` and
+`/data/local/chrome-command-line`, including bytes, existence, and mode. It
+refuses symlinks, non-files, a concurrent change, an existing Android
+`debug_app`, or an existing wait-for-debugger state. It temporarily selects
+only the admitted `.test` package, waits for its one exact abstract socket,
+then clears that selection and restores or removes both global files before
+returning. A successful browser process remains running with the flags it
+already consumed. Every failure after launch begins force-stops only that
+disposable package. Restoration failure is a hard failure; the boundary never
+continues to the probe.
+
+For the upstream control, repeat `install` and `launch` with its distinct
+prepared directory. The boundary derives
+`helium_control_test_devtools_remote` from the admitted control package; a
+caller cannot supply or reuse a socket name.
+
 Tailscale's publicly trusted certificate remains an optional later
 simplification. It requires enabling HTTPS for the tailnet and acknowledging
 public Certificate Transparency publication of lm's DNS name; it is not a
@@ -272,24 +315,24 @@ The server-side qlog diagnosis and the before/after packet sizes are recorded
 in the issue ledger; qlog is diagnostic-only and is not enabled on the
 credential-free service.
 
-After the test package is explicitly installed and launched on disposable
-oneplus state with its test-only CDP socket enabled, run the artifact-carried
-device orchestrator from the host connected to that device. Use a new evidence
-directory for every run. The two HTTPS endpoints must be credential-free
-synthetic fixtures: configure the first to allow HTTP/2 but not HTTP/3 and the
-second to advertise and serve HTTP/3. The browser records the actually
-negotiated protocols:
+After `disposable-browser.sh install`, the optional Sync-only cookie fixture
+preparation, and `disposable-browser.sh launch` succeed on disposable oneplus
+state, run the artifact-carried device orchestrator from the host connected to
+that device. Use a new evidence directory for every run. The two HTTPS
+endpoints must be credential-free synthetic fixtures: configure the first to
+allow HTTP/2 but not HTTP/3 and the second to advertise and serve HTTP/3. The
+browser records the actually negotiated protocols:
 
 ```sh
 acceptance=/srv/nas/helium-acceptance/JOB
 serial=ONEPLUS_ADB_SERIAL
 evidence=/srv/nas/helium-acceptance-evidence/JOB/oneplus-sync-N
+fixture_receipt="$HOME/.local/state/helium-media-fixtures/config/fixture-provenance.json"
 "$acceptance/runtime-acceptance/run-device-probe.sh" \
   "$acceptance" "$serial" "$evidence" \
   --h2 'https://lm.tail0168aa.ts.net:44723/stream/fetch?encoding=identity' \
   --h3 'https://lm.tail0168aa.ts.net:44724/stream/fetch?encoding=identity' \
-  --fixture-receipt \
-    "$HOME/.local/state/helium-media-fixtures/config/fixture-provenance.json" \
+  --fixture-receipt "$fixture_receipt" \
   --background-foreground true \
   --network-handoff wifi-to-cellular
 (cd "$evidence" && sha256sum -c EVIDENCE_SHA256SUMS)
