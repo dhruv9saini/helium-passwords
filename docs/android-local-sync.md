@@ -101,9 +101,12 @@ private CA/leaf and its credential-free HTTP/2-only/HTTP/3 behavior passes lm
 runtime and restart tests. Its non-secret receipt binds the exact leaf SPKI
 override admitted only for a disposable `.test` browser; the device runner
 verifies the effective command line and rejects broad certificate bypasses.
-da passes HTTP/2 and the HTTP/3-origin warm-up but direct HTTP/3 currently
-times out, so device HTTP/3 remains open. `deployment.md` owns the exact health,
-endpoint, receipt, and rollback commands.
+The pinned Caddy source patch keeps its QUIC Initial UDP payload at 1200 bytes,
+below Tailscale's 1280-byte interface MTU after IP/UDP overhead. lm and da pass
+HTTP/2, the HTTP/3-origin warm-up, and direct HTTP/3 with the unchanged private
+CA/SPKI. OnePlus browser negotiation remains an APK/device acceptance gate.
+`deployment.md` owns the exact health, endpoint, receipt, and rollback
+commands.
 
 ## Tabs
 

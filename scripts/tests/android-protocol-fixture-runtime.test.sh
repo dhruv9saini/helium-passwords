@@ -11,9 +11,15 @@ provenance=$HOME/.local/state/helium-media-fixtures/provenance.env
   echo "install the pinned protocol fixture source before running the runtime test" >&2
   exit 1
 }
-[[ "$($caddy_bin version | awk '{print $1}')" == "v$CADDY_VERSION" ]]
+[[ "$($caddy_bin version | awk '{print $1}')" == "v$CADDY_BUILD_VERSION" ]]
+grep -Fqx 'schema_version=2' "$provenance"
 grep -Fqx "caddy_version=$CADDY_VERSION" "$provenance"
-grep -Fqx "caddy_archive_sha256=$CADDY_LINUX_AMD64_TAR_SHA256" "$provenance"
+grep -Fqx "caddy_build_version=$CADDY_BUILD_VERSION" "$provenance"
+grep -Fqx "caddy_source_commit=$CADDY_SOURCE_COMMIT" "$provenance"
+grep -Fqx "caddy_source_tar_sha256=$CADDY_SOURCE_TAR_SHA256" "$provenance"
+grep -Fqx "caddy_patch_sha256=$CADDY_PATCH_SHA256" "$provenance"
+grep -Fqx "caddy_quic_go_version=$CADDY_QUIC_GO_VERSION" "$provenance"
+grep -Fqx "caddy_initial_packet_size=$CADDY_INITIAL_PACKET_SIZE" "$provenance"
 for command in curl jq node openssl ss tailscale; do
   command -v "$command" >/dev/null
 done

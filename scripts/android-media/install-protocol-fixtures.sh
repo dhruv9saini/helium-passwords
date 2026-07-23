@@ -8,7 +8,12 @@ source "$repo_root/scripts/android-media/protocol-fixture.conf"
 action=${1:-}
 
 [[ "$CADDY_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ &&
-   "$CADDY_LINUX_AMD64_TAR_SHA256" =~ ^[0-9a-f]{64}$ ]]
+   "$CADDY_BUILD_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-helium-mtu[0-9]+\.[0-9]+$ &&
+   "$CADDY_SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ &&
+   "$CADDY_SOURCE_TAR_SHA256" =~ ^[0-9a-f]{64}$ &&
+   "$CADDY_PATCH_SHA256" =~ ^[0-9a-f]{64}$ &&
+   "$CADDY_QUIC_GO_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ &&
+   "$CADDY_INITIAL_PACKET_SIZE" == 1200 ]]
 for port in "$FIXTURE_BACKEND_PORT" "$FIXTURE_H2_PORT" "$FIXTURE_H3_PORT"; do
   [[ "$port" =~ ^[0-9]+$ && "$port" -ge 1024 && "$port" -le 65535 ]]
 done
@@ -35,9 +40,11 @@ tls_root=$state_root/tls
 endpoint_env=$state_root/config/endpoint.env
 receipt=$state_root/config/fixture-provenance.json
 marker=$state_root/SYNTHETIC_ONLY
+provenance=$state_root/provenance.env
 backend_service=helium-media-fixture-backend.service
 protocol_service=helium-media-fixture-protocol.service
-caddy_url=https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz
+caddy_patch=$repo_root/scripts/android-media/caddy-tailnet-mtu.patch
+caddy_source_url=https://github.com/caddyserver/caddy/archive/${CADDY_SOURCE_COMMIT}.tar.gz
 
 case "$action" in
   install-source|issue-private-tls|enable|disable)
@@ -126,14 +133,25 @@ read_endpoint_config() {
 
 verify_source() {
   require_marker
+  [[ "$(sha256sum "$caddy_patch" | awk '{print $1}')" == "$CADDY_PATCH_SHA256" ]]
   [[ -x "$binary" && ! -L "$binary" ]] || {
     echo "pinned Caddy binary is missing" >&2
     return 1
   }
-  [[ "$($binary version | awk '{print $1}')" == "v$CADDY_VERSION" ]] || {
+  [[ "$($binary version | awk '{print $1}')" == "v$CADDY_BUILD_VERSION" ]] || {
     echo "installed Caddy version does not match the repository pin" >&2
     return 1
   }
+  "$binary" build-info | awk -F '\t' \
+    -v version="v$CADDY_QUIC_GO_VERSION" '
+      $1 == "dep" && $2 == "github.com/quic-go/quic-go" && $3 == version {
+        found = 1
+      }
+      END { exit found ? 0 : 1 }
+    ' || {
+      echo "installed Caddy quic-go version does not match the repository pin" >&2
+      return 1
+    }
   [[ -x "$node_binary" && ! -L "$node_binary" &&
       "$($node_binary --version)" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
     echo "installed Node runtime is missing or invalid" >&2
@@ -150,6 +168,36 @@ verify_source() {
     return 1
   }
   (cd "$assets_root/current" && sha256sum -c SHA256SUMS >/dev/null)
+  [[ -f "$provenance" && ! -L "$provenance" &&
+      "$(stat -c %a "$provenance")" == 600 ]] || {
+    echo "fixture source provenance is missing or unsafe" >&2
+    return 1
+  }
+  mapfile -t source_provenance <"$provenance"
+  caddy_sha=$(sha256sum "$binary" | awk '{print $1}')
+  fixture_source_sha=$(sha256sum \
+    "$repo_root/scripts/android-media/fixture-server.mjs" | awk '{print $1}')
+  node_sha=$(sha256sum "$node_binary" | awk '{print $1}')
+  asset_generation=${assets_root}/$(readlink "$assets_root/current")
+  asset_generation=${asset_generation##*/}
+  [[ ${#source_provenance[@]} -eq 14 &&
+      "${source_provenance[0]}" == "schema_version=2" &&
+      "${source_provenance[1]}" == "caddy_version=$CADDY_VERSION" &&
+      "${source_provenance[2]}" == "caddy_build_version=$CADDY_BUILD_VERSION" &&
+      "${source_provenance[3]}" == "caddy_source_commit=$CADDY_SOURCE_COMMIT" &&
+      "${source_provenance[4]}" == "caddy_source_tar_sha256=$CADDY_SOURCE_TAR_SHA256" &&
+      "${source_provenance[5]}" == "caddy_patch_sha256=$CADDY_PATCH_SHA256" &&
+      "${source_provenance[6]}" == "caddy_quic_go_version=$CADDY_QUIC_GO_VERSION" &&
+      "${source_provenance[7]}" == "caddy_initial_packet_size=$CADDY_INITIAL_PACKET_SIZE" &&
+      "${source_provenance[8]}" =~ ^caddy_go_version=go\ version\ go[0-9]+\.[0-9]+(\.[0-9]+)?[^[:space:]]*\ linux/amd64$ &&
+      "${source_provenance[9]}" == "caddy_sha256=$caddy_sha" &&
+      "${source_provenance[10]}" == "fixture_server_sha256=$fixture_source_sha" &&
+      "${source_provenance[11]}" == "node_version=$($node_binary --version)" &&
+      "${source_provenance[12]}" == "node_sha256=$node_sha" &&
+      "${source_provenance[13]}" == "asset_generation=$asset_generation" ]] || {
+    echo "fixture source provenance does not match the installed source" >&2
+    return 1
+  }
 }
 
 verify_tls() {
@@ -324,19 +372,58 @@ case "$action" in
       echo "refusing fixture source install while a fixture service is active" >&2
       exit 1
     fi
-    temp=$(mktemp -d /tmp/helium-media-fixture-install.XXXXXX)
+    install -d -m0700 "$share_root"
+    available_bytes=$(df --output=avail -B1 "$share_root" | tail -1)
+    minimum_free_bytes=$((6 * 1024 * 1024 * 1024))
+    [[ "$available_bytes" =~ ^[0-9]+$ &&
+        "$available_bytes" -ge "$minimum_free_bytes" ]] || {
+      echo "Caddy source build requires at least 6 GiB free on $share_root" >&2
+      exit 1
+    }
+    temp=$(mktemp -d "$share_root/.install.XXXXXX")
     cleanup_install() { find "$temp" -depth -delete; }
     trap cleanup_install EXIT
     curl --fail --silent --show-error --location --proto '=https' --tlsv1.3 \
-      --output "$temp/caddy.tar.gz" "$caddy_url"
-    echo "$CADDY_LINUX_AMD64_TAR_SHA256  $temp/caddy.tar.gz" | sha256sum -c -
-    [[ "$(tar -tzf "$temp/caddy.tar.gz" | sort | tr '\n' ' ')" == \
-      "LICENSE README.md caddy " ]] || {
-      echo "Caddy archive inventory changed" >&2
+      --output "$temp/caddy-source.tar.gz" "$caddy_source_url"
+    echo "$CADDY_SOURCE_TAR_SHA256  $temp/caddy-source.tar.gz" | sha256sum -c -
+    archive_root=caddy-$CADDY_SOURCE_COMMIT
+    tar -tzf "$temp/caddy-source.tar.gz" | awk -v root="$archive_root/" '
+      index($0, root) != 1 || $0 ~ /(^|\/)\.\.($|\/)/ { bad = 1 }
+      END { exit bad ? 1 : 0 }
+    ' || {
+      echo "Caddy source archive contains an unsafe path" >&2
       exit 1
     }
-    tar -xzf "$temp/caddy.tar.gz" -C "$temp" caddy
-    [[ "$($temp/caddy version | awk '{print $1}')" == "v$CADDY_VERSION" ]]
+    mkdir -m0700 "$temp/source" "$temp/go-build"
+    tar -xzf "$temp/caddy-source.tar.gz" -C "$temp/source" \
+      --strip-components=1 --no-same-owner --no-same-permissions
+    echo "$CADDY_PATCH_SHA256  $caddy_patch" | sha256sum -c -
+    patch --batch --forward --directory="$temp/source" --strip=1 \
+      <"$caddy_patch"
+    grep -Fqx $'\t\t\t\tInitialPacketSize: 1200,' "$temp/source/listeners.go"
+    grep -Fqx 'module github.com/caddyserver/caddy/v2' "$temp/source/go.mod"
+    awk -v version="v$CADDY_QUIC_GO_VERSION" '
+      $1 == "github.com/quic-go/quic-go" && $2 == version { found = 1 }
+      END { exit found ? 0 : 1 }
+    ' "$temp/source/go.mod"
+    go_source=$(command -v go)
+    go_source=$(readlink -f "$go_source")
+    [[ -x "$go_source" && "$($go_source version)" =~ ^go\ version\ go[0-9]+\.[0-9]+(\.[0-9]+)?[^[:space:]]*\ linux/amd64$ ]]
+    (
+      cd "$temp/source"
+      GOTOOLCHAIN=local CGO_ENABLED=0 GOMAXPROCS=2 GOTMPDIR="$temp/go-build" \
+        "$go_source" build -buildvcs=false -mod=readonly -trimpath -p=2 \
+        -ldflags="-s -w -X github.com/caddyserver/caddy/v2.CustomVersion=v$CADDY_BUILD_VERSION" \
+        -o "$temp/caddy" ./cmd/caddy
+    )
+    [[ "$("$temp/caddy" version | awk '{print $1}')" == "v$CADDY_BUILD_VERSION" ]]
+    "$temp/caddy" build-info | awk -F '\t' \
+      -v version="v$CADDY_QUIC_GO_VERSION" '
+        $1 == "dep" && $2 == "github.com/quic-go/quic-go" && $3 == version {
+          found = 1
+        }
+        END { exit found ? 0 : 1 }
+      '
     node_source=$(command -v node)
     node_source=$(readlink -f "$node_source")
     [[ -x "$node_source" && "$($node_source --version)" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
@@ -383,13 +470,21 @@ case "$action" in
     install -m0644 "$repo_root/systemd/helium-media-fixture-protocol.service" \
       "$unit_root/$protocol_service"
     fixture_source_sha=$(sha256sum "$repo_root/scripts/android-media/fixture-server.mjs" | awk '{print $1}')
+    caddy_sha=$(sha256sum "$binary" | awk '{print $1}')
+    caddy_go_version=$($go_source version)
     node_sha=$(sha256sum "$node_binary" | awk '{print $1}')
     node_version=$($node_binary --version)
-    provenance=$state_root/provenance.env
     {
-      printf 'schema_version=1\n'
+      printf 'schema_version=2\n'
       printf 'caddy_version=%s\n' "$CADDY_VERSION"
-      printf 'caddy_archive_sha256=%s\n' "$CADDY_LINUX_AMD64_TAR_SHA256"
+      printf 'caddy_build_version=%s\n' "$CADDY_BUILD_VERSION"
+      printf 'caddy_source_commit=%s\n' "$CADDY_SOURCE_COMMIT"
+      printf 'caddy_source_tar_sha256=%s\n' "$CADDY_SOURCE_TAR_SHA256"
+      printf 'caddy_patch_sha256=%s\n' "$CADDY_PATCH_SHA256"
+      printf 'caddy_quic_go_version=%s\n' "$CADDY_QUIC_GO_VERSION"
+      printf 'caddy_initial_packet_size=%s\n' "$CADDY_INITIAL_PACKET_SIZE"
+      printf 'caddy_go_version=%s\n' "$caddy_go_version"
+      printf 'caddy_sha256=%s\n' "$caddy_sha"
       printf 'fixture_server_sha256=%s\n' "$fixture_source_sha"
       printf 'node_version=%s\n' "$node_version"
       printf 'node_sha256=%s\n' "$node_sha"

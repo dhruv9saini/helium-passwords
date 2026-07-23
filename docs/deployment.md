@@ -146,13 +146,26 @@ only, while `44724/tcp` and `44724/udp` provide the HTTP/3 origin and its
 explicit Alt-Svc advertisement. Both origins require TLS 1.3 and proxy the
 same delayed deterministic fixture response.
 
-lm does not have Nix installed, so the source installer uses the simpler
-equivalent: the official Caddy `2.11.3` Linux amd64 release pinned by the exact
-archive SHA-256 in `scripts/android-media/protocol-fixture.conf`. It rejects a
-changed three-file archive inventory, records Caddy, Node, fixture-source, and
-asset hashes, and installs inactive under
-`~/.local/share/helium-media-fixtures`. Private endpoint state is mode 0600
-under `~/.local/state/helium-media-fixtures`; no certificate or key enters the
+The gateway is Caddy `2.11.3` at exact upstream commit
+`cc58caa1099240ef1a4c280b892260b380a85c86`, with quic-go `0.59.1`. The
+source archive and the one downstream patch are independently SHA-256 pinned
+in `scripts/android-media/protocol-fixture.conf`. The patch changes only
+quic-go's server `InitialPacketSize` from its 1280-byte default to the
+RFC-permitted 1200-byte minimum. This is required on the tailnet path:
+Tailscale's interface MTU is 1280 bytes, while a 1280-byte QUIC UDP payload
+needs another 28 bytes for IPv4 and UDP headers. The unpatched server receives
+the remote ClientHello but its first server flight never reaches the client.
+The 1200-byte initial payload leaves 52 bytes below the interface MTU and lets
+quic-go's normal path-MTU discovery proceed after the handshake.
+
+`install-source` verifies the source and patch hashes, applies the patch
+fail-closed, builds with the host's local Go toolchain using two jobs and
+`CGO_ENABLED=0`, and requires 6 GiB free before beginning the bounded Caddy
+build. It records the upstream/build/quic-go versions, source and patch hashes,
+Go version, final binary hash, Node/runtime hash, and asset generation before
+installing inactive under `~/.local/share/helium-media-fixtures`. Private
+endpoint state is mode 0600 under
+`~/.local/state/helium-media-fixtures`; no certificate or key enters the
 repository.
 
 Install and verify source without opening a listener:
@@ -230,12 +243,13 @@ simplification. It requires enabling HTTPS for the tailnet and acknowledging
 public Certificate Transparency publication of lm's DNS name; it is not a
 fixture availability requirement.
 
-As of 2026-07-22, the rootless service is enabled and survived restart. lm
-passes HTTP/2, Alt-Svc warm-up, direct HTTP/3, exact-body, receipt, and
-HTTP/2-port direct-QUIC-refusal checks. da passes the private-CA HTTP/2 and
-HTTP/3-origin warm-up checks, but direct HTTP/3 currently times out even though
-lm receives its UDP Initial and sends QUIC replies. Do not claim the da or
-Android HTTP/3 gate until that return-path/device-client issue is resolved.
+As of 2026-07-22, the MTU-safe rootless service is enabled and survived a
+source refresh without replacing its private CA, leaf, SPKI, or endpoint
+receipt. lm and da both pass private-CA HTTP/2, Alt-Svc warm-up, direct
+HTTP/3, exact-body, receipt, and HTTP/2-port direct-QUIC-refusal checks.
+The server-side qlog diagnosis and the before/after packet sizes are recorded
+in the issue ledger; qlog is diagnostic-only and is not enabled on the
+credential-free service.
 
 After the test package is explicitly installed and launched on disposable
 oneplus state with its test-only CDP socket enabled, run the artifact-carried

@@ -5,6 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
 installer=$repo_root/scripts/android-media/install-protocol-fixtures.sh
 config=$repo_root/scripts/android-media/protocol-fixture.conf
 caddyfile=$repo_root/scripts/android-media/Caddyfile.protocol-fixtures
+caddy_patch=$repo_root/scripts/android-media/caddy-tailnet-mtu.patch
 backend=$repo_root/systemd/helium-media-fixture-backend.service
 gateway=$repo_root/systemd/helium-media-fixture-protocol.service
 readiness=$repo_root/scripts/android-media/wait-fixture-backend.sh
@@ -12,8 +13,16 @@ readiness=$repo_root/scripts/android-media/wait-fixture-backend.sh
 # shellcheck source=../android-media/protocol-fixture.conf
 source "$config"
 [[ "$CADDY_VERSION" == 2.11.3 ]]
-[[ "$CADDY_LINUX_AMD64_TAR_SHA256" == \
-  3894577b14657feab3624d782f64175050211e52a228a6f57b4f24f4b0d970f3 ]]
+[[ "$CADDY_BUILD_VERSION" == 2.11.3-helium-mtu1200.1 ]]
+[[ "$CADDY_SOURCE_COMMIT" == cc58caa1099240ef1a4c280b892260b380a85c86 ]]
+[[ "$CADDY_SOURCE_TAR_SHA256" == \
+  6c17c1085cea1c733dc49b3d55225a6c3326e062e29bd3f55279c542beca62ec ]]
+[[ "$CADDY_PATCH_SHA256" == \
+  d60d866716277d3140e36f6f032af302b01f7716d3810571a9ed4f57d9def7a3 ]]
+[[ "$CADDY_QUIC_GO_VERSION" == 0.59.1 ]]
+[[ "$CADDY_INITIAL_PACKET_SIZE" == 1200 ]]
+[[ "$(sha256sum "$caddy_patch" | awk '{print $1}')" == "$CADDY_PATCH_SHA256" ]]
+grep -Fq '+				InitialPacketSize: 1200,' "$caddy_patch"
 [[ "$FIXTURE_BACKEND_PORT" == 44722 ]]
 [[ "$FIXTURE_H2_PORT" == 44723 ]]
 [[ "$FIXTURE_H3_PORT" == 44724 ]]
@@ -75,7 +84,12 @@ grep -Fqx 'ExecStart=%h/.local/share/helium-media-fixtures/bin/node --jitless %h
 grep -Fq 'http://127.0.0.1:$HELIUM_MEDIA_BACKEND_PORT/manifest.json' "$readiness"
 grep -Fq -- "--noproxy '*'" "$readiness"
 
-grep -Fq "CADDY_LINUX_AMD64_TAR_SHA256" "$installer"
+grep -Fq "CADDY_SOURCE_TAR_SHA256" "$installer"
+grep -Fq "CADDY_PATCH_SHA256" "$installer"
+grep -Fq 'GOTOOLCHAIN=local CGO_ENABLED=0 GOMAXPROCS=2' "$installer"
+grep -Fq -- '-buildvcs=false -mod=readonly -trimpath -p=2' "$installer"
+grep -Fq 'CustomVersion=v$CADDY_BUILD_VERSION' "$installer"
+grep -Fq 'caddy_initial_packet_size=%s' "$installer"
 grep -Fq 'install -m0755 "$node_source" "$node_binary.incoming"' "$installer"
 grep -Fq "issue-private-tls" "$installer"
 grep -Fq "Helium disposable media fixture CA" "$installer"

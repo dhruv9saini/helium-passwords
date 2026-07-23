@@ -1,0 +1,16 @@
+diff --git a/listeners.go b/listeners.go
+index 6031f98..ba9dfe3 100644
+--- a/listeners.go
++++ b/listeners.go
+@@ -480,8 +480,9 @@ func (na NetworkAddress) ListenQUIC(ctx context.Context, portOffset uint, config
+ 		earlyLn, err := tr.ListenEarly(
+ 			http3.ConfigureTLSConfig(quicTlsConfig),
+ 			&quic.Config{
+-				Allow0RTT: allow0rtt,
+-				Tracer:    h3qlog.DefaultConnectionTracer,
++				Allow0RTT:         allow0rtt,
++				InitialPacketSize: 1200,
++				Tracer:            h3qlog.DefaultConnectionTracer,
+ 			},
+ 		)
+ 		if err != nil {
