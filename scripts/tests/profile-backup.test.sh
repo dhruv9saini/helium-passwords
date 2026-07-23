@@ -150,6 +150,8 @@ EOF
 chmod 600 "$config"
 
 tool=$repo_root/scripts/profile-backup/helium-profile-backup.sh
+# Pipeline assertions must consume complete command output. With pipefail,
+# grep -q can close early and turn a successful multi-line producer into 141.
 preflight=$("$tool" preflight "$config")
 grep -qx 'preflight=ok' <<<"$preflight"
 grep -Eq '^topology_sha256=[a-f0-9]{64}$' <<<"$preflight"
@@ -159,7 +161,8 @@ sed 's/profile_id=default/profile_id=empty/' "$config" >"$empty_config"
 chmod 600 "$empty_config"
 mkdir -p "$test_root/nas/fixture/empty/generations" \
   "$test_root/peer/fixture/empty/generations"
-"$tool" retention-apply "$empty_config" | grep -qx 'retention=unchanged'
+"$tool" retention-apply "$empty_config" |
+  grep -x 'retention=unchanged' >/dev/null
 
 generation1=20260722T120000Z-1111111111111111
 generation2=20260722T120100Z-2222222222222222
@@ -168,14 +171,15 @@ generation4=20260722T120300Z-4444444444444444
 backup1=$("$tool" backup "$config" "$generation1")
 grep -qx 'backup=committed' <<<"$backup1"
 grep -qx 'receipt_destination=nas-copy' <<<"$backup1"
-"$tool" status "$config" "$generation1" | grep -qx 'status=healthy'
+"$tool" status "$config" "$generation1" |
+  grep -x 'status=healthy' >/dev/null
 
 receipt=$test_root/receipts/$generation1.env
 "$tool" receipt-export "$config" nas-copy "$generation1" "$receipt" |
-  grep -q "^receipt_exported=$receipt$"
+  grep -Fx "receipt_exported=$receipt" >/dev/null
 [[ -f "$receipt" && "$(stat -c %a "$receipt")" == 600 ]]
 "$tool" verify-receipt "$config" "$receipt" |
-  grep -qx 'profile_backup_admission=verified'
+  grep -x 'profile_backup_admission=verified' >/dev/null
 
 for root in "$test_root/nas" "$test_root/peer"; do
   generation_dir=$root/fixture/default/generations/$generation1
@@ -184,21 +188,23 @@ for root in "$test_root/nas" "$test_root/peer"; do
   [[ "$(find "$generation_dir" -mindepth 1 -maxdepth 1 | wc -l)" -eq 2 ]]
 done
 if find "$test_root" -type f \( -name '*.tar' -o -name '*.tar.zst' \) |
-  grep -q .; then
+  grep . >/dev/null; then
   echo 'plaintext archive was staged during profile backup' >&2
   exit 1
 fi
 
 restore=$test_root/restore-root/drill-profile
 "$tool" restore-to-disposable "$config" fixture-peer-copy \
-  "$generation1" "$restore" | grep -qx 'restore=disposable-only'
+  "$generation1" "$restore" |
+  grep -x 'restore=disposable-only' >/dev/null
 cmp "$test_root/profile/Default/Preferences" "$restore/Default/Preferences"
 grep -qx 'source_destination=fixture-peer-copy' \
   "$restore/.helium-profile-restore-receipt.env"
 
 nas_restore=$test_root/restore-root/drill-profile-nas
 "$tool" restore-to-disposable "$config" nas-copy \
-  "$generation1" "$nas_restore" | grep -qx 'restore=disposable-only'
+  "$generation1" "$nas_restore" |
+  grep -x 'restore=disposable-only' >/dev/null
 cmp "$test_root/profile/Default/Preferences" \
   "$nas_restore/Default/Preferences"
 cmp "$restore/Default/Preferences" "$nas_restore/Default/Preferences"
@@ -213,7 +219,8 @@ fi
 
 "$tool" backup "$config" "$generation2" >/dev/null
 "$tool" backup "$config" "$generation3" >/dev/null
-"$tool" retention-apply "$config" | grep -qx "retired_generation=$generation1"
+"$tool" retention-apply "$config" |
+  grep -x "retired_generation=$generation1" >/dev/null
 for root in "$test_root/nas" "$test_root/peer"; do
   [[ -f "$root/fixture/default/retired/$generation1/profile.tar.zst.age" ]]
   [[ -f "$root/fixture/default/retired/$generation1/receipt.env" ]]
@@ -226,11 +233,11 @@ if "$tool" status "$config" "$generation2" >/dev/null 2>&1; then
   exit 1
 fi
 "$tool" quarantine "$config" nas-copy "$generation2" checksum-failed |
-  grep -qx "quarantined=$generation2"
+  grep -x "quarantined=$generation2" >/dev/null
 [[ ! -e "$test_root/nas/fixture/default/generations/$generation2" ]]
 find "$test_root/nas/fixture/default/quarantine" \
   -maxdepth 1 -type d -name "$generation2.*.checksum-failed" |
-  grep -q .
+  grep . >/dev/null
 if "$tool" retention-apply "$config" >/dev/null 2>&1; then
   echo 'retention proceeded across disagreeing destination inventories' >&2
   exit 1
@@ -241,13 +248,15 @@ stream_bytes=$(tar -C "$test_root" -cf - profile | wc -c)
 tar -C "$test_root" -cf - profile |
   "$tool" backup-stream "$config" "$generation4" \
     "$stream_hash" "$stream_bytes" profile |
-  grep -qx 'backup=committed'
-"$tool" status "$config" "$generation4" | grep -qx 'status=healthy'
+  grep -x 'backup=committed' >/dev/null
+"$tool" status "$config" "$generation4" |
+  grep -x 'status=healthy' >/dev/null
 grep -qx 'source_fingerprint_kind=tar-stream-v1' \
   "$test_root/nas/fixture/default/generations/$generation4/receipt.env"
 stream_restore=$test_root/restore-root/drill-stream-profile
 "$tool" restore-to-disposable "$config" fixture-peer-copy \
-  "$generation4" "$stream_restore" | grep -qx 'restore=disposable-only'
+  "$generation4" "$stream_restore" |
+  grep -x 'restore=disposable-only' >/dev/null
 cmp "$test_root/profile/Default/Preferences" \
   "$stream_restore/Default/Preferences"
 if tar -C "$test_root" -cf - profile |
