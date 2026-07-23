@@ -48,12 +48,15 @@ closure_bytes=1
 chromium_commit=${chromium_commit}
 environment_source_sha256=${nix_source}
 EOF
-(
-    cd "${repo_root}"
-    sha256sum patches/helium-passwords/restore-password-autofill.patch \
-        patches/helium-passwords/restore-password-ui.patch patches/series \
-        >"${provenance}/patches.sha256"
+"${repo_root}/scripts/patch-inventory.sh" >"${provenance}/patches.sha256"
+mapfile -t hashed_patches < <(awk '{ print $2 }' "${provenance}/patches.sha256")
+mapfile -t expected_patches < <(
+    sed -e 's/\r$//' -e '/^[[:space:]]*$/d' -e '/^[[:space:]]*#/d' \
+        -e 's#^#patches/#' "${repo_root}/patches/series"
+    printf '%s\n' patches/series
 )
+[[ "$(printf '%s\n' "${hashed_patches[@]}")" = \
+    "$(printf '%s\n' "${expected_patches[@]}")" ]]
 (
     cd "${bundle}"
     find runtime -type f -print0 | sort -z | xargs -0 sha256sum >provenance/runtime.sha256
@@ -82,7 +85,12 @@ output=$("${repo_root}/scripts/verify-linux-runtime.sh" "${artifact}" "${verific
 grep -Fq "browser=${verification}/${bundle_name}/runtime/helium-wrapper" <<<"${output}"
 grep -Fq "receipt=${verification}/artifact-receipt.env" <<<"${output}"
 grep -Fqx "source_commit=${source_commit}" "${verification}/artifact-receipt.env"
+grep -Fqx "schema_version=2" "${verification}/artifact-receipt.env"
 grep -Fqx "browser_executable=${bundle_name}/runtime/helium-wrapper" \
+    "${verification}/artifact-receipt.env"
+grep -Fqx "runtime_inventory=${bundle_name}/provenance/runtime.sha256" \
+    "${verification}/artifact-receipt.env"
+grep -Eq '^runtime_inventory_sha256=[0-9a-f]{64}$' \
     "${verification}/artifact-receipt.env"
 
 bad_stage="${temporary}/bad-stage"

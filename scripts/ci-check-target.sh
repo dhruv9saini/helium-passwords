@@ -49,15 +49,16 @@ trap cleanup EXIT
 checkout="$("${root_dir}/scripts/prepare-platform.sh" \
     --skip-submodules "${platform}" "${checkout_root}/${platform}")"
 
-grep -qx 'helium/passwords/restore-password-autofill.patch' \
-    "${checkout}/patches/series"
-grep -qx 'helium/passwords/restore-password-ui.patch' \
-    "${checkout}/patches/series"
-
-cmp -s "${root_dir}/patches/helium-passwords/restore-password-autofill.patch" \
-    "${checkout}/patches/helium/passwords/restore-password-autofill.patch"
-cmp -s "${root_dir}/patches/helium-passwords/restore-password-ui.patch" \
-    "${checkout}/patches/helium/passwords/restore-password-ui.patch"
+while IFS= read -r patch_path || [ -n "${patch_path}" ]; do
+    patch_path="${patch_path%$'\r'}"
+    case "${patch_path}" in
+        ""|\#*) continue ;;
+    esac
+    patch_name="$(basename "${patch_path}")"
+    grep -qx "helium/passwords/${patch_name}" "${checkout}/patches/series"
+    cmp -s "${root_dir}/patches/${patch_path}" \
+        "${checkout}/patches/helium/passwords/${patch_name}"
+done <"${root_dir}/patches/series"
 
 for sync_patch in "${root_dir}"/chromium/patches/*.patch; do
     sync_patch_name="$(basename "${sync_patch}")"
