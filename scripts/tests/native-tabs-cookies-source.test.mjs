@@ -62,18 +62,28 @@ test("native cookie apply uses Chromium CookieManager and rejects malformed auth
 
 test("native tab export matches the independent store schema and is atomic", () => {
   for (const field of [
-    "schema_version", "windows", "active_index", "tabs", "pinned",
-    "group", "current_index", "navigations", "url", "title",
+    "schema_version", "windows", "active_index", "groups", "tabs", "pinned",
+    "group", "history_state", "current_index", "navigations", "url", "title",
+    "color", "collapsed", "metadata_state",
   ]) {
     assert.match(tabs, new RegExp(`Set\\(\"${field}\"`));
   }
+  assert.match(tabs, /constexpr int kSchemaVersion = 2/);
+  assert.match(tabs, /ListTabGroups\(\)/);
+  assert.match(tabs, /GetTabGroupVisualData/);
+  assert.match(tabs, /visual_data->is_collapsed\(\)/);
+  assert.match(tabs, /GroupColorName/);
+  assert.match(tabs, /item\.Set\("pinned", tab->IsPinned\(\)\)/);
+  assert.match(tabs, /item\.Set\("group", group_id\)/);
   assert.match(tabs, /ImportantFileWriter::WriteFileAtomically/);
   assert.match(tabs, /SetPosixFilePermissions\(export_path_\.DirName\(\), 0700\)/);
   assert.match(tabs, /SetPosixFilePermissions\(export_path_, 0600\)/);
   assert.doesNotMatch(tabs, /last_fingerprint_|SHA256HashString/);
-  assert.match(tabs, /if \(!contents\)/);
-  assert.match(tabs, /valid = false/);
-  assert.match(tabs, /SchemeIsHTTPOrHTTPS/);
+  assert.match(tabs, /HistoryCurrentOnlyUnloaded/);
+  assert.match(tabs, /tab->GetURL\(\)/);
+  assert.doesNotMatch(tabs, /LoadIfNeeded/);
+  assert.match(tabs, /url\.is_valid\(\) && !url\.scheme\(\)\.empty\(\)/);
+  assert.doesNotMatch(tabs, /SchemeIsHTTPOrHTTPS/);
 });
 
 test("tab snapshots stay independent of remote-sync credentials and profile files", () => {

@@ -24,6 +24,8 @@
 #include "chrome/browser/ui/browser_window/public/browser_window_interface.h"
 #include "chrome/browser/ui/browser_window/public/browser_window_interface_iterator.h"
 #include "components/sessions/core/session_id.h"
+#include "components/tab_groups/tab_group_color.h"
+#include "components/tab_groups/tab_group_visual_data.h"
 #include "components/tabs/public/tab_interface.h"
 #include "content/public/browser/navigation_controller.h"
 #include "content/public/browser/navigation_entry.h"
@@ -32,16 +34,44 @@
 namespace helium_sync {
 namespace {
 
-constexpr int kSchemaVersion = 1;
+constexpr int kSchemaVersion = 2;
 constexpr int kMaxWindows = 100;
 constexpr int kMaxTabs = 5000;
 constexpr int kMaxNavigations = 100;
+constexpr char kGroupMetadataComplete[] = "complete";
+constexpr char kHistoryBounded[] = "bounded";
+constexpr char kHistoryCurrentOnlyUnloaded[] = "current-only-unloaded";
 constexpr base::TimeDelta kStartupCaptureDelay = base::Seconds(30);
 constexpr base::TimeDelta kCaptureInterval = base::Minutes(5);
 
 bool AllowedSnapshotUrl(const GURL& url) {
-  return url.SchemeIsHTTPOrHTTPS() || url.SchemeIs("chrome") ||
-         url.SchemeIs("about");
+  return url.is_valid() && !url.scheme().empty();
+}
+
+std::optional<std::string> GroupColorName(tab_groups::TabGroupColorId color) {
+  switch (color) {
+    case tab_groups::TabGroupColorId::kGrey:
+      return "grey";
+    case tab_groups::TabGroupColorId::kBlue:
+      return "blue";
+    case tab_groups::TabGroupColorId::kRed:
+      return "red";
+    case tab_groups::TabGroupColorId::kYellow:
+      return "yellow";
+    case tab_groups::TabGroupColorId::kGreen:
+      return "green";
+    case tab_groups::TabGroupColorId::kPink:
+      return "pink";
+    case tab_groups::TabGroupColorId::kPurple:
+      return "purple";
+    case tab_groups::TabGroupColorId::kCyan:
+      return "cyan";
+    case tab_groups::TabGroupColorId::kOrange:
+      return "orange";
+    case tab_groups::TabGroupColorId::kNumEntries:
+      return std::nullopt;
+  }
+  return std::nullopt;
 }
 
 std::optional<base::DictValue> BuildSnapshot(Profile* profile) {
@@ -70,6 +100,31 @@ std::optional<base::DictValue> BuildSnapshot(Profile* profile) {
         base::DictValue window;
         window.Set("id", base::NumberToString(browser->GetSessionID().id()));
         window.Set("active_index", tab_list->GetActiveIndex());
+        base::ListValue groups;
+        for (const tab_groups::TabGroupId& group_id :
+             tab_list->ListTabGroups()) {
+          std::optional<tab_groups::TabGroupVisualData> visual_data =
+              tab_list->GetTabGroupVisualData(group_id);
+          if (!visual_data) {
+            valid = false;
+            return false;
+          }
+          std::optional<std::string> color =
+              GroupColorName(visual_data->color());
+          if (!color) {
+            valid = false;
+            return false;
+          }
+          base::DictValue group;
+          group.Set("id", group_id.ToString());
+          group.Set("title", base::UTF16ToUTF8(visual_data->title()));
+          group.Set("color", *color);
+          group.Set("collapsed", visual_data->is_collapsed());
+          group.Set("metadata_state", kGroupMetadataComplete);
+          groups.Append(std::move(group));
+        }
+        window.Set("groups", std::move(groups));
+
         base::ListValue tabs;
         for (tabs::TabInterface* tab : tab_list->GetAllTabs()) {
           if (!tab || ++tab_count > kMaxTabs) {
@@ -77,49 +132,64 @@ std::optional<base::DictValue> BuildSnapshot(Profile* profile) {
             return false;
           }
           content::WebContents* contents = tab->GetContents();
-          if (!contents) {
-            // Android may leave background tabs unloaded. Publishing a partial
-            // generation is worse than retaining the previous complete one.
-            valid = false;
-            return false;
-          }
-          content::NavigationController& controller = contents->GetController();
-          const int entry_count = controller.GetEntryCount();
-          const int current_index = controller.GetCurrentEntryIndex();
-          if (entry_count <= 0 || current_index < 0 ||
-              current_index >= entry_count) {
-            valid = false;
-            return false;
-          }
-
-          int first_entry = std::max(0, current_index - kMaxNavigations / 2);
-          int last_entry = std::min(entry_count, first_entry + kMaxNavigations);
-          first_entry = std::max(0, last_entry - kMaxNavigations);
           base::ListValue navigations;
-          for (int i = first_entry; i < last_entry; ++i) {
-            content::NavigationEntry* entry = controller.GetEntryAtIndex(i);
-            if (!entry || !entry->GetVirtualURL().is_valid() ||
-                !AllowedSnapshotUrl(entry->GetVirtualURL())) {
+          int snapshot_current_index = 0;
+          std::string history_state;
+          if (!contents) {
+            // Android may unload a background tab. TabInterface deliberately
+            // exposes its current URL/title without loading it; preserve that
+            // safe current entry and make the history limitation explicit.
+            const GURL url = tab->GetURL();
+            if (!url.is_valid() || !AllowedSnapshotUrl(url)) {
               valid = false;
               return false;
             }
             base::DictValue navigation;
-            navigation.Set("url", entry->GetVirtualURL().spec());
-            if (!entry->GetTitle().empty()) {
-              navigation.Set("title", base::UTF16ToUTF8(entry->GetTitle()));
-            }
+            navigation.Set("url", url.spec());
+            navigation.Set("title", base::UTF16ToUTF8(tab->GetTitle()));
             navigations.Append(std::move(navigation));
+            history_state = kHistoryCurrentOnlyUnloaded;
+          } else {
+            content::NavigationController& controller =
+                contents->GetController();
+            const int entry_count = controller.GetEntryCount();
+            const int current_index = controller.GetCurrentEntryIndex();
+            if (entry_count <= 0 || current_index < 0 ||
+                current_index >= entry_count) {
+              valid = false;
+              return false;
+            }
+
+            int first_entry = std::max(0, current_index - kMaxNavigations / 2);
+            int last_entry =
+                std::min(entry_count, first_entry + kMaxNavigations);
+            first_entry = std::max(0, last_entry - kMaxNavigations);
+            for (int i = first_entry; i < last_entry; ++i) {
+              content::NavigationEntry* entry = controller.GetEntryAtIndex(i);
+              if (!entry || !entry->GetVirtualURL().is_valid() ||
+                  !AllowedSnapshotUrl(entry->GetVirtualURL())) {
+                valid = false;
+                return false;
+              }
+              base::DictValue navigation;
+              navigation.Set("url", entry->GetVirtualURL().spec());
+              navigation.Set("title", base::UTF16ToUTF8(entry->GetTitle()));
+              navigations.Append(std::move(navigation));
+            }
+            snapshot_current_index = current_index - first_entry;
+            history_state = kHistoryBounded;
           }
 
           base::DictValue item;
           item.Set("id", base::NumberToString(tab->GetHandle().raw_value()));
-          if (tab->IsPinned()) {
-            item.Set("pinned", true);
-          }
+          item.Set("pinned", tab->IsPinned());
+          std::string group_id;
           if (std::optional<tab_groups::TabGroupId> group = tab->GetGroup()) {
-            item.Set("group", group->ToString());
+            group_id = group->ToString();
           }
-          item.Set("current_index", current_index - first_entry);
+          item.Set("group", group_id);
+          item.Set("history_state", history_state);
+          item.Set("current_index", snapshot_current_index);
           item.Set("navigations", std::move(navigations));
           tabs.Append(std::move(item));
         }

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/dhruv9saini/helium-sync/internal/tabsnapshot"
@@ -36,6 +37,8 @@ func run(args []string) error {
 		return prepareBrowserProfile(args[1:])
 	case "validate-browser-profile":
 		return validateBrowserProfile(args[1:])
+	case "validate-browser-state":
+		return validateBrowserState(args[1:])
 	case "quarantine":
 		return quarantine(args[1:])
 	case "retention-plan":
@@ -73,6 +76,12 @@ func capture(args []string) error {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&session); err != nil {
 		return fmt.Errorf("decode session input: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("decode session input: trailing JSON value")
+		}
+		return fmt.Errorf("decode session input trailer: %w", err)
 	}
 	store, err := tabsnapshot.Open(*root)
 	if err != nil {
@@ -186,6 +195,19 @@ func validateBrowserProfile(args []string) error {
 	return writeJSON(manifest)
 }
 
+func validateBrowserState(args []string) error {
+	flags := flag.NewFlagSet("validate-browser-state", flag.ContinueOnError)
+	destination := flags.String("destination", "", "prepared or native post-launch disposable profile")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	state, err := tabsnapshot.ValidateBrowserRestoreState(*destination)
+	if err != nil {
+		return err
+	}
+	return writeJSON(state)
+}
+
 func quarantine(args []string) error {
 	flags := flag.NewFlagSet("quarantine", flag.ContinueOnError)
 	root := flags.String("store", "", "independent snapshot store")
@@ -248,5 +270,5 @@ func writeJSON(value any) error {
 }
 
 func usageError() error {
-	return errors.New("usage: helium-tabs <capture|validate|list|restore|validate-restore|prepare-browser-profile|validate-browser-profile|quarantine|retention-plan|retention-apply> [flags]")
+	return errors.New("usage: helium-tabs <capture|validate|list|restore|validate-restore|prepare-browser-profile|validate-browser-profile|validate-browser-state|quarantine|retention-plan|retention-apply> [flags]")
 }

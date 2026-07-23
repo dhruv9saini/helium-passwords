@@ -1,0 +1,11 @@
+[Unit]
+Description=Back up Helium append-only tab journal (%i)
+
+[Timer]
+OnBootSec=5m
+OnUnitInactiveSec=15m
+Persistent=true
+RandomizedDelaySec=1m
+
+[Install]
+WantedBy=timers.target

@@ -1,11 +1,17 @@
 # Independent Tab Snapshots
 
-`helium-tabs` is the implemented recovery-store portion of HS-004. It does not
-read Chromium session files or accept a profile path. The native Chromium
-bridge exports the bounded JSON model through session/tab APIs to a dedicated
-file outside the profile and refreshes it every five minutes. The source exists
-but has not passed a Chromium compile or disposable-profile run, so use only
-synthetic exports until that validation is complete.
+`helium-tabs` is the implemented recovery-store and disposable-preparation
+portion of HS-004. It does not read Chromium session files or accept a profile
+path. The native Chromium bridge exports schema 2 through public tab APIs to a
+dedicated file outside the profile every five minutes. The model preserves
+window order, active tab, tab order, pinned state, exact group membership and
+visual metadata, and up to 100 navigation entries around the current entry.
+On Android, an unloaded tab is not loaded just to take a snapshot:
+`TabInterface::GetURL()` and `GetTitle()` preserve its current entry and
+`history_state=current-only-unloaded` records the bounded loss explicitly.
+The source has synthetic coverage but has not yet passed its Chromium compile
+or a disposable-profile runtime, so use only synthetic exports until those
+gates pass.
 
 The store must live outside both the browser profile and `helium-syncd` data
 directory. One store belongs to one logical device/profile namespace.
@@ -28,11 +34,19 @@ helium-tabs validate \
   --generation GENERATION
 ```
 
-Capture validates window/tab/navigation bounds and rejects unsafe URL schemes.
-It writes `session.json` and its hash/size manifest into a temporary directory,
-syncs both files and the directory, atomically renames the generation, syncs
-the parent directory, and validates the committed result. Each manifest links
-to the latest valid parent generation.
+Capture validates window/tab/navigation bounds and preserves every valid
+absolute browser URL scheme, including `chrome-native:`, `file:`,
+`chrome-extension:`, `devtools:`, `data:`, and `blob:`. It also requires
+globally unique IDs, a pinned prefix, contiguous group
+membership, exact group references, known Chromium group colors, valid active
+and current indexes, and explicit history/metadata provenance. Schema-1 input
+is migrated to schema 2. Missing schema-1 group visual metadata is recorded as
+`legacy-unavailable`, never guessed; such a generation remains neutral durable
+data but cannot be prepared for browser reconstruction. Capture writes
+`session.json` and its hash/size manifest into a temporary directory, syncs
+both files and the directory, atomically renames the generation, syncs the
+parent directory, and validates the committed result. Each manifest links to
+the latest valid parent generation.
 
 Retention is a two-step fail-closed operation:
 
@@ -84,7 +98,7 @@ session hash and size, validation marker, and restore time. The standalone
 validator rejects symlinks, nonprivate files, extra inventory, schema drift,
 and any receipt/content mismatch without consulting the source store.
 
-The only implemented browser consumer prepares a new, unopened drill profile:
+The browser boundary prepares a new, unopened drill profile:
 
 ```sh
 disposable_root=/new/private/tab-browser-drills
@@ -103,12 +117,45 @@ helium-tabs validate-browser-profile \
 
 The root must be a mode-0700 real directory with that exact private marker.
 The `drill-*` target must not exist, even as an empty directory. Preparation
-revalidates and copies the neutral restore, writes only each tab's current URL
-to Chromium's startup-URL preference, validates the staged inventory, and
-atomically publishes the new directory with a kernel-enforced no-replace
-rename. It does not write clean-exit state, launch a browser, merge data, or
-accept a normal profile path.
+revalidates and copies the complete neutral topology, writes an empty
+`Default/Preferences` so no URL can auto-open, binds window/tab/group counts
+and the source hash in `browser-restore-manifest.json`, and writes exact
+`.helium-tabs-disposable-browser-profile-v2` and
+`.helium-tabs-restore-prepared-v2` markers. It then atomically publishes the
+new directory with a kernel-enforced no-replace rename. It does not write
+clean-exit state, launch a browser, merge data, accept a normal profile path,
+or expose a normal-launch restore path.
+
 `validate-browser-profile` is intentionally a pre-launch gate because Chromium
-adds files on first start. Exact windows, pinned/grouped state, back/forward
-history, unloaded-tab state, first launch, second restart, and drill recording
-remain browser integration work. There is no automatic promotion path.
+adds files after first start. The native importer source consumes this input
+only when `--helium-restore-disposable-tabs=d|da|oneplus` is present. That
+dedicated process returns before any snapshot export or password/cookie
+network sync. It validates the exact private source inventory, hashes,
+topology, total resource bounds and one safe blank anchor; reconstructs
+windows, bounded history, pinned order, groups and active tabs; directly reads
+the live model back; and uses durable receipt-then-marker transitions. A
+runtime failure records `failed` only after rollback readback; asynchronous
+window cleanup remains fail-closed `in-progress` and the disposable directory
+must be discarded.
+
+After the native process exits, inspect prepared, interrupted or terminal
+state without opening a browser:
+
+```sh
+helium-tabs validate-browser-state \
+  --destination "$disposable_root/drill-20260722"
+```
+
+The terminal receipt is bound to the exact source generation, device, profile,
+session hash and topology counts. Its success claim is deliberately
+`exact-supported-live-topology`: persistence in Chromium's native Sessions
+store is not proven until the same disposable profile closes, starts a second
+time without the import switch, and passes topology readback. The pinned
+compile and those first/second runtime drills remain open. There is no
+automatic promotion path.
+
+The schema window-list order records capture-time activation order as
+provenance. The importer preserves each window's internal topology and creates
+windows in schema order, but does not claim Chromium's global MRU/activation
+ordering because the cross-platform public window interface has no stable
+setter/readback contract for that order.

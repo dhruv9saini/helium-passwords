@@ -17,6 +17,8 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
+#include "chrome/browser/helium_sync/helium_tab_journal_bridge.h"
+#include "chrome/browser/helium_sync/helium_tab_restore_bridge.h"
 #include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
 #include "chrome/browser/profiles/profile.h"
 #include "components/helium_sync/helium_password_sync_bridge.h"
@@ -50,6 +52,7 @@ constexpr char kCookieStateFile[] = "cookie-state.json";
 constexpr char kCookieRollbackFile[] = "cookie-rollback.json";
 constexpr char kCookieReauthSignalFile[] = "cookie-reauth-required.json";
 constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
+constexpr char kTabJournalRootFile[] = "tab_journal_root";
 
 #if BUILDFLAG(IS_ANDROID)
 void AndroidStatusLog(const std::string& message) {
@@ -95,8 +98,8 @@ std::optional<ClientEnrollment> ReadClientEnrollment(
   const base::DictValue* keys = state.FindDict("keys");
   if (!device_id || device_id->empty() || !role ||
       (*role != "seed" && *role != "join") || !phase ||
-      (*phase != "pending" && *phase != "active") ||
-      !active_key_id || active_key_id->empty() || !keys || keys->empty() ||
+      (*phase != "pending" && *phase != "active") || !active_key_id ||
+      active_key_id->empty() || !keys || keys->empty() ||
       !keys->Find(*active_key_id) || (*role == "seed" && *device_id != "d") ||
       (*role == "join" && *device_id == "d")) {
     return std::nullopt;
@@ -117,6 +120,16 @@ std::optional<ClientEnrollment> ReadClientEnrollment(
 }  // namespace
 
 HeliumSyncService::HeliumSyncService(Profile* profile) {
+  if (helium_sync::HeliumTabRestoreBridge::IsRequested()) {
+    tab_restore_bridge_ =
+        std::make_unique<helium_sync::HeliumTabRestoreBridge>(profile);
+    tab_restore_bridge_->Start();
+    // This command line is a dedicated disposable recovery process. Even a
+    // malformed restore request must never fall through into export or network
+    // synchronization against the selected profile.
+    return;
+  }
+
   const base::FilePath config_dir = profile->GetPath().AppendASCII(kConfigDir);
   if (std::optional<std::string> export_path =
           ReadConfigValue(config_dir, kTabSnapshotExportPathFile)) {
@@ -124,6 +137,12 @@ HeliumSyncService::HeliumSyncService(Profile* profile) {
         std::make_unique<helium_sync::HeliumTabSnapshotBridge>(
             profile, base::FilePath::FromUTF8Unsafe(*export_path));
     tab_snapshot_bridge_->Start();
+  }
+  if (std::optional<std::string> journal_root =
+          ReadConfigValue(config_dir, kTabJournalRootFile)) {
+    tab_journal_bridge_ = std::make_unique<helium_sync::HeliumTabJournalBridge>(
+        profile, base::FilePath::FromUTF8Unsafe(*journal_root));
+    tab_journal_bridge_->Start();
   }
 
   std::optional<std::string> token = ReadConfigValue(config_dir, kTokenFile);
@@ -150,12 +169,12 @@ HeliumSyncService::HeliumSyncService(Profile* profile) {
   if (enrollment->phase == "pending") {
     enrollment_client_ = std::make_unique<helium_sync::HeliumSyncClient>(
         profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
-    cookie_baseline_callback = base::BindRepeating(
-        &HeliumSyncService::OnCookieBaselineVerified,
-        weak_factory_.GetWeakPtr());
-    password_baseline_callback = base::BindRepeating(
-        &HeliumSyncService::OnPasswordBaselineVerified,
-        weak_factory_.GetWeakPtr());
+    cookie_baseline_callback =
+        base::BindRepeating(&HeliumSyncService::OnCookieBaselineVerified,
+                            weak_factory_.GetWeakPtr());
+    password_baseline_callback =
+        base::BindRepeating(&HeliumSyncService::OnPasswordBaselineVerified,
+                            weak_factory_.GetWeakPtr());
   }
   auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
       profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
@@ -200,6 +219,14 @@ void HeliumSyncService::Shutdown() {
   if (tab_snapshot_bridge_) {
     tab_snapshot_bridge_->Stop();
     tab_snapshot_bridge_.reset();
+  }
+  if (tab_journal_bridge_) {
+    tab_journal_bridge_->Stop();
+    tab_journal_bridge_.reset();
+  }
+  if (tab_restore_bridge_) {
+    tab_restore_bridge_->Stop();
+    tab_restore_bridge_.reset();
   }
   enrollment_client_.reset();
 }
@@ -264,8 +291,7 @@ void HeliumSyncService::OnEnrollmentComplete(bool ok, std::string error) {
 
   std::string cookie_error;
   std::string password_error;
-  const bool cookie_active =
-      cookie_bridge_->EnrollmentActivated(&cookie_error);
+  const bool cookie_active = cookie_bridge_->EnrollmentActivated(&cookie_error);
   const bool password_active =
       password_bridge_->EnrollmentActivated(&password_error);
   if (!cookie_active || !password_active) {
