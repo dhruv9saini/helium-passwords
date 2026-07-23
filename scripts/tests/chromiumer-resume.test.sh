@@ -60,11 +60,43 @@ cmp "$source_state/source.manifest" "$destination_state/source.manifest"
 cmp "$source_state/stage.env" "$destination_state/stage.env"
 grep -qx "resumed_from_job=$source_job" "$destination_state/resume.env"
 grep -qx 'resumed_from_result=timeout' "$destination_state/resume.env"
+grep -qx \
+    'resumed_from_reason=systemd stopped the job at its wall-time limit' \
+    "$destination_state/resume.env"
 grep -qx 'disk_budget_bytes=85899345920' "$destination_state/resume.env"
 grep -qx "resumed_to_job=$destination_job" "$source_state/resumed-to.env"
 grep -qx "resume_source_job=$source_job" <<<"$output"
 grep -qx "resume_destination_job=$destination_job" <<<"$output"
 grep -qx "source_dir=$destination_root/source" <<<"$output"
+
+readiness_job=readiness-source
+readiness_destination=readiness-destination
+readiness_state="$HELIUM_CHROMIUMER_STATE_ROOT/$readiness_job"
+readiness_root="$HELIUM_CHROMIUMER_WORK_ROOT/$readiness_job"
+mkdir -p "$readiness_state" "$readiness_root/source"
+cp "$source_state/stage.env" "$readiness_state/stage.env"
+cp "$source_state/source.manifest" "$readiness_state/source.manifest"
+cat >"$readiness_state/terminal.env" <<'EOF'
+state=terminal
+result=failure
+exit_code=125
+reason=health watchdog failed before readiness
+EOF
+cat >"$readiness_state/watchdog-stop.env" <<'EOF'
+reason=health watchdog failed before readiness
+EOF
+cp "$source_state/artifact-returned.env" \
+    "$readiness_state/artifact-returned.env"
+readiness_output=$(resume_stage "$readiness_job" "$readiness_destination")
+readiness_destination_state="$HELIUM_CHROMIUMER_STATE_ROOT/$readiness_destination"
+readiness_destination_root="$HELIUM_CHROMIUMER_WORK_ROOT/$readiness_destination"
+[[ ! -e "$readiness_root" ]]
+[[ -d "$readiness_destination_root/source" ]]
+grep -qx 'resumed_from_result=failure' \
+    "$readiness_destination_state/resume.env"
+grep -qx 'resumed_from_reason=health watchdog failed before readiness' \
+    "$readiness_destination_state/resume.env"
+grep -qx "resume_source_job=$readiness_job" <<<"$readiness_output"
 
 failed_job=failed-source
 failed_state="$HELIUM_CHROMIUMER_STATE_ROOT/$failed_job"
@@ -82,7 +114,7 @@ if (resume_stage "$failed_job" refused-destination) \
     exit 1
 fi
 grep -qx \
-    "resume source did not terminate at its wall-time limit: $failed_job" \
+    "resume source is not a resumable retained terminal job: $failed_job" \
     "$test_root/refused.out"
 [[ -d "$failed_root/source" ]]
 [[ ! -e "$HELIUM_CHROMIUMER_WORK_ROOT/refused-destination" ]]

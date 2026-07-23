@@ -299,10 +299,23 @@ resume_stage() {
         echo "resume source is not a retained terminal job: ${source_job}" >&2
         exit 1
     }
-    grep -qx 'result=timeout' "${source_state}/terminal.env" || {
-        echo "resume source did not terminate at its wall-time limit: ${source_job}" >&2
+    local source_result source_reason
+    if grep -qx 'result=timeout' "${source_state}/terminal.env"; then
+        source_result=timeout
+        source_reason="systemd stopped the job at its wall-time limit"
+    elif grep -qx 'result=failure' "${source_state}/terminal.env" && \
+        grep -qx 'exit_code=125' "${source_state}/terminal.env" && \
+        grep -qx 'reason=health watchdog failed before readiness' \
+            "${source_state}/terminal.env" && \
+        grep -qx 'reason=health watchdog failed before readiness' \
+            "${source_state}/watchdog-stop.env" 2>/dev/null && \
+        [ ! -e "${source_state}/watchdog-ready.env" ]; then
+        source_result=failure
+        source_reason="health watchdog failed before readiness"
+    else
+        echo "resume source is not a resumable retained terminal job: ${source_job}" >&2
         exit 1
-    }
+    fi
     [ -f "${source_state}/artifact-returned.env" ] || {
         echo "resume source evidence has not been returned: ${source_job}" >&2
         exit 1
@@ -355,7 +368,8 @@ resume_stage() {
         awk '{ print $1 }')
     {
         printf 'resumed_from_job=%s\n' "${source_job}"
-        printf 'resumed_from_result=timeout\n'
+        printf 'resumed_from_result=%s\n' "${source_result}"
+        printf 'resumed_from_reason=%s\n' "${source_reason}"
         printf 'resumed_at=%s\n' "${resumed_at}"
         printf 'source_manifest_sha256=%s\n' "${manifest_sha}"
         printf 'workspace_bytes=%s\n' "${workspace_bytes}"
@@ -815,6 +829,14 @@ watch_job() {
             start_scan
         fi
 
+        if [ ! -e "${state_dir}/watchdog-ready.env" ]; then
+            printf 'watchdog_ready_at=%s\ninitial_disk_scan=running\n' \
+                "$(date --iso-8601=seconds)" \
+                >"${state_dir}/watchdog-ready.env.tmp"
+            mv "${state_dir}/watchdog-ready.env.tmp" \
+                "${state_dir}/watchdog-ready.env"
+        fi
+
         if [ -n "${scan_pid}" ] && [ ! -f "${scan_status}" ] && \
             ! kill -0 "${scan_pid}" 2>/dev/null; then
             local wait_result
@@ -871,12 +893,6 @@ watch_job() {
             } >"${temp}"
             mv "${temp}" "${state_dir}/health.env"
 
-            if [ ! -e "${state_dir}/watchdog-ready.env" ]; then
-                printf 'watchdog_ready_at=%s\n' "$(date --iso-8601=seconds)" \
-                    >"${state_dir}/watchdog-ready.env.tmp"
-                mv "${state_dir}/watchdog-ready.env.tmp" \
-                    "${state_dir}/watchdog-ready.env"
-            fi
             find "${scan_result}" "${scan_error}" "${scan_status}" -delete
             next_scan_at=$((SECONDS + interval))
         fi
