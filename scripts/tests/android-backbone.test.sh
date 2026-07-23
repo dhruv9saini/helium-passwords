@@ -39,6 +39,7 @@ grep -qx $'core\tupstream-fixes/missing-dependencies.patch' "$plan"
 grep -qx $'passwords\thelium-passwords/restore-password-autofill.patch' "$plan"
 grep -qx $'passwords\thelium-passwords/restore-password-ui.patch' "$plan"
 grep -qx $'passwords\thelium-passwords/android-search-engine-api-compat.patch' "$plan"
+grep -qx $'passwords\thelium-passwords/disable-android-safe-browsing-bridges.patch' "$plan"
 grep -qx $'sync\t0001-helium-sync-overlay-files.patch' "$plan"
 grep -qx $'sync\t0006-helium-sync-android-ai-overview-blocker.patch' "$plan"
 grep -qx $'sync\t0007-helium-sync-android-no-safe-browsing-cycle.patch' "$plan"
@@ -66,6 +67,8 @@ grep -Fq 'restore-android-pruned-pref-inputs.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
 grep -Fq 'validate-android-java-pref-inputs.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
+grep -Fq 'validate-android-pruned-service-consumers.sh' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh"
 prune_line=$(grep -n 'prune_binaries.py" --keep-contingent-paths' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
 restore_line=$(grep -n 'restore-android-pruned-pref-inputs.sh' \
@@ -74,9 +77,12 @@ transform_line=$(grep -n 'apply_transforms "$source_tree"' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
 pref_validation_line=$(grep -n 'validate-android-java-pref-inputs.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
+mode0_validation_line=$(grep -n 'validate-android-pruned-service-consumers.sh' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
 [[ "$prune_line" -lt "$restore_line" ]]
 [[ "$restore_line" -lt "$transform_line" ]]
 [[ "$transform_line" -lt "$pref_validation_line" ]]
+[[ "$pref_validation_line" -lt "$mode0_validation_line" ]]
 prune_fixture="$test_root/prune-fixture"
 mkdir -p "$prune_fixture/chrome/android/java/res_chromium_base/values"
 printf '<resources/>\n' > \

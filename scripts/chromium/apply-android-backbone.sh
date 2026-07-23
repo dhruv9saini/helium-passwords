@@ -133,6 +133,8 @@ apply_backbone() {
   apply_transforms "$source_tree"
   "$repo_root/scripts/chromium/validate-android-java-pref-inputs.sh" \
     "$source_tree" "$HELIUM_ANDROID_CHROMIUM_COMMIT"
+  "$repo_root/scripts/chromium/validate-android-pruned-service-consumers.sh" \
+    "$source_tree"
 }
 
 command=${1:-}
