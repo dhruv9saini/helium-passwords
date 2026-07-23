@@ -2,7 +2,23 @@
 set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+# shellcheck source=../chromium/android-build.lock
+. "${root_dir}/chromium/android-build.lock"
 chromium_version="$(tr -d '\r\n' <"${root_dir}/helium-chromium/chromium_version.txt")"
+chromium_commit="${HELIUM_ANDROID_CHROMIUM_COMMIT}"
+[ "${HELIUM_ANDROID_CHROMIUM_VERSION}" = "${chromium_version}" ] || {
+    echo "Chromium version lock does not match the Helium core" >&2
+    exit 1
+}
+[[ "${chromium_commit}" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "Chromium source commit lock is not immutable" >&2
+    exit 1
+}
+[ "${HELIUM_ANDROID_CORE_COMMIT}" = \
+    "$(git -C "${root_dir}" rev-parse HEAD:helium-chromium)" ] || {
+    echo "Helium core lock does not match the committed submodule" >&2
+    exit 1
+}
 fixture="$(mktemp -d /tmp/helium-password-source.XXXXXX)"
 case "${fixture}" in
     /tmp/helium-password-source.*) ;;
@@ -14,6 +30,8 @@ cleanup() {
 trap cleanup EXIT
 
 files=(
+    chrome/browser/password_manager/chrome_password_manager_client.cc
+    chrome/browser/password_manager/factories/profile_password_store_factory.cc
     components/autofill/core/common/autofill_prefs.cc
     components/password_manager/core/browser/password_manager.cc
     components/payments/core/payment_prefs.cc
@@ -34,7 +52,7 @@ files=(
 for file in "${files[@]}"; do
     mkdir -p "${fixture}/$(dirname "${file}")"
     curl --retry 4 --retry-delay 1 --fail --silent --show-error --location \
-        "https://chromium.googlesource.com/chromium/src/+/refs/tags/${chromium_version}/${file}?format=TEXT" \
+        "https://chromium.googlesource.com/chromium/src/+/${chromium_commit}/${file}?format=TEXT" \
         | base64 --decode >"${fixture}/${file}"
 done
 
@@ -75,6 +93,16 @@ done
 
 grep -q 'kCredentialsEnableService, true' \
     "${fixture}/components/password_manager/core/browser/password_manager.cc"
+grep -q 'kCredentialsEnableAutosignin, true' \
+    "${fixture}/components/password_manager/core/browser/password_manager.cc"
+grep -q 'ChromePasswordManagerClient::IsSavingAndFillingEnabled' \
+    "${fixture}/chrome/browser/password_manager/chrome_password_manager_client.cc"
+grep -q 'ChromePasswordManagerClient::PromptUserToSaveOrUpdatePassword' \
+    "${fixture}/chrome/browser/password_manager/chrome_password_manager_client.cc"
+grep -q 'PasswordGenerationController::GetOrCreate(web_contents())' \
+    "${fixture}/chrome/browser/password_manager/chrome_password_manager_client.cc"
+grep -q 'CreatePasswordStoreBackend(password_manager::kProfileStore' \
+    "${fixture}/chrome/browser/password_manager/factories/profile_password_store_factory.cc"
 grep -q 'PageActionIconType::kSaveCard' \
     "${fixture}/chrome/browser/ui/views/location_bar/location_bar_view.cc"
 grep -q 'kActionShowPasswordsBubbleOrPage' \
@@ -91,4 +119,5 @@ if grep -q 'kPasswordManagerEnabled' \
     exit 1
 fi
 
-printf 'password patch stack applies to Chromium %s\n' "${chromium_version}"
+printf 'password patch stack applies to Chromium %s (%s)\n' \
+    "${chromium_version}" "${chromium_commit}"

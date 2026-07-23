@@ -29,6 +29,9 @@ jobs:
       - name: Validate patch metadata
         run: ./helium-chromium/devutils/lint.py -t .
 
+      - name: Replay password restoration on pinned Chromium source
+        run: bash scripts/check-password-patch-stack.sh
+
       - name: Smoke-test overlay injection
         shell: bash
         run: |
