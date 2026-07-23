@@ -28,7 +28,7 @@ gib() {
 profile() {
     case "$1" in
         production)
-            build_jobs=2
+            build_jobs=1
             cpu_quota=200%
             cpu_weight=10
             memory_high=4G

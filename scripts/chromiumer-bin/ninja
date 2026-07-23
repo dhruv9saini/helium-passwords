@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-[ "${HELIUM_BUILD_JOBS:-}" = 2 ] || {
-    echo "Chromiumer Ninja requires HELIUM_BUILD_JOBS=2" >&2
+[ "${HELIUM_BUILD_JOBS:-}" = 1 ] || {
+    echo "Chromiumer Ninja requires HELIUM_BUILD_JOBS=1" >&2
     exit 1
 }
 [ -n "${HELIUM_REAL_NINJA:-}" ] && [ -x "${HELIUM_REAL_NINJA}" ] || {
@@ -18,7 +18,7 @@ set -euo pipefail
 for argument in "$@"; do
     case "${argument}" in
         -j|-j*|--jobs|--jobs=*)
-            echo "Chromiumer Ninja owns the fixed two-job limit" >&2
+            echo "Chromiumer Ninja owns the fixed one-job limit" >&2
             exit 1
             ;;
     esac
