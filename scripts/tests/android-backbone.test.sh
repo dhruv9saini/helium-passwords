@@ -65,6 +65,8 @@ grep -Fq '"$core_root/utils/prune_binaries.py" --keep-contingent-paths \' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
 grep -Fq 'restore-android-pruned-build-inputs.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
+grep -Fq 'restore "$source_tree" "$HELIUM_ANDROID_CHROMIUM_COMMIT"' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh"
 grep -Fq 'validate-android-java-pref-inputs.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
 grep -Fq 'validate-android-pruned-service-consumers.sh' \
@@ -116,5 +118,15 @@ grep -Fq 'helium-chromium/flags.gn' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'gn gen "$out_dir" --fail-on-unused-args' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'validate-android-pruned-build-graph.sh' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+gn_line=$(grep -n 'gn gen "$out_dir" --fail-on-unused-args' \
+  "$repo_root/scripts/chromium/build-android-ci.sh" | cut -d: -f1)
+graph_validation_line=$(grep -n 'validate-android-pruned-build-graph.sh' \
+  "$repo_root/scripts/chromium/build-android-ci.sh" | cut -d: -f1)
+media_validation_line=$(grep -n 'verify-android-media-config.sh' \
+  "$repo_root/scripts/chromium/build-android-ci.sh" | cut -d: -f1)
+[[ "$gn_line" -lt "$graph_validation_line" ]]
+[[ "$graph_validation_line" -lt "$media_validation_line" ]]
 
 echo 'Android shared-backbone composition contract passed'

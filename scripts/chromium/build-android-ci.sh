@@ -218,6 +218,9 @@ EOF
   fi
 
   gn gen "$out_dir" --fail-on-unused-args
+  "$repo_root/scripts/chromium/validate-android-pruned-build-graph.sh" \
+    "$workspace/src" "$workspace/src/$out_dir" "$chromium_ref" \
+    "$repo_root/helium-chromium/pruning.list" "$target"
   "$repo_root/scripts/chromium/verify-android-media-config.sh" \
     "$workspace/src" "$out_dir" "$artifact_dir/build-provenance" \
     "$repo_root" "$chromium_ref" "$depot_tools_commit"
