@@ -464,7 +464,7 @@ export function validateAcceptance(run, fixtureEvidence) {
   };
 }
 
-export async function auditRun({runRoot, fixtureEvidence}) {
+export async function auditArtifactAdmission(runRoot) {
   const {root, run} = await loadRun(runRoot);
   const artifact = await regularFile(run.artifact_path, "browser artifact");
   if (sha256(await fsp.readFile(artifact.resolved)) !== run.artifact_sha256) {
@@ -486,6 +486,11 @@ export async function auditRun({runRoot, fixtureEvidence}) {
   } else {
     throw new Error("acceptance platform or Android test-package boundary is invalid");
   }
+  return {root, run};
+}
+
+export async function auditRun({runRoot, fixtureEvidence}) {
+  const {root, run} = await auditArtifactAdmission(runRoot);
   for (const capture of run.captures) {
     exactKeys(capture, ["step", "captured_at", "screenshot", "screenshot_sha256"], `capture ${capture.step}`);
     const screenshotPath = path.resolve(root, capture.screenshot);

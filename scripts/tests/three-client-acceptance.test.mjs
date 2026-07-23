@@ -27,6 +27,12 @@ import {
 const credentialKey = `credential/v2/${"c".repeat(64)}`;
 const cookieKey = "d".repeat(64);
 const keyID = "a1b2c3d4e5f60708";
+const TRAIN = Object.freeze({
+  source_commit: "1".repeat(40),
+  core_commit: "2".repeat(40),
+  chromium_commit: "3".repeat(40),
+  chromium_version: "150.0.7871.181",
+});
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
@@ -40,9 +46,9 @@ async function writeJSON(filePath, value) {
   await fsp.writeFile(filePath, `${JSON.stringify(value)}\n`, {mode: 0o600});
 }
 
-async function writeLinuxArtifactReceipt(root, artifact) {
+async function writeLinuxArtifactReceipt(root, artifact, arch) {
   const artifactHash = digest(await fsp.readFile(artifact));
-  const bundle = path.join(root, "helium-passwords-linux-x86_64");
+  const bundle = path.join(root, `helium-passwords-linux-${arch}`);
   const runtime = path.join(bundle, "runtime");
   const provenance = path.join(bundle, "provenance");
   const browser = path.join(runtime, "helium");
@@ -56,16 +62,16 @@ async function writeLinuxArtifactReceipt(root, artifact) {
     return `${hash}  ${path.relative(bundle, file)}`;
   }))).join("\n")}\n`;
   await fsp.writeFile(inventory, inventoryRaw, {mode: 0o600});
-  const receipt = path.join(root, "artifact-receipt.env");
+  const receipt = path.join(root, `${arch}-artifact-receipt.env`);
   await fsp.writeFile(receipt, [
     "schema_version=2",
     "product=helium-passwords",
     "platform=linux",
-    "arch=x86_64",
-    `source_commit=${"1".repeat(40)}`,
-    `helium_core_commit=${"2".repeat(40)}`,
-    "chromium_version=150.0.7871.181",
-    `chromium_commit=${"3".repeat(40)}`,
+    `arch=${arch}`,
+    `source_commit=${TRAIN.source_commit}`,
+    `helium_core_commit=${TRAIN.core_commit}`,
+    `chromium_version=${TRAIN.chromium_version}`,
+    `chromium_commit=${TRAIN.chromium_commit}`,
     `platform_commit=${"4".repeat(40)}`,
     `bundle=${path.join(root, "bundle.tar.xz")}`,
     `bundle_sha256=${"5".repeat(64)}`,
@@ -78,6 +84,61 @@ async function writeLinuxArtifactReceipt(root, artifact) {
     "",
   ].join("\n"), {mode: 0o600});
   return receipt;
+}
+
+async function writeAndroidAdmission(root) {
+  const prepared = path.join(root, "oneplus-prepared");
+  const provenance = path.join(prepared, "build-provenance");
+  const runtime = path.join(prepared, "runtime-acceptance");
+  const artifact = path.join(prepared, "Browser-test.apk");
+  await fsp.mkdir(provenance, {recursive: true});
+  await fsp.mkdir(runtime, {recursive: true});
+  await fsp.writeFile(artifact, "synthetic OnePlus APK", {mode: 0o600});
+  await fsp.writeFile(path.join(runtime, "fixture.txt"),
+    "synthetic Android runtime kit\n", {mode: 0o600});
+  await fsp.writeFile(path.join(runtime, "kit.env"), [
+    "schema_version=6",
+    `helium_sync_commit=${TRAIN.source_commit}`,
+    `chromium_commit=${TRAIN.chromium_commit}`,
+    "manifest_package=computer.helium.sync.test",
+    "target_cpu=arm64",
+    "",
+  ].join("\n"), {mode: 0o600});
+  await fsp.writeFile(path.join(provenance, "helium-sync-commit.txt"),
+    `${TRAIN.source_commit}\n`, {mode: 0o600});
+  await fsp.writeFile(path.join(provenance, "helium-core-commit.txt"),
+    `${TRAIN.core_commit}\n`, {mode: 0o600});
+  await fsp.writeFile(path.join(provenance, "chromium-source-commit.txt"),
+    `${TRAIN.chromium_commit}\n`, {mode: 0o600});
+  const artifactHash = digest(await fsp.readFile(artifact));
+  await fsp.writeFile(path.join(prepared, "acceptance.env"), [
+    "schema_version=2",
+    "package=computer.helium.sync.test",
+    `helium_sync_commit=${TRAIN.source_commit}`,
+    `chromium_commit=${TRAIN.chromium_commit}`,
+    "version_code=787500005",
+    `version_name=${TRAIN.chromium_version}`,
+    `source_archive_sha256=${"3".repeat(64)}`,
+    `apk_sha256=${artifactHash}`,
+    `runtime_kit_sha256=${"4".repeat(64)}`,
+    "prepared_at=2026-07-23T08:00:00Z",
+    "",
+  ].join("\n"), {mode: 0o600});
+  const files = [
+    "Browser-test.apk",
+    "acceptance.env",
+    "build-provenance/chromium-source-commit.txt",
+    "build-provenance/helium-core-commit.txt",
+    "build-provenance/helium-sync-commit.txt",
+    "runtime-acceptance/fixture.txt",
+    "runtime-acceptance/kit.env",
+  ];
+  const inventory = `${(await Promise.all(files.map(async relative =>
+    `${digest(await fsp.readFile(path.join(prepared, relative)))}  ./${relative}`
+  ))).join("\n")}\n`;
+  await fsp.writeFile(
+    path.join(prepared, "PACKAGE_SHA256SUMS"), inventory, {mode: 0o600});
+  return artifact;
 }
 
 function passwordState(revision, fingerprint, deleted) {
@@ -99,14 +160,14 @@ function passwordState(revision, fingerprint, deleted) {
   };
 }
 
-function journalRecord(sequence, revision, deleted) {
+function journalRecord(sequence, revision, deleted, device) {
   return JSON.stringify({
     seq: String(sequence),
     kind: "passwords",
     key: credentialKey,
     revision: String(revision),
     deleted,
-    device_id: "d",
+    device_id: device,
     key_id: keyID,
     nonce: `opaque-nonce-${sequence}`,
     ciphertext: `opaque-ciphertext-${sequence}`,
@@ -132,40 +193,41 @@ function fixtureEvidence(runNonce) {
   };
 }
 
-async function completeNativeUI(manifest, root) {
-  const screenshot = path.join(root, "native-screen.png");
-  const statePath = path.join(root, "password-state.json");
-  const journalPath = path.join(root, "records.jsonl");
+async function completeNativeUI(manifest, root, device) {
+  const nativeRun = manifest.devices[device].native_run;
+  const screenshot = path.join(root, `${device}-native-screen.png`);
+  const statePath = path.join(root, `${device}-password-state.json`);
+  const journalPath = path.join(root, `${device}-records.jsonl`);
   await fsp.writeFile(screenshot, PNG, {mode: 0o600});
   const snapshots = {
     saved_store: {
       state: passwordState(1, "1".repeat(64), false),
-      journal: `${journalRecord(1, 1, false)}\n`,
+      journal: `${journalRecord(1, 1, false, device)}\n`,
     },
     saved_restart_autofill: {
       state: passwordState(1, "1".repeat(64), false),
-      journal: `${journalRecord(1, 1, false)}\n`,
+      journal: `${journalRecord(1, 1, false, device)}\n`,
     },
     updated_store: {
       state: passwordState(2, "2".repeat(64), false),
-      journal: `${journalRecord(1, 1, false)}\n${journalRecord(2, 2, false)}\n`,
+      journal: `${journalRecord(1, 1, false, device)}\n${journalRecord(2, 2, false, device)}\n`,
     },
     updated_restart_autofill: {
       state: passwordState(2, "2".repeat(64), false),
-      journal: `${journalRecord(1, 1, false)}\n${journalRecord(2, 2, false)}\n`,
+      journal: `${journalRecord(1, 1, false, device)}\n${journalRecord(2, 2, false, device)}\n`,
     },
     deleted_store: {
       state: passwordState(3, "", true),
-      journal: `${journalRecord(1, 1, false)}\n${journalRecord(2, 2, false)}\n${journalRecord(3, 3, true)}\n`,
+      journal: `${journalRecord(1, 1, false, device)}\n${journalRecord(2, 2, false, device)}\n${journalRecord(3, 3, true, device)}\n`,
     },
     deleted_restart_empty: {
       state: passwordState(3, "", true),
-      journal: `${journalRecord(1, 1, false)}\n${journalRecord(2, 2, false)}\n${journalRecord(3, 3, true)}\n`,
+      journal: `${journalRecord(1, 1, false, device)}\n${journalRecord(2, 2, false, device)}\n${journalRecord(3, 3, true, device)}\n`,
     },
   };
   for (const step of NATIVE_PASSWORD_STEPS) {
     await captureStep({
-      runRoot: manifest.native_ui_run,
+      runRoot: nativeRun,
       step,
       screenshot,
     });
@@ -174,57 +236,74 @@ async function completeNativeUI(manifest, root) {
     await writeJSON(statePath, snapshot.state);
     await fsp.writeFile(journalPath, snapshot.journal, {mode: 0o600});
     await captureSyncStep({
-      runRoot: manifest.native_ui_run,
+      runRoot: nativeRun,
       step,
       passwordState: statePath,
       journal: journalPath,
     });
   }
   const publicRun = JSON.parse(
-    await fsp.readFile(path.join(manifest.native_ui_run, "run.json"), "utf8"),
+    await fsp.readFile(path.join(nativeRun, "run.json"), "utf8"),
   );
-  const evidencePath = path.join(manifest.native_ui_run, "fixture-evidence.json");
+  const evidencePath = path.join(nativeRun, "fixture-evidence.json");
   await writeJSON(evidencePath, fixtureEvidence(publicRun.run_nonce));
   await verifyRun({
-    runRoot: manifest.native_ui_run,
+    runRoot: nativeRun,
     fixtureEvidence: evidencePath,
   });
   await verifySyncRun({
-    runRoot: manifest.native_ui_run,
+    runRoot: nativeRun,
     fixtureEvidence: evidencePath,
   });
 }
 
-function browserEvidence(manifest, nativeUIReceiptSHA256 = "6".repeat(64)) {
-  const restart = (device, sequence, hash) => ({
-    device,
-    role: device === "d" ? "seed" : "join",
-    phase_before: device === "d" ? "new" : "pending",
-    phase_after: "active",
-    initial_sync: {
-      server_sequence: device === "d" ? "3" : "4",
-      password_revision: "1",
-      cookie_revision: "1",
-      password_apply: "verified",
-      cookie_apply: "verified",
-      password_readback: "exact",
-      cookie_readback: "exact",
-      initial_publications: {
-        passwords: device === "d" ? "1" : "0",
-        cookies: device === "d" ? "3" : "0",
+function browserEvidence(manifest, nativeUIReceiptSHA256 = {
+  d: "6".repeat(64),
+  da: "7".repeat(64),
+  oneplus: "8".repeat(64),
+}) {
+  const restart = (device, sequence, hash) => {
+    const admitted = manifest.devices[device];
+    return {
+      device,
+      platform: admitted.platform,
+      target: admitted.target,
+      package: admitted.package,
+      artifact_sha256: admitted.artifact_sha256,
+      admission_sha256: {
+        receipt: admitted.admission.receipt_sha256,
+        inventory: admitted.admission.inventory_sha256,
       },
-    },
-    unchanged_restart: {
-      before_sequence: sequence,
-      after_sequence: sequence,
-      before_state_sha256: hash,
-      after_state_sha256: hash,
-      before_journal_sha256: "e".repeat(64),
-      after_journal_sha256: "e".repeat(64),
-      password_publications: "0",
-      cookie_publications: "0",
-    },
-  });
+      profile_marker_sha256: admitted.profile_marker_sha256,
+      native_ui_receipt_sha256: nativeUIReceiptSHA256[device],
+      role: device === "d" ? "seed" : "join",
+      phase_before: device === "d" ? "new" : "pending",
+      phase_after: "active",
+      initial_sync: {
+        server_sequence: device === "d" ? "3" : "4",
+        password_revision: "1",
+        cookie_revision: "1",
+        password_apply: "verified",
+        cookie_apply: "verified",
+        password_readback: "exact",
+        cookie_readback: "exact",
+        initial_publications: {
+          passwords: device === "d" ? "1" : "0",
+          cookies: device === "d" ? "3" : "0",
+        },
+      },
+      unchanged_restart: {
+        before_sequence: sequence,
+        after_sequence: sequence,
+        before_state_sha256: hash,
+        after_state_sha256: hash,
+        before_journal_sha256: "e".repeat(64),
+        after_journal_sha256: "e".repeat(64),
+        password_publications: "0",
+        cookie_publications: "0",
+      },
+    };
+  };
   const applications = [];
   for (const device of ["d", "da", "oneplus"]) {
     for (const revision of ["1", "2", "3"]) {
@@ -268,12 +347,10 @@ function browserEvidence(manifest, nativeUIReceiptSHA256 = "6".repeat(64)) {
   });
   return {
     schema_version: 1,
-    artifact_sha256: manifest.artifact_sha256,
     evidence_scope: "disposable-browser",
     writer: "native-password-store-and-cookie-manager",
-    native_ui_receipt_sha256: nativeUIReceiptSHA256,
+    source_train: manifest.source_train,
     tabs_observed: false,
-    profile_marker_sha256: manifest.profile_marker_sha256,
     devices: [
       restart("d", "9", "a".repeat(64)),
       restart("da", "10", "b".repeat(64)),
@@ -352,8 +429,7 @@ function browserEvidence(manifest, nativeUIReceiptSHA256 = "6".repeat(64)) {
 function serverEvidence(manifest, browser) {
   return {
     schema_version: 1,
-    artifact_sha256: manifest.artifact_sha256,
-    source_commit: manifest.source_commit,
+    source_train: manifest.source_train,
     evidence_scope: "disposable-tls-service",
     transport: {
       tls: "verified",
@@ -425,7 +501,7 @@ function originAudit(manifest, device) {
     schema_version: 2,
     audit_id: `${device}-session-import-v1`,
     evidence_scope: "disposable-browser",
-    artifact_sha256: manifest.artifact_sha256,
+    artifact_sha256: manifest.devices[device].artifact_sha256,
     target_device: device,
     origins: [{
       origin: "https://session.fixture.invalid",
@@ -455,52 +531,181 @@ function originAudit(manifest, device) {
   };
 }
 
+function manifestFixture() {
+  const device = ({
+    platform,
+    target,
+    packageName,
+    artifact,
+    receipt,
+    inventory,
+    marker,
+  }) => ({
+    native_run: `/synthetic/native-${target}`,
+    platform,
+    target,
+    package: packageName,
+    artifact_path: `/synthetic/${target}/browser`,
+    artifact_sha256: artifact,
+    admission: {
+      kind: platform === "android" ?
+        "prepared-android-inventory" : "linux-runtime-receipt",
+      receipt_path: `/synthetic/${target}/receipt`,
+      receipt_sha256: receipt,
+      inventory_path: platform === "android" ?
+        `/synthetic/${target}/inventory` : null,
+      inventory_sha256: inventory,
+    },
+    profile_path: platform === "linux" ?
+      `/synthetic/native-${target}/profile` : null,
+    profile_marker_sha256: marker,
+  });
+  return {
+    source_train: TRAIN,
+    devices: {
+      d: device({
+        platform: "linux",
+        target: "linux-arm64-chroot",
+        packageName: "",
+        artifact: "a".repeat(64),
+        receipt: "b".repeat(64),
+        inventory: null,
+        marker: "c".repeat(64),
+      }),
+      da: device({
+        platform: "linux",
+        target: "linux-x86_64",
+        packageName: "",
+        artifact: "d".repeat(64),
+        receipt: "e".repeat(64),
+        inventory: null,
+        marker: "f".repeat(64),
+      }),
+      oneplus: device({
+        platform: "android",
+        target: "android-arm64",
+        packageName: "computer.helium.sync.test",
+        artifact: "0".repeat(64),
+        receipt: "1".repeat(64),
+        inventory: "2".repeat(64),
+        marker: null,
+      }),
+    },
+  };
+}
+
+async function preparedInputs(root) {
+  const dArtifact = path.join(
+    root, "helium-passwords-linux-arm64", "runtime", "helium-wrapper");
+  const daArtifact = path.join(
+    root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
+  await fsp.mkdir(path.dirname(dArtifact), {recursive: true});
+  await fsp.mkdir(path.dirname(daArtifact), {recursive: true});
+  await fsp.writeFile(dArtifact, "synthetic d arm64 browser", {mode: 0o700});
+  await fsp.writeFile(daArtifact, "synthetic da x86_64 browser", {mode: 0o700});
+  const dArtifactReceipt = await writeLinuxArtifactReceipt(
+    root, dArtifact, "arm64");
+  const daArtifactReceipt = await writeLinuxArtifactReceipt(
+    root, daArtifact, "x86_64");
+  const oneplusArtifact = await writeAndroidAdmission(root);
+  return {
+    dArtifact,
+    dArtifactReceipt,
+    daArtifact,
+    daArtifactReceipt,
+    oneplusArtifact,
+  };
+}
+
 async function preparedRun(root) {
-  const artifact = path.join(
-    root,
-    "helium-passwords-linux-x86_64",
-    "runtime",
-    "helium-wrapper",
-  );
-  await fsp.mkdir(path.dirname(artifact), {recursive: true});
-  await fsp.writeFile(artifact, "synthetic admitted browser", {mode: 0o700});
-  const artifactReceipt = await writeLinuxArtifactReceipt(root, artifact);
+  const inputs = await preparedInputs(root);
   const runRoot = path.join(root, "three-client");
   const manifest = await initializeThreeClientRun({
-    artifact,
-    artifactReceipt,
+    ...inputs,
     output: runRoot,
   });
-  await completeNativeUI(manifest, root);
-  return {manifest, runRoot};
+  for (const device of ["d", "da", "oneplus"]) {
+    await completeNativeUI(manifest, root, device);
+  }
+  return {
+    manifest,
+    runRoot,
+    inputs,
+  };
 }
+
+test("initialization rejects the wrong per-device target and a split source train", async () => {
+  const wrongTargetRoot = await fsp.mkdtemp(
+    path.join(os.tmpdir(), "helium-three-client-target-"));
+  const splitTrainRoot = await fsp.mkdtemp(
+    path.join(os.tmpdir(), "helium-three-client-train-"));
+  try {
+    const wrongTarget = await preparedInputs(wrongTargetRoot);
+    await assert.rejects(initializeThreeClientRun({
+      ...wrongTarget,
+      dArtifact: wrongTarget.daArtifact,
+      dArtifactReceipt: wrongTarget.daArtifactReceipt,
+      output: path.join(wrongTargetRoot, "run"),
+    }), /wrong architecture/);
+
+    const splitTrain = await preparedInputs(splitTrainRoot);
+    const receiptRaw = await fsp.readFile(
+      splitTrain.daArtifactReceipt, "utf8");
+    await fsp.writeFile(
+      splitTrain.daArtifactReceipt,
+      receiptRaw.replace(
+        `source_commit=${TRAIN.source_commit}`,
+        `source_commit=${"9".repeat(40)}`,
+      ),
+      {mode: 0o600},
+    );
+    await assert.rejects(initializeThreeClientRun({
+      ...splitTrain,
+      output: path.join(splitTrainRoot, "run"),
+    }), /shared source train/);
+  } finally {
+    await fsp.rm(wrongTargetRoot, {recursive: true, force: true});
+    await fsp.rm(splitTrainRoot, {recursive: true, force: true});
+  }
+});
 
 test("three-client gate binds native UI, pull-only joins, conflicts, sessions, and int64 evidence", async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-three-client-"));
   try {
-    const {manifest, runRoot} = await preparedRun(root);
+    const {manifest, runRoot, inputs} = await preparedRun(root);
     assert.equal((await acceptanceStatus(runRoot)).state, "flow-evidence-required");
-    for (const profile of Object.values(manifest.profiles)) {
+    for (const device of ["d", "da"]) {
+      const profile = manifest.devices[device].profile_path;
       assert.equal((await fsp.stat(profile)).mode & 0o777, 0o700);
       assert.equal(
         await fsp.readFile(path.join(profile, "SYNTHETIC_ONLY"), "utf8"),
         "helium-password-runtime-v2\n",
       );
-    }
-    for (const [device, profile] of Object.entries(manifest.profiles)) {
       assert.equal(
         await fsp.readFile(path.join(profile, "HELIUM_SYNC_DEVICE"), "utf8"),
         `helium-three-client-device-v1:${device}\n`,
       );
     }
+    assert.equal(manifest.devices.d.target, "linux-arm64-chroot");
+    assert.equal(manifest.devices.da.target, "linux-x86_64");
+    assert.equal(manifest.devices.oneplus.target, "android-arm64");
+    assert.equal(manifest.devices.oneplus.package, "computer.helium.sync.test");
+    assert.equal(manifest.devices.oneplus.profile_path, null);
+    assert.equal(manifest.devices.oneplus.profile_marker_sha256, null);
+    assert.match(manifest.devices.oneplus.admission.inventory_sha256,
+      /^[0-9a-f]{64}$/);
+    assert.deepEqual(manifest.source_train, TRAIN);
     await assert.rejects(initializeThreeClientRun({
-      artifact: manifest.artifact_path,
-      artifactReceipt: manifest.artifact_receipt_path,
+      ...inputs,
       output: runRoot,
     }), /already exists/);
 
-    const nativeUIReceiptSHA256 = digest(
-      await fsp.readFile(path.join(manifest.native_ui_run, "sync-receipt.json")),
+    const nativeUIReceiptSHA256 = Object.fromEntries(
+      await Promise.all(["d", "da", "oneplus"].map(async device => [
+        device,
+        digest(await fsp.readFile(
+          path.join(manifest.devices[device].native_run, "sync-receipt.json"))),
+      ])),
     );
     const browser = browserEvidence(manifest, nativeUIReceiptSHA256);
     const server = serverEvidence(manifest, browser);
@@ -516,7 +721,8 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
     await writeJSON(files.oneplus, originAudit(manifest, "oneplus"));
     const wrongBrowser = path.join(root, "wrong-browser-evidence.json");
     const wrongBrowserEvidence = structuredClone(browser);
-    wrongBrowserEvidence.native_ui_receipt_sha256 = "0".repeat(64);
+    wrongBrowserEvidence.devices.find(entry => entry.device === "oneplus")
+      .native_ui_receipt_sha256 = "9".repeat(64);
     await writeJSON(wrongBrowser, wrongBrowserEvidence);
     await assert.rejects(verifyThreeClientRun({
       runRoot,
@@ -524,7 +730,7 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
       serverEvidence: files.server,
       daOriginAudit: files.da,
       oneplusOriginAudit: files.oneplus,
-    }), /not bound to the verified native UI receipt/);
+    }), /OnePlus|oneplus browser evidence is not bound/);
     const receipt = await verifyThreeClientRun({
       runRoot,
       browserEvidence: files.browser,
@@ -533,7 +739,13 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
       oneplusOriginAudit: files.oneplus,
     });
     assert.equal(receipt.result, "passed");
-    assert.equal(receipt.source_commit, manifest.source_commit);
+    assert.deepEqual(receipt.source_train, manifest.source_train);
+    assert.deepEqual(receipt.artifact_sha256, Object.fromEntries(
+      ["d", "da", "oneplus"].map(device => [
+        device, manifest.devices[device].artifact_sha256,
+      ]),
+    ));
+    assert.equal(receipt.profile_marker_sha256.oneplus, null);
     assert.deepEqual(receipt.enrollment_order, ["d", "da", "oneplus"]);
     assert.equal(receipt.password_revisions.tombstone, "3");
     assert.equal(receipt.cookie_authoritative_revision, "4");
@@ -553,27 +765,34 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
       /receipt no longer matches its evidence/);
     await fsp.writeFile(verifiedServer, verifiedServerRaw, {mode: 0o600});
     assert.equal((await acceptanceStatus(runRoot)).state, "passed");
-    await auditVerifiedSyncRun({
-      runRoot: manifest.native_ui_run,
-      fixtureEvidence: path.join(manifest.native_ui_run, "fixture-evidence.json"),
-    });
+    for (const device of ["d", "da", "oneplus"]) {
+      const nativeRun = manifest.devices[device].native_run;
+      await auditVerifiedSyncRun({
+        runRoot: nativeRun,
+        fixtureEvidence: path.join(nativeRun, "fixture-evidence.json"),
+      });
+    }
   } finally {
     await fsp.rm(root, {recursive: true, force: true});
   }
 });
 
 test("browser evidence fails closed on join publication, stale overwrite, cookie gaps, loops, and tabs", async () => {
-  const manifest = {
-    artifact_sha256: "a".repeat(64),
-    source_commit: "1".repeat(40),
-    profile_marker_sha256: {
-      d: "b".repeat(64),
-      da: "b".repeat(64),
-      oneplus: "b".repeat(64),
-    },
-  };
+  const manifest = manifestFixture();
   const baseline = browserEvidence(manifest);
   validateBrowserEvidence(baseline, manifest);
+
+  const wrongArtifact = structuredClone(baseline);
+  wrongArtifact.devices.find(entry => entry.device === "d").artifact_sha256 =
+    manifest.devices.da.artifact_sha256;
+  assert.throws(() => validateBrowserEvidence(wrongArtifact, manifest),
+    /device identity/);
+
+  const inventedOnePlusProfile = structuredClone(baseline);
+  inventedOnePlusProfile.devices.find(entry => entry.device === "oneplus")
+    .profile_marker_sha256 = "9".repeat(64);
+  assert.throws(() => validateBrowserEvidence(inventedOnePlusProfile, manifest),
+    /device identity|invented a filesystem profile/);
 
   const joinPublished = structuredClone(baseline);
   joinPublished.devices.find(entry => entry.device === "da")
@@ -630,15 +849,7 @@ test("browser evidence fails closed on join publication, stale overwrite, cookie
 });
 
 test("server evidence rejects enrollment reorder, stale acceptance, 32-bit counters, plaintext, and tabs", () => {
-  const manifest = {
-    artifact_sha256: "a".repeat(64),
-    source_commit: "1".repeat(40),
-    profile_marker_sha256: {
-      d: "b".repeat(64),
-      da: "b".repeat(64),
-      oneplus: "b".repeat(64),
-    },
-  };
+  const manifest = manifestFixture();
   const browser = browserEvidence(manifest);
   const baseline = serverEvidence(manifest, browser);
   validateServerEvidence(baseline, manifest, browser);
@@ -649,7 +860,7 @@ test("server evidence rejects enrollment reorder, stale acceptance, 32-bit count
     /enrollment order/);
 
   const wrongSource = structuredClone(baseline);
-  wrongSource.source_commit = "2".repeat(40);
+  wrongSource.source_train.core_commit = "9".repeat(40);
   assert.throws(() => validateServerEvidence(wrongSource, manifest, browser),
     /identity or enrollment order/);
 

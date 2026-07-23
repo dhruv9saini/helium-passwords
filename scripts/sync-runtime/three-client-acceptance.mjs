@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import crypto from "node:crypto";
-import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 
 import {
+  auditArtifactAdmission,
   DISPOSABLE_PROFILE_MARKER,
   initializeRun,
 } from "../password-runtime/acceptance.mjs";
@@ -18,6 +18,26 @@ const ROOT_MARKER = "helium-three-client-disposable-v1\n";
 const DEVICE_MARKER_PREFIX = "helium-three-client-device-v1:";
 const DEVICES = Object.freeze(["d", "da", "oneplus"]);
 const JOINERS = Object.freeze(["da", "oneplus"]);
+const DEVICE_SPECS = Object.freeze({
+  d: Object.freeze({
+    platform: "linux",
+    target: "linux-arm64-chroot",
+    arch: "arm64",
+    packageName: "",
+  }),
+  da: Object.freeze({
+    platform: "linux",
+    target: "linux-x86_64",
+    arch: "x86_64",
+    packageName: "",
+  }),
+  oneplus: Object.freeze({
+    platform: "android",
+    target: "android-arm64",
+    arch: "arm64",
+    packageName: "computer.helium.sync.test",
+  }),
+});
 const HASH = /^[0-9a-f]{64}$/;
 const CREDENTIAL_KEY = /^credential\/v2\/[0-9a-f]{64}$/;
 const COOKIE_KEY = /^[0-9a-f]{64}$/;
@@ -33,12 +53,6 @@ const ORIGIN_STATE_KINDS = Object.freeze([
 
 function sha256(data) {
   return crypto.createHash("sha256").update(data).digest("hex");
-}
-
-async function sha256File(filePath) {
-  const hash = crypto.createHash("sha256");
-  for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
-  return hash.digest("hex");
 }
 
 function equalJSON(left, right) {
@@ -128,25 +142,168 @@ async function requireDisposableProfile(profilePath, expectedPath, device) {
   ]));
 }
 
-function expectedProfilePath(root, device) {
-  if (device === "d") return path.join(root, "native-ui-d", "profile");
-  return path.join(root, "profiles", device);
+function nativeRunPath(root, device) {
+  return path.join(root, `native-${device}`);
 }
 
-async function admittedSourceCommit(receiptPath) {
-  const raw = await fsp.readFile(receiptPath, "utf8");
-  const values = raw.split("\n")
-    .filter(line => line.startsWith("source_commit="))
-    .map(line => line.slice("source_commit=".length));
-  if (values.length !== 1 || !/^[0-9a-f]{40}$/.test(values[0])) {
-    throw new Error("admitted artifact receipt has no exact source commit");
+function exactCommit(value, label) {
+  if (typeof value !== "string" || !/^[0-9a-f]{40}$/.test(value)) {
+    throw new Error(`${label} must be a full commit`);
   }
-  return values[0];
+  return value;
+}
+
+async function readEnv(filePath, label) {
+  const file = await regularFile(filePath, label);
+  const raw = await fsp.readFile(file.resolved, "utf8");
+  const values = new Map();
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const separator = line.indexOf("=");
+    if (separator < 1 || values.has(line.slice(0, separator))) {
+      throw new Error(`${label} is malformed`);
+    }
+    values.set(line.slice(0, separator), line.slice(separator + 1));
+  }
+  return {file, raw, values};
+}
+
+async function readCommitFile(filePath, label) {
+  const file = await regularFile(filePath, label, 128);
+  return {
+    file,
+    value: exactCommit(
+      (await fsp.readFile(file.resolved, "utf8")).trim(),
+      label,
+    ),
+  };
+}
+
+async function describeAdmittedDevice(run, device) {
+  const spec = DEVICE_SPECS[device];
+  let admission;
+  let train;
+  if (spec.platform === "linux") {
+    const receipt = await readEnv(
+      run.artifact_receipt, `${device} Linux artifact receipt`);
+    if (receipt.values.get("arch") !== spec.arch) {
+      throw new Error(`${device} Linux artifact has the wrong architecture`);
+    }
+    admission = {
+      kind: "linux-runtime-receipt",
+      receipt_path: receipt.file.resolved,
+      receipt_sha256: sha256(receipt.raw),
+      inventory_path: null,
+      inventory_sha256: null,
+    };
+    train = {
+      source_commit: exactCommit(
+        receipt.values.get("source_commit"), `${device} source commit`),
+      core_commit: exactCommit(
+        receipt.values.get("helium_core_commit"), `${device} core commit`),
+      chromium_commit: exactCommit(
+        receipt.values.get("chromium_commit"), `${device} Chromium commit`),
+      chromium_version: receipt.values.get("chromium_version"),
+    };
+  } else {
+    const prepared = path.dirname(run.artifact_path);
+    const metadata = await readEnv(
+      path.join(prepared, "acceptance.env"),
+      "OnePlus Android acceptance metadata",
+    );
+    const inventory = await regularFile(
+      path.join(prepared, "PACKAGE_SHA256SUMS"),
+      "OnePlus Android acceptance inventory",
+    );
+    const inventoryRaw = await fsp.readFile(inventory.resolved, "utf8");
+    const runtimeKit = await readEnv(
+      path.join(prepared, "runtime-acceptance", "kit.env"),
+      "OnePlus Android runtime kit",
+    );
+    const source = await readCommitFile(
+      path.join(prepared, "build-provenance", "helium-sync-commit.txt"),
+      "OnePlus source commit",
+    );
+    const core = await readCommitFile(
+      path.join(prepared, "build-provenance", "helium-core-commit.txt"),
+      "OnePlus core commit",
+    );
+    const chromium = await readCommitFile(
+      path.join(prepared, "build-provenance", "chromium-source-commit.txt"),
+      "OnePlus Chromium commit",
+    );
+    if (metadata.values.get("helium_sync_commit") !== source.value ||
+        metadata.values.get("chromium_commit") !== chromium.value ||
+        runtimeKit.values.get("helium_sync_commit") !== source.value ||
+        runtimeKit.values.get("chromium_commit") !== chromium.value ||
+        runtimeKit.values.get("manifest_package") !== spec.packageName ||
+        runtimeKit.values.get("target_cpu") !== spec.arch) {
+      throw new Error("OnePlus prepared admission disagrees with its provenance");
+    }
+    admission = {
+      kind: "prepared-android-inventory",
+      receipt_path: metadata.file.resolved,
+      receipt_sha256: sha256(metadata.raw),
+      inventory_path: inventory.resolved,
+      inventory_sha256: sha256(inventoryRaw),
+    };
+    train = {
+      source_commit: source.value,
+      core_commit: core.value,
+      chromium_commit: chromium.value,
+      chromium_version: metadata.values.get("version_name"),
+    };
+  }
+  if (!/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(
+    train.chromium_version || "")) {
+    throw new Error(`${device} Chromium version is invalid`);
+  }
+
+  let profileMarkerSHA256 = null;
+  if (spec.platform === "linux") {
+    profileMarkerSHA256 = await requireDisposableProfile(
+      run.profile_path,
+      path.join(nativeRunPath(path.dirname(run.run_root), device), "profile"),
+      device,
+    );
+  } else if (run.profile_path !== null) {
+    throw new Error("OnePlus Android admission unexpectedly has a filesystem profile");
+  }
+  return {
+    descriptor: {
+      native_run: run.run_root,
+      platform: spec.platform,
+      target: spec.target,
+      package: spec.packageName,
+      artifact_path: run.artifact_path,
+      artifact_sha256: run.artifact_sha256,
+      admission,
+      profile_path: run.profile_path,
+      profile_marker_sha256: profileMarkerSHA256,
+    },
+    train,
+  };
+}
+
+function requireOneTrain(trains) {
+  const expected = trains.d;
+  exactKeys(expected, [
+    "source_commit", "core_commit", "chromium_commit", "chromium_version",
+  ], "source train");
+  for (const device of DEVICES) {
+    if (!equalJSON(trains[device], expected)) {
+      throw new Error(`${device} artifact is not on the shared source train`);
+    }
+  }
+  return expected;
 }
 
 export async function initializeThreeClientRun({
-  artifact,
-  artifactReceipt,
+  dArtifact,
+  dArtifactReceipt,
+  daArtifact,
+  daArtifactReceipt,
+  oneplusArtifact,
   output,
 }) {
   const root = path.resolve(output);
@@ -157,27 +314,26 @@ export async function initializeThreeClientRun({
     if (error.code !== "ENOENT") throw error;
   }
 
-  const nativeUIRoot = path.join(root, "native-ui-d");
-  const nativeRun = await initializeRun({
-    artifact,
-    artifactReceipt,
-    output: nativeUIRoot,
-    platform: "linux",
-  });
-  await fsp.chmod(root, 0o700);
-  await fsp.mkdir(path.join(root, "profiles"), {mode: 0o700});
-  for (const device of JOINERS) {
-    const profile = expectedProfilePath(root, device);
-    await fsp.mkdir(profile, {mode: 0o700});
-    await fsp.writeFile(
-      path.join(profile, "SYNTHETIC_ONLY"),
-      DISPOSABLE_PROFILE_MARKER,
-      {mode: 0o600, flag: "wx"},
-    );
-  }
+  const inputs = {
+    d: {artifact: dArtifact, artifactReceipt: dArtifactReceipt},
+    da: {artifact: daArtifact, artifactReceipt: daArtifactReceipt},
+    oneplus: {artifact: oneplusArtifact, artifactReceipt: ""},
+  };
+  const nativeRuns = {};
   for (const device of DEVICES) {
+    const spec = DEVICE_SPECS[device];
+    nativeRuns[device] = await initializeRun({
+      artifact: inputs[device].artifact,
+      artifactReceipt: inputs[device].artifactReceipt,
+      output: nativeRunPath(root, device),
+      platform: spec.platform,
+      packageName: spec.packageName,
+    });
+  }
+  await fsp.chmod(root, 0o700);
+  for (const device of ["d", "da"]) {
     await fsp.writeFile(
-      path.join(expectedProfilePath(root, device), "HELIUM_SYNC_DEVICE"),
+      path.join(nativeRuns[device].profile_path, "HELIUM_SYNC_DEVICE"),
       `${DEVICE_MARKER_PREFIX}${device}\n`,
       {mode: 0o600, flag: "wx"},
     );
@@ -188,26 +344,19 @@ export async function initializeThreeClientRun({
     {mode: 0o600, flag: "wx"},
   );
 
-  const profileMarkerSHA256 = {};
-  const profiles = {};
+  const devices = {};
+  const trains = {};
   for (const device of DEVICES) {
-    const profile = expectedProfilePath(root, device);
-    profiles[device] = profile;
-    profileMarkerSHA256[device] = await requireDisposableProfile(
-      profile, profile, device);
+    const admitted = await describeAdmittedDevice(nativeRuns[device], device);
+    devices[device] = admitted.descriptor;
+    trains[device] = admitted.train;
   }
   const manifest = {
     schema_version: SCHEMA_VERSION,
     root,
-    artifact_path: nativeRun.artifact_path,
-    artifact_sha256: nativeRun.artifact_sha256,
-    artifact_receipt_path: nativeRun.artifact_receipt,
-    artifact_receipt_sha256: nativeRun.artifact_receipt_sha256,
-    source_commit: await admittedSourceCommit(nativeRun.artifact_receipt),
     created_at: new Date().toISOString(),
-    native_ui_run: nativeUIRoot,
-    profiles,
-    profile_marker_sha256: profileMarkerSHA256,
+    devices,
+    source_train: requireOneTrain(trains),
     expected_enrollment_order: DEVICES,
     tabs_policy: "excluded",
   };
@@ -229,45 +378,50 @@ async function loadManifest(runRoot) {
   const manifestFile = await readJSON(path.join(root, "run.json"), "three-client run");
   const manifest = manifestFile.value;
   exactKeys(manifest, [
-    "schema_version", "root", "artifact_path", "artifact_sha256",
-    "artifact_receipt_path", "artifact_receipt_sha256", "source_commit",
-    "created_at", "native_ui_run", "profiles", "profile_marker_sha256",
+    "schema_version", "root", "created_at", "devices", "source_train",
     "expected_enrollment_order", "tabs_policy",
   ], "three-client run");
-  exactKeys(manifest.profiles, DEVICES, "three-client profiles");
-  exactKeys(manifest.profile_marker_sha256, DEVICES, "profile marker hashes");
+  exactKeys(manifest.devices, DEVICES, "three-client devices");
   if (manifest.schema_version !== SCHEMA_VERSION || manifest.root !== root ||
-      manifest.native_ui_run !== path.join(root, "native-ui-d") ||
       !Number.isFinite(Date.parse(manifest.created_at)) ||
       !equalJSON(manifest.expected_enrollment_order, DEVICES) ||
       manifest.tabs_policy !== "excluded") {
     throw new Error("three-client run metadata is invalid");
   }
-  requireHash(manifest.artifact_sha256, "run artifact hash");
-  requireHash(manifest.artifact_receipt_sha256, "run artifact receipt hash");
-  if (!/^[0-9a-f]{40}$/.test(manifest.source_commit)) {
-    throw new Error("run source commit is invalid");
-  }
-  const artifact = await regularFile(manifest.artifact_path, "admitted browser", 2 * 1024 * 1024 * 1024);
-  if (await sha256File(artifact.resolved) !== manifest.artifact_sha256) {
-    throw new Error("admitted browser changed after initialization");
-  }
-  const artifactReceipt = await regularFile(
-    manifest.artifact_receipt_path,
-    "admitted browser receipt",
-  );
-  if ((artifactReceipt.info.mode & 0o077) !== 0 ||
-      await sha256File(artifactReceipt.resolved) !== manifest.artifact_receipt_sha256) {
-    throw new Error("admitted browser receipt changed after initialization");
-  }
+  exactKeys(manifest.source_train, [
+    "source_commit", "core_commit", "chromium_commit", "chromium_version",
+  ], "shared source train");
+  const trains = {};
   for (const device of DEVICES) {
-    const expected = expectedProfilePath(root, device);
-    if (manifest.profiles[device] !== expected ||
-        await requireDisposableProfile(
-          manifest.profiles[device], expected, device) !==
-          manifest.profile_marker_sha256[device]) {
-      throw new Error(`disposable ${device} profile no longer matches the run`);
+    const spec = DEVICE_SPECS[device];
+    const recorded = manifest.devices[device];
+    exactKeys(recorded, [
+      "native_run", "platform", "target", "package", "artifact_path",
+      "artifact_sha256", "admission", "profile_path",
+      "profile_marker_sha256",
+    ], `${device} device admission`);
+    exactKeys(recorded.admission, [
+      "kind", "receipt_path", "receipt_sha256",
+      "inventory_path", "inventory_sha256",
+    ], `${device} admission files`);
+    if (recorded.native_run !== nativeRunPath(root, device) ||
+        recorded.platform !== spec.platform ||
+        recorded.target !== spec.target ||
+        recorded.package !== spec.packageName) {
+      throw new Error(`${device} platform admission changed`);
     }
+    requireHash(recorded.artifact_sha256, `${device} artifact hash`);
+    requireHash(recorded.admission.receipt_sha256,
+      `${device} admission receipt hash`);
+    const audited = await auditArtifactAdmission(recorded.native_run);
+    const current = await describeAdmittedDevice(audited.run, device);
+    if (!equalJSON(current.descriptor, recorded)) {
+      throw new Error(`${device} admitted artifact or boundary changed`);
+    }
+    trains[device] = current.train;
+  }
+  if (!equalJSON(requireOneTrain(trains), manifest.source_train)) {
+    throw new Error("shared artifact source train changed");
   }
   return {root, manifest};
 }
@@ -547,34 +701,63 @@ function validateCookieEvidence(value) {
 
 export function validateBrowserEvidence(value, manifest) {
   exactKeys(value, [
-    "schema_version", "artifact_sha256", "evidence_scope", "writer",
-    "native_ui_receipt_sha256", "tabs_observed", "profile_marker_sha256",
-    "devices", "password", "cookies",
+    "schema_version", "evidence_scope", "writer", "source_train",
+    "tabs_observed", "devices", "password", "cookies",
   ], "browser evidence");
-  exactKeys(value.profile_marker_sha256, DEVICES, "browser profile marker hashes");
   if (value.schema_version !== SCHEMA_VERSION ||
-      value.artifact_sha256 !== manifest.artifact_sha256 ||
       value.evidence_scope !== "disposable-browser" ||
       value.writer !== "native-password-store-and-cookie-manager" ||
       value.tabs_observed !== false ||
-      !equalJSON(value.profile_marker_sha256, manifest.profile_marker_sha256) ||
+      !equalJSON(value.source_train, manifest.source_train) ||
       !Array.isArray(value.devices) || value.devices.length !== DEVICES.length) {
     throw new Error("browser evidence boundary is invalid");
   }
-  requireHash(value.native_ui_receipt_sha256, "native UI receipt hash");
   const cookieResult = validateCookieEvidence(value.cookies);
   const devices = new Map();
   for (const entry of value.devices) {
     exactKeys(entry, [
-      "device", "role", "phase_before", "phase_after", "initial_sync",
-      "unchanged_restart",
+      "device", "platform", "target", "package", "artifact_sha256",
+      "admission_sha256", "profile_marker_sha256",
+      "native_ui_receipt_sha256", "role", "phase_before", "phase_after",
+      "initial_sync", "unchanged_restart",
     ], "browser device evidence");
+    exactKeys(entry.admission_sha256, ["receipt", "inventory"],
+      `${entry.device} browser admission hashes`);
+    const recorded = manifest.devices[entry.device];
+    const expectedAdmission = recorded && {
+      receipt: recorded.admission.receipt_sha256,
+      inventory: recorded.admission.inventory_sha256,
+    };
     if (!DEVICES.includes(entry.device) || devices.has(entry.device) ||
+        entry.platform !== recorded?.platform ||
+        entry.target !== recorded?.target ||
+        entry.package !== recorded?.package ||
+        entry.artifact_sha256 !== recorded?.artifact_sha256 ||
+        !equalJSON(entry.admission_sha256, expectedAdmission) ||
+        entry.profile_marker_sha256 !== recorded?.profile_marker_sha256 ||
         entry.role !== (entry.device === "d" ? "seed" : "join") ||
         entry.phase_before !== (entry.device === "d" ? "new" : "pending") ||
         entry.phase_after !== "active") {
       throw new Error("browser enrollment phase or device identity is invalid");
     }
+    requireHash(entry.artifact_sha256, `${entry.device} browser artifact hash`);
+    requireHash(entry.admission_sha256.receipt,
+      `${entry.device} admission receipt hash`);
+    if (entry.device === "oneplus") {
+      requireHash(entry.admission_sha256.inventory,
+        "OnePlus admission inventory hash");
+      if (entry.profile_marker_sha256 !== null) {
+        throw new Error("OnePlus browser evidence invented a filesystem profile");
+      }
+    } else {
+      requireHash(entry.profile_marker_sha256,
+        `${entry.device} profile marker hash`);
+      if (entry.admission_sha256.inventory !== null) {
+        throw new Error(`${entry.device} Linux evidence invented an APK inventory`);
+      }
+    }
+    requireHash(entry.native_ui_receipt_sha256,
+      `${entry.device} native UI receipt hash`);
     validateInitialSync(entry.initial_sync, entry.device, value.cookies.record_count);
     validateUnchangedRestart(entry.unchanged_restart, entry.device);
     devices.set(entry.device, entry);
@@ -597,14 +780,13 @@ function validatePublicationCounts(value, label, expectedPasswords, expectedCook
 
 export function validateServerEvidence(value, manifest, browserEvidence) {
   exactKeys(value, [
-    "schema_version", "artifact_sha256", "source_commit", "evidence_scope",
-    "transport", "enrollment_order", "join_cursors",
+    "schema_version", "source_train", "evidence_scope", "transport",
+    "enrollment_order", "join_cursors",
     "initial_publications", "restarts", "password", "cookies",
     "counter_probe", "journal",
   ], "server evidence");
   if (value.schema_version !== SCHEMA_VERSION ||
-      value.artifact_sha256 !== manifest.artifact_sha256 ||
-      value.source_commit !== manifest.source_commit ||
+      !equalJSON(value.source_train, manifest.source_train) ||
       value.evidence_scope !== "disposable-tls-service" ||
       !equalJSON(value.enrollment_order, DEVICES)) {
     throw new Error("server evidence identity or enrollment order is invalid");
@@ -747,7 +929,7 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
 function validateOriginAudit(input, expectedDevice, manifest, browserEvidence) {
   const result = auditOriginState(input);
   if (result.proof_level !== "disposable-browser" ||
-      result.artifact_sha256 !== manifest.artifact_sha256 ||
+      result.artifact_sha256 !== manifest.devices[expectedDevice].artifact_sha256 ||
       result.target_device !== expectedDevice ||
       !Array.isArray(result.origins) || result.origins.length === 0) {
     throw new Error(`${expectedDevice} origin-state audit is not disposable browser evidence`);
@@ -767,6 +949,62 @@ function validateOriginAudit(input, expectedDevice, manifest, browserEvidence) {
   return result;
 }
 
+async function auditNativeRuns(manifest) {
+  const audited = {};
+  for (const device of DEVICES) {
+    const nativeRun = manifest.devices[device].native_run;
+    audited[device] = await auditVerifiedSyncRun({
+      runRoot: nativeRun,
+      fixtureEvidence: path.join(nativeRun, "fixture-evidence.json"),
+    });
+    if (audited[device].receipt.artifact_sha256 !==
+        manifest.devices[device].artifact_sha256) {
+      throw new Error(`${device} native receipt belongs to a different artifact`);
+    }
+  }
+  return audited;
+}
+
+function requireNativeBindings(browserEvidence, nativeRuns) {
+  for (const device of DEVICES) {
+    const evidence = browserEvidence.devices.find(
+      entry => entry.device === device);
+    if (evidence.native_ui_receipt_sha256 !==
+        nativeRuns[device].receipt_sha256) {
+      throw new Error(
+        `${device} browser evidence is not bound to its verified native UI receipt`);
+    }
+  }
+}
+
+function artifactHashes(manifest) {
+  return Object.fromEntries(DEVICES.map(device => [
+    device, manifest.devices[device].artifact_sha256,
+  ]));
+}
+
+function nativeReceiptHashes(nativeRuns) {
+  return Object.fromEntries(DEVICES.map(device => [
+    device, nativeRuns[device].receipt_sha256,
+  ]));
+}
+
+function admissionHashes(manifest) {
+  return Object.fromEntries(DEVICES.map(device => {
+    const admission = manifest.devices[device].admission;
+    return [device, {
+      receipt: admission.receipt_sha256,
+      inventory: admission.inventory_sha256,
+    }];
+  }));
+}
+
+function profileMarkerHashes(manifest) {
+  return Object.fromEntries(DEVICES.map(device => [
+    device, manifest.devices[device].profile_marker_sha256,
+  ]));
+}
+
 export async function verifyThreeClientRun({
   runRoot,
   browserEvidence,
@@ -775,13 +1013,7 @@ export async function verifyThreeClientRun({
   oneplusOriginAudit,
 }) {
   const {root, manifest} = await loadManifest(runRoot);
-  const nativeUI = await auditVerifiedSyncRun({
-    runRoot: manifest.native_ui_run,
-    fixtureEvidence: path.join(manifest.native_ui_run, "fixture-evidence.json"),
-  });
-  if (nativeUI.receipt.artifact_sha256 !== manifest.artifact_sha256) {
-    throw new Error("native password UI receipt belongs to a different browser");
-  }
+  const nativeRuns = await auditNativeRuns(manifest);
 
   const browserFile = await readJSON(browserEvidence, "browser-native flow evidence");
   const serverFile = await readJSON(serverEvidence, "server flow evidence");
@@ -791,9 +1023,7 @@ export async function verifyThreeClientRun({
     "oneplus origin-state evidence",
   );
   validateBrowserEvidence(browserFile.value, manifest);
-  if (browserFile.value.native_ui_receipt_sha256 !== nativeUI.receipt_sha256) {
-    throw new Error("browser evidence is not bound to the verified native UI receipt");
-  }
+  requireNativeBindings(browserFile.value, nativeRuns);
   validateServerEvidence(serverFile.value, manifest, browserFile.value);
   validateOriginAudit(daAuditFile.value, "da", manifest, browserFile.value);
   validateOriginAudit(
@@ -806,14 +1036,15 @@ export async function verifyThreeClientRun({
   const receipt = {
     schema_version: SCHEMA_VERSION,
     result: "passed",
-    artifact_sha256: manifest.artifact_sha256,
-    source_commit: manifest.source_commit,
-    native_ui_receipt_sha256: nativeUI.receipt_sha256,
+    artifact_sha256: artifactHashes(manifest),
+    source_train: manifest.source_train,
+    admission_sha256: admissionHashes(manifest),
+    native_ui_receipt_sha256: nativeReceiptHashes(nativeRuns),
     browser_evidence_sha256: sha256(browserFile.raw),
     server_evidence_sha256: sha256(serverFile.raw),
     da_origin_audit_sha256: sha256(daAuditFile.raw),
     oneplus_origin_audit_sha256: sha256(oneplusAuditFile.raw),
-    profile_marker_sha256: manifest.profile_marker_sha256,
+    profile_marker_sha256: profileMarkerHashes(manifest),
     enrollment_order: DEVICES,
     password_revisions: {
       seed: "1",
@@ -863,10 +1094,7 @@ export async function verifyThreeClientRun({
 export async function auditVerifiedThreeClientRun(runRoot) {
   const {root, manifest} = await loadManifest(runRoot);
   const finalDirectory = path.join(root, "verified");
-  const nativeUI = await auditVerifiedSyncRun({
-    runRoot: manifest.native_ui_run,
-    fixtureEvidence: path.join(manifest.native_ui_run, "fixture-evidence.json"),
-  });
+  const nativeRuns = await auditNativeRuns(manifest);
   const browserFile = await readJSON(
     path.join(finalDirectory, "browser-evidence.json"),
     "verified browser-native flow evidence",
@@ -884,9 +1112,7 @@ export async function auditVerifiedThreeClientRun(runRoot) {
     "verified oneplus origin-state evidence",
   );
   validateBrowserEvidence(browserFile.value, manifest);
-  if (browserFile.value.native_ui_receipt_sha256 !== nativeUI.receipt_sha256) {
-    throw new Error("verified browser evidence lost its native UI binding");
-  }
+  requireNativeBindings(browserFile.value, nativeRuns);
   validateServerEvidence(serverFile.value, manifest, browserFile.value);
   validateOriginAudit(daAuditFile.value, "da", manifest, browserFile.value);
   validateOriginAudit(
@@ -904,14 +1130,15 @@ export async function auditVerifiedThreeClientRun(runRoot) {
   const expected = {
     schema_version: SCHEMA_VERSION,
     result: "passed",
-    artifact_sha256: manifest.artifact_sha256,
-    source_commit: manifest.source_commit,
-    native_ui_receipt_sha256: nativeUI.receipt_sha256,
+    artifact_sha256: artifactHashes(manifest),
+    source_train: manifest.source_train,
+    admission_sha256: admissionHashes(manifest),
+    native_ui_receipt_sha256: nativeReceiptHashes(nativeRuns),
     browser_evidence_sha256: sha256(browserFile.raw),
     server_evidence_sha256: sha256(serverFile.raw),
     da_origin_audit_sha256: sha256(daAuditFile.raw),
     oneplus_origin_audit_sha256: sha256(oneplusAuditFile.raw),
-    profile_marker_sha256: manifest.profile_marker_sha256,
+    profile_marker_sha256: profileMarkerHashes(manifest),
     enrollment_order: DEVICES,
     password_revisions: {
       seed: "1",
@@ -935,8 +1162,12 @@ export async function acceptanceStatus(runRoot) {
   const {root, manifest} = await loadManifest(runRoot);
   let state = "native-ui-required";
   try {
-    await regularFile(path.join(manifest.native_ui_run, "sync-receipt.json"),
-      "Sync acceptance receipt");
+    for (const device of DEVICES) {
+      await regularFile(
+        path.join(manifest.devices[device].native_run, "sync-receipt.json"),
+        `${device} Sync acceptance receipt`,
+      );
+    }
     state = "flow-evidence-required";
   } catch (error) {
     if (error.code !== "ENOENT") throw error;
@@ -972,7 +1203,7 @@ function requireArgs(args, names) {
 
 function usage() {
   return `usage:
-  three-client-acceptance.mjs init --artifact FILE --artifact-receipt FILE --output NEW_DIR
+  three-client-acceptance.mjs init --d-artifact FILE --d-artifact-receipt FILE --da-artifact FILE --da-artifact-receipt FILE --oneplus-artifact Browser-test.apk --output NEW_DIR
   three-client-acceptance.mjs status --run DIR
   three-client-acceptance.mjs verify --run DIR --browser-evidence JSON --server-evidence JSON --da-origin-audit JSON --oneplus-origin-audit JSON
 `;
@@ -984,18 +1215,24 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     const args = parseArgs(process.argv.slice(3));
     let result;
     if (command === "init") {
-      requireArgs(args, ["artifact", "artifact-receipt", "output"]);
+      requireArgs(args, [
+        "d-artifact", "d-artifact-receipt",
+        "da-artifact", "da-artifact-receipt",
+        "oneplus-artifact", "output",
+      ]);
       result = await initializeThreeClientRun({
-        artifact: args.artifact,
-        artifactReceipt: args["artifact-receipt"],
+        dArtifact: args["d-artifact"],
+        dArtifactReceipt: args["d-artifact-receipt"],
+        daArtifact: args["da-artifact"],
+        daArtifactReceipt: args["da-artifact-receipt"],
+        oneplusArtifact: args["oneplus-artifact"],
         output: args.output,
       });
       result = {
         event: "initialized",
         run: result.root,
-        artifact_sha256: result.artifact_sha256,
-        native_ui_run: result.native_ui_run,
-        profiles: result.profiles,
+        source_train: result.source_train,
+        devices: result.devices,
       };
     } else if (command === "status") {
       requireArgs(args, ["run"]);

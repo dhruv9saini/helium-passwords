@@ -97,7 +97,10 @@ loopback fixture attestation; a checklist alone cannot pass this gate.
 
 ## Gate 2: Password Sync
 
-Use three disposable profiles named `oneplus-test`, `d-test`, and `da-test`.
+Use separate disposable targets: the `d` Linux arm64-chroot profile, the `da`
+Linux x86_64 profile, and the separately installed
+`computer.helium.sync.test` OnePlus package. The OnePlus target is package
+admission, not a fabricated Linux profile directory.
 For the native lifecycle, run the private extension in
 [`password-runtime-sync-acceptance.md`](password-runtime-sync-acceptance.md).
 Its receipt binds secret-free bridge state and readable-journal metadata to the
@@ -412,9 +415,9 @@ record only timing/status observations, never conversation content or tokens.
 
 | Device | Desktop browser | Android browser | Required manual checks |
 | --- | --- | --- | --- |
-| `d` | Linux x86_64 | N/A | Authoritative seed, password lifecycle, service restart, local tab restore |
+| `d` | Linux ARM64 chroot Helium | N/A | Authoritative seed, password lifecycle, service restart, local tab restore |
 | `da` | Linux x86_64 | N/A | Pull-only join, password/cookie convergence, independent local tab restore |
-| `oneplus` | Linux ARM64 chroot Helium | Android arm64 Helium Sync | Native Android password store, background sync, codecs, streaming, tab restore |
+| `oneplus` | N/A | Android arm64 Helium Sync | Native Android password store, background sync, codecs, streaming, tab restore |
 
 An artifact is releasable only when every applicable gate has a linked result
 and every expected failure is explicit.

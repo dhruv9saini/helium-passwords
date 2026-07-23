@@ -17,30 +17,50 @@ The source tests have two deliberately separate responsibilities:
   tombstones, credential/content-key rotation, cookie records, and 64-bit
   counters. The fake receipt test is not presented as protocol proof.
 
-Runtime completion still requires a compiled, receipt-bound browser and the
-existing disposable TLS service. The gate validates the resulting evidence; it
-does not invent browser UI or server observations.
+Runtime completion still requires three compiled, independently admitted
+browser artifacts and the existing disposable TLS service. The gate validates
+the resulting evidence; it does not invent browser UI or server observations.
 
 ## Initialize
 
-Use one exact verified Linux browser input. The initializer reuses the public
-native password admission code, creates `d`, `da`, and `oneplus` profile
-directories with mode 0700 and the existing mode-0600 synthetic-only marker,
-adds a distinct mode-0600 device identity marker to each, and records every
-path and combined marker hash. The output directory must not exist.
+Use the exact artifact for each execution environment:
+
+- `d`: the Linux arm64 chroot executable and its verified Linux runtime receipt;
+- `da`: the Linux x86_64 executable and its verified Linux runtime receipt; and
+- `oneplus`: `Browser-test.apk` from the prepared
+  `computer.helium.sync.test` directory. Its `acceptance.env`,
+  `PACKAGE_SHA256SUMS`, and every inventoried runtime/provenance member are the
+  Android admission.
+
+The initializer calls the existing native password admission independently for
+all three devices. It creates mode-0700 browser profiles only for the two Linux
+targets, retains the existing mode-0600 synthetic marker, and adds distinct
+mode-0600 `d` and `da` identity markers. It does not create a filesystem
+browser profile for OnePlus: the exact test package, APK hash, acceptance
+metadata, and complete prepared-directory inventory are its boundary.
+
+All three admissions must report the same private source commit, Helium core
+commit, Chromium commit, and four-component Chromium version. Mixing artifacts
+from different builds or swapping the two Linux architectures fails during
+initialization. The output directory must not exist.
 
 ```sh
 node scripts/sync-runtime/three-client-acceptance.mjs init \
-  --artifact /absolute/verified/runtime/helium-wrapper \
-  --artifact-receipt /absolute/verified/artifact-receipt.env \
+  --d-artifact /absolute/d-arm64/runtime/helium-wrapper \
+  --d-artifact-receipt /absolute/d-arm64/artifact-receipt.env \
+  --da-artifact /absolute/da-x86_64/runtime/helium-wrapper \
+  --da-artifact-receipt /absolute/da-x86_64/artifact-receipt.env \
+  --oneplus-artifact /absolute/oneplus-prepared/Browser-test.apk \
   --output /absolute/new/three-client-run
 ```
 
-The returned `native_ui_run` is the `d` seed run. Complete
+The returned `devices` map names `native-d`, `native-da`, and
+`native-oneplus`. Complete
 [`password-runtime-acceptance.md`](password-runtime-acceptance.md) and
 [`password-runtime-sync-acceptance.md`](password-runtime-sync-acceptance.md)
-there with the exact admitted artifact. `da` and `oneplus` use the other two
-profile paths from `run.json`.
+in each sub-run with its exact admitted artifact. Launch the Android lifecycle
+only through the prepared package's artifact-carried disposable-browser
+boundary; never synthesize a OnePlus profile path.
 
 ## Required runtime flow
 
@@ -53,8 +73,9 @@ Helium Sync bridge.
 2. Enroll `da`, then `oneplus`, each pending and pull-only. Verify native
    password-store and CookieManager application/readback before promotion.
    Each joiner's initial password and cookie publication count must be zero.
-3. Restart all three unchanged profiles. Hash the bridge state before and after
-   and record zero password and cookie publications.
+3. Restart both unchanged Linux profiles and the unchanged Android test
+   package. Hash each bridge state before and after and record zero password and
+   cookie publications.
 4. Update the password from `da`. Attempt the stale prior revision from
    `oneplus`; require a revision conflict and preservation of the newer value.
    Apply/read back the update on all three devices, then delete it from `da`,
@@ -81,12 +102,13 @@ Helium Sync bridge.
 Browser evidence is an external, content-free JSON receipt because these
 native UI and CookieManager operations cannot be truthfully reconstructed by a
 source-only script. It must name
-`native-password-store-and-cookie-manager`, bind the exact
-`sync-receipt.json` SHA-256, and bind all three profile marker hashes. Server
-evidence must come from the canonical TLS service, name the exact private source
-commit admitted by the artifact receipt, and record only device, cursor,
-revision, count, result, and journal-hash metadata. It must not contain payloads,
-credentials, tokens, nonces, or ciphertext.
+`native-password-store-and-cookie-manager` and, for each device, bind its
+platform, target, package, artifact SHA-256, admission hashes, native
+`sync-receipt.json` SHA-256, and Linux profile marker or Android null marker.
+Server evidence must come from the canonical TLS service, name the exact shared
+source/core/Chromium train, and record only device, cursor, revision, count,
+result, and journal-hash metadata. It must not contain payloads, credentials,
+tokens, nonces, or ciphertext.
 
 ## Verify
 
@@ -102,15 +124,15 @@ node scripts/sync-runtime/three-client-acceptance.mjs status \
   --run /absolute/three-client-run
 ```
 
-Verification rehashes the artifact, artifact receipt, disposable markers,
-native screenshots, native Sync state/journal evidence, browser receipt, server
-receipt, and both origin audits. It copies the admitted content-free inputs and
-a mode-0600 receipt atomically into `verified/`; an existing result is never
-replaced. `status` reports `passed` only after repeating that audit and matching
-the receipt to the copied evidence; corruption does not degrade to a stale
-success label.
+Verification rehashes all three artifacts, both Linux receipts, the complete
+prepared Android inventory, both Linux markers, all three native screenshot and
+Sync state/journal receipts, browser receipt, server receipt, and both origin
+audits. It copies the admitted content-free inputs and a mode-0600 receipt
+atomically into `verified/`; an existing result is never replaced. `status`
+reports `passed` only after repeating that audit and matching the receipt to
+the copied evidence; corruption does not degrade to a stale success label.
 
 A source-test pass means the gate and canonical protocol foundations are ready.
-It does not mean a browser artifact passed. Personal enrollment remains blocked
-until the runtime receipt exists for the returned artifact and all three new
-disposable profiles.
+It does not mean any browser artifact passed. Personal enrollment remains
+blocked until all three native runtime receipts and the consolidated
+three-device receipt exist for the exact returned artifacts.
