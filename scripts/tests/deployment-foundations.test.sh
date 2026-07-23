@@ -9,64 +9,86 @@ cleanup() { find "$test_root" "$tmp_destination" "$shm_destination" -depth -dele
 trap cleanup EXIT
 mkdir -p "$test_root/bin" "$test_root/home/.config/net.imput.helium/Default" \
   "$test_root/artifact"
-printf 'age1fixture-a\nage1fixture-b\n' >"$test_root/recipients.txt"
+printf '%s\n' \
+  'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' \
+  'age1pppppppppppppppppppppppppppppppppppppppppppppppppppp' \
+  >"$test_root/recipients.txt"
 printf 'AGE-SECRET-KEY-fixture\n' >"$test_root/identity.txt"
-chmod 600 "$test_root/recipients.txt" "$test_root/identity.txt"
+printf 'SYNTHETIC-SSH-PRIVATE-KEY\n' >"$test_root/ssh-identity"
+printf 'fixture-peer ssh-ed25519 SYNTHETIC\n' >"$test_root/known-hosts"
+chmod 600 "$test_root/recipients.txt" "$test_root/identity.txt" \
+  "$test_root/ssh-identity" "$test_root/known-hosts"
 
 make_backup_receipt() {
   local source_path=$1 config=$2 generation=$3 profile_id=$4
-  local cipher=$test_root/cipher-$profile_id cipher_sha cipher_size recipients_sha path_sha archive_root dest ns receipt
+  local cipher=$test_root/cipher-$profile_id cipher_sha cipher_size
+  local recipients_sha topology_sha path_sha archive_root dest ns receipt tree_sha
+  local fingerprint_kind
   printf 'synthetic encrypted profile %s\n' "$profile_id" >"$cipher"
   cipher_sha=$(sha256sum "$cipher" | awk '{print $1}')
   cipher_size=$(stat -c %s "$cipher")
   recipients_sha=$(sort -u "$test_root/recipients.txt" | sha256sum | awk '{print $1}')
+  topology_sha=$(
+    printf '%s\n' \
+      "nas-copy|nas|local|$(uname -n | cut -d. -f1)|$tmp_destination" \
+      'fixture-peer-copy|device|ssh|fixture-peer|/synthetic/deploy-peer' |
+      sort | sha256sum | awk '{print $1}'
+  )
   path_sha=$(printf %s "$source_path" | sha256sum | awk '{print $1}')
   archive_root=${source_path##*/}
   if [[ "$profile_id" == android && -f "$test_root/android-profile.tar" ]]; then
     tree_sha=$(sha256sum "$test_root/android-profile.tar" | awk '{print $1}')
+    fingerprint_kind='tar-stream-v1'
   elif [[ -d "$source_path" ]]; then
     tree_sha=$(tar --sort=name --format=posix \
       --pax-option=delete=atime,delete=ctime --mtime=@0 \
       --owner=0 --group=0 --numeric-owner -C "$source_path" -cf - . | \
       sha256sum | awk '{print $1}')
+    fingerprint_kind='normalized-tree-v1'
   else
     tree_sha=$(printf 'synthetic-tree-%s' "$profile_id" | sha256sum | awk '{print $1}')
+    fingerprint_kind='normalized-tree-v1'
   fi
   cat >"$config" <<EOF
-version=1
+version=2
 source_device=fixture
 profile_id=$profile_id
 source_path=$source_path
 age_recipients=$test_root/recipients.txt
 age_identity=$test_root/identity.txt
+ssh_user=d
+ssh_identity=$test_root/ssh-identity
+ssh_known_hosts=$test_root/known-hosts
 retention_keep=2
 destination_reserve_bytes=1
-destination=copy-a|$tmp_destination
-destination=copy-b|$shm_destination
+destination=nas-copy|nas|local|$(uname -n | cut -d. -f1)|-|$tmp_destination
+destination=fixture-peer-copy|device|ssh|fixture-peer|fixture-peer|/synthetic/deploy-peer
 EOF
   chmod 600 "$config"
   for dest in "$tmp_destination" "$shm_destination"; do
-    ns=$dest/helium-profile-backups/fixture/$profile_id/generations
+    ns=$dest/fixture/$profile_id/generations/$generation
     mkdir -p "$ns"
-    cp "$cipher" "$ns/$generation.tar.zst.age"
-    receipt=$ns/$generation.receipt.env
+    cp "$cipher" "$ns/profile.tar.zst.age"
+    receipt=$ns/receipt.env
     cat >"$receipt" <<EOF
-schema_version=1
+schema_version=2
 source_device=fixture
 profile_id=$profile_id
 profile_path_sha256=$path_sha
 source_tree_sha256=$tree_sha
+source_fingerprint_kind=$fingerprint_kind
 archive_root=$archive_root
 generation=$generation
 cipher_sha256=$cipher_sha
 cipher_size=$cipher_size
 source_bytes=123
 recipients_sha256=$recipients_sha
+topology_sha256=$topology_sha
 created_at=2026-07-22T12:00:00Z
 EOF
-    chmod 600 "$receipt" "$ns/$generation.tar.zst.age"
+    chmod 600 "$receipt" "$ns/profile.tar.zst.age"
   done
-  printf '%s\n' "$tmp_destination/helium-profile-backups/fixture/$profile_id/generations/$generation.receipt.env"
+  printf '%s\n' "$tmp_destination/fixture/$profile_id/generations/$generation/receipt.env"
 }
 
 commit=0123456789abcdef0123456789abcdef01234567
@@ -117,25 +139,84 @@ EOF
 cat >"$test_root/bin/age" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-mode= output= input=
+mode= input=
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --encrypt) mode=encrypt; shift ;;
     --decrypt) mode=decrypt; shift ;;
     --recipients-file|--identity) shift 2 ;;
-    --output) output=$2; shift 2 ;;
     *) input=$1; shift ;;
   esac
 done
 case "$mode" in
-  encrypt) openssl enc -aes-256-cbc -pbkdf2 -pass pass:synthetic-deploy-test -out "$output" ;;
-  decrypt) openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:synthetic-deploy-test -in "$input" ;;
+  encrypt)
+    openssl enc -aes-256-cbc -pbkdf2 -pass pass:synthetic-deploy-test
+    ;;
+  decrypt)
+    if [[ -n "$input" ]]; then
+      openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:synthetic-deploy-test -in "$input"
+    else
+      openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:synthetic-deploy-test
+    fi
+    ;;
   *) exit 64 ;;
 esac
 EOF
-chmod 700 "$test_root/bin/git" "$test_root/bin/go" "$test_root/bin/adb" "$test_root/bin/age"
+cat >"$test_root/bin/findmnt" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '/synthetic-separate-nas\n'
+EOF
+cat >"$test_root/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+while [[ "${1:-}" == -* ]]; do
+  case "$1" in
+    -F) [[ "$2" == none ]]; shift 2 ;;
+    -o) shift 2 ;;
+    -i) [[ "$2" == "$DEPLOY_TEST_SSH_IDENTITY" ]]; shift 2 ;;
+    -l) [[ "$2" == d ]]; shift 2 ;;
+    *) exit 1 ;;
+  esac
+done
+[[ "$1" == fixture-peer ]]
+shift
+command_text=$1
+if [[ "$command_text" == "uname -n " ]]; then
+  printf 'fixture-peer\n'
+  exit
+fi
+command_text=${command_text//\/synthetic\/deploy-peer/${DEPLOY_TEST_PEER_ROOT}}
+bash -c "$command_text"
+EOF
+cat >"$test_root/bin/rsync" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+arguments=("$@")
+[[ "$1" == -e && "$2" == *"-F none"* ]]
+count=${#arguments[@]}
+source_file=${arguments[count-2]}
+target_file=${arguments[count-1]}
+if [[ "$source_file" == fixture-peer:* ]]; then
+  source_file=${source_file#fixture-peer:}
+  source_file=${source_file/\/synthetic\/deploy-peer/${DEPLOY_TEST_PEER_ROOT}}
+else
+  [[ "$target_file" == fixture-peer:* ]]
+  target_file=${target_file#fixture-peer:}
+  target_file=${target_file/\/synthetic\/deploy-peer/${DEPLOY_TEST_PEER_ROOT}}
+fi
+cat "$source_file" >"$target_file"
+chmod 600 "$target_file"
+EOF
+chmod 700 "$test_root/bin/git" "$test_root/bin/go" "$test_root/bin/adb" \
+  "$test_root/bin/age" "$test_root/bin/findmnt" "$test_root/bin/ssh" \
+  "$test_root/bin/rsync"
 PATH="$test_root/bin:$PATH"
 export PATH
+export DEPLOY_TEST_SSH_IDENTITY="$test_root/ssh-identity"
+export DEPLOY_TEST_PEER_ROOT="$shm_destination"
 
 cat >"$test_root/artifact/helium" <<'EOF'
 #!/usr/bin/env sh
@@ -220,7 +301,7 @@ if ADB="$test_root/bin/adb" ADB_STREAM_COUNTER="$test_root/adb-stream-count" \
   echo 'changing Android profile stream committed a backup' >&2
   exit 1
 fi
-test ! -e "$tmp_destination/helium-profile-backups/fixture/android/generations/20260722T120300Z-dddddddddddddddd.receipt.env"
+test ! -e "$tmp_destination/fixture/android/generations/20260722T120300Z-dddddddddddddddd"
 
 sed -i 's#https://lm.tailnet.test:44719#http://127.0.0.1:44719#' "$test_root/enrollment/base_url"
 if ADB="$test_root/bin/adb" "$repo_root/scripts/android-local/configure-android-chromium-sync.sh" \

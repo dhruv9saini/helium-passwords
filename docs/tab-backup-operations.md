@@ -143,12 +143,14 @@ general-purpose login key or trusting a first connection.
 Each device has its own `key_id` and age-recipient file. The normalized
 recipient-set fingerprint is bound into every backup manifest. At least two
 distinct recovery recipients are required so losing one recovery identity does
-not make every snapshot unreadable. Do not reuse recipient sets across source
-devices. Private identities are needed only for an explicit restore: keep them
-on separate recovery media, not persistently on the source, either destination,
-or in the repository. Temporarily attach the matching source-device identity
-only for a restore drill, then remove it. Destination devices hold ciphertext
-only and cannot open or merge another device's tabs.
+not make every snapshot unreadable. No individual recipient may appear in two
+source-device configs; merely using three different recipient-set fingerprints
+is insufficient because partially overlapping sets still share a key authority.
+Private identities are needed only for an explicit restore: keep them on
+separate recovery media, not persistently on the source, either destination, or
+in the repository. Temporarily attach the matching source-device identity only
+for a restore drill, then remove it. Destination devices hold ciphertext only
+and cannot open or merge another device's tabs.
 
 Before installation, stage the three public-recipient configs on lm and prove
 exact topology and distinct key material without contacting a browser:
@@ -158,7 +160,10 @@ scripts/tabs/tab-fleet-audit.sh d.conf da.conf oneplus.conf
 ```
 
 The audit outputs only device IDs, key IDs, recipient fingerprints, and
-destination IDs; it never prints keys or tab content.
+destination IDs; it never prints keys or tab content. Its terminal result is
+`fleet_configuration=verified`: this proves configuration only, not live
+routes, fresh browser exports, healthy ciphertext copies, or a restore drill.
+Those remain source-local runtime gates.
 
 Destination data is namespaced as:
 
@@ -183,8 +188,9 @@ scripts/tabs/tab-backup.sh quarantine "$config" local-spool GENERATION bad-hash
 ```
 
 The configuration parser never evaluates shell. It rejects topology aliases,
-local destinations, the wrong replica device, and either host when it equals
-the source device. Two directories on lm cannot masquerade as two hosts.
+local destinations, the wrong replica device, any peer root other than
+`/home/d/.local/share/helium-tab-backups`, and either host when it equals the
+source device. Two directories on lm cannot masquerade as two hosts.
 
 ## Retention and recovery
 
@@ -211,17 +217,21 @@ Restore is explicit and may target only a nonexistent disposable directory:
 
 ```sh
 scripts/tabs/tab-backup.sh restore-to-disposable "$config" \
-  d-copy GENERATION /new/disposable/tab-restore
+  d-copy GENERATION /new/disposable/tab-restore-peer
+scripts/tabs/tab-backup.sh restore-to-disposable "$config" \
+  nas-on-lm GENERATION /new/disposable/tab-restore-nas
 ```
 
-The command fetches one copy, verifies the ciphertext, decrypts to a temporary
-directory, rejects any unexpected tar member, revalidates the snapshot through
-`helium-tabs`, and uses its atomic disposable restore. It then invokes the
-standalone `validate-restore` gate and verifies that the receipt names the
-requested source generation, device, and profile. Nothing in this layer can
-promote a restore into a live browser profile. The wrapper must run on the
-snapshot's source device and cannot open or merge the result into another
-device's browser.
+Run both commands for each source-device drill and require their restored
+session files to agree. This proves that neither off-device copy is merely a
+write-only claim. Each command fetches one copy, verifies the ciphertext,
+decrypts to a temporary directory, rejects any unexpected tar member,
+revalidates the snapshot through `helium-tabs`, and uses its atomic disposable
+restore. It then invokes the standalone `validate-restore` gate and verifies
+that the receipt names the requested source generation, device, and profile.
+Nothing in this layer can promote a restore into a live browser profile. The
+wrapper must run on the snapshot's source device and cannot open or merge the
+result into another device's browser.
 
 After that neutral restore succeeds, `helium-tabs prepare-browser-profile`
 may prepare a browser-readable copy only as a new `drill-*` child of an

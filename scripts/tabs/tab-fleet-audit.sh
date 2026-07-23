@@ -14,6 +14,7 @@ expected_devices=(d da oneplus)
 config_files=("$@")
 key_ids=()
 recipient_fingerprints=()
+recipient_owners=()
 
 for index in 0 1 2; do
 	config_file=${config_files[index]}
@@ -26,6 +27,9 @@ for index in 0 1 2; do
 	tab_ops_require_absolute age_recipients "${TAB_AGE_RECIPIENTS}"
 	key_ids+=("${TAB_KEY_ID}")
 	recipient_fingerprints+=("$(tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}")")
+	while IFS= read -r recipient; do
+		recipient_owners+=("${TAB_SOURCE_DEVICE}|${recipient}")
+	done < <(tab_ops_normalized_recipients "${TAB_AGE_RECIPIENTS}")
 	printf 'device=%s key_id=%s recipients_sha256=%s topology=%s,%s\n' \
 		"${TAB_SOURCE_DEVICE}" "${TAB_KEY_ID}" "${recipient_fingerprints[index]}" \
 		"${TAB_DEST_IDS[0]}@${TAB_DEST_HOSTS[0]}" \
@@ -40,5 +44,14 @@ done
 	echo "each source device must use independent recovery recipients" >&2
 	exit 1
 }
+recipient_count=${#recipient_owners[@]}
+unique_recipient_count=$(
+	printf '%s\n' "${recipient_owners[@]}" |
+		cut -d'|' -f2- | sort -u | wc -l
+)
+[ "${recipient_count}" -eq "${unique_recipient_count}" ] || {
+	echo "no recovery recipient may be shared between source devices" >&2
+	exit 1
+}
 
-echo 'fleet_health=configuration_verified'
+echo 'fleet_configuration=verified'

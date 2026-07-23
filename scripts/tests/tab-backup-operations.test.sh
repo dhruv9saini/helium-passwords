@@ -78,6 +78,7 @@ remote_alias=$1
 shift
 command_text=$1
 command_text=${command_text//\/srv\/nas\/helium-tab-backups/${TAB_TEST_NAS_ROOT}}
+command_text=${command_text//\/home\/d\/.local\/share\/helium-tab-backups/${TAB_TEST_PEER_ROOT}}
 if [[ "${command_text}" == "uname -n " ]]; then
     printf '%s\n' "${remote_alias}"
 else
@@ -105,6 +106,8 @@ source_file=${source_file#*:}
 destination_file=${destination_file#*:}
 source_file=${source_file/\/srv\/nas\/helium-tab-backups/${TAB_TEST_NAS_ROOT}}
 destination_file=${destination_file/\/srv\/nas\/helium-tab-backups/${TAB_TEST_NAS_ROOT}}
+source_file=${source_file/\/home\/d\/.local\/share\/helium-tab-backups/${TAB_TEST_PEER_ROOT}}
+destination_file=${destination_file/\/home\/d\/.local\/share\/helium-tab-backups/${TAB_TEST_PEER_ROOT}}
 install -m 600 "${source_file}" "${destination_file}"
 EOF
 
@@ -154,10 +157,11 @@ ssh_identity=${temporary}/ssh-identity
 ssh_known_hosts=${temporary}/known-hosts
 destination_reserve_bytes=1
 destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-tab-backups
-destination=d-copy|device|ssh|d|d|${temporary}/destination-two
+destination=d-copy|device|ssh|d|d|/home/d/.local/share/helium-tab-backups
 EOF
 chmod 600 "${config}"
 export TAB_TEST_NAS_ROOT="${temporary}/destination-lm"
+export TAB_TEST_PEER_ROOT="${temporary}/destination-two"
 export TAB_TEST_SSH_IDENTITY="${temporary}/ssh-identity"
 export TAB_TEST_SSH_KNOWN_HOSTS="${temporary}/known-hosts"
 export PATH="${temporary}/bin:${PATH}"
@@ -240,6 +244,13 @@ restore_directory="${temporary}/disposable-restore"
 test -f "${restore_directory}/session.json"
 test -f "${restore_directory}/restore-manifest.json"
 grep -q 'fixture.invalid' "${restore_directory}/session.json"
+
+nas_restore_directory="${temporary}/disposable-restore-nas"
+"${repo_root}/scripts/tabs/tab-backup.sh" restore-to-disposable "${config}" \
+	nas-on-lm "${generation}" "${nas_restore_directory}" >/dev/null
+"${temporary}/bin/helium-tabs" validate-restore \
+	--destination "${nas_restore_directory}" >/dev/null
+cmp "${restore_directory}/session.json" "${nas_restore_directory}/session.json"
 
 disposable_root="${temporary}/disposable-browser-root"
 mkdir -m 700 "${disposable_root}"
@@ -343,7 +354,7 @@ ssh_identity=${temporary}/ssh-identity
 ssh_known_hosts=${temporary}/known-hosts
 destination_reserve_bytes=1
 destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-tab-backups
-destination=${peer}-copy|device|ssh|${peer}|${peer}|${temporary}/fleet-${peer}
+destination=${peer}-copy|device|ssh|${peer}|${peer}|/home/d/.local/share/helium-tab-backups
 EOF
 	chmod 600 "${output}"
 }
@@ -354,7 +365,7 @@ make_fleet_config d da "${temporary}/d.recipients" "${d_config}"
 make_fleet_config oneplus da "${temporary}/oneplus.recipients" "${oneplus_config}"
 fleet_output=$("${repo_root}/scripts/tabs/tab-fleet-audit.sh" \
 	"${d_config}" "${config}" "${oneplus_config}")
-grep -q '^fleet_health=configuration_verified$' <<<"${fleet_output}"
+grep -q '^fleet_configuration=verified$' <<<"${fleet_output}"
 
 reused_key_config="${temporary}/oneplus-reused-key.conf"
 sed "s#age_recipients=${temporary}/oneplus.recipients#age_recipients=${temporary}/recipients.txt#" \
@@ -363,6 +374,21 @@ chmod 600 "${reused_key_config}"
 if "${repo_root}/scripts/tabs/tab-fleet-audit.sh" \
 	"${d_config}" "${config}" "${reused_key_config}" >/dev/null 2>&1; then
 	echo "fleet audit accepted a reused recovery recipient set" >&2
+	exit 1
+fi
+
+partially_reused_key_config="${temporary}/oneplus-partially-reused-key.conf"
+{
+	head -n 1 "${temporary}/recipients.txt"
+	tail -n 1 "${temporary}/oneplus.recipients"
+} >"${temporary}/oneplus-partially-reused.recipients"
+chmod 600 "${temporary}/oneplus-partially-reused.recipients"
+sed "s#age_recipients=${temporary}/oneplus.recipients#age_recipients=${temporary}/oneplus-partially-reused.recipients#" \
+	"${oneplus_config}" >"${partially_reused_key_config}"
+chmod 600 "${partially_reused_key_config}"
+if "${repo_root}/scripts/tabs/tab-fleet-audit.sh" \
+	"${d_config}" "${config}" "${partially_reused_key_config}" >/dev/null 2>&1; then
+	echo "fleet audit accepted one recovery recipient shared across devices" >&2
 	exit 1
 fi
 

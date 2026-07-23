@@ -2,121 +2,265 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-source_root=$(mktemp -d "$repo_root/.profile-backup-source.XXXXXX")
-tmp_destination=$(mktemp -d /tmp/helium-profile-backup-a.XXXXXX)
-shm_destination=$(mktemp -d /dev/shm/helium-profile-backup-b.XXXXXX)
+test_root=$(mktemp -d "$repo_root/.profile-backup-test.XXXXXX")
 cleanup() {
   [[ -z "${holder_pid:-}" ]] || kill "$holder_pid" >/dev/null 2>&1 || true
-  find "$source_root" "$tmp_destination" "$shm_destination" -depth -delete
+  find "$test_root" -depth -delete
 }
 trap cleanup EXIT
 
-mkdir -p "$source_root/profile/Default/Sessions" "$source_root/bin" \
-  "$source_root/restore-root"
-chmod 700 "$source_root/restore-root"
-: >"$source_root/restore-root/.helium-disposable-profile-restore-root"
-printf 'synthetic-session-state\n' >"$source_root/profile/Default/Sessions/Tabs_fixture"
-printf 'synthetic-preferences\n' >"$source_root/profile/Default/Preferences"
+mkdir -p "$test_root/profile/Default/Sessions" "$test_root/bin" \
+  "$test_root/nas" "$test_root/peer" "$test_root/restore-root" \
+  "$test_root/receipts"
+chmod 700 "$test_root/restore-root"
+: >"$test_root/restore-root/.helium-disposable-profile-restore-root"
+printf 'synthetic-session-state\n' >"$test_root/profile/Default/Sessions/Tabs_fixture"
+printf 'synthetic-preferences\n' >"$test_root/profile/Default/Preferences"
 
-cat >"$source_root/bin/age" <<'EOF'
+cat >"$test_root/bin/age" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-mode= output= input=
+mode= input=
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --encrypt) mode=encrypt; shift ;;
     --decrypt) mode=decrypt; shift ;;
-    --recipients-file|--identity) shift 2 ;;
-    --output) output=$2; shift 2 ;;
+    --recipients-file|--identity) [[ -s "$2" ]]; shift 2 ;;
     *) input=$1; shift ;;
   esac
 done
 case "$mode" in
-  encrypt) openssl enc -aes-256-cbc -pbkdf2 -pass pass:synthetic-profile-test -out "$output" ;;
-  decrypt) openssl enc -d -aes-256-cbc -pbkdf2 -pass pass:synthetic-profile-test -in "$input" ;;
+  encrypt)
+    openssl enc -aes-256-cbc -pbkdf2 -pass pass:synthetic-profile-test
+    ;;
+  decrypt)
+    if [[ -n "$input" ]]; then
+      openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:synthetic-profile-test -in "$input"
+    else
+      openssl enc -d -aes-256-cbc -pbkdf2 \
+        -pass pass:synthetic-profile-test
+    fi
+    ;;
   *) exit 64 ;;
 esac
 EOF
-chmod 700 "$source_root/bin/age"
-PATH="$source_root/bin:$PATH"
-export PATH
-printf 'AGE-SECRET-KEY-1SYNTHETIC-A\n' >"$source_root/identity-a.txt"
-printf 'AGE-SECRET-KEY-1SYNTHETIC-B\n' >"$source_root/identity-b.txt"
-printf 'age1synthetic-recipient-a\nage1synthetic-recipient-b\n' >"$source_root/recipients.txt"
-chmod 600 "$source_root/identity-a.txt" "$source_root/identity-b.txt" \
-  "$source_root/recipients.txt"
 
-config=$source_root/profile-backup.conf
+cat >"$test_root/bin/findmnt" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '/synthetic-separate-nas\n'
+EOF
+
+cat >"$test_root/bin/ssh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+while [[ "${1:-}" == -* ]]; do
+  case "$1" in
+    -F) [[ "$2" == none ]]; shift 2 ;;
+    -o)
+      case "$2" in
+        GlobalKnownHostsFile=*|UserKnownHostsFile=*)
+          [[ "${2#*=}" == "$PROFILE_TEST_SSH_KNOWN_HOSTS" ]]
+          ;;
+      esac
+      shift 2
+      ;;
+    -i) [[ "$2" == "$PROFILE_TEST_SSH_IDENTITY" ]]; shift 2 ;;
+    -l) [[ "$2" == d ]]; shift 2 ;;
+    *) echo "unexpected SSH option: $1" >&2; exit 1 ;;
+  esac
+done
+remote_alias=$1
+shift
+[[ "$remote_alias" == fixture-peer ]]
+command_text=$1
+if [[ "$command_text" == "uname -n " ]]; then
+  printf '%s\n' "${PROFILE_TEST_REMOTE_HOST:-fixture-peer}"
+  exit
+fi
+command_text=${command_text//\/synthetic\/peer-profile-backups/${PROFILE_TEST_PEER_ROOT}}
+bash -c "$command_text"
+EOF
+
+cat >"$test_root/bin/rsync" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+arguments=("$@")
+[[ "$1" == -e ]]
+[[ "$2" == *"-F none"* ]]
+[[ "$2" == *"-o BatchMode=yes"* ]]
+[[ "$2" == *"-o IdentitiesOnly=yes"* ]]
+[[ "$2" == *"-o StrictHostKeyChecking=yes"* ]]
+[[ "$2" == *"-o GlobalKnownHostsFile=${PROFILE_TEST_SSH_KNOWN_HOSTS}"* ]]
+[[ "$2" == *"-o UserKnownHostsFile=${PROFILE_TEST_SSH_KNOWN_HOSTS}"* ]]
+[[ "$2" == *"-i ${PROFILE_TEST_SSH_IDENTITY}"* ]]
+count=${#arguments[@]}
+source_file=${arguments[count-2]}
+target_file=${arguments[count-1]}
+if [[ "$source_file" == fixture-peer:* ]]; then
+  source_file=${source_file#fixture-peer:}
+  source_file=${source_file/\/synthetic\/peer-profile-backups/${PROFILE_TEST_PEER_ROOT}}
+else
+  [[ "$target_file" == fixture-peer:* ]]
+  target_file=${target_file#fixture-peer:}
+  target_file=${target_file/\/synthetic\/peer-profile-backups/${PROFILE_TEST_PEER_ROOT}}
+fi
+cat "$source_file" >"$target_file"
+chmod 600 "$target_file"
+EOF
+
+chmod 700 "$test_root/bin/age" "$test_root/bin/findmnt" \
+  "$test_root/bin/ssh" "$test_root/bin/rsync"
+PATH="$test_root/bin:$PATH"
+export PATH
+
+printf 'AGE-SECRET-KEY-1SYNTHETIC-A\n' >"$test_root/identity-a.txt"
+printf 'AGE-SECRET-KEY-1SYNTHETIC-B\n' >"$test_root/identity-b.txt"
+printf '%s\n' \
+  'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' \
+  'age1pppppppppppppppppppppppppppppppppppppppppppppppppppp' \
+  >"$test_root/recipients.txt"
+printf 'SYNTHETIC-SSH-PRIVATE-KEY\n' >"$test_root/ssh-identity"
+printf 'fixture-peer ssh-ed25519 SYNTHETIC\n' >"$test_root/known-hosts"
+chmod 600 "$test_root/identity-a.txt" "$test_root/identity-b.txt" \
+  "$test_root/recipients.txt" "$test_root/ssh-identity" \
+  "$test_root/known-hosts"
+export PROFILE_TEST_SSH_IDENTITY="$test_root/ssh-identity"
+export PROFILE_TEST_SSH_KNOWN_HOSTS="$test_root/known-hosts"
+export PROFILE_TEST_PEER_ROOT="$test_root/peer"
+
+local_host=$(uname -n | cut -d. -f1)
+config=$test_root/profile-backup.conf
 cat >"$config" <<EOF
-version=1
+version=2
 source_device=fixture
 profile_id=default
-source_path=$source_root/profile
-age_recipients=$source_root/recipients.txt
-age_identity=$source_root/identity-a.txt
+source_path=$test_root/profile
+age_recipients=$test_root/recipients.txt
+age_identity=$test_root/identity-a.txt
+ssh_user=d
+ssh_identity=$test_root/ssh-identity
+ssh_known_hosts=$test_root/known-hosts
 retention_keep=2
 destination_reserve_bytes=1
-destination=copy-a|$tmp_destination
-destination=copy-b|$shm_destination
+destination=nas-copy|nas|local|$local_host|-|$test_root/nas
+destination=fixture-peer-copy|device|ssh|fixture-peer|fixture-peer|/synthetic/peer-profile-backups
 EOF
 chmod 600 "$config"
 
 tool=$repo_root/scripts/profile-backup/helium-profile-backup.sh
-preflight=$($tool preflight "$config")
+preflight=$("$tool" preflight "$config")
 grep -qx 'preflight=ok' <<<"$preflight"
+grep -Eq '^topology_sha256=[a-f0-9]{64}$' <<<"$preflight"
+
+empty_config=$test_root/empty-profile-backup.conf
+sed 's/profile_id=default/profile_id=empty/' "$config" >"$empty_config"
+chmod 600 "$empty_config"
+mkdir -p "$test_root/nas/fixture/empty/generations" \
+  "$test_root/peer/fixture/empty/generations"
+"$tool" retention-apply "$empty_config" | grep -qx 'retention=unchanged'
+
 generation1=20260722T120000Z-1111111111111111
 generation2=20260722T120100Z-2222222222222222
 generation3=20260722T120200Z-3333333333333333
 generation4=20260722T120300Z-4444444444444444
-backup1=$($tool backup "$config" "$generation1")
-receipt=$(awk -F= '$1 == "receipt" {print substr($0,9)}' <<<"$backup1")
-test -f "$receipt"
-$tool status "$config" "$generation1" | grep -qx 'status=healthy'
-$tool verify-receipt "$config" "$receipt" | grep -qx 'profile_backup_admission=verified'
+backup1=$("$tool" backup "$config" "$generation1")
+grep -qx 'backup=committed' <<<"$backup1"
+grep -qx 'receipt_destination=nas-copy' <<<"$backup1"
+"$tool" status "$config" "$generation1" | grep -qx 'status=healthy'
 
-restore=$source_root/restore-root/drill-profile
-$tool restore-to-disposable "$config" "$generation1" "$restore" | \
-  grep -qx 'restore=disposable-only'
-cmp "$source_root/profile/Default/Preferences" "$restore/Default/Preferences"
-test -f "$restore/.helium-profile-restore-receipt.env"
-if $tool restore-to-disposable "$config" "$generation1" "$restore" >/dev/null 2>&1; then
+receipt=$test_root/receipts/$generation1.env
+"$tool" receipt-export "$config" nas-copy "$generation1" "$receipt" |
+  grep -q "^receipt_exported=$receipt$"
+[[ -f "$receipt" && "$(stat -c %a "$receipt")" == 600 ]]
+"$tool" verify-receipt "$config" "$receipt" |
+  grep -qx 'profile_backup_admission=verified'
+
+for root in "$test_root/nas" "$test_root/peer"; do
+  generation_dir=$root/fixture/default/generations/$generation1
+  [[ -f "$generation_dir/profile.tar.zst.age" ]]
+  [[ -f "$generation_dir/receipt.env" ]]
+  [[ "$(find "$generation_dir" -mindepth 1 -maxdepth 1 | wc -l)" -eq 2 ]]
+done
+if find "$test_root" -type f \( -name '*.tar' -o -name '*.tar.zst' \) |
+  grep -q .; then
+  echo 'plaintext archive was staged during profile backup' >&2
+  exit 1
+fi
+
+restore=$test_root/restore-root/drill-profile
+"$tool" restore-to-disposable "$config" fixture-peer-copy \
+  "$generation1" "$restore" | grep -qx 'restore=disposable-only'
+cmp "$test_root/profile/Default/Preferences" "$restore/Default/Preferences"
+grep -qx 'source_destination=fixture-peer-copy' \
+  "$restore/.helium-profile-restore-receipt.env"
+
+nas_restore=$test_root/restore-root/drill-profile-nas
+"$tool" restore-to-disposable "$config" nas-copy \
+  "$generation1" "$nas_restore" | grep -qx 'restore=disposable-only'
+cmp "$test_root/profile/Default/Preferences" \
+  "$nas_restore/Default/Preferences"
+cmp "$restore/Default/Preferences" "$nas_restore/Default/Preferences"
+grep -qx 'source_destination=nas-copy' \
+  "$nas_restore/.helium-profile-restore-receipt.env"
+
+if "$tool" restore-to-disposable "$config" nas-copy \
+  "$generation1" "$restore" >/dev/null 2>&1; then
   echo 'restore overwrote an existing destination' >&2
   exit 1
 fi
 
-$tool backup "$config" "$generation2" >/dev/null
-$tool backup "$config" "$generation3" >/dev/null
-$tool retention-apply "$config" | grep -qx "retired_generation=$generation1"
-test -f "$tmp_destination/helium-profile-backups/fixture/default/retired/$generation1/$generation1.tar.zst.age"
-test -f "$shm_destination/helium-profile-backups/fixture/default/retired/$generation1/$generation1.tar.zst.age"
+"$tool" backup "$config" "$generation2" >/dev/null
+"$tool" backup "$config" "$generation3" >/dev/null
+"$tool" retention-apply "$config" | grep -qx "retired_generation=$generation1"
+for root in "$test_root/nas" "$test_root/peer"; do
+  [[ -f "$root/fixture/default/retired/$generation1/profile.tar.zst.age" ]]
+  [[ -f "$root/fixture/default/retired/$generation1/receipt.env" ]]
+done
 
-cipher="$tmp_destination/helium-profile-backups/fixture/default/generations/$generation2.tar.zst.age"
+cipher=$test_root/nas/fixture/default/generations/$generation2/profile.tar.zst.age
 printf tamper >>"$cipher"
-if $tool status "$config" "$generation2" >/dev/null 2>&1; then
+if "$tool" status "$config" "$generation2" >/dev/null 2>&1; then
   echo 'tampered profile backup passed status' >&2
   exit 1
 fi
-$tool quarantine "$config" copy-a "$generation2" checksum-failed | \
+"$tool" quarantine "$config" nas-copy "$generation2" checksum-failed |
   grep -qx "quarantined=$generation2"
-test ! -e "$cipher"
+[[ ! -e "$test_root/nas/fixture/default/generations/$generation2" ]]
+find "$test_root/nas/fixture/default/quarantine" \
+  -maxdepth 1 -type d -name "$generation2.*.checksum-failed" |
+  grep -q .
+if "$tool" retention-apply "$config" >/dev/null 2>&1; then
+  echo 'retention proceeded across disagreeing destination inventories' >&2
+  exit 1
+fi
 
-stream_hash=$(tar -C "$source_root" -cf - profile | sha256sum | awk '{print $1}')
-stream_bytes=$(tar -C "$source_root" -cf - profile | wc -c)
-tar -C "$source_root" -cf - profile | \
-  $tool backup-stream "$config" "$generation4" "$stream_hash" "$stream_bytes" profile \
-  | grep -qx 'backup=committed'
-$tool status "$config" "$generation4" | grep -qx 'status=healthy'
-if tar -C "$source_root" -cf - profile | \
-  $tool backup-stream "$config" 20260722T120400Z-5555555555555555 \
-    "$(printf wrong | sha256sum | awk '{print $1}')" "$stream_bytes" profile \
-    >/dev/null 2>&1; then
+stream_hash=$(tar -C "$test_root" -cf - profile | sha256sum | awk '{print $1}')
+stream_bytes=$(tar -C "$test_root" -cf - profile | wc -c)
+tar -C "$test_root" -cf - profile |
+  "$tool" backup-stream "$config" "$generation4" \
+    "$stream_hash" "$stream_bytes" profile |
+  grep -qx 'backup=committed'
+"$tool" status "$config" "$generation4" | grep -qx 'status=healthy'
+grep -qx 'source_fingerprint_kind=tar-stream-v1' \
+  "$test_root/nas/fixture/default/generations/$generation4/receipt.env"
+stream_restore=$test_root/restore-root/drill-stream-profile
+"$tool" restore-to-disposable "$config" fixture-peer-copy \
+  "$generation4" "$stream_restore" | grep -qx 'restore=disposable-only'
+cmp "$test_root/profile/Default/Preferences" \
+  "$stream_restore/Default/Preferences"
+if tar -C "$test_root" -cf - profile |
+  "$tool" backup-stream "$config" 20260722T120400Z-5555555555555555 \
+    "$(printf wrong | sha256sum | awk '{print $1}')" \
+    "$stream_bytes" profile >/dev/null 2>&1; then
   echo 'changed backup stream passed its expected fingerprint' >&2
   exit 1
 fi
 
-( exec 9<"$source_root/profile/Default/Preferences"; sleep 30 ) &
+( exec 9<"$test_root/profile/Default/Preferences"; sleep 30 ) &
 holder_pid=$!
-if $tool preflight "$config" >/dev/null 2>&1; then
+if "$tool" preflight "$config" >/dev/null 2>&1; then
   echo 'open source profile passed preflight' >&2
   exit 1
 fi
@@ -124,12 +268,28 @@ kill "$holder_pid"
 wait "$holder_pid" 2>/dev/null || true
 holder_pid=
 
-same_fs_config=$source_root/same-filesystem.conf
-sed "s#destination=copy-b|$shm_destination#destination=copy-b|$tmp_destination#" \
-  "$config" >"$same_fs_config"
-chmod 600 "$same_fs_config"
-if $tool preflight "$same_fs_config" >/dev/null 2>&1; then
-  echo 'same-filesystem backup destinations passed preflight' >&2
+wrong_host_config=$test_root/wrong-host.conf
+sed 's/fixture-peer|fixture-peer|/wrong-peer|fixture-peer|/' \
+  "$config" >"$wrong_host_config"
+chmod 600 "$wrong_host_config"
+if PROFILE_TEST_REMOTE_HOST=fixture-peer \
+  "$tool" preflight "$wrong_host_config" >/dev/null 2>&1; then
+  echo 'wrong authenticated destination host was accepted' >&2
+  exit 1
+fi
+
+same_host_config=$test_root/same-host.conf
+sed "s/destination=fixture-peer-copy|device|ssh|fixture-peer|fixture-peer|/destination=fixture-peer-copy|device|ssh|$local_host|fixture-peer|/" \
+  "$config" >"$same_host_config"
+chmod 600 "$same_host_config"
+if "$tool" status "$same_host_config" "$generation4" >/dev/null 2>&1; then
+  echo 'same-host destinations passed topology validation' >&2
+  exit 1
+fi
+
+chmod 644 "$test_root/ssh-identity"
+if "$tool" preflight "$config" >/dev/null 2>&1; then
+  echo 'loose SSH identity mode passed preflight' >&2
   exit 1
 fi
 

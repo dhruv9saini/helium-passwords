@@ -3,104 +3,396 @@ set -euo pipefail
 
 usage() {
   cat >&2 <<'EOF'
-usage: helium-profile-backup.sh <preflight|backup|backup-stream|status|verify-receipt|retention-apply|quarantine|restore-to-disposable> CONFIG [arguments]
+usage: helium-profile-backup.sh <command> CONFIG [arguments]
 
+  preflight CONFIG
   backup CONFIG [GENERATION]
   backup-stream CONFIG GENERATION EXPECTED-TREE-SHA256 SOURCE-BYTES ARCHIVE-ROOT
   status CONFIG GENERATION
-  verify-receipt CONFIG RECEIPT
+  receipt-export CONFIG DESTINATION-ID GENERATION NEW-FILE
+  verify-receipt CONFIG RECEIPT [EXPECTED-PROFILE-PATH]
   retention-apply CONFIG
   quarantine CONFIG DESTINATION-ID GENERATION REASON-SLUG
-  restore-to-disposable CONFIG GENERATION NEW-DIRECTORY
+  restore-to-disposable CONFIG DESTINATION-ID GENERATION NEW-DIRECTORY
 
-CONFIG is a mode-0600 key/value file with exactly two destination=ID|PATH
-entries.  Backup and restore never launch a browser or alter the source profile.
+CONFIG schema 2 names exactly two off-source destinations. Ciphertext streams
+directly to their private incoming directories; plaintext archives are never
+staged. Restore can write only a new marked disposable directory.
 EOF
 }
 
 die() { echo "$*" >&2; exit 1; }
 valid_generation() { [[ "$1" =~ ^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{16}$ ]]; }
-valid_slug() { [[ "$1" =~ ^[a-z0-9][a-z0-9-]{0,63}$ ]]; }
+valid_slug() { [[ "$1" =~ ^[a-z0-9][a-z0-9._-]{0,63}$ ]]; }
+host_short() { uname -n | cut -d. -f1; }
+require_absolute() {
+  [[ "$2" == /* && "$2" != *$'\n'* && "/$2/" != *"/../"* ]] ||
+    die "$1 must be a safe absolute path"
+}
 
 load_config() {
-  local config=$1 line key value mode
-  [[ -f "$config" && ! -L "$config" ]] || die "config must be a regular non-symlink file"
+  local config=$1 line key value mode extra
+  [[ -f "$config" && ! -L "$config" ]] ||
+    die "config must be a regular non-symlink file"
   mode=$(stat -c %a -- "$config")
-  (( (8#$mode & 077) == 0 )) || die "config must not be accessible by group or other users"
+  (( (8#$mode & 077) == 0 )) ||
+    die "config must not be accessible by group or other users"
 
   PROFILE_DEST_IDS=()
+  PROFILE_DEST_ROLES=()
+  PROFILE_DEST_KINDS=()
+  PROFILE_DEST_HOSTS=()
+  PROFILE_DEST_SSH=()
   PROFILE_DEST_ROOTS=()
   unset PROFILE_VERSION PROFILE_SOURCE_DEVICE PROFILE_ID PROFILE_SOURCE_PATH
   unset PROFILE_AGE_RECIPIENTS PROFILE_AGE_IDENTITY PROFILE_RETENTION_KEEP
-  unset PROFILE_DESTINATION_RESERVE_BYTES
+  unset PROFILE_DESTINATION_RESERVE_BYTES PROFILE_SSH_USER
+  unset PROFILE_SSH_IDENTITY PROFILE_SSH_KNOWN_HOSTS
+
   while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ -n "$line" && "$line" != \#* && "$line" == *=* ]] || die "invalid profile backup config line"
+    [[ -n "$line" && "$line" != \#* && "$line" == *=* ]] ||
+      die "invalid profile backup config line"
     key=${line%%=*}
     value=${line#*=}
     case "$key" in
-      version) [[ -z "${PROFILE_VERSION+x}" ]] || die "duplicate version"; PROFILE_VERSION=$value ;;
-      source_device) [[ -z "${PROFILE_SOURCE_DEVICE+x}" ]] || die "duplicate source_device"; PROFILE_SOURCE_DEVICE=$value ;;
-      profile_id) [[ -z "${PROFILE_ID+x}" ]] || die "duplicate profile_id"; PROFILE_ID=$value ;;
-      source_path) [[ -z "${PROFILE_SOURCE_PATH+x}" ]] || die "duplicate source_path"; PROFILE_SOURCE_PATH=$value ;;
-      age_recipients) [[ -z "${PROFILE_AGE_RECIPIENTS+x}" ]] || die "duplicate age_recipients"; PROFILE_AGE_RECIPIENTS=$value ;;
-      age_identity) [[ -z "${PROFILE_AGE_IDENTITY+x}" ]] || die "duplicate age_identity"; PROFILE_AGE_IDENTITY=$value ;;
-      retention_keep) [[ -z "${PROFILE_RETENTION_KEEP+x}" ]] || die "duplicate retention_keep"; PROFILE_RETENTION_KEEP=$value ;;
-      destination_reserve_bytes) [[ -z "${PROFILE_DESTINATION_RESERVE_BYTES+x}" ]] || die "duplicate destination_reserve_bytes"; PROFILE_DESTINATION_RESERVE_BYTES=$value ;;
+      version)
+        [[ -z "${PROFILE_VERSION+x}" ]] || die "duplicate version"
+        PROFILE_VERSION=$value
+        ;;
+      source_device)
+        [[ -z "${PROFILE_SOURCE_DEVICE+x}" ]] || die "duplicate source_device"
+        PROFILE_SOURCE_DEVICE=$value
+        ;;
+      profile_id)
+        [[ -z "${PROFILE_ID+x}" ]] || die "duplicate profile_id"
+        PROFILE_ID=$value
+        ;;
+      source_path)
+        [[ -z "${PROFILE_SOURCE_PATH+x}" ]] || die "duplicate source_path"
+        PROFILE_SOURCE_PATH=$value
+        ;;
+      age_recipients)
+        [[ -z "${PROFILE_AGE_RECIPIENTS+x}" ]] || die "duplicate age_recipients"
+        PROFILE_AGE_RECIPIENTS=$value
+        ;;
+      age_identity)
+        [[ -z "${PROFILE_AGE_IDENTITY+x}" ]] || die "duplicate age_identity"
+        PROFILE_AGE_IDENTITY=$value
+        ;;
+      ssh_user)
+        [[ -z "${PROFILE_SSH_USER+x}" ]] || die "duplicate ssh_user"
+        PROFILE_SSH_USER=$value
+        ;;
+      ssh_identity)
+        [[ -z "${PROFILE_SSH_IDENTITY+x}" ]] || die "duplicate ssh_identity"
+        PROFILE_SSH_IDENTITY=$value
+        ;;
+      ssh_known_hosts)
+        [[ -z "${PROFILE_SSH_KNOWN_HOSTS+x}" ]] || die "duplicate ssh_known_hosts"
+        PROFILE_SSH_KNOWN_HOSTS=$value
+        ;;
+      retention_keep)
+        [[ -z "${PROFILE_RETENTION_KEEP+x}" ]] || die "duplicate retention_keep"
+        PROFILE_RETENTION_KEEP=$value
+        ;;
+      destination_reserve_bytes)
+        [[ -z "${PROFILE_DESTINATION_RESERVE_BYTES+x}" ]] ||
+          die "duplicate destination_reserve_bytes"
+        PROFILE_DESTINATION_RESERVE_BYTES=$value
+        ;;
       destination)
-        IFS='|' read -r dest_id dest_root extra <<<"$value"
-        [[ -n "$dest_id" && -n "$dest_root" && -z "$extra" ]] || die "invalid destination entry"
-        PROFILE_DEST_IDS+=("$dest_id")
-        PROFILE_DEST_ROOTS+=("$dest_root")
+        local destination_id destination_role destination_kind
+        local destination_host destination_ssh destination_root
+        IFS='|' read -r destination_id destination_role destination_kind \
+          destination_host destination_ssh destination_root extra <<<"$value"
+        [[ -n "$destination_id" && -n "$destination_role" &&
+          -n "$destination_kind" && -n "$destination_host" &&
+          -n "$destination_ssh" && -n "$destination_root" &&
+          -z "${extra:-}" ]] ||
+          die "destination requires id|nas-or-device|local-or-ssh|host-id|ssh-alias-or--|absolute-root"
+        PROFILE_DEST_IDS+=("$destination_id")
+        PROFILE_DEST_ROLES+=("$destination_role")
+        PROFILE_DEST_KINDS+=("$destination_kind")
+        PROFILE_DEST_HOSTS+=("$destination_host")
+        PROFILE_DEST_SSH+=("$destination_ssh")
+        PROFILE_DEST_ROOTS+=("$destination_root")
         ;;
       *) die "unknown profile backup config field: $key" ;;
     esac
   done <"$config"
 
-  [[ "${PROFILE_VERSION:-}" == 1 ]] || die "unsupported profile backup config schema"
-  [[ "${PROFILE_SOURCE_DEVICE:-}" =~ ^(d|da|oneplus|fixture)$ ]] || die "invalid source_device"
+  [[ "${PROFILE_VERSION:-}" == 2 ]] ||
+    die "unsupported profile backup config version"
+  [[ "${PROFILE_SOURCE_DEVICE:-}" =~ ^(d|da|oneplus|fixture)$ ]] ||
+    die "invalid source_device"
   valid_slug "${PROFILE_ID:-}" || die "invalid profile_id"
-  [[ "${PROFILE_SOURCE_PATH:-}" == /* ]] || die "source_path must be absolute"
-  [[ "${PROFILE_AGE_RECIPIENTS:-}" == /* ]] || die "age_recipients must be absolute"
-  [[ "${PROFILE_AGE_IDENTITY:-}" == /* ]] || die "age_identity must be absolute"
-  [[ "${PROFILE_RETENTION_KEEP:-}" =~ ^[1-9][0-9]*$ ]] || die "retention_keep must be positive"
-  [[ "${PROFILE_DESTINATION_RESERVE_BYTES:-}" =~ ^[0-9]+$ ]] || die "destination_reserve_bytes must be non-negative"
-  [[ ${#PROFILE_DEST_IDS[@]} -eq 2 ]] || die "exactly two destinations are required"
-  [[ "${PROFILE_DEST_IDS[0]}" != "${PROFILE_DEST_IDS[1]}" ]] || die "destination ids must differ"
-  local index
+  require_absolute source_path "${PROFILE_SOURCE_PATH:-}"
+  require_absolute age_recipients "${PROFILE_AGE_RECIPIENTS:-}"
+  require_absolute age_identity "${PROFILE_AGE_IDENTITY:-}"
+  [[ "${PROFILE_SSH_USER:-}" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] ||
+    die "ssh_user is invalid"
+  require_absolute ssh_identity "${PROFILE_SSH_IDENTITY:-}"
+  require_absolute ssh_known_hosts "${PROFILE_SSH_KNOWN_HOSTS:-}"
+  [[ "${PROFILE_SSH_IDENTITY}" =~ ^/[A-Za-z0-9._/-]+$ &&
+    "${PROFILE_SSH_KNOWN_HOSTS}" =~ ^/[A-Za-z0-9._/-]+$ ]] ||
+    die "SSH material path contains unsupported characters"
+  [[ "${PROFILE_RETENTION_KEEP:-}" =~ ^[1-9][0-9]*$ ]] ||
+    die "retention_keep must be positive"
+  [[ "${PROFILE_DESTINATION_RESERVE_BYTES:-}" =~ ^[0-9]+$ ]] ||
+    die "destination_reserve_bytes must be non-negative"
+  validate_destinations
+}
+
+validate_destinations() {
+  [[ ${#PROFILE_DEST_IDS[@]} -eq 2 ]] ||
+    die "exactly two off-source destinations are required"
+  local index expected_peer nas_count=0 device_count=0 actual
+  actual=$(host_short)
+  case "$PROFILE_SOURCE_DEVICE" in
+    d)
+      [[ "$actual" == d ]] ||
+        die "d profile backups must run on authenticated source host d"
+      expected_peer=da
+      ;;
+    da)
+      [[ "$actual" == da ]] ||
+        die "da profile backups must run on authenticated source host da"
+      expected_peer=d
+      ;;
+    oneplus)
+      [[ "$actual" == lm ]] ||
+        die "oneplus app-profile backup streams must be handled on lm"
+      expected_peer=da
+      ;;
+    fixture) expected_peer= ;;
+  esac
+
   for index in 0 1; do
-    valid_slug "${PROFILE_DEST_IDS[$index]}" || die "invalid destination id"
-    [[ "${PROFILE_DEST_ROOTS[$index]}" == /* ]] || die "destination paths must be absolute"
+    valid_slug "${PROFILE_DEST_IDS[index]}" || die "invalid destination id"
+    valid_slug "${PROFILE_DEST_HOSTS[index]}" || die "invalid destination host id"
+    [[ "${PROFILE_DEST_HOSTS[index]}" != "$PROFILE_SOURCE_DEVICE" ]] ||
+      die "destination ${PROFILE_DEST_IDS[index]} is on the source device"
+    require_absolute destination_root "${PROFILE_DEST_ROOTS[index]}"
+    [[ "${PROFILE_DEST_ROOTS[index]}" =~ ^/[A-Za-z0-9._/-]+$ ]] ||
+      die "destination root contains unsupported characters"
+    case "${PROFILE_DEST_KINDS[index]}" in
+      local)
+        [[ "${PROFILE_DEST_SSH[index]}" == - ]] ||
+          die "a local destination must use '-' as its SSH alias"
+        [[ "${PROFILE_DEST_HOSTS[index]}" == "$actual" ]] ||
+          die "local destination host does not match this machine"
+        ;;
+      ssh)
+        [[ "${PROFILE_DEST_SSH[index]}" =~ ^[A-Za-z0-9._-]+$ ]] ||
+          die "invalid destination SSH alias"
+        ;;
+      *) die "destination kind must be local or ssh" ;;
+    esac
+    case "${PROFILE_DEST_ROLES[index]}" in
+      nas) nas_count=$((nas_count + 1)) ;;
+      device) device_count=$((device_count + 1)) ;;
+      *) die "destination role must be nas or device" ;;
+    esac
   done
+
+  [[ "${PROFILE_DEST_IDS[0]}" != "${PROFILE_DEST_IDS[1]}" &&
+    "${PROFILE_DEST_HOSTS[0]}" != "${PROFILE_DEST_HOSTS[1]}" ]] ||
+    die "the two destinations must use distinct IDs and hosts"
+  [[ $nas_count -eq 1 && $device_count -eq 1 ]] ||
+    die "exactly one NAS and one peer-device destination are required"
+
+  if [[ "$PROFILE_SOURCE_DEVICE" != fixture ]]; then
+    for index in 0 1; do
+      case "${PROFILE_DEST_ROLES[index]}" in
+        nas)
+          [[ "${PROFILE_DEST_IDS[index]}" == nas-on-lm &&
+            "${PROFILE_DEST_HOSTS[index]}" == lm &&
+            "${PROFILE_DEST_ROOTS[index]}" == /srv/nas/helium-profile-backups ]] ||
+            die "the NAS copy must be nas-on-lm at /srv/nas/helium-profile-backups on lm"
+          ;;
+        device)
+          [[ "${PROFILE_DEST_IDS[index]}" == "$expected_peer-copy" &&
+            "${PROFILE_DEST_HOSTS[index]}" == "$expected_peer" &&
+            "${PROFILE_DEST_KINDS[index]}" == ssh &&
+            "${PROFILE_DEST_ROOTS[index]}" == /home/d/.local/share/helium-profile-backups ]] ||
+            die "$PROFILE_SOURCE_DEVICE must use the fixed $expected_peer peer replica"
+          ;;
+      esac
+    done
+  fi
+}
+
+normalized_recipients() {
+  [[ -f "$PROFILE_AGE_RECIPIENTS" && ! -L "$PROFILE_AGE_RECIPIENTS" ]] ||
+    die "age recipients file is unavailable"
+  awk '
+    /^[[:space:]]*($|#)/ { next }
+    /^age1[023456789acdefghjklmnpqrstuvwxyz]{20,}$/ { print $1; next }
+    /^ssh-(ed25519|rsa)[[:space:]][A-Za-z0-9+\/=]+([[:space:]].*)?$/ {
+      print $1 " " $2
+      next
+    }
+    { invalid = 1 }
+    END { if (invalid) exit 1 }
+  ' "$PROFILE_AGE_RECIPIENTS" | sort -u
 }
 
 recipients_fingerprint() {
-  local count
-  [[ -f "$PROFILE_AGE_RECIPIENTS" && ! -L "$PROFILE_AGE_RECIPIENTS" ]] || die "age recipients file is unavailable"
-  count=$(awk 'NF && $1 !~ /^#/ {print $1}' "$PROFILE_AGE_RECIPIENTS" | sort -u | wc -l)
-  [[ "$count" -ge 2 ]] || die "at least two distinct recovery recipients are required"
-  awk 'NF && $1 !~ /^#/ {print $1}' "$PROFILE_AGE_RECIPIENTS" | sort -u | sha256sum | awk '{print $1}'
+  local normalized count
+  normalized=$(normalized_recipients) ||
+    die "age recipients file contains an invalid recipient"
+  count=$(wc -l <<<"$normalized")
+  [[ $count -ge 2 ]] ||
+    die "at least two distinct recovery recipients are required"
+  printf '%s\n' "$normalized" | sha256sum | awk '{print $1}'
 }
 
-namespace() {
-  local index=$1
-  printf '%s/helium-profile-backups/%s/%s\n' \
-    "${PROFILE_DEST_ROOTS[$index]%/}" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
+topology_fingerprint() {
+  local index
+  for index in 0 1; do
+    printf '%s|%s|%s|%s|%s\n' \
+      "${PROFILE_DEST_IDS[index]}" "${PROFILE_DEST_ROLES[index]}" \
+      "${PROFILE_DEST_KINDS[index]}" "${PROFILE_DEST_HOSTS[index]}" \
+      "${PROFILE_DEST_ROOTS[index]}"
+  done | sort | sha256sum | awk '{print $1}'
 }
 
-cipher_path() { printf '%s/generations/%s.tar.zst.age\n' "$(namespace "$1")" "$2"; }
-receipt_path() { printf '%s/generations/%s.receipt.env\n' "$(namespace "$1")" "$2"; }
-
-profile_path_hash() {
-  printf '%s' "$(realpath -e -- "$PROFILE_SOURCE_PATH")" | sha256sum | awk '{print $1}'
+require_ssh_material() {
+  local needed=false material mode owner
+  [[ "${PROFILE_DEST_KINDS[0]}" == ssh ||
+    "${PROFILE_DEST_KINDS[1]}" == ssh ]] && needed=true
+  [[ "$needed" == true ]] || return 0
+  command -v ssh >/dev/null || die "ssh is required"
+  command -v rsync >/dev/null || die "rsync is required"
+  for material in "$PROFILE_SSH_IDENTITY" "$PROFILE_SSH_KNOWN_HOSTS"; do
+    [[ -f "$material" && ! -L "$material" && -s "$material" ]] ||
+      die "SSH material must be a nonempty regular non-symlink file"
+    owner=$(stat -c %u -- "$material")
+    [[ "$owner" == "$(id -u)" ]] ||
+      die "SSH material must be owned by the source user"
+    mode=$(stat -c %a -- "$material")
+    [[ "$mode" == 600 ]] || die "SSH material must have mode 0600"
+  done
 }
 
-profile_tree_fingerprint() {
-  local path=${1:-$PROFILE_SOURCE_PATH}
-  [[ -d "$path" && ! -L "$path" ]] || die "profile tree is unavailable for fingerprinting"
-  tar --sort=name --format=posix \
-    --pax-option=delete=atime,delete=ctime --mtime=@0 \
-    --owner=0 --group=0 --numeric-owner -C "$path" -cf - . | \
-    sha256sum | awk '{print $1}'
+destination_run() {
+  local index=$1 command_text
+  shift
+  if [[ "${PROFILE_DEST_KINDS[index]}" == local ]]; then
+    "$@"
+    return
+  fi
+  printf -v command_text '%q ' "$@"
+  ssh -F none -o BatchMode=yes -o ConnectTimeout=10 \
+    -o ClearAllForwardings=yes -o RequestTTY=no -o IdentitiesOnly=yes \
+    -o StrictHostKeyChecking=yes \
+    -o "GlobalKnownHostsFile=${PROFILE_SSH_KNOWN_HOSTS}" \
+    -o "UserKnownHostsFile=${PROFILE_SSH_KNOWN_HOSTS}" \
+    -i "$PROFILE_SSH_IDENTITY" -l "$PROFILE_SSH_USER" \
+    "${PROFILE_DEST_SSH[index]}" "$command_text"
+}
+
+destination_rsh() {
+  printf 'ssh -F none -o BatchMode=yes -o ConnectTimeout=10 -o ClearAllForwardings=yes -o RequestTTY=no -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o GlobalKnownHostsFile=%s -o UserKnownHostsFile=%s -i %s -l %s\n' \
+    "$PROFILE_SSH_KNOWN_HOSTS" "$PROFILE_SSH_KNOWN_HOSTS" \
+    "$PROFILE_SSH_IDENTITY" "$PROFILE_SSH_USER"
+}
+
+verify_destination_host() {
+  local index=$1 actual
+  actual=$(destination_run "$index" uname -n)
+  actual=${actual%%.*}
+  [[ "$actual" == "${PROFILE_DEST_HOSTS[index]}" ]] ||
+    die "destination host identity mismatch for ${PROFILE_DEST_IDS[index]}"
+}
+
+verify_destination_storage() {
+  local index=$1 root=$2 target
+  [[ "${PROFILE_DEST_ROLES[index]}" == nas ]] || return 0
+  target=$(destination_run "$index" findmnt --noheadings --output TARGET \
+    --target "$root" | awk 'NF {print $1; exit}')
+  [[ -n "$target" && "$target" != / ]] ||
+    die "nas-on-lm is not a separately mounted filesystem"
+}
+
+destination_namespace() {
+  printf '%s/%s/%s\n' "${PROFILE_DEST_ROOTS[$1]%/}" \
+    "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
+}
+generation_dir() { printf '%s/generations/%s\n' "$(destination_namespace "$1")" "$2"; }
+cipher_path() { printf '%s/profile.tar.zst.age\n' "$(generation_dir "$1" "$2")"; }
+receipt_path() { printf '%s/receipt.env\n' "$(generation_dir "$1" "$2")"; }
+incoming_dir() {
+  printf '%s/incoming/%s.%s\n' "$(destination_namespace "$1")" "$2" "$3"
+}
+
+destination_sha256() {
+  destination_run "$1" sha256sum "$2" | awk '{print $1}'
+}
+
+destination_size() {
+  destination_run "$1" stat -c %s -- "$2"
+}
+
+destination_copy_to() {
+  local index=$1 source=$2 target=$3
+  if [[ "${PROFILE_DEST_KINDS[index]}" == local ]]; then
+    (
+      umask 077
+      set -o noclobber
+      cat "$source" >"$target"
+    )
+  else
+    rsync -e "$(destination_rsh)" --archive --chmod=F600 --ignore-existing \
+      "$source" "${PROFILE_DEST_SSH[index]}:$target"
+  fi
+}
+
+destination_copy_from() {
+  local index=$1 source=$2 target=$3
+  if [[ "${PROFILE_DEST_KINDS[index]}" == local ]]; then
+    cat "$source" >"$target"
+  else
+    rsync -e "$(destination_rsh)" --archive --chmod=F600 \
+      "${PROFILE_DEST_SSH[index]}:$source" "$target"
+  fi
+  chmod 600 "$target"
+}
+
+destination_receive_stream() {
+  local index=$1 target=$2
+  if [[ "${PROFILE_DEST_KINDS[index]}" == local ]]; then
+    (
+      umask 077
+      set -o noclobber
+      cat >"$target"
+    )
+  else
+    # shellcheck disable=SC2016
+    destination_run "$index" bash -c \
+      'umask 077; set -o noclobber; cat >"$1"' _ "$target"
+  fi
+}
+
+preflight_destinations() {
+  local source_bytes=$1 index available root
+  [[ "$source_bytes" =~ ^[1-9][0-9]*$ ]] ||
+    die "source size must be positive"
+  require_ssh_material
+  recipients_fingerprint >/dev/null
+  for index in 0 1; do
+    verify_destination_host "$index"
+    root=${PROFILE_DEST_ROOTS[index]}
+    destination_run "$index" test -d "$root"
+    destination_run "$index" test ! -L "$root"
+    destination_run "$index" test -w "$root"
+    verify_destination_storage "$index" "$root"
+    available=$(destination_run "$index" df -PB1 "$root" |
+      awk 'NR == 2 {print $4}')
+    [[ "$available" =~ ^[0-9]+$ &&
+      "$available" -ge $((source_bytes + PROFILE_DESTINATION_RESERVE_BYTES)) ]] ||
+      die "destination ${PROFILE_DEST_IDS[index]} lacks source-size budget plus reserve"
+  done
 }
 
 profile_open_pid() {
@@ -110,7 +402,13 @@ profile_open_pid() {
   for proc in /proc/[0-9]*; do
     for fd in "$proc"/fd/*; do
       target=$(readlink -- "$fd" 2>/dev/null || true)
-      case "$target" in "$canonical"*) printf '%s\n' "${proc##*/}"; shopt -u nullglob; return 0 ;; esac
+      case "$target" in
+        "$canonical"*)
+          printf '%s\n' "${proc##*/}"
+          shopt -u nullglob
+          return 0
+          ;;
+      esac
     done
   done
   shopt -u nullglob
@@ -119,330 +417,576 @@ profile_open_pid() {
 
 ensure_source_stopped() {
   local pid
-  [[ -d "$PROFILE_SOURCE_PATH" && ! -L "$PROFILE_SOURCE_PATH" ]] || die "source profile must be a real directory"
+  [[ -d "$PROFILE_SOURCE_PATH" && ! -L "$PROFILE_SOURCE_PATH" ]] ||
+    die "source profile must be a real directory"
   pid=$(profile_open_pid || true)
-  [[ -z "$pid" ]] || die "source profile has an open file in process $pid; stop the browser first"
+  [[ -z "$pid" ]] ||
+    die "source profile has an open file in process $pid; stop the browser first"
 }
 
-filesystem_id() { findmnt --noheadings --output MAJ:MIN --target "$1" | awk 'NF {print $1; exit}'; }
+profile_path_hash() {
+  printf '%s' "$(realpath -e -- "$PROFILE_SOURCE_PATH")" |
+    sha256sum | awk '{print $1}'
+}
+
+profile_tree_fingerprint() {
+  local path=${1:-$PROFILE_SOURCE_PATH}
+  [[ -d "$path" && ! -L "$path" ]] ||
+    die "profile tree is unavailable for fingerprinting"
+  tar --sort=name --format=posix \
+    --pax-option=delete=atime,delete=ctime --mtime=@0 \
+    --owner=0 --group=0 --numeric-owner -C "$path" -cf - . |
+    sha256sum | awk '{print $1}'
+}
 
 preflight() {
-  local source_real source_fs dest_real dest_fs available needed recipients index
+  local source_bytes recipients
   command -v age >/dev/null || die "age is required"
   command -v zstd >/dev/null || die "zstd is required"
-  command -v findmnt >/dev/null || die "findmnt is required"
   ensure_source_stopped
+  source_bytes=$(du -sb -- "$PROFILE_SOURCE_PATH" | awk '{print $1}')
   recipients=$(recipients_fingerprint)
-  source_real=$(realpath -e -- "$PROFILE_SOURCE_PATH")
-  source_fs=$(filesystem_id "$source_real")
-  [[ -n "$source_fs" ]] || die "could not identify the source filesystem"
-  needed=$(du -sb -- "$source_real" | awk '{print $1}')
-  PROFILE_DEST_FILESYSTEMS=()
-  for index in 0 1; do
-    [[ -d "${PROFILE_DEST_ROOTS[$index]}" && ! -L "${PROFILE_DEST_ROOTS[$index]}" ]] || die "destination root must be an existing non-symlink directory"
-    [[ -w "${PROFILE_DEST_ROOTS[$index]}" ]] || die "destination root is not writable"
-    dest_real=$(realpath -e -- "${PROFILE_DEST_ROOTS[$index]}")
-    case "$dest_real/" in "$source_real/"*) die "destination is inside the source profile" ;; esac
-    case "$source_real/" in "$dest_real/"*) die "source profile is inside a destination" ;; esac
-    dest_fs=$(filesystem_id "$dest_real")
-    [[ -n "$dest_fs" && "$dest_fs" != "$source_fs" ]] || die "destination must use a filesystem independent of the source"
-    PROFILE_DEST_FILESYSTEMS+=("$dest_fs")
-    available=$(df --output=avail -B1 "$dest_real" | awk 'NR==2 {print $1}')
-    (( available >= needed + PROFILE_DESTINATION_RESERVE_BYTES )) || die "destination lacks source-size budget plus reserve"
-  done
-  [[ "${PROFILE_DEST_FILESYSTEMS[0]}" != "${PROFILE_DEST_FILESYSTEMS[1]}" ]] || die "the two destinations must use different filesystems"
-  printf 'preflight=ok\nsource_device=%s\nprofile_id=%s\nsource_bytes=%s\nrecipients_sha256=%s\n' \
-    "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" "$needed" "$recipients"
+  preflight_destinations "$source_bytes"
+  printf 'preflight=ok\nsource_device=%s\nprofile_id=%s\nsource_bytes=%s\nrecipients_sha256=%s\ntopology_sha256=%s\n' \
+    "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" "$source_bytes" "$recipients" \
+    "$(topology_fingerprint)"
 }
 
-remote_preflight() {
-  local source_bytes=$1 dest_real dest_fs available index
-  [[ "$source_bytes" =~ ^[1-9][0-9]*$ ]] || die "stream source size must be positive"
-  command -v age >/dev/null || die "age is required"
-  command -v zstd >/dev/null || die "zstd is required"
-  command -v findmnt >/dev/null || die "findmnt is required"
-  recipients_fingerprint >/dev/null
-  PROFILE_DEST_FILESYSTEMS=()
+prepare_incoming() {
+  local generation=$1 operation=$2 index ns incoming final
   for index in 0 1; do
-    [[ -d "${PROFILE_DEST_ROOTS[$index]}" && ! -L "${PROFILE_DEST_ROOTS[$index]}" ]] || die "destination root must be an existing non-symlink directory"
-    [[ -w "${PROFILE_DEST_ROOTS[$index]}" ]] || die "destination root is not writable"
-    dest_real=$(realpath -e -- "${PROFILE_DEST_ROOTS[$index]}")
-    dest_fs=$(filesystem_id "$dest_real")
-    [[ -n "$dest_fs" ]] || die "could not identify destination filesystem"
-    PROFILE_DEST_FILESYSTEMS+=("$dest_fs")
-    available=$(df --output=avail -B1 "$dest_real" | awk 'NR==2 {print $1}')
-    (( available >= source_bytes + PROFILE_DESTINATION_RESERVE_BYTES )) || die "destination lacks stream-size budget plus reserve"
+    ns=$(destination_namespace "$index")
+    incoming=$(incoming_dir "$index" "$generation" "$operation")
+    final=$(generation_dir "$index" "$generation")
+    destination_run "$index" mkdir -p \
+      "$ns/generations" "$ns/incoming" "$ns/quarantine" "$ns/retired"
+    destination_run "$index" chmod 700 \
+      "$ns" "$ns/generations" "$ns/incoming" "$ns/quarantine" "$ns/retired"
+    destination_run "$index" test ! -e "$final"
+    destination_run "$index" test ! -e "$incoming"
+    destination_run "$index" mkdir "$incoming"
+    destination_run "$index" chmod 700 "$incoming"
   done
-  [[ "${PROFILE_DEST_FILESYSTEMS[0]}" != "${PROFILE_DEST_FILESYSTEMS[1]}" ]] || die "the two destinations must use different filesystems"
+}
+
+stream_cipher() {
+  local mode=$1 generation=$2 operation=$3 scratch=$4
+  local fifo0=$scratch/cipher.0 fifo1=$scratch/cipher.1
+  local hash_fifo=$scratch/cipher.hash raw_fifo=$scratch/raw.hash
+  local dest0 dest1 hash_pid raw_pid='' pipeline_rc=0 wait_rc=0
+  dest0="$(incoming_dir 0 "$generation" "$operation")/profile.tar.zst.age"
+  dest1="$(incoming_dir 1 "$generation" "$operation")/profile.tar.zst.age"
+  mkfifo -m 600 "$fifo0" "$fifo1" "$hash_fifo"
+  destination_receive_stream 0 "$dest0" <"$fifo0" &
+  local dest0_pid=$!
+  destination_receive_stream 1 "$dest1" <"$fifo1" &
+  local dest1_pid=$!
+  sha256sum <"$hash_fifo" | awk '{print $1}' >"$scratch/cipher.sha256" &
+  hash_pid=$!
+
+  if [[ "$mode" == stream ]]; then
+    mkfifo -m 600 "$raw_fifo"
+    sha256sum <"$raw_fifo" | awk '{print $1}' >"$scratch/raw.sha256" &
+    raw_pid=$!
+    tee "$raw_fifo" |
+      zstd -q -T1 -3 |
+      age --encrypt --recipients-file "$PROFILE_AGE_RECIPIENTS" |
+      tee "$fifo0" "$fifo1" "$hash_fifo" >/dev/null ||
+      pipeline_rc=$?
+  else
+    tar --format=pax --numeric-owner \
+      -C "$(dirname -- "$PROFILE_SOURCE_PATH")" \
+      -cf - "$(basename -- "$PROFILE_SOURCE_PATH")" |
+      zstd -q -T1 -3 |
+      age --encrypt --recipients-file "$PROFILE_AGE_RECIPIENTS" |
+      tee "$fifo0" "$fifo1" "$hash_fifo" >/dev/null ||
+      pipeline_rc=$?
+  fi
+
+  wait "$dest0_pid" || wait_rc=1
+  wait "$dest1_pid" || wait_rc=1
+  wait "$hash_pid" || wait_rc=1
+  [[ -z "$raw_pid" ]] || wait "$raw_pid" || wait_rc=1
+  [[ $pipeline_rc -eq 0 && $wait_rc -eq 0 ]] ||
+    die "encrypted profile stream did not reach both destinations"
+  [[ -s "$scratch/cipher.sha256" ]] ||
+    die "cipher stream hash was not produced"
+}
+
+write_receipt() {
+  local output=$1 generation=$2 source_tree=$3 fingerprint_kind=$4
+  local archive_root=$5 cipher_hash=$6 cipher_size=$7 source_bytes=$8
+  {
+    printf 'schema_version=2\nsource_device=%s\nprofile_id=%s\n' \
+      "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
+    printf 'profile_path_sha256=%s\nsource_tree_sha256=%s\nsource_fingerprint_kind=%s\n' \
+      "$PROFILE_PATH_HASH" "$source_tree" "$fingerprint_kind"
+    printf 'archive_root=%s\n' "$archive_root"
+    printf 'generation=%s\ncipher_sha256=%s\ncipher_size=%s\nsource_bytes=%s\n' \
+      "$generation" "$cipher_hash" "$cipher_size" "$source_bytes"
+    printf 'recipients_sha256=%s\ntopology_sha256=%s\ncreated_at=%s\n' \
+      "$(recipients_fingerprint)" "$(topology_fingerprint)" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } >"$output"
+  chmod 600 "$output"
 }
 
 read_receipt() {
-  local file=$1 line key value allowed
-  [[ -f "$file" && ! -L "$file" ]] || die "receipt is unavailable: $file"
+  local file=$1 line key value
+  local allowed=' schema_version source_device profile_id profile_path_sha256 source_tree_sha256 source_fingerprint_kind archive_root generation cipher_sha256 cipher_size source_bytes recipients_sha256 topology_sha256 created_at '
+  [[ -f "$file" && ! -L "$file" ]] ||
+    die "receipt is unavailable: $file"
   declare -gA RECEIPT=()
-  allowed=' schema_version source_device profile_id profile_path_sha256 source_tree_sha256 archive_root generation cipher_sha256 cipher_size source_bytes recipients_sha256 created_at '
   while IFS= read -r line || [[ -n "$line" ]]; do
-    [[ -n "$line" && "$line" == *=* ]] || die "invalid profile backup receipt line"
-    key=${line%%=*}; value=${line#*=}
-    [[ "$key" =~ ^[a-z][a-z0-9_]*$ && "$allowed" == *" $key "* ]] || die "unknown profile backup receipt field: $key"
-    [[ -z "${RECEIPT[$key]+set}" ]] || die "duplicate profile backup receipt field: $key"
+    [[ -n "$line" && "$line" == *=* ]] ||
+      die "invalid profile backup receipt line"
+    key=${line%%=*}
+    value=${line#*=}
+    [[ "$key" =~ ^[a-z][a-z0-9_]*$ && "$allowed" == *" $key "* ]] ||
+      die "unknown profile backup receipt field: $key"
+    [[ -z "${RECEIPT[$key]+set}" ]] ||
+      die "duplicate profile backup receipt field: $key"
     [[ -n "$value" ]] || die "empty profile backup receipt field: $key"
     RECEIPT[$key]=$value
   done <"$file"
-  [[ ${#RECEIPT[@]} -eq 12 ]] || die "incomplete profile backup receipt"
-  [[ "${RECEIPT[schema_version]:-}" == 1 && "${RECEIPT[source_device]:-}" == "$PROFILE_SOURCE_DEVICE" && "${RECEIPT[profile_id]:-}" == "$PROFILE_ID" ]] || die "profile backup receipt namespace mismatch"
+  [[ ${#RECEIPT[@]} -eq 14 ]] || die "incomplete profile backup receipt"
+  [[ "${RECEIPT[schema_version]:-}" == 2 &&
+    "${RECEIPT[source_device]:-}" == "$PROFILE_SOURCE_DEVICE" &&
+    "${RECEIPT[profile_id]:-}" == "$PROFILE_ID" ]] ||
+    die "profile backup receipt namespace mismatch"
   valid_generation "${RECEIPT[generation]:-}" || die "invalid receipt generation"
-  [[ "${RECEIPT[cipher_sha256]:-}" =~ ^[a-f0-9]{64}$ && "${RECEIPT[recipients_sha256]:-}" =~ ^[a-f0-9]{64}$ && "${RECEIPT[profile_path_sha256]:-}" =~ ^[a-f0-9]{64}$ && "${RECEIPT[source_tree_sha256]:-}" =~ ^[a-f0-9]{64}$ ]] || die "invalid profile backup receipt hashes"
-  [[ "${RECEIPT[cipher_size]:-}" =~ ^[1-9][0-9]*$ && "${RECEIPT[source_bytes]:-}" =~ ^[0-9]+$ ]] || die "invalid profile backup receipt sizes"
-  [[ "${RECEIPT[archive_root]:-}" != */* && "${RECEIPT[archive_root]:-}" != . && "${RECEIPT[archive_root]:-}" != .. ]] || die "invalid archive root"
+  [[ "${RECEIPT[cipher_sha256]:-}" =~ ^[a-f0-9]{64}$ &&
+    "${RECEIPT[recipients_sha256]:-}" =~ ^[a-f0-9]{64}$ &&
+    "${RECEIPT[topology_sha256]:-}" =~ ^[a-f0-9]{64}$ &&
+    "${RECEIPT[profile_path_sha256]:-}" =~ ^[a-f0-9]{64}$ &&
+    "${RECEIPT[source_tree_sha256]:-}" =~ ^[a-f0-9]{64}$ ]] ||
+    die "invalid profile backup receipt hashes"
+  [[ "${RECEIPT[cipher_size]:-}" =~ ^[1-9][0-9]*$ &&
+    "${RECEIPT[source_bytes]:-}" =~ ^[1-9][0-9]*$ ]] ||
+    die "invalid profile backup receipt sizes"
+  [[ "${RECEIPT[source_fingerprint_kind]:-}" =~ ^(normalized-tree-v1|tar-stream-v1)$ ]] ||
+    die "invalid source fingerprint kind"
+  [[ "${RECEIPT[archive_root]:-}" != */* &&
+    "${RECEIPT[archive_root]:-}" != . &&
+    "${RECEIPT[archive_root]:-}" != .. ]] ||
+    die "invalid archive root"
+  [[ "${RECEIPT[recipients_sha256]}" == "$(recipients_fingerprint)" &&
+    "${RECEIPT[topology_sha256]}" == "$(topology_fingerprint)" ]] ||
+    die "receipt recovery recipients or destination topology changed"
 }
 
-verify_generation() {
-  local generation=$1 index receipt cipher hash
-  valid_generation "$generation" || die "invalid generation"
+verify_incoming_cipher() {
+  local generation=$1 operation=$2 expected_hash=$3
+  local index path size first_size=
   for index in 0 1; do
-    receipt=$(receipt_path "$index" "$generation")
-    cipher=$(cipher_path "$index" "$generation")
-    read_receipt "$receipt"
-    [[ "${RECEIPT[generation]}" == "$generation" ]] || die "receipt generation mismatch"
-    [[ "${RECEIPT[recipients_sha256]}" == "$(recipients_fingerprint)" ]] || die "recovery recipients changed"
-    [[ -f "$cipher" && ! -L "$cipher" && "$(stat -c %s -- "$cipher")" == "${RECEIPT[cipher_size]}" ]] || die "cipher size mismatch at ${PROFILE_DEST_IDS[$index]}"
-    hash=$(sha256sum -- "$cipher" | awk '{print $1}')
-    [[ "$hash" == "${RECEIPT[cipher_sha256]}" ]] || die "cipher checksum mismatch at ${PROFILE_DEST_IDS[$index]}"
-    if [[ $index -eq 0 ]]; then
-      first_hash=$hash
-      first_receipt_hash=$(sha256sum -- "$receipt" | awk '{print $1}')
+    path="$(incoming_dir "$index" "$generation" "$operation")/profile.tar.zst.age"
+    destination_run "$index" test -f "$path"
+    destination_run "$index" test ! -L "$path"
+    [[ "$(destination_sha256 "$index" "$path")" == "$expected_hash" ]] ||
+      die "cipher stream checksum mismatch at ${PROFILE_DEST_IDS[index]}"
+    size=$(destination_size "$index" "$path")
+    [[ "$size" =~ ^[1-9][0-9]*$ ]] || die "cipher stream is empty"
+    if [[ -z "$first_size" ]]; then
+      first_size=$size
     else
-      [[ "$hash" == "$first_hash" && "$(sha256sum -- "$receipt" | awk '{print $1}')" == "$first_receipt_hash" ]] || die "destination copies disagree"
+      [[ "$size" == "$first_size" ]] ||
+        die "destination cipher sizes disagree"
     fi
   done
+  printf '%s\n' "$first_size"
+}
+
+publish_generation() {
+  local generation=$1 operation=$2 receipt=$3 index incoming
+  local receipt_hash
+  receipt_hash=$(sha256sum -- "$receipt" | awk '{print $1}')
+  for index in 0 1; do
+    incoming=$(incoming_dir "$index" "$generation" "$operation")
+    destination_copy_to "$index" "$receipt" "$incoming/receipt.env"
+    [[ "$(destination_sha256 "$index" "$incoming/receipt.env")" == "$receipt_hash" ]] ||
+      die "receipt transfer checksum mismatch at ${PROFILE_DEST_IDS[index]}"
+  done
+  for index in 0 1; do
+    incoming=$(incoming_dir "$index" "$generation" "$operation")
+    destination_run "$index" mv -T "$incoming" \
+      "$(generation_dir "$index" "$generation")"
+  done
+}
+
+backup_common() {
+  local mode=$1 generation=$2 expected_tree=${3:-} source_bytes=${4:-}
+  local archive_root=${5:-} operation scratch cipher_hash cipher_size
+  local tree_before tree_after fingerprint_kind
+  valid_generation "$generation" || die "invalid generation"
+  command -v age >/dev/null || die "age is required"
+  command -v zstd >/dev/null || die "zstd is required"
+
+  if [[ "$mode" == profile ]]; then
+    ensure_source_stopped
+    archive_root=$(basename -- "$(realpath -e -- "$PROFILE_SOURCE_PATH")")
+    source_bytes=$(du -sb -- "$PROFILE_SOURCE_PATH" | awk '{print $1}')
+    PROFILE_PATH_HASH=$(profile_path_hash)
+    tree_before=$(profile_tree_fingerprint)
+    fingerprint_kind='normalized-tree-v1'
+  else
+    [[ "$expected_tree" =~ ^[a-f0-9]{64}$ ]] ||
+      die "invalid expected stream fingerprint"
+    [[ "$source_bytes" =~ ^[1-9][0-9]*$ ]] ||
+      die "stream source size must be positive"
+    [[ "$archive_root" == "$(basename -- "$PROFILE_SOURCE_PATH")" &&
+      "$archive_root" != . && "$archive_root" != .. &&
+      "$archive_root" != */* ]] ||
+      die "stream archive root does not match configured source path"
+    PROFILE_PATH_HASH=$(printf '%s' "$PROFILE_SOURCE_PATH" |
+      sha256sum | awk '{print $1}')
+    fingerprint_kind='tar-stream-v1'
+  fi
+
+  preflight_destinations "$source_bytes"
+  operation=$(tr -d - </proc/sys/kernel/random/uuid)
+  scratch=$(mktemp -d)
+  chmod 700 "$scratch"
+  cleanup_backup() {
+    local result=$?
+    find "$scratch" -depth -delete 2>/dev/null || true
+    return "$result"
+  }
+  trap cleanup_backup EXIT
+  prepare_incoming "$generation" "$operation"
+  stream_cipher "$mode" "$generation" "$operation" "$scratch"
+  cipher_hash=$(tr -d '\r\n' <"$scratch/cipher.sha256")
+  [[ "$cipher_hash" =~ ^[a-f0-9]{64}$ ]] ||
+    die "invalid encrypted stream checksum"
+  cipher_size=$(verify_incoming_cipher "$generation" "$operation" "$cipher_hash")
+
+  if [[ "$mode" == profile ]]; then
+    tree_after=$(profile_tree_fingerprint)
+    [[ "$tree_after" == "$tree_before" ]] ||
+      die "source profile changed while the backup was being created"
+    expected_tree=$tree_before
+  else
+    [[ "$(tr -d '\r\n' <"$scratch/raw.sha256")" == "$expected_tree" ]] ||
+      die "source changed between fingerprint and encrypted backup stream"
+  fi
+
+  write_receipt "$scratch/receipt.env" "$generation" "$expected_tree" \
+    "$fingerprint_kind" "$archive_root" "$cipher_hash" "$cipher_size" \
+    "$source_bytes"
+  publish_generation "$generation" "$operation" "$scratch/receipt.env"
+  verify_generation "$generation"
+  find "$scratch" -depth -delete
+  trap - EXIT
+  printf 'backup=committed\ngeneration=%s\nsource_tree_sha256=%s\ncipher_sha256=%s\nreceipt_destination=%s\n' \
+    "$generation" "$expected_tree" "$cipher_hash" "${PROFILE_DEST_IDS[0]}"
 }
 
 backup() {
-  local generation=${1:-} index ns incoming first_cipher first_receipt archive_root
-  local cipher_hash cipher_size source_bytes recipients profile_hash tree_hash tree_hash_after temporary_receipt
-  preflight >/dev/null
-  [[ -n "$generation" ]] || generation="$(date -u +%Y%m%dT%H%M%SZ)-$(tr -d - </proc/sys/kernel/random/uuid | cut -c1-16)"
-  valid_generation "$generation" || die "invalid generation"
-  archive_root=$(basename -- "$(realpath -e -- "$PROFILE_SOURCE_PATH")")
-  [[ "$archive_root" != . && "$archive_root" != .. && "$archive_root" != */* ]] || die "invalid source profile basename"
-  source_bytes=$(du -sb -- "$PROFILE_SOURCE_PATH" | awk '{print $1}')
-  recipients=$(recipients_fingerprint)
-  profile_hash=$(profile_path_hash)
-  tree_hash=$(profile_tree_fingerprint)
-
-  for index in 0 1; do
-    ns=$(namespace "$index")
-    mkdir -p -- "$ns/generations" "$ns/incoming" "$ns/quarantine" "$ns/retired"
-    chmod 700 "$ns" "$ns/generations" "$ns/incoming" "$ns/quarantine" "$ns/retired"
-    [[ ! -e "$(cipher_path "$index" "$generation")" && ! -e "$(receipt_path "$index" "$generation")" ]] || die "generation already exists"
-  done
-
-  first_cipher="$(namespace 0)/incoming/$generation.tar.zst.age.partial"
-  first_receipt="$(namespace 0)/incoming/$generation.receipt.env.partial"
-  trap 'rm -f -- "${first_cipher:-}" "${first_receipt:-}" "${second_cipher:-}" "${second_receipt:-}"' EXIT
-  tar --format=pax --numeric-owner -C "$(dirname -- "$PROFILE_SOURCE_PATH")" -cf - "$archive_root" | \
-    zstd -q -T1 -3 | age --encrypt --recipients-file "$PROFILE_AGE_RECIPIENTS" --output "$first_cipher"
-  tree_hash_after=$(profile_tree_fingerprint)
-  [[ "$tree_hash_after" == "$tree_hash" ]] || die "source profile changed while the backup was being created"
-  chmod 600 "$first_cipher"
-  cipher_hash=$(sha256sum -- "$first_cipher" | awk '{print $1}')
-  cipher_size=$(stat -c %s -- "$first_cipher")
-  {
-    printf 'schema_version=1\nsource_device=%s\nprofile_id=%s\n' "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
-    printf 'profile_path_sha256=%s\nsource_tree_sha256=%s\narchive_root=%s\ngeneration=%s\n' "$profile_hash" "$tree_hash" "$archive_root" "$generation"
-    printf 'cipher_sha256=%s\ncipher_size=%s\nsource_bytes=%s\n' "$cipher_hash" "$cipher_size" "$source_bytes"
-    printf 'recipients_sha256=%s\ncreated_at=%s\n' "$recipients" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } >"$first_receipt"
-  chmod 600 "$first_receipt"
-
-  second_cipher="$(namespace 1)/incoming/$generation.tar.zst.age.partial"
-  second_receipt="$(namespace 1)/incoming/$generation.receipt.env.partial"
-  cp --reflink=never -- "$first_cipher" "$second_cipher"
-  cp --reflink=never -- "$first_receipt" "$second_receipt"
-  chmod 600 "$second_cipher" "$second_receipt"
-  [[ "$(sha256sum -- "$second_cipher" | awk '{print $1}')" == "$cipher_hash" ]] || die "second destination copy checksum mismatch"
-
-  mv -- "$first_cipher" "$(cipher_path 0 "$generation")"
-  mv -- "$first_receipt" "$(receipt_path 0 "$generation")"
-  mv -- "$second_cipher" "$(cipher_path 1 "$generation")"
-  mv -- "$second_receipt" "$(receipt_path 1 "$generation")"
-  trap - EXIT
-  verify_generation "$generation"
-  printf 'backup=committed\ngeneration=%s\ncipher_sha256=%s\nreceipt=%s\n' \
-    "$generation" "$cipher_hash" "$(receipt_path 0 "$generation")"
+  local generation=${1:-}
+  [[ -n "$generation" ]] ||
+    generation="$(date -u +%Y%m%dT%H%M%SZ)-$(tr -d - </proc/sys/kernel/random/uuid | cut -c1-16)"
+  backup_common profile "$generation"
 }
 
 backup_stream() {
-  local generation=$1 expected_tree_hash=$2 source_bytes=$3 archive_root=$4
-  local index ns first_cipher first_receipt second_cipher second_receipt
-  local hash_file hash_pipe hash_pid cipher_hash cipher_size recipients profile_hash actual_tree_hash
+  backup_common stream "$1" "$2" "$3" "$4"
+}
+
+verify_generation() (
+  local generation=$1 index dir cipher receipt inventory hash size
+  local scratch first_receipt_hash='' first_cipher_hash='' receipt_hash
   valid_generation "$generation" || die "invalid generation"
-  [[ "$expected_tree_hash" =~ ^[a-f0-9]{64}$ ]] || die "invalid expected stream fingerprint"
-  [[ "$archive_root" == "$(basename -- "$PROFILE_SOURCE_PATH")" && "$archive_root" != . && "$archive_root" != .. && "$archive_root" != */* ]] || die "stream archive root does not match configured source path"
-  remote_preflight "$source_bytes"
-  recipients=$(recipients_fingerprint)
-  profile_hash=$(printf '%s' "$PROFILE_SOURCE_PATH" | sha256sum | awk '{print $1}')
-
+  require_ssh_material
+  scratch=$(mktemp -d)
+  chmod 700 "$scratch"
+  trap 'find "$scratch" -depth -delete 2>/dev/null || true' EXIT
   for index in 0 1; do
-    ns=$(namespace "$index")
-    mkdir -p -- "$ns/generations" "$ns/incoming" "$ns/quarantine" "$ns/retired"
-    chmod 700 "$ns" "$ns/generations" "$ns/incoming" "$ns/quarantine" "$ns/retired"
-    [[ ! -e "$(cipher_path "$index" "$generation")" && ! -e "$(receipt_path "$index" "$generation")" ]] || die "generation already exists"
+    verify_destination_host "$index"
+    dir=$(generation_dir "$index" "$generation")
+    cipher=$(cipher_path "$index" "$generation")
+    receipt=$(receipt_path "$index" "$generation")
+    destination_run "$index" test -d "$dir"
+    destination_run "$index" test ! -L "$dir"
+    inventory=$(destination_run "$index" find "$dir" -mindepth 1 -maxdepth 1 \
+      -printf '%f\n' | sort)
+    [[ "$inventory" == $'profile.tar.zst.age\nreceipt.env' ]] ||
+      die "generation inventory is invalid at ${PROFILE_DEST_IDS[index]}"
+    destination_run "$index" test -f "$cipher"
+    destination_run "$index" test ! -L "$cipher"
+    destination_run "$index" test -f "$receipt"
+    destination_run "$index" test ! -L "$receipt"
+    destination_copy_from "$index" "$receipt" "$scratch/receipt.$index"
+    read_receipt "$scratch/receipt.$index"
+    [[ "${RECEIPT[generation]}" == "$generation" ]] ||
+      die "receipt generation mismatch"
+    hash=$(destination_sha256 "$index" "$cipher")
+    size=$(destination_size "$index" "$cipher")
+    [[ "$hash" == "${RECEIPT[cipher_sha256]}" &&
+      "$size" == "${RECEIPT[cipher_size]}" ]] ||
+      die "cipher checksum or size mismatch at ${PROFILE_DEST_IDS[index]}"
+    if [[ -z "$first_receipt_hash" ]]; then
+      first_receipt_hash=$(sha256sum "$scratch/receipt.$index" | awk '{print $1}')
+      first_cipher_hash=$hash
+    else
+      receipt_hash=$(sha256sum "$scratch/receipt.$index" | awk '{print $1}')
+      [[ "$receipt_hash" == "$first_receipt_hash" &&
+        "$hash" == "$first_cipher_hash" ]] ||
+        die "destination copies disagree"
+    fi
   done
+)
 
-  first_cipher="$(namespace 0)/incoming/$generation.tar.zst.age.partial"
-  first_receipt="$(namespace 0)/incoming/$generation.receipt.env.partial"
-  hash_file="$(namespace 0)/incoming/$generation.source-tree.sha256.partial"
-  hash_pipe="$(namespace 0)/incoming/$generation.source-tree.pipe.partial"
-  trap '[[ -z "${hash_pid:-}" ]] || kill "$hash_pid" 2>/dev/null || true; rm -f -- "${first_cipher:-}" "${first_receipt:-}" "${second_cipher:-}" "${second_receipt:-}" "${hash_file:-}" "${hash_pipe:-}"' EXIT
-  mkfifo -m 600 "$hash_pipe"
-  sha256sum <"$hash_pipe" | awk '{print $1}' >"$hash_file" &
-  hash_pid=$!
-  tee "$hash_pipe" | \
-    zstd -q -T1 -3 | age --encrypt --recipients-file "$PROFILE_AGE_RECIPIENTS" --output "$first_cipher"
-  wait "$hash_pid"
-  hash_pid=
-  rm -f "$hash_pipe"
-  [[ -s "$hash_file" ]] || die "stream fingerprint was not produced"
-  actual_tree_hash=$(tr -d '\r\n' <"$hash_file")
-  [[ "$actual_tree_hash" == "$expected_tree_hash" ]] || die "source profile changed between fingerprint and backup stream"
-  rm -f "$hash_file"
-  chmod 600 "$first_cipher"
-  cipher_hash=$(sha256sum -- "$first_cipher" | awk '{print $1}')
-  cipher_size=$(stat -c %s -- "$first_cipher")
-  {
-    printf 'schema_version=1\nsource_device=%s\nprofile_id=%s\n' "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
-    printf 'profile_path_sha256=%s\nsource_tree_sha256=%s\narchive_root=%s\ngeneration=%s\n' "$profile_hash" "$actual_tree_hash" "$archive_root" "$generation"
-    printf 'cipher_sha256=%s\ncipher_size=%s\nsource_bytes=%s\n' "$cipher_hash" "$cipher_size" "$source_bytes"
-    printf 'recipients_sha256=%s\ncreated_at=%s\n' "$recipients" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  } >"$first_receipt"
-  chmod 600 "$first_receipt"
+destination_index() {
+  local wanted=$1 index
+  for index in 0 1; do
+    if [[ "${PROFILE_DEST_IDS[index]}" == "$wanted" ]]; then
+      printf '%s\n' "$index"
+      return
+    fi
+  done
+  die "unknown destination id"
+}
 
-  second_cipher="$(namespace 1)/incoming/$generation.tar.zst.age.partial"
-  second_receipt="$(namespace 1)/incoming/$generation.receipt.env.partial"
-  cp --reflink=never -- "$first_cipher" "$second_cipher"
-  cp --reflink=never -- "$first_receipt" "$second_receipt"
-  chmod 600 "$second_cipher" "$second_receipt"
-  [[ "$(sha256sum -- "$second_cipher" | awk '{print $1}')" == "$cipher_hash" ]] || die "second destination copy checksum mismatch"
-  mv -- "$first_cipher" "$(cipher_path 0 "$generation")"
-  mv -- "$first_receipt" "$(receipt_path 0 "$generation")"
-  mv -- "$second_cipher" "$(cipher_path 1 "$generation")"
-  mv -- "$second_receipt" "$(receipt_path 1 "$generation")"
-  trap - EXIT
+receipt_export() {
+  local wanted=$1 generation=$2 output=$3 index temporary
+  valid_generation "$generation" || die "invalid generation"
+  require_absolute receipt_export "$output"
+  [[ ! -e "$output" ]] || die "receipt export destination already exists"
+  [[ -d "$(dirname -- "$output")" &&
+    ! -L "$(dirname -- "$output")" ]] ||
+    die "receipt export parent must be a real directory"
   verify_generation "$generation"
-  printf 'backup=committed\ngeneration=%s\nsource_tree_sha256=%s\ncipher_sha256=%s\nreceipt=%s\n' \
-    "$generation" "$actual_tree_hash" "$cipher_hash" "$(receipt_path 0 "$generation")"
+  index=$(destination_index "$wanted")
+  temporary=$(mktemp "$(dirname -- "$output")/.receipt.XXXXXX")
+  chmod 600 "$temporary"
+  destination_copy_from "$index" "$(receipt_path "$index" "$generation")" "$temporary"
+  read_receipt "$temporary"
+  [[ "${RECEIPT[generation]}" == "$generation" ]] ||
+    die "exported receipt generation mismatch"
+  mv -T "$temporary" "$output"
+  printf 'receipt_exported=%s\ngeneration=%s\ndestination=%s\n' \
+    "$output" "$generation" "$wanted"
 }
 
 verify_receipt_command() {
-  local supplied=$1 expected_path=${2:-} generation canonical supplied_hash expected_hash
+  local supplied=$1 expected_path=${2:-} generation expected_hash index
+  local supplied_hash destination_receipt_hash
+  local expected_tree_hash
   read_receipt "$supplied"
   generation=${RECEIPT[generation]}
-  canonical=$(receipt_path 0 "$generation")
-  supplied_hash=$(sha256sum -- "$supplied" | awk '{print $1}')
   verify_generation "$generation"
-  [[ "$supplied_hash" == "$(sha256sum -- "$canonical" | awk '{print $1}')" ]] || die "supplied receipt is not the committed receipt"
+  supplied_hash=$(sha256sum "$supplied" | awk '{print $1}')
+  for index in 0 1; do
+    destination_receipt_hash=$(
+      destination_sha256 "$index" "$(receipt_path "$index" "$generation")"
+    )
+    [[ "$destination_receipt_hash" == "$supplied_hash" ]] ||
+      die "supplied receipt is not the committed receipt"
+  done
   if [[ -n "$expected_path" ]]; then
-    [[ "$expected_path" == /* ]] || die "expected profile path must be absolute"
+    require_absolute expected_profile_path "$expected_path"
     expected_hash=$(printf '%s' "$expected_path" | sha256sum | awk '{print $1}')
   else
     ensure_source_stopped
     expected_hash=$(profile_path_hash)
+    expected_tree_hash=$(profile_tree_fingerprint)
+    [[ "${RECEIPT[source_tree_sha256]}" == "$expected_tree_hash" ]] ||
+      die "profile changed after the admitted backup"
   fi
-  [[ "${RECEIPT[profile_path_sha256]}" == "$expected_hash" ]] || die "backup receipt belongs to a different profile path"
-  if [[ -z "$expected_path" ]]; then
-    [[ "${RECEIPT[source_tree_sha256]}" == "$(profile_tree_fingerprint)" ]] || die "profile changed after the admitted backup"
-  fi
+  [[ "${RECEIPT[profile_path_sha256]}" == "$expected_hash" ]] ||
+    die "backup receipt belongs to a different profile path"
   printf 'profile_backup_admission=verified\ngeneration=%s\nsource_device=%s\nprofile_id=%s\nprofile_path_sha256=%s\nsource_tree_sha256=%s\n' \
-    "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" "${RECEIPT[profile_path_sha256]}" "${RECEIPT[source_tree_sha256]}"
+    "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID" \
+    "${RECEIPT[profile_path_sha256]}" "${RECEIPT[source_tree_sha256]}"
 }
 
 retention_apply() {
-  local index receipt generation
-  mapfile -t generations < <(find "$(namespace 0)/generations" -maxdepth 1 -type f -name '*.receipt.env' -printf '%f\n' | sed 's/\.receipt\.env$//' | sort -r)
-  [[ ${#generations[@]} -gt PROFILE_RETENTION_KEEP ]] || { echo 'retention=unchanged'; return; }
+  local index generation dir listing peer_listing
+  require_ssh_material
+  for index in 0 1; do
+    verify_destination_host "$index"
+  done
+  listing=$(destination_run 0 find "$(destination_namespace 0)/generations" \
+    -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r)
+  peer_listing=$(destination_run 1 find "$(destination_namespace 1)/generations" \
+    -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -r)
+  [[ "$listing" == "$peer_listing" ]] ||
+    die "destination active-generation inventories disagree"
+  if [[ -n $listing ]]; then
+    mapfile -t generations <<<"$listing"
+  else
+    generations=()
+  fi
+  [[ ${#generations[@]} -gt PROFILE_RETENTION_KEEP ]] ||
+    { echo 'retention=unchanged'; return; }
   for generation in "${generations[@]:PROFILE_RETENTION_KEEP}"; do
+    valid_generation "$generation" ||
+      die "destination contains an invalid generation directory"
     verify_generation "$generation"
   done
   for generation in "${generations[@]:PROFILE_RETENTION_KEEP}"; do
     for index in 0 1; do
-      mkdir -p "$(namespace "$index")/retired/$generation"
-      chmod 700 "$(namespace "$index")/retired/$generation"
-      mv -- "$(cipher_path "$index" "$generation")" "$(namespace "$index")/retired/$generation/"
-      mv -- "$(receipt_path "$index" "$generation")" "$(namespace "$index")/retired/$generation/"
+      dir="$(destination_namespace "$index")/retired/$generation"
+      destination_run "$index" test ! -e "$dir"
+      destination_run "$index" mv -T \
+        "$(generation_dir "$index" "$generation")" "$dir"
     done
     printf 'retired_generation=%s\n' "$generation"
   done
 }
 
 quarantine() {
-  local wanted=$1 generation=$2 reason=$3 index=-1 suffix ns
+  local wanted=$1 generation=$2 reason=$3 index source target suffix
   valid_generation "$generation" || die "invalid generation"
   valid_slug "$reason" || die "invalid quarantine reason"
-  [[ "${PROFILE_DEST_IDS[0]}" == "$wanted" ]] && index=0
-  [[ "${PROFILE_DEST_IDS[1]}" == "$wanted" ]] && index=1
-  [[ $index -ge 0 ]] || die "unknown destination id"
-  ns=$(namespace "$index")
+  require_ssh_material
+  index=$(destination_index "$wanted")
+  verify_destination_host "$index"
+  source=$(generation_dir "$index" "$generation")
   suffix="$(date -u +%Y%m%dT%H%M%SZ).$reason"
-  mkdir -p "$ns/quarantine/$generation.$suffix"
-  chmod 700 "$ns/quarantine/$generation.$suffix"
-  [[ -e "$(cipher_path "$index" "$generation")" || -e "$(receipt_path "$index" "$generation")" ]] || die "generation is absent at destination"
-  [[ ! -e "$ns/quarantine/$generation.$suffix/$generation.tar.zst.age" ]] || die "quarantine target exists"
-  [[ ! -e "$(cipher_path "$index" "$generation")" ]] || mv -- "$(cipher_path "$index" "$generation")" "$ns/quarantine/$generation.$suffix/"
-  [[ ! -e "$(receipt_path "$index" "$generation")" ]] || mv -- "$(receipt_path "$index" "$generation")" "$ns/quarantine/$generation.$suffix/"
-  printf 'quarantined=%s\ndestination=%s\nreason=%s\n' "$generation" "$wanted" "$reason"
+  target="$(destination_namespace "$index")/quarantine/$generation.$suffix"
+  destination_run "$index" test -d "$source"
+  destination_run "$index" test ! -e "$target"
+  destination_run "$index" mv -T "$source" "$target"
+  printf 'quarantined=%s\ndestination=%s\nreason=%s\n' \
+    "$generation" "$wanted" "$reason"
+}
+
+stream_destination_cipher() {
+  destination_run "$1" cat "$(cipher_path "$1" "$2")"
 }
 
 restore_to_disposable() {
-  local generation=$1 destination=$2 parent temporary listing archive_root
+  local wanted=$1 generation=$2 destination=$3 index parent temporary listing
+  local archive_root scratch identity_mode restored_tree_hash restored_stream_hash
+  local raw_hash_pid=
   valid_generation "$generation" || die "invalid generation"
-  [[ -f "$PROFILE_AGE_IDENTITY" && ! -L "$PROFILE_AGE_IDENTITY" ]] || die "age identity is unavailable"
-  [[ "$destination" == /* && ! -e "$destination" ]] || die "restore destination must be a new absolute path"
-  [[ "$(basename -- "$destination")" == drill-* ]] || die "restore destination name must start with drill-"
+  [[ -f "$PROFILE_AGE_IDENTITY" && ! -L "$PROFILE_AGE_IDENTITY" &&
+    -s "$PROFILE_AGE_IDENTITY" ]] || die "age identity is unavailable"
+  [[ "$(stat -c %u -- "$PROFILE_AGE_IDENTITY")" == "$(id -u)" ]] ||
+    die "age identity must be owned by the restoring user"
+  identity_mode=$(stat -c %a -- "$PROFILE_AGE_IDENTITY")
+  (( (8#$identity_mode & 077) == 0 )) ||
+    die "age identity must not be accessible by group or other users"
+  require_absolute restore_destination "$destination"
+  [[ ! -e "$destination" ]] ||
+    die "restore destination must be a new path"
+  [[ "$(basename -- "$destination")" == drill-* ]] ||
+    die "restore destination name must start with drill-"
   parent=$(dirname -- "$destination")
-  [[ -d "$parent" && ! -L "$parent" && -f "$parent/.helium-disposable-profile-restore-root" ]] || die "restore parent lacks the disposable marker"
-  [[ "$(stat -c %a -- "$parent")" == 700 ]] || die "restore parent must have mode 0700"
+  [[ -d "$parent" && ! -L "$parent" &&
+    -f "$parent/.helium-disposable-profile-restore-root" ]] ||
+    die "restore parent lacks the disposable marker"
+  [[ "$(stat -c %a -- "$parent")" == 700 ]] ||
+    die "restore parent must have mode 0700"
   verify_generation "$generation"
-  read_receipt "$(receipt_path 0 "$generation")"
+  index=$(destination_index "$wanted")
+  scratch=$(mktemp -d "$parent/.profile-restore.XXXXXX")
+  chmod 700 "$scratch"
+  cleanup_restore() {
+    local result=$?
+    [[ -z "$raw_hash_pid" ]] ||
+      kill "$raw_hash_pid" >/dev/null 2>&1 || true
+    find "$scratch" -depth -delete 2>/dev/null || true
+    return "$result"
+  }
+  trap cleanup_restore EXIT
+  destination_copy_from "$index" "$(receipt_path "$index" "$generation")" \
+    "$scratch/receipt.env"
+  read_receipt "$scratch/receipt.env"
   archive_root=${RECEIPT[archive_root]}
-  temporary="$parent/.restore-$generation.$$"
-  listing="$parent/.restore-list-$generation.$$.txt"
-  trap 'rm -rf -- "${temporary:-}"; rm -f -- "${listing:-}"' EXIT
-  mkdir -m 700 "$temporary"
-  age --decrypt --identity "$PROFILE_AGE_IDENTITY" "$(cipher_path 0 "$generation")" | zstd -q -d | tar -tf - >"$listing"
+  listing=$scratch/archive.list
+  mkfifo -m 600 "$scratch/archive.hash.pipe"
+  sha256sum <"$scratch/archive.hash.pipe" |
+    awk '{print $1}' >"$scratch/archive.sha256" &
+  raw_hash_pid=$!
+  stream_destination_cipher "$index" "$generation" |
+    age --decrypt --identity "$PROFILE_AGE_IDENTITY" |
+    zstd -q -d |
+    tee "$scratch/archive.hash.pipe" |
+    tar -tf - >"$listing"
+  wait "$raw_hash_pid"
+  raw_hash_pid=
+  restored_stream_hash=$(tr -d '\r\n' <"$scratch/archive.sha256")
+  [[ "$restored_stream_hash" =~ ^[a-f0-9]{64}$ ]] ||
+    die "restored archive stream fingerprint is invalid"
+  if [[ "${RECEIPT[source_fingerprint_kind]}" == tar-stream-v1 ]]; then
+    [[ "$restored_stream_hash" == "${RECEIPT[source_tree_sha256]}" ]] ||
+      die "restored archive stream does not match the admitted source"
+  fi
   awk -v root="$archive_root" '
     /^\// {exit 1}
     /(^|\/)\.\.($|\/)/ {exit 1}
     $0 != root && index($0, root "/") != 1 {exit 1}
     END {if (NR == 0) exit 1}
   ' "$listing" || die "backup archive contains unsafe or foreign paths"
-  age --decrypt --identity "$PROFILE_AGE_IDENTITY" "$(cipher_path 0 "$generation")" | zstd -q -d | tar --no-same-owner --no-same-permissions -xf - -C "$temporary"
-  [[ -d "$temporary/$archive_root" && ! -L "$temporary/$archive_root" ]] || die "restored archive root is invalid"
-  [[ "$(profile_tree_fingerprint "$temporary/$archive_root")" == "${RECEIPT[source_tree_sha256]}" ]] || die "restored profile content does not match the admitted source"
-  mv -- "$temporary/$archive_root" "$destination"
-  rmdir "$temporary"
+  temporary=$scratch/extracted
+  mkdir -m 700 "$temporary"
+  stream_destination_cipher "$index" "$generation" |
+    age --decrypt --identity "$PROFILE_AGE_IDENTITY" |
+    zstd -q -d |
+    tar --no-same-owner --no-same-permissions -xf - -C "$temporary"
+  [[ -d "$temporary/$archive_root" && ! -L "$temporary/$archive_root" ]] ||
+    die "restored archive root is invalid"
+  restored_tree_hash=$(profile_tree_fingerprint "$temporary/$archive_root")
+  if [[ "${RECEIPT[source_fingerprint_kind]}" == normalized-tree-v1 ]]; then
+    [[ "$restored_tree_hash" == "${RECEIPT[source_tree_sha256]}" ]] ||
+      die "restored profile content does not match the admitted source"
+  fi
+  mv -T "$temporary/$archive_root" "$destination"
   {
-    printf 'schema_version=1\ngeneration=%s\nsource_device=%s\nprofile_id=%s\n' "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
-    printf 'cipher_sha256=%s\nrestored_at=%s\n' "${RECEIPT[cipher_sha256]}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    printf 'schema_version=2\ngeneration=%s\nsource_device=%s\nprofile_id=%s\n' \
+      "$generation" "$PROFILE_SOURCE_DEVICE" "$PROFILE_ID"
+    printf 'cipher_sha256=%s\nsource_destination=%s\nrestored_at=%s\n' \
+      "${RECEIPT[cipher_sha256]}" "$wanted" "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } >"$destination/.helium-profile-restore-receipt.env"
   chmod 600 "$destination/.helium-profile-restore-receipt.env"
-  rm -f "$listing"
+  find "$scratch" -depth -delete
   trap - EXIT
-  printf 'restore=disposable-only\ngeneration=%s\ndestination=%s\n' "$generation" "$destination"
+  printf 'restore=disposable-only\ngeneration=%s\nsource_destination=%s\ndestination=%s\n' \
+    "$generation" "$wanted" "$destination"
 }
 
-command=${1:-}; config=${2:-}
+command=${1:-}
+config=${2:-}
 [[ -n "$command" && -n "$config" ]] || { usage; exit 64; }
 load_config "$config"
 case "$command" in
-  preflight) [[ $# -eq 2 ]] || { usage; exit 64; }; preflight ;;
-  backup) [[ $# -le 3 ]] || { usage; exit 64; }; backup "${3:-}" ;;
-  backup-stream) [[ $# -eq 6 ]] || { usage; exit 64; }; backup_stream "$3" "$4" "$5" "$6" ;;
-  status) [[ $# -eq 3 ]] || { usage; exit 64; }; verify_generation "$3"; printf 'status=healthy\ngeneration=%s\n' "$3" ;;
-  verify-receipt) [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 64; }; verify_receipt_command "$3" "${4:-}" ;;
-  retention-apply) [[ $# -eq 2 ]] || { usage; exit 64; }; retention_apply ;;
-  quarantine) [[ $# -eq 5 ]] || { usage; exit 64; }; quarantine "$3" "$4" "$5" ;;
-  restore-to-disposable) [[ $# -eq 4 ]] || { usage; exit 64; }; restore_to_disposable "$3" "$4" ;;
+  preflight)
+    [[ $# -eq 2 ]] || { usage; exit 64; }
+    preflight
+    ;;
+  backup)
+    [[ $# -le 3 ]] || { usage; exit 64; }
+    backup "${3:-}"
+    ;;
+  backup-stream)
+    [[ $# -eq 6 ]] || { usage; exit 64; }
+    backup_stream "$3" "$4" "$5" "$6"
+    ;;
+  status)
+    [[ $# -eq 3 ]] || { usage; exit 64; }
+    verify_generation "$3"
+    printf 'status=healthy\ngeneration=%s\n' "$3"
+    ;;
+  receipt-export)
+    [[ $# -eq 5 ]] || { usage; exit 64; }
+    receipt_export "$3" "$4" "$5"
+    ;;
+  verify-receipt)
+    [[ $# -ge 3 && $# -le 4 ]] || { usage; exit 64; }
+    verify_receipt_command "$3" "${4:-}"
+    ;;
+  retention-apply)
+    [[ $# -eq 2 ]] || { usage; exit 64; }
+    retention_apply
+    ;;
+  quarantine)
+    [[ $# -eq 5 ]] || { usage; exit 64; }
+    quarantine "$3" "$4" "$5"
+    ;;
+  restore-to-disposable)
+    [[ $# -eq 5 ]] || { usage; exit 64; }
+    restore_to_disposable "$3" "$4" "$5"
+    ;;
   *) usage; exit 64 ;;
 esac

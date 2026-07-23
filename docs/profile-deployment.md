@@ -31,27 +31,46 @@ from the returned provenance; an operator must not hand-author one.
 
 ## Full-profile backup
 
-Create a mode-0600 configuration on the source device. The two destination
-paths must already exist on filesystems distinct from the source and from one
-another. They are storage roots, not browser profiles.
+Create a mode-0600 configuration beside the backup producer. It names exactly
+one NAS destination on lm and one required peer-device destination. d and da
+run the producer locally and reach both destinations through SSH. The OnePlus
+app-profile producer runs on lm, uses the NAS mount locally, and reaches da
+through SSH. The source hostname is an admission invariant: a d config runs
+only on d, a da config only on da, and a oneplus app-profile stream only on lm.
+Destination roots must already exist.
 
 ```text
-version=1
+version=2
 source_device=d
 profile_id=default
 source_path=/home/d/.config/net.imput.helium
 age_recipients=/secure/d-profile-recovery.recipients
 age_identity=/MOUNTED/OFFLINE/d-profile-recovery-a.identity
+ssh_user=d
+ssh_identity=/home/d/.ssh/helium_profile_backup_ed25519
+ssh_known_hosts=/home/d/.ssh/helium_profile_backup_known_hosts
 retention_keep=3
 destination_reserve_bytes=10737418240
-destination=nas-on-lm|/MOUNTED/NAS
-destination=da-copy|/MOUNTED/DA
+destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-profile-backups
+destination=da-copy|device|ssh|da|da|/home/d/.local/share/helium-profile-backups
 ```
 
 Use at least two distinct age recipients whose private identities are held in
 separate failure domains. The backup host needs only the recipient file. An
 identity is needed for a restore drill and must not be placed in Git, lm server
-state, the NAS server backup, or a Chromium artifact.
+state, the NAS server backup, or a Chromium artifact. The SSH identity and
+pinned known-hosts file must be source-user-owned, nonempty, regular,
+non-symlink mode-0600 files. The transport ignores user SSH configuration,
+uses BatchMode and `-F none`, offers only that key, pins the destination host
+key, and disables forwarding and TTY allocation.
+
+The enforced topology is the same as tab disaster recovery:
+
+| Source | NAS copy | Peer copy |
+| --- | --- | --- |
+| d | `/srv/nas/helium-profile-backups` on lm | `/home/d/.local/share/helium-profile-backups` on da |
+| da | `/srv/nas/helium-profile-backups` on lm | `/home/d/.local/share/helium-profile-backups` on d |
+| oneplus | `/srv/nas/helium-profile-backups` on lm | `/home/d/.local/share/helium-profile-backups` on da |
 
 With the browser stopped:
 
@@ -59,22 +78,42 @@ With the browser stopped:
 scripts/profile-backup/helium-profile-backup.sh preflight /secure/d-profile.conf
 scripts/profile-backup/helium-profile-backup.sh backup /secure/d-profile.conf
 scripts/profile-backup/helium-profile-backup.sh status /secure/d-profile.conf GENERATION
+scripts/profile-backup/helium-profile-backup.sh receipt-export \
+  /secure/d-profile.conf nas-on-lm GENERATION \
+  /secure/receipts/d-default-GENERATION.env
 scripts/profile-backup/helium-profile-backup.sh verify-receipt \
   /secure/d-profile.conf \
-  /MOUNTED/NAS/helium-profile-backups/d/default/generations/GENERATION.receipt.env
+  /secure/receipts/d-default-GENERATION.env
 ```
 
 Preflight refuses an open profile, insufficient destination capacity, a
-destination on the source filesystem, or two destinations on the same
-filesystem. Backup records a deterministic content fingerprint immediately
-before and after the encrypted archive stream; any concurrent change aborts
-the generation. Admission later refuses a running or byte-changed local
-profile, so an old but otherwise healthy copy cannot authorize installation
-after the profile changes.
+destination on the source device, a wrong authenticated host, a system-disk
+directory masquerading as lm's NAS, or any topology other than the fixed NAS
+plus peer. Backup records a deterministic content fingerprint immediately
+before and after the encrypted stream; any concurrent change aborts the
+generation. Admission later refuses a running or byte-changed local profile,
+so an old but otherwise healthy copy cannot authorize installation after the
+profile changes.
 
-Both destination copies carry the same ciphertext and receipt. `status`
-rehashes both and requires them to agree. A damaged copy is preserved outside
-the active set:
+The producer compresses and encrypts once, then fans the ciphertext through
+pipes directly into private per-destination incoming directories. Neither a
+plaintext tar nor a local ciphertext spool is created. Both incoming
+ciphertexts must match the producer's stream hash and size before the same
+schema-2 receipt is copied with rsync. The receipt binds the source path and
+source fingerprint, its explicit `normalized-tree-v1` or `tar-stream-v1`
+method, generation, ciphertext hash and size, recovery-recipient fingerprint,
+and exact destination topology. The method distinction is required because an
+Android `adb exec-out` producer admits the exact root tar stream, while a local
+desktop producer can fingerprint the stopped filesystem tree directly. Each
+destination atomically renames its complete incoming directory into
+`generations/GENERATION`; `status` downloads only the small receipts, rehashes
+both remote ciphertexts in place, and requires the copies to agree. A damaged
+destination generation is preserved outside the active set:
+
+```text
+DESTINATION_ROOT/SOURCE_DEVICE/PROFILE_ID/generations/GENERATION/profile.tar.zst.age
+DESTINATION_ROOT/SOURCE_DEVICE/PROFILE_ID/generations/GENERATION/receipt.env
+```
 
 ```sh
 scripts/profile-backup/helium-profile-backup.sh quarantine \
@@ -82,7 +121,8 @@ scripts/profile-backup/helium-profile-backup.sh quarantine \
 ```
 
 `retention-apply` keeps the configured newest count in `generations/` and
-moves older, fully verified pairs to `retired/`; it does not delete them.
+moves older, fully verified generation directories to `retired/` on both
+hosts. It does not delete them.
 
 ## Disposable restore drill
 
@@ -94,16 +134,20 @@ name must start with `drill-`:
 install -d -m0700 /secure/profile-restore-drills
 touch /secure/profile-restore-drills/.helium-disposable-profile-restore-root
 scripts/profile-backup/helium-profile-backup.sh restore-to-disposable \
-  /secure/d-profile.conf GENERATION \
+  /secure/d-profile.conf da-copy GENERATION \
   /secure/profile-restore-drills/drill-d-GENERATION
 ```
 
-Restore verifies both encrypted copies, rejects unsafe archive paths, decrypts
-to a new directory, and matches the restored content fingerprint before it
-writes a secret-free restore receipt. It never launches Helium, changes a
-launcher, overwrites an existing profile, imports a copy on another device, or
-opens tabs. A full-profile backup contains that source device's local session
-files only as disaster-recovery data; it is not tab synchronization.
+Restore first verifies both independent copies, then streams the selected
+authenticated destination ciphertext through age and zstd without staging a
+plaintext archive. Extraction is confined to a new child of the marked
+disposable root. A local backup's restored normalized tree, or an Android
+backup's decrypted tar stream, must equal the corresponding admitted
+fingerprint before the atomic publish and secret-free restore receipt. The
+command never launches Helium, changes a launcher, overwrites an existing
+profile, imports a copy on another device, or opens tabs. A full-profile
+backup contains that source device's local session files only as
+disaster-recovery data; it is not tab synchronization.
 
 ## Transactional desktop and chroot install
 
@@ -112,7 +156,7 @@ After disposable browser acceptance and the exact-profile backup gate:
 ```sh
 scripts/laptop/install-laptop-sync.sh install \
   /artifacts/helium-linux.tar.xz /artifacts/helium-linux.receipt.env \
-  /secure/d-profile.conf /MOUNTED/NAS/.../GENERATION.receipt.env
+  /secure/d-profile.conf /secure/receipts/d-default-GENERATION.env
 ```
 
 The installer extracts to
@@ -130,7 +174,7 @@ For the OnePlus Arch chroot:
 ```sh
 scripts/android-local/install-chroot-helium.sh install \
   /artifacts/helium-linux-arm64.tar.xz /artifacts/helium-linux-arm64.receipt.env \
-  /secure/oneplus-chroot-profile.conf /MOUNTED/NAS/.../GENERATION.receipt.env
+  /secure/oneplus-chroot-profile.conf /secure/receipts/oneplus-chroot-GENERATION.env
 scripts/android-local/install-chroot-helium.sh rollback ARTIFACT_SHA256
 ```
 
@@ -152,9 +196,10 @@ The config's `source_path` must exactly match the installed package's resolved
 `<dataDir>/app_chrome`. The producer force-stops the app, streams root tar over
 `adb exec-out`, fingerprints one preflight stream, and accepts the encrypted
 stream only when its SHA-256 is identical. The plaintext tar is never written
-on lm; it flows directly through zstd and age into the first destination's
-incoming generation, then the identical ciphertext is copied and verified on
-the second filesystem before either receipt becomes active.
+on lm; it flows directly through zstd and age and fans out to the local NAS
+incoming directory and authenticated da SSH incoming directory. Both copies
+must match the local encrypted-stream hash before either generation becomes
+active.
 
 `configure-android-chromium-sync.sh` accepts one explicit oneplus join
 directory containing exactly `base_url`, `client.json`, and `token`. It

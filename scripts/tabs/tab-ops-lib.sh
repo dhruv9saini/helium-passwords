@@ -17,13 +17,13 @@ tab_ops_require_absolute() {
     }
 }
 
-tab_ops_recipients_fingerprint() {
-	local recipients_file=$1 normalized recipient_count
+tab_ops_normalized_recipients() {
+	local recipients_file=$1
 	[ -s "${recipients_file}" ] || {
 		echo "age recipient file is missing or empty" >&2
 		return 1
 	}
-	normalized=$(awk '
+	awk '
 	  /^[[:space:]]*($|#)/ { next }
 	  /^age1[023456789acdefghjklmnpqrstuvwxyz]{20,}$/ { print $1; next }
 	  /^ssh-(ed25519|rsa)[[:space:]][A-Za-z0-9+\/=]+([[:space:]].*)?$/ {
@@ -32,7 +32,12 @@ tab_ops_recipients_fingerprint() {
 	  }
 	  { invalid = 1 }
 	  END { if (invalid) exit 1 }
-	' "${recipients_file}" | sort -u) || {
+	' "${recipients_file}" | sort -u
+}
+
+tab_ops_recipients_fingerprint() {
+	local recipients_file=$1 normalized recipient_count
+	normalized=$(tab_ops_normalized_recipients "${recipients_file}") || {
 		echo "age recipient file contains an invalid recipient" >&2
 		return 1
 	}
@@ -253,6 +258,10 @@ tab_ops_validate_destinations() {
 				[ "${TAB_DEST_IDS[index]}" = "${expected_peer}-copy" ] && \
 					[ "${TAB_DEST_HOSTS[index]}" = "${expected_peer}" ] || {
 					echo "${TAB_SOURCE_DEVICE} must use ${expected_peer} as its device replica" >&2
+					return 1
+				}
+				[ "${TAB_DEST_ROOTS[index]}" = /home/d/.local/share/helium-tab-backups ] || {
+					echo "device replicas must use /home/d/.local/share/helium-tab-backups" >&2
 					return 1
 				}
 				device_count=$((device_count + 1))
