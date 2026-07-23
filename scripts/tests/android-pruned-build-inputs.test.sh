@@ -78,9 +78,17 @@ find "$source_root" -type f -name '*BUILD.gn' -print0 | sort -z | \
   xargs -0 sha256sum > "$test_root/build-files.before"
 restore_output=$(
   "$repo_root/scripts/chromium/restore-android-pruned-build-inputs.sh" \
-    "$source_root" "$pinned_commit" "$pruning_list"
+    restore "$source_root" "$pinned_commit" "$pruning_list"
 )
-[[ "$(grep -c '^restored_android_build_input=' <<< "$restore_output")" -eq 6 ]]
+[[ "$(grep -c '^restore_android_build_input=' <<< "$restore_output")" -eq 6 ]]
+d8_blob=$(git -C "$source_root" rev-parse \
+  "$pinned_commit:third_party/r8/custom_d8.jar")
+r8_blob=$(git -C "$source_root" rev-parse \
+  "$pinned_commit:third_party/r8/custom_r8.jar")
+grep -qx "restore_android_build_input=third_party/r8/custom_d8.jar blob=$d8_blob" \
+  <<< "$restore_output"
+grep -qx "restore_android_build_input=third_party/r8/custom_r8.jar blob=$r8_blob" \
+  <<< "$restore_output"
 find "$source_root" -type f -name '*BUILD.gn' -print0 | sort -z | \
   xargs -0 sha256sum > "$test_root/build-files.after"
 cmp "$test_root/build-files.before" "$test_root/build-files.after"
@@ -97,12 +105,91 @@ validator="$repo_root/scripts/chromium/validate-android-java-pref-inputs.sh"
   grep -qx 'android_java_pref_inputs=verified count=3'
 
 if "$repo_root/scripts/chromium/restore-android-pruned-build-inputs.sh" \
-  "$source_root" "$pinned_commit" "$pruning_list" \
+  restore "$source_root" "$pinned_commit" "$pruning_list" \
   > "$test_root/repeated.out" 2>&1; then
   echo 'repeated Android build-input restoration unexpectedly passed' >&2
   exit 1
 fi
 grep -q 'was not pruned before restoration' "$test_root/repeated.out"
+
+wrong_commit=0000000000000000000000000000000000000000
+if "$repo_root/scripts/chromium/restore-android-pruned-build-inputs.sh" \
+  validate "$source_root" "$wrong_commit" "$pruning_list" \
+  > "$test_root/wrong-revision.out" 2>&1; then
+  echo 'wrong Chromium revision unexpectedly passed build-input validation' >&2
+  exit 1
+fi
+grep -qx 'Chromium source does not match the expected commit' \
+  "$test_root/wrong-revision.out"
+
+printf 'tampered R8\n' >> "$source_root/third_party/r8/custom_d8.jar"
+if "$repo_root/scripts/chromium/restore-android-pruned-build-inputs.sh" \
+  validate "$source_root" "$pinned_commit" "$pruning_list" \
+  > "$test_root/tampered-r8.out" 2>&1; then
+  echo 'tampered restored R8 input unexpectedly passed validation' >&2
+  exit 1
+fi
+grep -qx \
+  'restored Android build input does not match its pinned blob: third_party/r8/custom_d8.jar' \
+  "$test_root/tampered-r8.out"
+git -C "$source_root" show "$pinned_commit:third_party/r8/custom_d8.jar" \
+  > "$source_root/third_party/r8/custom_d8.jar"
+
+validate_output=$(
+  "$repo_root/scripts/chromium/restore-android-pruned-build-inputs.sh" \
+    validate "$source_root" "$pinned_commit" "$pruning_list"
+)
+[[ "$(grep -c '^validate_android_build_input=' <<< "$validate_output")" -eq 6 ]]
+grep -qx "validate_android_build_input=third_party/r8/custom_d8.jar blob=$d8_blob" \
+  <<< "$validate_output"
+grep -qx "validate_android_build_input=third_party/r8/custom_r8.jar blob=$r8_blob" \
+  <<< "$validate_output"
+
+out_dir="$source_root/out/Default"
+mkdir -p "$out_dir"
+cat > "$out_dir/build.ninja" <<'EOF'
+rule package
+  command = touch $out
+build chrome_public_apk: package ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../chrome/common/pref_names.h
+EOF
+graph_validator="$repo_root/scripts/chromium/validate-android-pruned-build-graph.sh"
+"$graph_validator" "$source_root" "$out_dir" "$pinned_commit" \
+  "$pruning_list" chrome_public_apk | \
+  grep -qx 'android_pruned_build_graph=verified target=chrome_public_apk count=2'
+
+mkdir -p "$source_root/third_party/angle/third_party/r8"
+printf 'synthetic ANGLE D8\n' \
+  > "$source_root/third_party/angle/third_party/r8/custom_d8.jar"
+printf '%s\n' 'third_party/angle/third_party/r8/custom_d8.jar' >> "$pruning_list"
+cat > "$out_dir/build.ninja" <<'EOF'
+rule package
+  command = touch $out
+build chrome_public_apk: package ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../third_party/angle/third_party/r8/custom_d8.jar
+EOF
+if "$graph_validator" "$source_root" "$out_dir" "$pinned_commit" \
+  "$pruning_list" chrome_public_apk > "$test_root/unexpected-graph.out" 2>&1; then
+  echo 'unexpected pruned Android graph input passed validation' >&2
+  exit 1
+fi
+grep -q 'unexpected pruned Android target input:' \
+  "$test_root/unexpected-graph.out"
+grep -qx 'third_party/angle/third_party/r8/custom_d8.jar' \
+  "$test_root/unexpected-graph.out"
+
+sed -i '/third_party\/angle\/third_party\/r8\/custom_d8.jar/d' "$pruning_list"
+cat > "$out_dir/build.ninja" <<'EOF'
+rule package
+  command = touch $out
+build chrome_public_apk: package ../../third_party/r8/custom_d8.jar
+EOF
+if "$graph_validator" "$source_root" "$out_dir" "$pinned_commit" \
+  "$pruning_list" chrome_public_apk > "$test_root/missing-graph.out" 2>&1; then
+  echo 'incomplete pruned Android graph inventory passed validation' >&2
+  exit 1
+fi
+grep -q 'expected pruned Android target input is unreachable:' \
+  "$test_root/missing-graph.out"
+grep -qx 'third_party/r8/custom_r8.jar' "$test_root/missing-graph.out"
 
 sed -i '/signin_pref_names.cc/a\    "//missing/generated_pref_source.h",' \
   "$source_root/chrome/browser/preferences/BUILD.gn"
