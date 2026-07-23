@@ -264,7 +264,8 @@ test -d "$test_root/releases/browser/$artifact_sha"
 test -f "$test_root/releases/browser/$artifact_sha/.helium-artifact-receipt.env"
 HOME="$test_root/home" HELIUM_LAPTOP_RELEASE_ROOT="$test_root/releases" \
   "$repo_root/scripts/laptop/install-laptop-sync.sh" rollback "$artifact_sha" \
-  | grep -qx 'rollback=activated'
+  >"$test_root/laptop-rollback.out"
+grep -qx 'rollback=activated' "$test_root/laptop-rollback.out"
 
 mkdir -p "$test_root/enrollment"
 mkdir -p "$test_root/android-live/app_chrome/Default"
