@@ -59,14 +59,14 @@ mv -T \"\$ROOT/opt/helium-sync.new.\$\$\" \"\$ROOT/opt/helium-sync\"
 install_release() {
   local artifact=$1 artifact_receipt=$2 backup_config=$3 backup_receipt=$4
   local admission backup_admission artifact_sha sync_commit expected_tree_sha work_dir helium_member
-  local normalized_member strip_components artifact_machine artifact_arch chroot_machine chroot_arch
+  local bundle_root strip_components artifact_machine artifact_arch chroot_machine chroot_arch
   local tmp_name receipt_name
 
   validate_root
   command -v readelf >/dev/null || { echo "readelf is required" >&2; exit 1; }
   artifact=$(realpath -e -- "$artifact")
   artifact_receipt=$(realpath -e -- "$artifact_receipt")
-  admission=$("$repo_root/scripts/deployment/verify-artifact-receipt.sh" \
+  admission=$("$repo_root/scripts/verify-deployment-artifact-receipt.sh" \
     "$artifact" "$artifact_receipt" linux-arm64-chroot)
   artifact_sha=$(awk -F= '$1 == "artifact_sha256" {print $2}' <<<"$admission")
   sync_commit=$(awk -F= '$1 == "helium_sync_commit" {print $2}' <<<"$admission")
@@ -83,15 +83,22 @@ install_release() {
 
   work_dir=$(mktemp -d)
   trap 'rm -rf -- "$work_dir"; "$adb_bin" shell "rm -f /data/local/tmp/${tmp_name:-missing} /data/local/tmp/${receipt_name:-missing}" >/dev/null 2>&1 || true' EXIT
+  bundle_root=helium-sync-linux-arm64
   tar -tf "$artifact" >"$work_dir/members.txt"
   while IFS= read -r member; do
     case "$member" in /*|..|../*|*/../*|*/..) echo "unsafe artifact member: $member" >&2; exit 1 ;; esac
   done <"$work_dir/members.txt"
-  helium_member=$(awk '$0 !~ /\/$/ && ($0 == "helium" || $0 == "./helium" || $0 ~ /\/helium$/) {print; exit}' "$work_dir/members.txt")
-  [[ -n "$helium_member" ]] || { echo "artifact does not contain a helium executable" >&2; exit 1; }
+  [[ "$(awk -F/ 'NF {print $1}' "$work_dir/members.txt" | sort -u)" == "$bundle_root" ]] || {
+    echo "artifact root is not the Helium Sync arm64 product" >&2
+    exit 1
+  }
+  helium_member="$bundle_root/runtime/helium"
+  grep -Fqx "$helium_member" "$work_dir/members.txt" || {
+    echo "artifact does not contain the exact Helium Sync executable" >&2
+    exit 1
+  }
   tar -xOf "$artifact" "$helium_member" >"$work_dir/helium"
-  normalized_member=${helium_member#./}
-  if [[ "$normalized_member" == helium ]]; then strip_components=0; else strip_components=$(awk -F/ '{print NF - 1}' <<<"$normalized_member"); fi
+  strip_components=2
   artifact_machine=$(readelf -h "$work_dir/helium" | awk -F: '/Machine:/ {gsub(/^[ \t]+/, "", $2); print $2; exit}')
   artifact_arch=$(normalize_arch "$artifact_machine")
   chroot_machine=$("$adb_bin" shell 'su -c "chroot '"$root"' /usr/bin/uname -m"' | tr -d '\r')
@@ -123,7 +130,7 @@ if [ ! -d \"\$RELEASE\" ]; then
   test ! -e \"\$STAGING\"
   mkdir \"\$STAGING\"
   cp \"\$ARCHIVE\" \"\$ROOT/tmp/\$SHA.tar.xz\"
-  /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/bin:/bin /usr/bin/tar -xf \"/tmp/\$SHA.tar.xz\" -C \"/opt/helium-sync-releases/.incoming-\$SHA.\$\$\" --strip-components=\"\$STRIP\"
+  /system/bin/chroot \"\$ROOT\" /usr/bin/env PATH=/usr/bin:/bin /usr/bin/tar -xf \"/tmp/\$SHA.tar.xz\" -C \"/opt/helium-sync-releases/.incoming-\$SHA.\$\$\" --strip-components=\"\$STRIP\" '"$bundle_root"'/runtime
   rm -f \"\$ROOT/tmp/\$SHA.tar.xz\"
   test -x \"\$STAGING/helium\"
   test -x \"\$STAGING/helium_crashpad_handler\"

@@ -23,11 +23,17 @@ provenance_sha256=<64 lowercase hex>
 created_at=<UTC YYYY-MM-DDTHH:MM:SSZ>
 ```
 
-`scripts/deployment/verify-artifact-receipt.sh` rejects unknown or duplicate
+`scripts/verify-deployment-artifact-receipt.sh` rejects unknown or duplicate
 fields, a target mismatch, abbreviated commits, size drift, and artifact hash
-drift. Installers also require the recorded private source commit to exist in
-their normal Git ancestry. The build pipeline still has to emit this receipt
-from the returned provenance; an operator must not hand-author one.
+drift. There is one accepted schema and no legacy verifier fallback.
+`linux-product.conf` binds desktop Sync to `helium-sync-linux-x86_64` and
+`linux-x86_64`, and binds the cross-built OnePlus chroot artifact to
+`helium-sync-linux-arm64` and `linux-arm64-chroot`. It also records the exact
+public Passwords ancestor and requires the private Sync commit to come from
+this repository. Installers require the recorded private source commit in
+their normal Git ancestry. Only `scripts/package-linux-runtime.sh` may create
+the post-build receipt through `scripts/write-deployment-artifact-receipt.sh`;
+an operator must not hand-author one.
 
 ## Full-profile backup
 
@@ -162,7 +168,8 @@ After disposable browser acceptance and the exact-profile backup gate:
 
 ```sh
 scripts/laptop/install-laptop-sync.sh install \
-  /artifacts/helium-linux.tar.xz /artifacts/helium-linux.receipt.env \
+  /artifacts/helium-sync-linux-x86_64.tar.xz \
+  /artifacts/helium-sync-linux-x86_64.receipt.env \
   /secure/d-profile.conf /secure/receipts/d-default-GENERATION.env
 ```
 
@@ -180,7 +187,8 @@ For the OnePlus Arch chroot:
 
 ```sh
 scripts/android-local/install-chroot-helium.sh install \
-  /artifacts/helium-linux-arm64.tar.xz /artifacts/helium-linux-arm64.receipt.env \
+  /artifacts/helium-sync-linux-arm64.tar.xz \
+  /artifacts/helium-sync-linux-arm64.receipt.env \
   /secure/oneplus-chroot-profile.conf /secure/receipts/oneplus-chroot-GENERATION.env
 scripts/android-local/install-chroot-helium.sh rollback ARTIFACT_SHA256
 ```

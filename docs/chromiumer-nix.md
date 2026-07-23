@@ -135,7 +135,8 @@ scripts/chromiumer-job.sh start "$job" \
   --summary "Linux x86_64 browser artifact and password acceptance input" \
   --next "Fetch and verify the packaged artifact, then run the disposable password gate on da." -- \
   scripts/chromiumer-nix.sh run -- \
-    bash scripts/build-chromiumer-linux.sh x86_64
+    bash scripts/build-chromiumer-linux.sh \
+      helium-sync x86_64 linux-x86_64 "$job"
 ```
 
 Use `scripts/chromiumer-job.sh cancel "$job"` as the one cancellation command.

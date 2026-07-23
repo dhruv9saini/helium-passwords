@@ -30,7 +30,7 @@ const PNG = Buffer.from(
 async function writeLinuxArtifactReceipt(root, artifact) {
   const artifactHash = crypto.createHash("sha256")
     .update(await fsp.readFile(artifact)).digest("hex");
-  const bundle = path.join(root, "helium-passwords-linux-x86_64");
+  const bundle = path.join(root, "helium-sync-linux-x86_64");
   const runtime = path.join(bundle, "runtime");
   const provenance = path.join(bundle, "provenance");
   const browser = path.join(runtime, "helium");
@@ -48,7 +48,7 @@ async function writeLinuxArtifactReceipt(root, artifact) {
   const receipt = path.join(root, "artifact-receipt.env");
   await fsp.writeFile(receipt, [
     "schema_version=2",
-    "product=helium-passwords",
+    "product=helium-sync",
     "platform=linux",
     "arch=x86_64",
     `source_commit=${"1".repeat(40)}`,
@@ -125,7 +125,7 @@ test("private receipt binds public UI evidence to exact revisions, tombstone, an
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-sync-run-"));
   try {
     const artifact = path.join(
-      root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
+      root, "helium-sync-linux-x86_64", "runtime", "helium-wrapper");
     const screenshot = path.join(root, "screen.png");
     const runRoot = path.join(root, "acceptance");
     const statePath = path.join(root, "password-state.json");
@@ -221,7 +221,7 @@ test("Sync metadata must be captured at its matching public UI step", async () =
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-sync-binding-"));
   try {
     const artifact = path.join(
-      root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
+      root, "helium-sync-linux-x86_64", "runtime", "helium-wrapper");
     const screenshot = path.join(root, "screen.png");
     const runRoot = path.join(root, "acceptance");
     const statePath = path.join(root, "password-state.json");

@@ -8,7 +8,7 @@ shm_destination=$(mktemp -d /dev/shm/helium-deploy-backup-b.XXXXXX)
 cleanup() { find "$test_root" "$tmp_destination" "$shm_destination" -depth -delete; }
 trap cleanup EXIT
 mkdir -p "$test_root/bin" "$test_root/home/.config/net.imput.helium/Default" \
-  "$test_root/artifact"
+  "$test_root/artifact/helium-sync-linux-x86_64/runtime"
 printf '%s\n' \
   'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' \
   'age1pppppppppppppppppppppppppppppppppppppppppppppppppppp' \
@@ -218,35 +218,30 @@ export PATH
 export DEPLOY_TEST_SSH_IDENTITY="$test_root/ssh-identity"
 export DEPLOY_TEST_PEER_ROOT="$shm_destination"
 
-cat >"$test_root/artifact/helium" <<'EOF'
+cat >"$test_root/artifact/helium-sync-linux-x86_64/runtime/helium" <<'EOF'
 #!/usr/bin/env sh
 echo 'Helium fixture 1'
 EOF
-cat >"$test_root/artifact/helium_crashpad_handler" <<'EOF'
+cat >"$test_root/artifact/helium-sync-linux-x86_64/runtime/helium_crashpad_handler" <<'EOF'
 #!/usr/bin/env sh
 exit 0
 EOF
-chmod 755 "$test_root/artifact/helium" "$test_root/artifact/helium_crashpad_handler"
-printf icu >"$test_root/artifact/icudtl.dat"
-printf resources >"$test_root/artifact/resources.pak"
-tar -C "$test_root/artifact" -cJf "$test_root/helium-linux.tar.xz" .
+chmod 755 \
+  "$test_root/artifact/helium-sync-linux-x86_64/runtime/helium" \
+  "$test_root/artifact/helium-sync-linux-x86_64/runtime/helium_crashpad_handler"
+printf icu >"$test_root/artifact/helium-sync-linux-x86_64/runtime/icudtl.dat"
+printf resources >"$test_root/artifact/helium-sync-linux-x86_64/runtime/resources.pak"
+tar -C "$test_root/artifact" -cJf "$test_root/helium-linux.tar.xz" \
+  helium-sync-linux-x86_64
 artifact_sha=$(sha256sum "$test_root/helium-linux.tar.xz" | awk '{print $1}')
-artifact_size=$(stat -c %s "$test_root/helium-linux.tar.xz")
 write_artifact_receipt() {
   local target=$1 output=$2
-  cat >"$output" <<EOF
-schema_version=1
-artifact_sha256=$artifact_sha
-artifact_size=$artifact_size
-target=$target
-helium_sync_commit=$commit
-helium_passwords_commit=$commit
-helium_core_commit=$commit
-chromium_commit=$commit
-build_job_id=fixture-deployment-01
-provenance_sha256=$(printf fixture-provenance | sha256sum | awk '{print $1}')
-created_at=2026-07-22T12:00:00Z
-EOF
+  "$repo_root/scripts/write-deployment-artifact-receipt.sh" \
+    "$test_root/helium-linux.tar.xz" "$target" \
+    "$commit" "$commit" "$commit" "$commit" \
+    fixture-deployment-01 \
+    "$(printf fixture-provenance | sha256sum | awk '{print $1}')" \
+    "$output" >/dev/null
 }
 
 laptop_config=$test_root/laptop-backup.conf
@@ -313,7 +308,7 @@ fi
 
 grep -q 'helium-sync-releases' "$repo_root/scripts/android-local/install-chroot-helium.sh"
 ! grep -Fq 'rm -rf \"\$ROOT/opt/helium-sync\"' "$repo_root/scripts/android-local/install-chroot-helium.sh"
-grep -q 'verify-artifact-receipt.sh' "$repo_root/scripts/android-local/install-chroot-helium.sh"
+grep -q 'verify-deployment-artifact-receipt.sh' "$repo_root/scripts/android-local/install-chroot-helium.sh"
 grep -q 'verify-receipt' "$repo_root/scripts/android-local/install-chroot-helium.sh"
 
 printf 'deployment_foundations=passed\n'
