@@ -32,11 +32,13 @@ readonly_paths=(
   components/safe_browsing/core/common/safe_browsing_prefs.h
   components/signin/public/base/signin_pref_names.cc
   components/signin/public/base/signin_pref_names.h
+  third_party/r8/custom_d8.jar
+  third_party/r8/custom_r8.jar
 )
 
 temporary=
 cleanup() {
-  if [[ -n "$temporary" && "$temporary" == "$source_root"/.helium-android-pref-restore.* ]]; then
+  if [[ -n "$temporary" && "$temporary" == "$source_root"/.helium-android-input-restore.* ]]; then
     find "$temporary" -maxdepth 0 -type f -delete
   fi
 }
@@ -44,11 +46,11 @@ trap cleanup EXIT
 
 for relative_path in "${readonly_paths[@]}"; do
   grep -Fxq "$relative_path" "$pruning_list" || {
-    echo "Android pref input is not declared by the pruning list: $relative_path" >&2
+    echo "Android build input is not declared by the pruning list: $relative_path" >&2
     exit 1
   }
   [[ ! -e "$source_root/$relative_path" && ! -L "$source_root/$relative_path" ]] || {
-    echo "Android pref input was not pruned before restoration: $relative_path" >&2
+    echo "Android build input was not pruned before restoration: $relative_path" >&2
     exit 1
   }
 
@@ -61,7 +63,7 @@ for relative_path in "${readonly_paths[@]}"; do
     exit 1
   }
 
-  temporary=$(mktemp "$source_root/.helium-android-pref-restore.XXXXXX")
+  temporary=$(mktemp "$source_root/.helium-android-input-restore.XXXXXX")
   git -C "$source_root" cat-file blob "$expected_blob" > "$temporary"
   chmod 644 "$temporary"
   mkdir -p "$(dirname "$source_root/$relative_path")"
@@ -69,13 +71,13 @@ for relative_path in "${readonly_paths[@]}"; do
   temporary=
 
   [[ "$(git -C "$source_root" hash-object "$relative_path")" == "$expected_blob" ]] || {
-    echo "restored Android pref input does not match its pinned blob: $relative_path" >&2
+    echo "restored Android build input does not match its pinned blob: $relative_path" >&2
     exit 1
   }
   git -C "$source_root" diff --quiet -- "$relative_path" || {
-    echo "restored Android pref input differs from pinned Chromium: $relative_path" >&2
+    echo "restored Android build input differs from pinned Chromium: $relative_path" >&2
     exit 1
   }
-  printf 'restored_android_pref_input=%s blob=%s\n' \
+  printf 'restored_android_build_input=%s blob=%s\n' \
     "$relative_path" "$expected_blob"
 done
