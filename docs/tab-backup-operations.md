@@ -233,6 +233,13 @@ Nothing in this layer can promote a restore into a live browser profile. The
 wrapper must run on the snapshot's source device and cannot open or merge the
 result into another device's browser.
 
+The command also atomically publishes a mode-0600 sibling source receipt at
+`RESTORE.helium-tab-offdevice-source.env`. It binds the requested destination,
+ciphertext and backup-manifest hashes, source namespace, generation, and
+restored session hash. The runtime proof consumes this receipt so two copies
+of one restored directory cannot be relabeled as two destination drills. See
+[tab-runtime-proof.md](tab-runtime-proof.md).
+
 After that neutral restore succeeds, `helium-tabs prepare-browser-profile`
 may prepare a native-import-ready copy only as a new `drill-*` child of an
 operator-created mode-0700 root containing the exact

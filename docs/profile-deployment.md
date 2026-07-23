@@ -149,6 +149,13 @@ profile, imports a copy on another device, or opens tabs. A full-profile
 backup contains that source device's local session files only as
 disaster-recovery data; it is not tab synchronization.
 
+After restoring the same synthetic generation independently from both
+destinations, use the authenticated first/second-start gate in
+[tab-runtime-proof.md](tab-runtime-proof.md). It consumes each restore's
+source-bound receipt and requires the two evidence records to name distinct
+destinations with the same ciphertext before `full-profile.status` can be
+emitted.
+
 ## Transactional desktop and chroot install
 
 After disposable browser acceptance and the exact-profile backup gate:

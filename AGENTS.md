@@ -167,6 +167,12 @@ restores Chromium's native password manager.
   session copier, event journal, alternate normal-launch bridge, or additional
   mechanism count. Keep neutral and full-profile producers, configs, recovery
   recipients, retention, restore commands, and health proofs independent.
+  Runtime status must come from `scripts/tabs/tab-runtime-proof.mjs` evidence
+  authenticated by `scripts/tabs/tab-proof-status.mjs`; never hand-write a
+  healthy status. Neutral and full-profile status requires two source-bound
+  restore proofs from distinct destinations. The desktop runner accepts only a
+  marked `drill-*` profile. Android remains fail-closed to the exact
+  `computer.helium.sync.test` identity until its app-sandbox adapter exists.
 - `scripts/android-local/start-arch-xmonad-root.sh` also keeps Android
   Tailscale usable for chroot `ssh`/`mosh`: if `com.tailscale.ipn` is installed
   and `ARCH_X11_TAILSCALE_CONNECT` is not `0`, startup whitelists the app from
