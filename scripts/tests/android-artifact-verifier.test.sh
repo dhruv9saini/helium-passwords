@@ -79,6 +79,10 @@ cat > "$test_root/input/runtime-acceptance/run-device-probe.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 EOF
+cat > "$test_root/input/runtime-acceptance/disposable-browser.sh" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+EOF
 cat > "$test_root/input/runtime-acceptance/prepare-cookie-acceptance-profile.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -102,9 +106,9 @@ printf 'synthetic webm\n' > "$1/vp9-opus.webm"
   printf 'synthetic ffmpeg\n' > FFMPEG_VERSION
 )
 EOF
-chmod +x "$test_root/input/runtime-acceptance/"{fixture-server.mjs,run-cdp-probe.mjs,prepare-cookie-acceptance-profile.sh,run-device-probe.sh,verify-probe-pair.sh,generate-fixtures.sh}
+chmod +x "$test_root/input/runtime-acceptance/"{fixture-server.mjs,run-cdp-probe.mjs,disposable-browser.sh,prepare-cookie-acceptance-profile.sh,run-device-probe.sh,verify-probe-pair.sh,generate-fixtures.sh}
 cat > "$test_root/input/runtime-acceptance/kit.env" <<EOF
-schema_version=5
+schema_version=6
 probe_schema_version=1
 helium_sync_commit=$commit
 chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT
@@ -117,8 +121,8 @@ EOF
 (
   cd "$test_root/input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-    verify-probe-pair.sh kit.env > SHA256SUMS
+    disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
 )
 tar -C "$test_root/input" -caf "$test_root/artifact.tar.xz" .
 
@@ -144,6 +148,25 @@ grep -qx "helium_sync_commit=$commit" "$test_root/result"
 grep -Eq '^apk_sha256=[0-9a-f]{64}$' "$test_root/result"
 grep -Eq '^runtime_kit_sha256=[0-9a-f]{64}$' "$test_root/result"
 
+cp -a "$test_root/input" "$test_root/missing-boundary-input"
+find "$test_root/missing-boundary-input/runtime-acceptance/disposable-browser.sh" \
+  -delete
+(
+  cd "$test_root/missing-boundary-input/runtime-acceptance"
+  sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
+    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
+    verify-probe-pair.sh kit.env > SHA256SUMS
+)
+tar -C "$test_root/missing-boundary-input" \
+  -caf "$test_root/missing-boundary-artifact.tar.xz" .
+if AAPT2="$test_root/aapt2" \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh" \
+  "$test_root/missing-boundary-artifact.tar.xz" \
+  computer.helium.sync.test "$commit" > /dev/null 2>&1; then
+  echo "Android artifact without its disposable boundary unexpectedly passed" >&2
+  exit 1
+fi
+
 cp -a "$test_root/input" "$test_root/production-input"
 sed -i \
   -e 's/computer\.helium\.sync\.test/computer.helium.sync/' \
@@ -155,8 +178,8 @@ checksum_provenance "$test_root/production-input/build-provenance"
 (
   cd "$test_root/production-input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-    verify-probe-pair.sh kit.env > SHA256SUMS
+    disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
 )
 tar -C "$test_root/production-input" -caf "$test_root/production-artifact.tar.xz" .
 cat > "$test_root/production-aapt2" <<'EOF'
@@ -216,8 +239,8 @@ checksum_provenance "$test_root/control-input/build-provenance"
 (
   cd "$test_root/control-input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-    verify-probe-pair.sh kit.env > SHA256SUMS
+    disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
 )
 tar -C "$test_root/control-input" -caf "$test_root/control-artifact.tar.xz" .
 cat > "$test_root/control-aapt2" <<'EOF'
@@ -242,6 +265,7 @@ AAPT2="$test_root/control-aapt2" \
 grep -qx 'package=computer.helium.control.test' \
   "$test_root/control-prepared/acceptance.env"
 [[ -f "$test_root/control-prepared/Browser-test.apk" ]]
+[[ -x "$test_root/control-prepared/runtime-acceptance/disposable-browser.sh" ]]
 
 AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
@@ -253,6 +277,7 @@ grep -qx "helium_sync_commit=$commit" "$test_root/prepared/acceptance.env"
 grep -qx "version_code=$HELIUM_ANDROID_VERSION_CODE" "$test_root/prepared/acceptance.env"
 grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$test_root/prepared/acceptance.env"
 [[ -f "$test_root/prepared/Browser-test.apk" ]]
+[[ -x "$test_root/prepared/runtime-acceptance/disposable-browser.sh" ]]
 [[ -f "$test_root/prepared/media/h264-aac.mp4" ]]
 [[ -f "$test_root/prepared/media/h264-aac-fragmented.mp4" ]]
 [[ -f "$test_root/prepared/media/vp9-opus.webm" ]]

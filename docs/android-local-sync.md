@@ -92,13 +92,24 @@ on chromiumer. Its codec flags and source tests are necessary but not runtime
 proof. `scripts/android-media/prepare-disposable-acceptance.sh` verifies a
 returned Sync or upstream-control test-package archive, creates a new
 checksum-complete test directory with one `Browser-test.apk`, and never
-installs or launches it. That directory carries `run-device-probe.sh`, which
-owns the fixed ADB mappings, background/resume cycle, optional Wi-Fi-to-cellular
-handoff with restoration, immutable evidence directory, and protocol/lifecycle
-validation. The exact device command is in `deployment.md`. Acceptance still
-requires same-source upstream-control and Sync APKs on oneplus for H.264/AAC, MSE,
-VP9/Opus, progressive Fetch, gzip/Brotli, SSE, actually negotiated HTTP/2 and
-HTTP/3, background/foreground, and network handoff.
+installs or launches it. The artifact-carried
+`runtime-acceptance/disposable-browser.sh`, sourced from
+`scripts/android-media/disposable-browser.sh`, is the sole install/launch
+boundary for those prepared artifacts. It admits only the two `.test`
+identities, installs and re-hashes exactly `Browser-test.apk`, derives rather
+than accepts the package-specific DevTools socket, and launches with exactly
+the automation switch plus the optional fixture receipt's exact SPKI switch.
+It snapshots, validates, and restores both Android Chromium command-line files
+byte-for-byte and clears its temporary debug-app selection on every exit; it
+refuses existing global debug state instead of force-stopping another app.
+The same directory carries `run-device-probe.sh`, which owns the fixed ADB
+mappings, background/resume cycle, optional Wi-Fi-to-cellular handoff with
+restoration, immutable evidence directory, and protocol/lifecycle validation.
+The exact install, launch, and device-probe commands are in `deployment.md`.
+Acceptance still requires same-source upstream-control and Sync APKs on
+oneplus for H.264/AAC, MSE, VP9/Opus, progressive Fetch, gzip/Brotli, SSE,
+actually negotiated HTTP/2 and HTTP/3, background/foreground, and network
+handoff.
 Both disposable packages use `is_debug = false` and disable DCHECKs, but set
 `debuggable_apks = true` so a rootless Android shell can select only the
 `.test` app for its isolated command line and inspect synthetic bridge state.

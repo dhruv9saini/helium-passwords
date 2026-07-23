@@ -251,14 +251,14 @@ package_runtime_acceptance() {
   sync_commit=$(git -C "$repo_root" rev-parse HEAD)
   mkdir -p "$destination"
   for source in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-    prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-    verify-probe-pair.sh; do
+    disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+    run-device-probe.sh verify-probe-pair.sh; do
     git -C "$repo_root" show "$sync_commit:scripts/android-media/$source" \
       > "$destination/$source"
     chmod 755 "$destination/$source"
   done
   {
-    printf 'schema_version=5\n'
+    printf 'schema_version=6\n'
     printf 'probe_schema_version=1\n'
     printf 'helium_sync_commit=%s\n' "$sync_commit"
     printf 'chromium_commit=%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT"
@@ -271,8 +271,8 @@ package_runtime_acceptance() {
   (
     cd "$destination"
     sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-      prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-      verify-probe-pair.sh kit.env > SHA256SUMS
+      disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+      run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
   )
 }
 

@@ -46,6 +46,13 @@ replace the browser gates below.
   kit bound to the same Helium Sync commit, Chromium commit, package, arm64 CPU,
   and `chrome_public_apk` target. A prepared disposable directory must pass its
   complete `PACKAGE_SHA256SUMS` inventory before installation or execution.
+- Installation and launch use the prepared directory's artifact-carried
+  `runtime-acceptance/disposable-browser.sh`. It admits only the exact prepared
+  `.test` APK, re-hashes the installed base APK, derives the fixed package
+  socket, and restores both Android global Chromium command-line files plus the
+  temporary debug-app selection on every exit. Pre-existing debug state,
+  unsafe command-line paths, concurrent changes, a broad certificate bypass,
+  or a non-receipt SPKI override fail before probing.
 - Both the Sync and upstream-control archives carry the realized Chromiumer Nix
   store path, closure hash/size, realization capacity record, and exact
   shell-escaped build command inside the artifact checksum boundary. Sync
@@ -345,8 +352,22 @@ normal package fail before evidence capture. The temporary self-signed runtime
 test proves source behavior only and cannot satisfy this device gate.
 
 The two APKs are independently installable and must never share a DevTools
-endpoint. Launch the admitted test package with exactly one
-`--enable-automation` switch and its exact command-line override:
+endpoint. Install and launch each prepared directory with the boundary before
+running the artifact-carried probe:
+
+```sh
+acceptance=/srv/nas/helium-acceptance/JOB
+serial=ONEPLUS_ADB_SERIAL
+"$acceptance/runtime-acceptance/disposable-browser.sh" \
+  install "$acceptance" "$serial"
+"$acceptance/runtime-acceptance/disposable-browser.sh" \
+  launch "$acceptance" "$serial" \
+  --fixture-receipt \
+    "$HOME/.local/state/helium-media-fixtures/config/fixture-provenance.json"
+```
+
+The admitted process receives exactly one `--enable-automation` switch and its
+derived command-line override:
 
 ```text
 computer.helium.sync.test     --remote-debugging-socket-name=helium_sync_test_devtools_remote
