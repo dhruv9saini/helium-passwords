@@ -94,12 +94,76 @@ async function readPreparedAndroidAdmission(artifactPath, artifactHash, packageN
     if (values.has(key)) throw new Error("Android acceptance metadata contains duplicate keys");
     values.set(key, line.slice(separator + 1));
   }
-  if (values.get("schema_version") !== "1" || values.get("package") !== packageName ||
+  const expectedMetadataKeys = [
+    "schema_version", "package", "helium_sync_commit", "chromium_commit",
+    "version_code", "version_name", "source_archive_sha256", "apk_sha256",
+    "runtime_kit_sha256", "prepared_at",
+  ].sort();
+  if (JSON.stringify([...values.keys()].sort()) !== JSON.stringify(expectedMetadataKeys)) {
+    throw new Error("Android acceptance metadata has an unexpected field inventory");
+  }
+  if (values.get("schema_version") !== "2" || values.get("package") !== packageName ||
       values.get("apk_sha256") !== artifactHash) {
     throw new Error("Android acceptance metadata does not admit this test APK and package");
   }
-  const expectedLine = `${artifactHash}  ./Browser-test.apk`;
-  if (!(await fsp.readFile(inventory.resolved, "utf8")).split("\n").includes(expectedLine)) {
+  for (const name of ["helium_sync_commit", "chromium_commit"]) {
+    if (!/^[0-9a-f]{40}$/.test(values.get(name) || "")) {
+      throw new Error(`Android acceptance metadata has an invalid ${name}`);
+    }
+  }
+  for (const name of ["source_archive_sha256", "apk_sha256", "runtime_kit_sha256"]) {
+    if (!/^[0-9a-f]{64}$/.test(values.get(name) || "")) {
+      throw new Error(`Android acceptance metadata has an invalid ${name}`);
+    }
+  }
+  if (!/^[1-9][0-9]*$/.test(values.get("version_code") || "") ||
+      !/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(values.get("version_name") || "") ||
+      !Number.isFinite(Date.parse(values.get("prepared_at") || ""))) {
+    throw new Error("Android acceptance metadata has an invalid version or timestamp");
+  }
+
+  const recordedFiles = new Map();
+  for (const line of (await fsp.readFile(inventory.resolved, "utf8")).split("\n")) {
+    if (!line) continue;
+    const match = /^([0-9a-f]{64})  \.\/(.+)$/.exec(line);
+    if (!match || match[2].startsWith("/") || match[2].includes("\\") ||
+        match[2].split("/").some(component => component === "" ||
+          component === "." || component === "..") ||
+        recordedFiles.has(match[2])) {
+      throw new Error("Android acceptance checksum inventory is malformed");
+    }
+    recordedFiles.set(match[2], match[1]);
+  }
+
+  const actualFiles = new Map();
+  async function walk(relativeDirectory = "") {
+    const absoluteDirectory = path.join(directory, relativeDirectory);
+    for (const entry of await fsp.readdir(absoluteDirectory, {withFileTypes: true})) {
+      const relative = relativeDirectory ?
+        path.posix.join(relativeDirectory, entry.name) : entry.name;
+      if (relative === "PACKAGE_SHA256SUMS") continue;
+      if (entry.isDirectory()) {
+        await walk(relative);
+      } else if (entry.isFile()) {
+        const file = await regularFile(path.join(directory, relative),
+          `Android acceptance file ${relative}`);
+        actualFiles.set(relative, await sha256File(file.resolved));
+      } else {
+        throw new Error(`Android acceptance entry is unsafe: ${relative}`);
+      }
+    }
+  }
+  await walk();
+  if (JSON.stringify([...recordedFiles.keys()].sort()) !==
+      JSON.stringify([...actualFiles.keys()].sort())) {
+    throw new Error("Android acceptance checksum inventory is incomplete or unexpected");
+  }
+  for (const [relative, digest] of actualFiles) {
+    if (recordedFiles.get(relative) !== digest) {
+      throw new Error(`Android acceptance file changed after preparation: ${relative}`);
+    }
+  }
+  if (recordedFiles.get("Browser-test.apk") !== artifactHash) {
     throw new Error("Android checksum inventory does not admit this test APK");
   }
 }

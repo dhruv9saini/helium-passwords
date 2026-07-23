@@ -280,8 +280,8 @@ scripts/dev.sh check
 sync_commit=$(git rev-parse HEAD)
 
 sync_job=hs-android-150-sync-test-01
-scripts/chromiumer-job.sh preflight 100
-scripts/chromiumer-job.sh stage "$sync_job" 100
+scripts/chromiumer-job.sh preflight 80
+scripts/chromiumer-job.sh stage "$sync_job" 80
 scripts/chromiumer-job.sh start "$sync_job" \
   --summary "Chromium 150 disposable Helium Sync arm64 APK" \
   --next "Fetch and verify the Sync APK, then prepare disposable acceptance." -- \
@@ -294,8 +294,8 @@ scripts/chromiumer-job.sh start "$sync_job" \
       bash scripts/chromium/build-android-ci.sh
 
 control_job=hs-android-150-control-test-01
-scripts/chromiumer-job.sh preflight 100
-scripts/chromiumer-job.sh stage "$control_job" 100
+scripts/chromiumer-job.sh preflight 80
+scripts/chromiumer-job.sh stage "$control_job" 80
 scripts/chromiumer-job.sh start "$control_job" \
   --summary "Same-source unmodified Chromium 150 arm64 control APK" \
   --next "Fetch and verify the control APK, then prepare disposable acceptance." -- \
@@ -306,10 +306,19 @@ scripts/chromiumer-job.sh start "$control_job" \
       bash scripts/chromium/build-android-control-ci.sh
 ```
 
-Do not run the two 100 GiB jobs concurrently. Before starting the second job,
+Do not run the two 80 GiB jobs concurrently. Before starting the second job,
 fetch the first artifact and clean its verified workspace so the shared disk
 admission is recomputed. Both artifact verifiers receive the saved
 `$sync_commit`; this is the cross-job source binding.
+
+Always preserve the commit from the staged source manifest and pass that exact
+value to both artifact verifiers even if `main` advances while the detached job
+runs. A clean ancestor artifact may be checksum/provenance verified and kept as
+compile evidence. It is not a OnePlus runtime candidate unless that exact
+commit is still the selected acceptance source, its generated overlay is
+current, and its artifact-carried kit is the selected kit. Otherwise, finish
+the evidence return and start a fresh Sync/control pair from the later exact
+commit; never substitute the new `HEAD` as the old artifact's expected commit.
 
 When each job reaches terminal success, fetch and verify the exact archive on
 lm before cleanup:

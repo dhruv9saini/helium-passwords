@@ -86,6 +86,12 @@ validation. The exact device command is in `deployment.md`. Acceptance still
 requires same-source upstream-control and Sync APKs on oneplus for H.264/AAC, MSE,
 VP9/Opus, progressive Fetch, gzip/Brotli, SSE, actually negotiated HTTP/2 and
 HTTP/3, background/foreground, and network handoff.
+Both disposable packages use `is_debug = false` and disable DCHECKs, but set
+`debuggable_apks = true` so a rootless Android shell can select only the
+`.test` app for its isolated command line and inspect synthetic bridge state.
+The later `computer.helium.sync` build explicitly sets
+`debuggable_apks = false`. Artifact admission rejects a package whose manifest
+debuggable bit and GN role do not match.
 The carried probe records EME and `com.widevine.alpha` availability separately;
 ordinary codec playback never proves DRM, and protected playback remains
 outside the passing gate until a CDM is deliberately provisioned.

@@ -408,9 +408,15 @@ restores Chromium's native password manager.
   installer. The tool never launches a browser or makes a restored copy active.
   Do not confuse full-profile rollback copies with cross-device tab transport;
   neither may auto-open tabs.
-- Android APKs intended for local phone use should be release-style,
-  non-debuggable builds: keep `is_debug = false` and
-  `dcheck_always_on = false`; do not set `is_desktop_android = true`.
+- Production Android APKs intended for local phone use must be release-style
+  and non-debuggable: keep `is_debug = false`, `dcheck_always_on = false`, and
+  explicitly set `debuggable_apks = false`; do not set
+  `is_desktop_android = true`. Disposable `.test` packages also keep
+  `is_debug = false` and DCHECKs off, but explicitly use
+  `debuggable_apks = true` so the rootless acceptance harness can select only
+  that package as Android's debug app and inspect synthetic bridge metadata.
+  The artifact verifier enforces this package-role split; a debuggable
+  `computer.helium.sync` APK is never a production artifact.
   Keep `ffmpeg_branding = "Chrome"` with `proprietary_codecs = true` so regular
   MP4/H.264/AAC video works. This is separate from DRM/Widevine.
   Default `is_official_build = false` for local laptop builds because Chromium's

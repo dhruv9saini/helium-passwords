@@ -72,7 +72,10 @@ Confirm the returned APK manifest and `build-provenance/gn-args-resolved.txt`
 both name `computer.helium.sync.test` before installation. Android then gives
 the fixture browser an independent app-data directory. The later production
 artifact is a separate clean build with the default `computer.helium.sync`;
-back up that app's complete existing data before installing it.
+back up that app's complete existing data before installing it. The `.test`
+artifact explicitly has `debuggable_apks = true` for rootless synthetic
+instrumentation; the production artifact explicitly has
+`debuggable_apks = false`. Both remain `is_debug = false` with DCHECKs off.
 
 Run the native password lifecycle through the shared
 `docs/password-runtime-acceptance.md` protocol, then run the private
@@ -94,7 +97,8 @@ AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
 The verifier also checks the relocatable provenance manifest, pinned Chromium
 commit, clean tracked source status, exactly one `HeliumSync.apk`, and the
 artifact-carried runtime acceptance kit. It rejects an artifact lock other than
-the repository lock and uses `aapt2 dump badging` to require versionCode
+the repository lock and uses `aapt2 dump badging` to require the package-role
+debuggable bit plus versionCode
 `787500005` and versionName `150.0.7871.181`; the code is exactly one above the
 observed installed production code `787500004`. It prints those versions plus
 the APK and runtime-kit SHA-256 values. Prepare a new, immutable disposable test

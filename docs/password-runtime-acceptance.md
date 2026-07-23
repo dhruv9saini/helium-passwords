@@ -68,9 +68,15 @@ which keeps the acceptance app separate from a production installation:
 "${node_runtime[@]}" scripts/password-runtime/acceptance.mjs init \
   --artifact /srv/nas/helium-acceptance/JOB/Browser-test.apk \
   --platform android \
-  --package computer.helium.passwords.test \
+  --package computer.helium.sync.test \
   --output "$run"
 ```
+
+The initializer requires the preparer's schema-2 `acceptance.env`, rehashes
+every file in the complete `PACKAGE_SHA256SUMS` inventory, and binds the run to
+the exact `.test` package and APK. A changed runtime kit, provenance file,
+fixture, APK, metadata file, symlink, or unlisted file fails before the run
+directory is created.
 
 Clearing or uninstalling is permitted only for the admitted `.test` package.
 Do not read any other app data, `Login Data`, or a personal profile.

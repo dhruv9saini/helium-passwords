@@ -26,6 +26,7 @@ media_use_ffmpeg = true
 proprietary_codecs = true
 is_debug = false
 dcheck_always_on = false
+debuggable_apks = true
 chrome_public_manifest_package = "computer.helium.sync.test"
 android_override_version_code = "$HELIUM_ANDROID_VERSION_CODE"
 android_override_version_name = "$HELIUM_ANDROID_VERSION_NAME"
@@ -53,6 +54,8 @@ PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
 
 grep -qx 'proprietary_codecs = true' "$test_root/provenance/gn-args-resolved.txt"
 grep -qx 'chrome_public_manifest_package = "computer.helium.sync.test"' \
+  "$test_root/provenance/gn-args-resolved.txt"
+grep -qx 'debuggable_apks = true' \
   "$test_root/provenance/gn-args-resolved.txt"
 grep -Eq '^[0-9a-f]{40}$' "$test_root/provenance/chromium-source-commit.txt"
 grep -qx "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
@@ -127,6 +130,8 @@ grep -Fq 'android_override_version_code' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'android_override_version_name' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'debuggable_apks = $android_debuggable_apks' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'dump badging' \
   "$repo_root/scripts/chromium/verify-android-artifact.sh"
 grep -Fq 'status --short --untracked-files=no' \
@@ -146,7 +151,9 @@ grep -q 'must be computer.helium.sync or computer.helium.sync.test' \
 
 grep -Fq 'CHROMIUM_ANDROID_MANIFEST_PACKAGE:-computer.helium.sync' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'computer.helium.sync|computer.helium.sync.test' \
+grep -Fq 'computer.helium.sync)' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'computer.helium.sync.test)' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 
 echo 'Android media build configuration contract passed'

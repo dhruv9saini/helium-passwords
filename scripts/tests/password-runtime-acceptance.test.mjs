@@ -239,16 +239,37 @@ test("Android admission requires a prepared artifact and matching non-production
     const apk = path.join(prepared, "Browser-test.apk");
     await fsp.mkdir(prepared);
     await fsp.writeFile(apk, "synthetic test apk", {mode: 0o600});
+    await fsp.mkdir(path.join(prepared, "runtime-acceptance"));
+    await fsp.writeFile(path.join(prepared, "runtime-acceptance", "fixture.txt"),
+      "synthetic runtime fixture\n", {mode: 0o600});
     const apkHash = crypto.createHash("sha256").update("synthetic test apk").digest("hex");
     await fsp.writeFile(path.join(prepared, "acceptance.env"), [
-      "schema_version=1",
-      "package=computer.helium.passwords.test",
+      "schema_version=2",
+      "package=computer.helium.sync.test",
+      `helium_sync_commit=${"1".repeat(40)}`,
+      `chromium_commit=${"2".repeat(40)}`,
+      "version_code=787500005",
+      "version_name=150.0.7871.181",
+      `source_archive_sha256=${"3".repeat(64)}`,
       `apk_sha256=${apkHash}`,
-      "prepared_at=fixture",
+      `runtime_kit_sha256=${"4".repeat(64)}`,
+      "prepared_at=2026-07-23T08:00:00Z",
       "",
     ].join("\n"), {mode: 0o600});
+    const inventory = async () => {
+      const files = [
+        "Browser-test.apk",
+        "acceptance.env",
+        "runtime-acceptance/fixture.txt",
+      ];
+      return (await Promise.all(files.map(async relative => {
+        const digest = crypto.createHash("sha256")
+          .update(await fsp.readFile(path.join(prepared, relative))).digest("hex");
+        return `${digest}  ./${relative}`;
+      }))).join("\n") + "\n";
+    };
     await fsp.writeFile(path.join(prepared, "PACKAGE_SHA256SUMS"),
-      `${apkHash}  ./Browser-test.apk\n`, {mode: 0o600});
+      await inventory(), {mode: 0o600});
     await assert.rejects(initializeRun({
       artifact: apk,
       output: path.join(root, "production-package"),
@@ -265,10 +286,18 @@ test("Android admission requires a prepared artifact and matching non-production
       artifact: apk,
       output: path.join(root, "admitted"),
       platform: "android",
-      packageName: "computer.helium.passwords.test",
+      packageName: "computer.helium.sync.test",
     });
     assert.equal(run.artifact_sha256, apkHash);
     assert.equal(run.profile_path, null);
+    await fsp.appendFile(path.join(prepared, "runtime-acceptance", "fixture.txt"),
+      "tampered\n");
+    await assert.rejects(initializeRun({
+      artifact: apk,
+      output: path.join(root, "tampered-inventory-member"),
+      platform: "android",
+      packageName: "computer.helium.sync.test",
+    }), /changed after preparation/);
   } finally {
     await fsp.rm(root, {recursive: true, force: true});
   }

@@ -37,6 +37,11 @@ replace the browser gates below.
 - Android disposable evidence uses `computer.helium.sync.test`; manifest and GN
   provenance must agree. It must coexist with, and never upgrade or read, the
   existing `computer.helium.sync` app data.
+- The disposable Sync and control packages are non-debug Chromium builds with
+  DCHECKs disabled but have `debuggable_apks = true` for rootless test-only
+  command-line selection and synthetic bridge inspection. Production
+  `computer.helium.sync` has `debuggable_apks = false`. Artifact admission
+  requires the GN value and manifest flag to agree with the package role.
 - The returned Android archive must carry a checksum-verified runtime acceptance
   kit bound to the same Helium Sync commit, Chromium commit, package, arm64 CPU,
   and `chrome_public_apk` target. A prepared disposable directory must pass its

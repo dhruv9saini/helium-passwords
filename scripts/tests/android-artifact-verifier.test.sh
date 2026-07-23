@@ -60,7 +60,8 @@ printf 'bash scripts/chromium/build-android-ci.sh \n' \
   printf '%s\n' 'chrome_public_manifest_package = "computer.helium.sync.test"'
   printf 'android_override_version_code = "%s"\n' "$HELIUM_ANDROID_VERSION_CODE"
   printf 'android_override_version_name = "%s"\n' "$HELIUM_ANDROID_VERSION_NAME"
-  printf '%s\n' 'is_debug = false' 'dcheck_always_on = false'
+  printf '%s\n' 'is_debug = false' 'dcheck_always_on = false' \
+    'debuggable_apks = true'
   printf '%s\n' 'target_os = "android"' 'target_cpu = "arm64"' \
     'ffmpeg_branding = "Chrome"' 'proprietary_codecs = true' \
     'media_use_ffmpeg = true'
@@ -121,7 +122,7 @@ cat > "$test_root/aapt2" <<'EOF'
 [[ "$1" == dump && -f "$3" ]]
 case "$2" in
   packagename) printf '%s\n' computer.helium.sync.test ;;
-  badging) printf "package: name='computer.helium.sync.test' versionCode='787500005' versionName='150.0.7871.181'\n" ;;
+  badging) printf "package: name='computer.helium.sync.test' versionCode='787500005' versionName='150.0.7871.181'\napplication-debuggable\n" ;;
   *) exit 1 ;;
 esac
 EOF
@@ -137,6 +138,46 @@ grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$test_root/result"
 grep -qx "helium_sync_commit=$commit" "$test_root/result"
 grep -Eq '^apk_sha256=[0-9a-f]{64}$' "$test_root/result"
 grep -Eq '^runtime_kit_sha256=[0-9a-f]{64}$' "$test_root/result"
+
+cp -a "$test_root/input" "$test_root/production-input"
+sed -i \
+  -e 's/computer\.helium\.sync\.test/computer.helium.sync/' \
+  -e 's/debuggable_apks = true/debuggable_apks = false/' \
+  "$test_root/production-input/build-provenance/gn-args-resolved.txt"
+sed -i 's/computer\.helium\.sync\.test/computer.helium.sync/' \
+  "$test_root/production-input/runtime-acceptance/kit.env"
+checksum_provenance "$test_root/production-input/build-provenance"
+(
+  cd "$test_root/production-input/runtime-acceptance"
+  sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
+    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+)
+tar -C "$test_root/production-input" -caf "$test_root/production-artifact.tar.xz" .
+cat > "$test_root/production-aapt2" <<'EOF'
+#!/usr/bin/env bash
+[[ "$1" == dump && -f "$3" ]]
+case "$2" in
+  packagename) printf '%s\n' computer.helium.sync ;;
+  badging) printf "package: name='computer.helium.sync' versionCode='787500005' versionName='150.0.7871.181'\n" ;;
+  *) exit 1 ;;
+esac
+EOF
+chmod +x "$test_root/production-aapt2"
+AAPT2="$test_root/production-aapt2" \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh" \
+  "$test_root/production-artifact.tar.xz" computer.helium.sync "$commit" \
+  > "$test_root/production-result"
+grep -qx 'package=computer.helium.sync' "$test_root/production-result"
+sed '/badging)/s/\\n"/\\napplication-debuggable\\n"/' \
+  "$test_root/production-aapt2" > "$test_root/debuggable-production-aapt2"
+chmod +x "$test_root/debuggable-production-aapt2"
+if AAPT2="$test_root/debuggable-production-aapt2" \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh" \
+  "$test_root/production-artifact.tar.xz" computer.helium.sync "$commit" \
+  > /dev/null 2>&1; then
+  echo "debuggable production Android manifest unexpectedly passed" >&2
+  exit 1
+fi
 
 cp -a "$test_root/input" "$test_root/foreign-lock-input"
 sed -i 's/HELIUM_ANDROID_VERSION_CODE=787500005/HELIUM_ANDROID_VERSION_CODE=787500006/' \
@@ -177,7 +218,7 @@ cat > "$test_root/control-aapt2" <<'EOF'
 [[ "$1" == dump && -f "$3" ]]
 case "$2" in
   packagename) printf '%s\n' computer.helium.control.test ;;
-  badging) printf "package: name='computer.helium.control.test' versionCode='787500005' versionName='150.0.7871.181'\n" ;;
+  badging) printf "package: name='computer.helium.control.test' versionCode='787500005' versionName='150.0.7871.181'\napplication-debuggable\n" ;;
   *) exit 1 ;;
 esac
 EOF

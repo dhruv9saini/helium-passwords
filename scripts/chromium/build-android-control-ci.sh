@@ -93,6 +93,7 @@ target_cpu = "arm64"
 is_official_build = false
 is_debug = false
 dcheck_always_on = false
+debuggable_apks = true
 is_component_build = false
 use_siso = false
 android_static_analysis = "off"
@@ -120,6 +121,8 @@ grep -qx 'media_use_ffmpeg = true' \
 grep -qx 'is_debug = false' \
   "$artifact_dir/build-provenance/gn-args-resolved.txt"
 grep -qx 'dcheck_always_on = false' \
+  "$artifact_dir/build-provenance/gn-args-resolved.txt"
+grep -qx 'debuggable_apks = true' \
   "$artifact_dir/build-provenance/gn-args-resolved.txt"
 grep -qx "chrome_public_manifest_package = \"$manifest_package\"" \
   "$artifact_dir/build-provenance/gn-args-resolved.txt"

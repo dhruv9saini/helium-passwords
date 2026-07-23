@@ -77,7 +77,12 @@ case "$use_siso" in
 esac
 
 case "$manifest_package" in
-  computer.helium.sync|computer.helium.sync.test) ;;
+  computer.helium.sync)
+    android_debuggable_apks=false
+    ;;
+  computer.helium.sync.test)
+    android_debuggable_apks=true
+    ;;
   *)
     echo "CHROMIUM_ANDROID_MANIFEST_PACKAGE must be computer.helium.sync or computer.helium.sync.test" >&2
     exit 64
@@ -201,6 +206,7 @@ target_cpu = "$target_cpu"
 is_official_build = $official_build
 is_debug = false
 dcheck_always_on = false
+debuggable_apks = $android_debuggable_apks
 is_component_build = false
 use_siso = $effective_use_siso
 android_static_analysis = "off"

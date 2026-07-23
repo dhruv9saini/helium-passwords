@@ -157,6 +157,19 @@ grep -qx 'dcheck_always_on = false' "$provenance/gn-args-resolved.txt" || {
   echo "APK enables always-on DCHECKs" >&2
   exit 1
 }
+case "$expected_package" in
+  computer.helium.sync)
+    expected_debuggable=false
+    ;;
+  computer.helium.sync.test|computer.helium.control.test)
+    expected_debuggable=true
+    ;;
+esac
+grep -qx "debuggable_apks = $expected_debuggable" \
+  "$provenance/gn-args-resolved.txt" || {
+  echo "APK debuggability does not match its production or disposable role" >&2
+  exit 1
+}
 for required_arg in \
   'target_os = "android"' \
   'target_cpu = "arm64"' \
@@ -229,6 +242,14 @@ badging=$($aapt2 dump badging "${apks[0]}")
 package_record=$(grep '^package:' <<<"$badging")
 apk_version_code=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$package_record")
 apk_version_name=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<<"$package_record")
+apk_debuggable=false
+if grep -qx 'application-debuggable' <<<"$badging"; then
+  apk_debuggable=true
+fi
+[[ "$apk_debuggable" == "$expected_debuggable" ]] || {
+  echo "APK manifest debuggability does not match GN provenance" >&2
+  exit 1
+}
 [[ "$apk_version_code" == "$HELIUM_ANDROID_VERSION_CODE" ]] || {
   echo "APK versionCode does not match the build lock" >&2
   exit 1
