@@ -67,8 +67,14 @@ the `net::CanonicalCookie` fields needed by
 inventory is local rejection evidence and is never put in the cookie payload.
 A higher remote revision may change key epoch only to the client's active
 epoch. Destination rejection is persisted for exactly that record/revision and
-cleared only by a later verified apply or a verified local mutation published
-through the next CAS revision.
+cleared by a later verified authoritative apply. The bridge restores the
+complete last-good local snapshot and suppresses the rejected revision. A
+later local cookie mutation is held locally as unverified rather than
+published: Chromium exposes no signal that an arbitrary cookie rotation proves
+a successful password login. `cookie-reauth-required.json` records only the
+schemeful site and explicitly forbids navigation or form submission because a
+cookie does not identify an exact origin or login entry. Browser-native
+reauthentication remains blocked until disposable evidence provides both.
 
 ## Build Strategy
 

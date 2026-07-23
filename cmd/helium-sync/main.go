@@ -19,7 +19,7 @@ import (
 	"github.com/dhruv9saini/helium-sync/internal/syncstore"
 )
 
-const cookieBridgeStateSchema = 3
+const cookieBridgeStateSchema = 4
 
 func main() {
 	if len(os.Args) < 2 {

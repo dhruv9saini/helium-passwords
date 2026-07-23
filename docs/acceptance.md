@@ -150,10 +150,11 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   canonical cookie key, remote revision and payload fingerprint plus exact
   same-site session keys observed locally, without claiming a session-to-cookie
   binding or successful destination authentication.
-- A synthetic schema-2 cookie state migrates to schema 3 after writing an
-  atomic mode-0600 `schema-v2.bak`; the active state rewrite is also atomic.
-  Revisions, fingerprints, deletion state, and pending CAS state survive; the
-  old site-wide `non_clonable` fields do not.
+- Synthetic schema-2 and schema-3 cookie states migrate to schema 4 after
+  writing an atomic mode-0600 `schema-v2.bak` or `schema-v3.bak`; the active
+  state rewrite is also atomic. Revisions, fingerprints, deletion state,
+  pending CAS state, and exact schema-3 exceptions survive; old schema-2
+  site-wide `non_clonable` fields do not.
 - Every apply records a destination preview and sealed rollback first. A
   rejected set or verification mismatch restores the destination snapshot.
 - A pending join with a different local cookie at the same canonical identity
@@ -162,9 +163,14 @@ The fixture server issues controlled cookies and rotating opaque tokens.
 - More than 32 local cookie changes drain over multiple deterministic
   publication batches, and no serialized native request exceeds 4 MiB.
 - The same rejected revision is not retried every cycle. A higher active-epoch
-  remote revision retries transactionally; a real local cookie change after
-  reauthentication may publish the next CAS revision; successful readback
-  clears the prior exception without overwriting the last-good rollback state.
+  remote revision retries transactionally. A local cookie change while the
+  exception remains is marked unverified, held locally, and never published as
+  proof of reauthentication. Successful readback clears the prior exception
+  without overwriting the last-good rollback state.
+- The local reauthentication intent contains the schemeful site but no guessed
+  origin or login path, forbids navigation and automatic form submission, and
+  cannot claim browser-native reauthentication until a disposable run provides
+  the exact origin, entry, tab, and discovered password form.
 - Android browser suspension and process restart recover without overwriting a
   newer remote record. No DevTools path participates.
 - Cookie payload corruption is detected before apply.
@@ -176,6 +182,9 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   Synthetic evidence must produce only synthetic/unknown classifications;
   a missing, symlinked, or hash-mismatched artifact and any secret-bearing
   evidence field must fail.
+- Origin-state evidence schema 2 requires separate preview, apply, readback,
+  and rollback results. Because no source-registered adapter exists, any
+  evidence that names one or reports a transfer result fails closed.
 
 ## Gate 4: Durable Tabs
 

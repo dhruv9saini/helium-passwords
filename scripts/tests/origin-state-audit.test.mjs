@@ -11,7 +11,7 @@ import { auditOriginState } from "../session-state/origin-state-audit.mjs";
 
 function evidence(scope = "synthetic") {
   return {
-    schema_version: 1,
+    schema_version: 2,
     audit_id: "fixture-audit-v1",
     evidence_scope: scope,
     artifact_sha256: "a".repeat(64),
@@ -28,7 +28,10 @@ function evidence(scope = "synthetic") {
         kind: "local-storage",
         need: "required",
         adapter: "none",
-        result: "not-tested",
+        preview_result: "not-tested",
+        apply_result: "not-tested",
+        readback_result: "not-tested",
+        rollback_result: "not-tested",
         evidence_ref: "fixture-local-storage-v1",
       }],
     }],
@@ -79,6 +82,28 @@ test("audit accepts origins only and rejects unmodeled secret-bearing fields", (
   const inconsistent = evidence();
   inconsistent.origins[0].cookie.apply_result = "not-tested";
   assert.throws(() => auditOriginState(inconsistent), /inconsistent cookie evidence/);
+});
+
+test("origin-state transfer fails closed without a source-registered adapter", () => {
+  const input = evidence("disposable-browser");
+  Object.assign(input.origins[0].state[0], {
+    adapter: "claimed-local-storage-adapter",
+    preview_result: "verified",
+    apply_result: "verified",
+    readback_result: "verified",
+    rollback_result: "verified",
+  });
+  assert.throws(() => auditOriginState(input),
+    /origin-state adapter is not implemented/);
+
+  const resultWithoutAdapter = evidence("disposable-browser");
+  resultWithoutAdapter.origins[0].state[0].readback_result = "verified";
+  assert.throws(() => auditOriginState(resultWithoutAdapter),
+    /cannot have transaction results without an adapter/);
+
+  const secretBearing = evidence();
+  secretBearing.origins[0].state[0].values = { token: "must-not-be-accepted" };
+  assert.throws(() => auditOriginState(secretBearing), /unknown or missing field/);
 });
 
 test("CLI emits metadata-only classifications from a regular evidence file", t => {

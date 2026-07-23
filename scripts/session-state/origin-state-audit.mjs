@@ -15,6 +15,9 @@ const OBSERVATIONS = new Set(["not-tested", "observed", "not-observed"]);
 const APPLY_RESULTS = new Set(["not-tested", "verified", "rejected"]);
 const AUTH_RESULTS = new Set(["not-tested", "authenticated", "reauth-required"]);
 const STATE_NEEDS = new Set(["not-tested", "required", "not-required"]);
+// Adding an adapter requires a reviewed browser implementation. An evidence
+// file cannot opt itself into handling secret origin state.
+const SUPPORTED_ORIGIN_STATE_ADAPTERS = new Set();
 
 function exactKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -64,10 +67,18 @@ function classifyOriginState(state, proofLevel) {
   if (state.need === "required" && state.adapter === "none") {
     return concrete ? "required-unsupported" : "synthetic-required-case";
   }
-  if (state.need === "required" && state.result === "verified") {
+  const transaction = [
+    state.preview_result,
+    state.apply_result,
+    state.readback_result,
+    state.rollback_result,
+  ];
+  if (state.need === "required" &&
+      transaction.every(result => result === "verified")) {
     return concrete ? "destination-verified" : "synthetic-success-case";
   }
-  if (state.need === "required" && state.result === "rejected") {
+  if (state.need === "required" &&
+      transaction.some(result => result === "rejected")) {
     return concrete ? "adapter-rejected-observed" : "synthetic-rejection-case";
   }
   return "unknown";
@@ -88,7 +99,7 @@ export function auditOriginState(input) {
     "schema_version", "audit_id", "evidence_scope", "artifact_sha256",
     "target_device", "origins",
   ], "audit");
-  if (input.schema_version !== 1 || !validSlug(input.audit_id) ||
+  if (input.schema_version !== 2 || !validSlug(input.audit_id) ||
       !["synthetic", "disposable-browser"].includes(input.evidence_scope) ||
       !/^[a-f0-9]{64}$/.test(input.artifact_sha256) ||
       !["d", "da", "oneplus"].includes(input.target_device) ||
@@ -126,22 +137,43 @@ export function auditOriginState(input) {
     if (!Array.isArray(item.state)) throw new Error(`state ${origin} must be an array`);
     const seenKinds = new Set();
     const state = item.state.map((entry, stateIndex) => {
-      exactKeys(entry, ["kind", "need", "adapter", "result", "evidence_ref"],
+      exactKeys(entry, [
+        "kind", "need", "adapter", "preview_result", "apply_result",
+        "readback_result", "rollback_result", "evidence_ref",
+      ],
         `state ${origin} ${stateIndex}`);
       if (!ORIGIN_STATE_KINDS.has(entry.kind) || seenKinds.has(entry.kind) ||
-          !STATE_NEEDS.has(entry.need) || !APPLY_RESULTS.has(entry.result) ||
+          !STATE_NEEDS.has(entry.need) ||
+          !APPLY_RESULTS.has(entry.preview_result) ||
+          !APPLY_RESULTS.has(entry.apply_result) ||
+          !APPLY_RESULTS.has(entry.readback_result) ||
+          !APPLY_RESULTS.has(entry.rollback_result) ||
           !(entry.adapter === "none" || validSlug(entry.adapter))) {
         throw new Error(`invalid origin-state evidence for ${origin}`);
       }
       seenKinds.add(entry.kind);
-      if (entry.adapter === "none" && entry.result !== "not-tested") {
-        throw new Error(`origin state cannot have a result without an adapter: ${origin}`);
+      const transaction = [
+        entry.preview_result,
+        entry.apply_result,
+        entry.readback_result,
+        entry.rollback_result,
+      ];
+      if (entry.adapter === "none" &&
+          transaction.some(result => result !== "not-tested")) {
+        throw new Error(
+          `origin state cannot have transaction results without an adapter: ${origin}`);
+      }
+      if (entry.adapter !== "none" &&
+          !SUPPORTED_ORIGIN_STATE_ADAPTERS.has(entry.adapter)) {
+        throw new Error(`origin-state adapter is not implemented: ${entry.adapter}`);
       }
       if (entry.need !== "required" &&
-          (entry.adapter !== "none" || entry.result !== "not-tested")) {
+          (entry.adapter !== "none" ||
+           transaction.some(result => result !== "not-tested"))) {
         throw new Error(`origin state cannot apply an adapter unless required: ${origin}`);
       }
-      requireEvidenceReference(entry, [entry.need, entry.result], `state ${origin} ${entry.kind}`);
+      requireEvidenceReference(entry, [entry.need, ...transaction],
+        `state ${origin} ${entry.kind}`);
       return {
         kind: entry.kind,
         classification: classifyOriginState(entry, input.evidence_scope),
@@ -157,7 +189,7 @@ export function auditOriginState(input) {
   });
 
   return {
-    schema_version: 1,
+    schema_version: 2,
     audit_id: input.audit_id,
     proof_level: input.evidence_scope,
     artifact_sha256: input.artifact_sha256,
