@@ -410,6 +410,11 @@ user service with a mandatory `SYNTHETIC_ONLY` marker, direct TLS, the same
 tailnet-only BPF rule, no capabilities, strict system and process isolation,
 and `ProtectHome=tmpfs`; only its executable directory, endpoint/TLS state,
 and one writable opaque server directory are bound into the mount namespace.
+The pre-fix synthetic CA was replaced after the current verifier correctly
+rejected its Android-incompatible name constraints. The active synthetic
+generation now uses the DNS-only path-zero constraint, contains no CA private
+key on lm, and passes the exact DNS/IP TLS 1.3 health gate. This replacement
+does not enroll the new public root on any browser or personal device.
 Its independent user timer stops the service, writes an opaque generation to
 `/srv/nas/helium-sync-server-disposable`, and restarts it. Activation always
 performs a fresh disposable restore drill and waits for the TLS listener.
@@ -444,7 +449,7 @@ evidence.
 
 | Area | Implemented and source-tested | Still required before personal data |
 | --- | --- | --- |
-| Transport | Opaque v2 E2EE, direct TLS 1.3 server, Android-compatible DNS-constrained offline CA issuance/verification, exact DNS/IP leaf admission, OnePlus BoringSSL chain/wrong-root proof, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; synthetic rootless endpoint and scheduled NAS restore proof live on lm | Replace the pre-fix synthetic root/leaf, restore root authorization, install the dedicated-account service, and enroll the new public root on disposable browser clients |
+| Transport | Opaque v2 E2EE, direct TLS 1.3 server, Android-compatible DNS-constrained offline CA issuance/verification, exact DNS/IP leaf admission, OnePlus BoringSSL chain/wrong-root proof, authenticated device identity, scopes, CAS revisions, int64 string counters, tombstones, journal recovery; the active synthetic rootless endpoint uses the corrected CA profile and its scheduled NAS restore proof passes on lm | Create the independently held production root, restore root authorization, install the dedicated-account service, and enroll only its authenticated public root on disposable browser clients |
 | Enrollment | d-only seed, signed X25519 join wrapping, pending pull-only phase, dual bridge cursor gate, revocation and rotations; consolidated TLS-backed three-device protocol lifecycle passes | Execute native bridge promotion on disposable profiles, then provision personal d/da/oneplus only after backups |
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; complete `PasswordForm` unique-key identity; schema-3 preservation/collision stop; durable one-at-a-time publication and pull-verified ambiguous outcomes; artifact-bound native fixture/capture/receipt gate | Compile the bridge, then run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete, rapid observer events, ambiguous-success restarts, and three-device stale conflicts |
 | Cookies | Whole-profile canonical identity, E2EE, active-epoch CAS rekey, authoritative pull-only join replacement under sealed rollback, bounded publication batches, preview/apply/readback/rollback, exact revision-scoped rejection evidence, unchanged-revision suppression, and unverified-local-rotation hold | Compile the bridge; prove colliding join replacement, multi-batch publication, destination rejection/readback/rollback, later-revision retry, DBSC evidence scope, and authenticated-site behavior in disposable browsers; collect exact origin/login-entry evidence before adding a native password reauth flow |
