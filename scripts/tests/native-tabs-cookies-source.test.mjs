@@ -82,7 +82,8 @@ test("native tab export matches the independent store schema and is atomic", () 
   assert.match(tabs, /HistoryCurrentOnlyUnloaded/);
   assert.match(tabs, /tab->GetURL\(\)/);
   assert.doesNotMatch(tabs, /LoadIfNeeded/);
-  assert.match(tabs, /SchemeIsHTTPOrHTTPS/);
+  assert.match(tabs, /url\.is_valid\(\) && !url\.scheme\(\)\.empty\(\)/);
+  assert.doesNotMatch(tabs, /SchemeIsHTTPOrHTTPS/);
 });
 
 test("tab snapshots stay independent of remote-sync credentials and profile files", () => {

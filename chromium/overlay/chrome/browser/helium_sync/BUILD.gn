@@ -8,6 +8,10 @@ source_set("helium_sync") {
     "helium_sync_service.h",
     "helium_sync_service_factory.cc",
     "helium_sync_service_factory.h",
+    "helium_tab_journal_bridge.cc",
+    "helium_tab_journal_bridge.h",
+    "helium_tab_restore_bridge.cc",
+    "helium_tab_restore_bridge.h",
     "helium_tab_snapshot_bridge.cc",
     "helium_tab_snapshot_bridge.h",
   ]
@@ -21,10 +25,12 @@ source_set("helium_sync") {
     "//chrome/browser/profiles:profile",
     "//chrome/browser/tab_list",
     "//chrome/browser/ui/browser_window",
+    "//chrome/browser/ui/browser_window:create_browser_window",
     "//chrome/common",
     "//components/helium_sync",
     "//components/keyed_service/core",
     "//components/password_manager/core/browser/password_store:password_store_interface",
+    "//components/sessions",
     "//components/sessions:session_id",
     "//components/tab_groups",
     "//components/tabs:public",
@@ -33,6 +39,8 @@ source_set("helium_sync") {
     "//net",
     "//services/network/public/cpp",
     "//services/network/public/mojom",
+    "//sql",
+    "//ui/base",
     "//url",
   ]
 }

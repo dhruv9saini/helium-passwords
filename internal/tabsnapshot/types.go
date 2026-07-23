@@ -118,3 +118,24 @@ type BrowserRestoreManifest struct {
 	PreparedAt       time.Time  `json:"prepared_at"`
 	State            string     `json:"state"`
 }
+
+type BrowserRestoreReceipt struct {
+	SchemaVersion         int    `json:"schema_version"`
+	State                 string `json:"state"`
+	SourceGeneration      string `json:"source_generation"`
+	SourceDevice          string `json:"source_device"`
+	SourceProfile         string `json:"source_profile"`
+	SourceSessionSHA256   string `json:"source_session_sha256"`
+	WindowCount           int    `json:"window_count"`
+	TabCount              int    `json:"tab_count"`
+	GroupCount            int    `json:"group_count"`
+	ReadbackValidation    string `json:"readback_validation"`
+	CompletedAtUnixMillis string `json:"completed_at_unix_millis"`
+	Error                 string `json:"error"`
+}
+
+type BrowserRestoreState struct {
+	Marker   string                 `json:"marker"`
+	Manifest BrowserRestoreManifest `json:"manifest"`
+	Receipt  *BrowserRestoreReceipt `json:"receipt,omitempty"`
+}

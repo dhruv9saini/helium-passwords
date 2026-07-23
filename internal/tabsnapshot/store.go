@@ -518,7 +518,7 @@ func ValidateSession(session Session) error {
 				if err != nil || len(navigation.URL) > maxURLBytes ||
 					len(navigation.Title) > maxTitleBytes ||
 					!utf8.ValidString(navigation.Title) ||
-					!allowedScheme(parsed.Scheme) ||
+					parsed.Scheme == "" ||
 					(parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host == "" {
 					return fmt.Errorf("tab %q has disallowed URL", tab.ID)
 				}
@@ -688,15 +688,6 @@ func generationTime(value string) (time.Time, error) {
 		return time.Time{}, errors.New("invalid generation id")
 	}
 	return capturedAt.UTC(), nil
-}
-
-func allowedScheme(scheme string) bool {
-	switch strings.ToLower(scheme) {
-	case "http", "https", "chrome", "about":
-		return true
-	default:
-		return false
-	}
 }
 
 func validSnapshotIdentifier(value string) bool {

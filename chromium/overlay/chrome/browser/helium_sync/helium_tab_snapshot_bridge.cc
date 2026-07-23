@@ -45,8 +45,7 @@ constexpr base::TimeDelta kStartupCaptureDelay = base::Seconds(30);
 constexpr base::TimeDelta kCaptureInterval = base::Minutes(5);
 
 bool AllowedSnapshotUrl(const GURL& url) {
-  return url.SchemeIsHTTPOrHTTPS() || url.SchemeIs("chrome") ||
-         url.SchemeIs("about");
+  return url.is_valid() && !url.scheme().empty();
 }
 
 std::optional<std::string> GroupColorName(tab_groups::TabGroupColorId color) {

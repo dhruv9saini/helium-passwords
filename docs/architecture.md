@@ -17,6 +17,13 @@ tab snapshot repository. The neutral snapshot preserves bounded local
 window/tab/group/navigation topology, but preparation writes no startup URLs
 and can target only a new, explicitly marked disposable directory. No sync
 record, backup copy, normal launch, or preparation command can auto-open a tab.
+Five independently recoverable mechanisms protect tabs: Chromium's native
+session recovery, neutral topology generations, stopped full-profile
+generations, stopped-only raw native Sessions capsules, and a direct-observer
+append-only SQLite hash-chain journal. Replicated copies do not increase that
+count. Their producers, formats, schedules, retention, recovery tools and key
+namespaces are intentionally separate; [tab-recovery-defense.md](tab-recovery-defense.md)
+defines the exact boundaries and current runtime gates.
 
 ## Trust and data flow
 
@@ -354,10 +361,12 @@ deletion, applies 24-hourly/14-daily/12-weekly retention without deleting the
 last known-good copy, and restores only to a nonexistent disposable state
 directory. A separate consumer converts a validated neutral restore into a
 new `drill-*` browser profile only under an explicitly marked private
-disposable root. It retains the neutral receipt, writes current URLs as
-Chromium startup URLs, validates staging, and atomically publishes without
-launching a browser, mutating clean-exit state, or accepting an existing
-profile.
+disposable root. It retains the neutral receipt and complete topology,
+validates staging, and atomically publishes without launch, startup URLs,
+clean-exit mutation, or an existing-profile target. Only the explicit
+disposable command-line importer reconstructs windows, bounded history,
+pinned tabs, groups, visual state, and active tabs, then records exact live
+readback.
 
 The operations design assigns every source device its own hostname-bound
 scheduler and device-specific age key namespace. One validated generation is
@@ -373,16 +382,19 @@ Chromium recovery and local generations are extra layers, not either
 off-device copy. Recovery identities stay outside all source and destination
 stores except while explicitly attached for a disposable restore drill.
 
-The independent store, stale-export boundary, fixed topology, pinned dedicated
-SSH transport, encryption/copy logic, health proof, retention, quarantine,
-neutral restore, and atomic disposable current-URL browser consumer are
-implemented and synthetic-tested. The native tab producer is source-complete
-but not yet compile/runtime validated. Full window, pin, group, navigation
-history, and unloaded-tab reconstruction plus first/second browser-start proof
-remain open. da currently has only a disabled user timer; oneplus has only
-source tools and a disabled runner template. No source can be enabled until its
-fresh browser export, two offline public recovery recipients, and both exact
-destination routes pass preflight.
+The five mechanisms have distinct source formats and restore tools.
+Neutral/full-profile operations and the new raw-capsule/journal operations are
+implemented and synthetic-tested with fixed topology, pinned SSH, separate
+recipients, authenticated ciphertext, hash/size checks, retention, and
+disposable restore. The journal also has a marked independent root,
+crash-resumed heartbeat, bounded epoch rotation, complete group visuals,
+all-valid-URL capture, stale-producer admission, and two-second reconciliation
+for topology notifications missing from the public observer. The native
+exporter/importer/journal remain compile/runtime unvalidated. d and da have
+checked-in disabled user timers; OnePlus still needs a tested native lifetime
+guard and device-local raw/journal schedule. No source can be enabled until
+fresh exports, non-overlapping offline public recipients, exact destination
+routes, and all five disposable drills pass.
 
 ## Runtime and build boundaries
 
@@ -451,7 +463,7 @@ evidence.
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; complete `PasswordForm` unique-key identity; schema-3 preservation/collision stop; durable one-at-a-time publication and pull-verified ambiguous outcomes; artifact-bound native fixture/capture/receipt gate | Compile the bridge, then run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete, rapid observer events, ambiguous-success restarts, and three-device stale conflicts |
 | Cookies | Whole-profile canonical identity, E2EE, active-epoch CAS rekey, authoritative pull-only join replacement under sealed rollback, bounded publication batches, preview/apply/readback/rollback, exact revision-scoped rejection evidence, unchanged-revision suppression, and unverified-local-rotation hold | Compile the bridge; prove colliding join replacement, multi-batch publication, destination rejection/readback/rollback, later-revision retry, DBSC evidence scope, and authenticated-site behavior in disposable browsers; collect exact origin/login-entry evidence before adding a native password reauth flow |
 | Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; explicit preview/apply/readback/rollback contract; empty source-registered adapter set; no state values accepted | Disposable-browser evidence collector and one reviewed exact-origin adapter only where observed necessary |
-| Tabs | Local exporter/store, atomic checked generations, standalone content-bound restores from both destinations, atomic marked-root current-URL browser consumer, exact peer roots, fleet recipient non-overlap, two-destination encrypted operations, corruption/retention/restore tests | Compile exporter; authorize da's dedicated key on d; provision independent non-reused recovery recipients; enable schedules only after two-route preflight; implement full tab topology reconstruction and prove first/second disposable browser starts on every device |
+| Tabs | Five-mechanism architecture; schema-2 all-valid-URL neutral exporter/store; explicit marked-disposable full-topology native importer with live readback, restart state validator and verified-rollback fail closure; stopped native Sessions capsule with lifetime guard/pinned parser; marked-root direct-observer/reconciled SQLite hash-chain journal with group visuals, crash resume, epoch rotation, freshness gate, independent authenticated two-copy operations and escaped catalog restore; exact-five health report | Compile all three native bridges; provision non-overlapping capsule/journal recipient sets and d/da schedules plus the OnePlus native guard/device-local schedule; prove capsule format support plus pinned parser restore; then restore every mechanism from both off-device destinations and prove neutral importer first/second disposable starts on d, da and oneplus |
 | Media/streaming | Reproducible fixtures, strict codec GN provenance, separate no-patch upstream-control builder, progressive Fetch/SSE and Service Worker relay gates, explicit codec-versus-Widevine evidence, artifact-carried fail-closed device orchestration, source/fixture/media-bound A/B pair receipts, and live rootless tailnet-only H2/H3 origins with exact private-leaf SPKI admission | Resolve da's direct-HTTP/3 return/client failure, then run same-source control/Sync APK A/B on oneplus for negotiated protocols, lifecycle, video/audio, and content-free ChatGPT timing; CDM provisioning remains separate |
 | Android source/build | Exact Chromium `150.0.7871.181`/Helium `0.14.8` lock; shared one-request immutable source helper; exact-HEAD, depot pin, cache-disable, monotonic version, and private single-entry contracts | Fresh isolated chromiumer source preparation, 312 selected patches (301 core + 2 Passwords + 9 Sync), GN generation, focused compile, then APK |
 | Deployment | Executable d recovery export/import, credential cutover, direct-TLS generation install/start gates, source unit/install gate, rollback-preserving installers, and fixed-topology full-profile backup streaming to one NAS plus one authenticated peer without plaintext or local ciphertext staging | Create off-device recovery identities/copies and offline TLS CA, enroll its public root, prove live tailnet TLS, authorize the d SSH routes, build artifacts, run real two-copy profile backup/restore drills, then enroll sequentially |

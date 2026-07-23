@@ -242,9 +242,10 @@ retains the complete schema-2 window/tab/group/navigation topology, writes an
 empty Chromium Preferences object, binds counts and hashes in a versioned
 manifest, validates staging, and atomically publishes the unopened profile.
 It never launches a browser, configures startup URLs, or accepts an existing
-target. Run `validate-browser-profile --profile-dir PATH` before a future
-explicit disposable-only native import; the exact commands and current
-reconstruction boundary are in `tab-snapshots.md`.
+target. Run `validate-browser-profile --profile-dir PATH` before the explicit
+disposable-only native import and `validate-browser-state --destination PATH`
+after it. The exact switch, durable state machine and current compile/runtime
+boundary are in `tab-snapshots.md`.
 
 If a local generation itself is corrupt, preserve it explicitly before
 unblocking retention:
@@ -303,11 +304,14 @@ directory. It never deletes bytes and it never happens automatically.
   keys remain only on their source devices; no age recovery identity was
   created or copied.
 - The source adapter, schema-2 topology model, migration/validation, unopened
-  disposable preparation, and native five-minute refresh contract are
-  implemented and synthetic-tested. The native bridge still requires a
-  chromiumer compile. A marked-profile native importer and first/second
-  disposable browser runs remain open before any scheduler is enabled or
-  source is promoted beyond disabled staging.
+  disposable preparation, native five-minute refresh contract, explicit
+  marked-profile importer, live topology readback and post-launch receipt
+  validator are implemented and source/synthetic-tested. The three native tab
+  bridges still require a chromiumer compile. First/second disposable browser
+  runs remain open before any scheduler is enabled or source is promoted
+  beyond disabled staging. Raw native Sessions capsules and the independent
+  event journal are specified separately in
+  [tab-recovery-defense.md](tab-recovery-defense.md).
 
 These are deployment gates, not reasons to weaken destination independence or
 copy unencrypted tab data through an intermediary.

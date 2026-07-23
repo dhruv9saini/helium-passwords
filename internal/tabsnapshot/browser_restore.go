@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,12 +22,161 @@ const (
 	browserProfileMarkerFile     = ".helium-tabs-disposable-browser-profile-v2"
 	browserProfileMarkerContent  = "helium-tabs-disposable-browser-profile-v2\n"
 	restorePreparedMarkerFile    = ".helium-tabs-restore-prepared-v2"
-	restorePreparedMarkerContent = "helium-tabs-restore-prepared-v2\n"
+	restorePreparedMarkerContent = "helium-tabs-restore-state-v2\n"
+	restoreInProgressMarkerFile  = ".helium-tabs-restore-in-progress-v2"
+	restoreConsumedMarkerFile    = ".helium-tabs-restore-consumed-v2"
+	restoreFailedMarkerFile      = ".helium-tabs-restore-failed-v2"
+	restoreReceiptFile           = ".helium-tabs-restore-receipt-v2.json"
 	browserRestoreManifestFile   = "browser-restore-manifest.json"
 	restoreSourceDirectory       = "restore-source"
 	preferencesFile              = "Preferences"
 	browserRestorePreparedState  = "prepared-not-opened"
 )
+
+// ValidateBrowserRestoreState independently validates prepared and native
+// post-launch state without opening a browser. Browser-created files are
+// intentionally ignored, while the immutable recovery source, manifest,
+// state marker, and terminal receipt remain exact and content-bound.
+func ValidateBrowserRestoreState(directory string) (BrowserRestoreState, error) {
+	if err := requirePrivateDirectory(directory); err != nil {
+		return BrowserRestoreState{}, err
+	}
+	if err := requirePrivateDirectory(filepath.Dir(directory)); err != nil {
+		return BrowserRestoreState{}, err
+	}
+	if err := requireMarker(filepath.Join(filepath.Dir(directory),
+		disposableRootMarkerFile), disposableRootMarkerContent); err != nil {
+		return BrowserRestoreState{}, err
+	}
+	if err := requireMarker(filepath.Join(directory, browserProfileMarkerFile),
+		browserProfileMarkerContent); err != nil {
+		return BrowserRestoreState{}, err
+	}
+
+	markers := []string{
+		restorePreparedMarkerFile,
+		restoreInProgressMarkerFile,
+		restoreConsumedMarkerFile,
+		restoreFailedMarkerFile,
+	}
+	selected := ""
+	for _, marker := range markers {
+		path := filepath.Join(directory, marker)
+		if _, err := os.Lstat(path); err == nil {
+			if selected != "" {
+				return BrowserRestoreState{}, errors.New("multiple browser restore state markers")
+			}
+			if err := requireMarker(path, restorePreparedMarkerContent); err != nil {
+				return BrowserRestoreState{}, err
+			}
+			selected = marker
+		} else if !errors.Is(err, os.ErrNotExist) {
+			return BrowserRestoreState{}, err
+		}
+	}
+	if selected == "" {
+		return BrowserRestoreState{}, errors.New("missing browser restore state marker")
+	}
+
+	sourceDirectory := filepath.Join(directory, restoreSourceDirectory)
+	sourceManifest, err := ValidateRestore(sourceDirectory)
+	if err != nil {
+		return BrowserRestoreState{}, fmt.Errorf("validate browser restore source: %w", err)
+	}
+	session, err := readRestoredSession(sourceDirectory)
+	if err != nil {
+		return BrowserRestoreState{}, err
+	}
+	if err := ValidateSessionForBrowserRestore(session); err != nil {
+		return BrowserRestoreState{}, err
+	}
+	windowCount, tabCount, groupCount := topologyCounts(session)
+	manifestPath := filepath.Join(directory, browserRestoreManifestFile)
+	if err := requirePrivateRegularFile(manifestPath); err != nil {
+		return BrowserRestoreState{}, err
+	}
+	rawManifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return BrowserRestoreState{}, err
+	}
+	var manifest BrowserRestoreManifest
+	if err := decodeStrictJSON(rawManifest, &manifest); err != nil {
+		return BrowserRestoreState{}, err
+	}
+	emptyPreferences := []byte("{}\n")
+	emptyHash := sha256.Sum256(emptyPreferences)
+	if manifest.SchemaVersion != BrowserRestoreSchemaVersion ||
+		manifest.SourceGeneration != sourceManifest.SourceGeneration ||
+		manifest.SourceDevice != sourceManifest.SourceDevice ||
+		manifest.SourceProfile != sourceManifest.SourceProfile ||
+		manifest.SourceSession != sourceManifest.Session ||
+		manifest.Preferences.Size != int64(len(emptyPreferences)) ||
+		manifest.Preferences.SHA256 != hex.EncodeToString(emptyHash[:]) ||
+		manifest.WindowCount != windowCount || manifest.TabCount != tabCount ||
+		manifest.GroupCount != groupCount ||
+		manifest.Invocation != BrowserRestoreInvocation ||
+		manifest.PreparedAt.IsZero() ||
+		manifest.State != browserRestorePreparedState {
+		return BrowserRestoreState{}, errors.New("post-launch browser restore manifest mismatch")
+	}
+
+	state := BrowserRestoreState{Marker: selected, Manifest: manifest}
+	receiptPath := filepath.Join(directory, restoreReceiptFile)
+	if _, err := os.Lstat(receiptPath); errors.Is(err, os.ErrNotExist) {
+		if selected == restoreConsumedMarkerFile ||
+			selected == restoreFailedMarkerFile {
+			return BrowserRestoreState{}, errors.New("terminal browser restore state lacks receipt")
+		}
+		return state, nil
+	} else if err != nil {
+		return BrowserRestoreState{}, err
+	}
+	if err := requirePrivateRegularFile(receiptPath); err != nil {
+		return BrowserRestoreState{}, err
+	}
+	rawReceipt, err := os.ReadFile(receiptPath)
+	if err != nil {
+		return BrowserRestoreState{}, err
+	}
+	var receipt BrowserRestoreReceipt
+	if err := decodeStrictJSON(rawReceipt, &receipt); err != nil {
+		return BrowserRestoreState{}, err
+	}
+	if receipt.SchemaVersion != BrowserRestoreSchemaVersion ||
+		receipt.SourceGeneration != manifest.SourceGeneration ||
+		receipt.SourceDevice != manifest.SourceDevice ||
+		receipt.SourceProfile != manifest.SourceProfile ||
+		receipt.SourceSessionSHA256 != manifest.SourceSession.SHA256 ||
+		receipt.WindowCount != manifest.WindowCount ||
+		receipt.TabCount != manifest.TabCount ||
+		receipt.GroupCount != manifest.GroupCount ||
+		receipt.CompletedAtUnixMillis == "" {
+		return BrowserRestoreState{}, errors.New("browser restore receipt source mismatch")
+	}
+	if _, err := strconv.ParseInt(receipt.CompletedAtUnixMillis, 10, 64); err != nil {
+		return BrowserRestoreState{}, errors.New("invalid browser restore receipt time")
+	}
+	switch receipt.State {
+	case "applied":
+		if receipt.ReadbackValidation != "exact-supported-live-topology" ||
+			receipt.Error != "" ||
+			(selected != restoreInProgressMarkerFile &&
+				selected != restoreConsumedMarkerFile) {
+			return BrowserRestoreState{}, errors.New("invalid applied browser restore receipt")
+		}
+	case "failed":
+		if receipt.ReadbackValidation != "verified-rollback" ||
+			receipt.Error == "" ||
+			(selected != restoreInProgressMarkerFile &&
+				selected != restoreFailedMarkerFile) {
+			return BrowserRestoreState{}, errors.New("invalid failed browser restore receipt")
+		}
+	default:
+		return BrowserRestoreState{}, errors.New("unknown browser restore receipt state")
+	}
+	state.Receipt = &receipt
+	return state, nil
+}
 
 // PrepareDisposableBrowserProfile converts a validated neutral restore into a
 // new, unopened Chromium user-data directory under an explicitly marked

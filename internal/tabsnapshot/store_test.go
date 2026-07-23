@@ -410,6 +410,62 @@ func TestPrepareDisposableBrowserProfileConsumesValidatedNeutralRestore(t *testi
 	}
 }
 
+func TestPostLaunchStateBindsTerminalReceiptToPreparedSource(t *testing.T) {
+	restoreDirectory := createTestRestore(t)
+	root := markedDisposableRoot(t)
+	manifest, destination, err := PrepareDisposableBrowserProfile(
+		restoreDirectory, root, "drill-post-launch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := ValidateBrowserRestoreState(destination)
+	if err != nil || state.Marker != restorePreparedMarkerFile ||
+		state.Receipt != nil {
+		t.Fatalf("prepared state invalid: %#v %v", state, err)
+	}
+	if err := os.Rename(
+		filepath.Join(destination, restorePreparedMarkerFile),
+		filepath.Join(destination, restoreConsumedMarkerFile)); err != nil {
+		t.Fatal(err)
+	}
+	receipt := BrowserRestoreReceipt{
+		SchemaVersion:         BrowserRestoreSchemaVersion,
+		State:                 "applied",
+		SourceGeneration:      manifest.SourceGeneration,
+		SourceDevice:          manifest.SourceDevice,
+		SourceProfile:         manifest.SourceProfile,
+		SourceSessionSHA256:   manifest.SourceSession.SHA256,
+		WindowCount:           manifest.WindowCount,
+		TabCount:              manifest.TabCount,
+		GroupCount:            manifest.GroupCount,
+		ReadbackValidation:    "exact-supported-live-topology",
+		CompletedAtUnixMillis: "1784736000000",
+		Error:                 "",
+	}
+	raw, err := json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, restoreReceiptFile),
+		append(raw, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	state, err = ValidateBrowserRestoreState(destination)
+	if err != nil || state.Marker != restoreConsumedMarkerFile ||
+		state.Receipt == nil || state.Receipt.State != "applied" {
+		t.Fatalf("consumed state invalid: %#v %v", state, err)
+	}
+	receipt.SourceGeneration += "-stale"
+	raw, _ = json.Marshal(receipt)
+	if err := os.WriteFile(filepath.Join(destination, restoreReceiptFile),
+		raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ValidateBrowserRestoreState(destination); err == nil {
+		t.Fatal("stale terminal receipt passed source binding")
+	}
+}
+
 func TestDisposableBrowserProfileRequiresMarkerAndNewTarget(t *testing.T) {
 	restoreDirectory := createTestRestore(t)
 
@@ -537,12 +593,19 @@ func TestDisposableBrowserProfileNeverReplacesConcurrentTarget(t *testing.T) {
 	}
 }
 
-func TestCaptureRejectsMalformedOrUnsafeSession(t *testing.T) {
+func TestCapturePreservesValidNonHTTPBrowserURLs(t *testing.T) {
 	store := openTestStore(t)
 	request := testCapture(time.Now(), false)
-	request.Session.Windows[0].Tabs[0].Navigations[0].URL = "javascript:fixture()"
-	if _, err := store.Capture(request); err == nil || !strings.Contains(err.Error(), "disallowed URL") {
-		t.Fatalf("unsafe URL was not rejected: %v", err)
+	for _, browserURL := range []string{
+		"chrome-native://newtab/", "file:///tmp/fixture",
+		"chrome-extension://abcdefghijklmnop/page.html",
+		"devtools://devtools/bundled/inspector.html", "data:text/plain,fixture",
+		"javascript:void(0)",
+	} {
+		request.Session.Windows[0].Tabs[0].Navigations[0].URL = browserURL
+		if _, err := store.Capture(request); err != nil {
+			t.Fatalf("valid browser URL %q was not preserved: %v", browserURL, err)
+		}
 	}
 }
 

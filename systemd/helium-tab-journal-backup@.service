@@ -1,0 +1,11 @@
+[Unit]
+Description=Helium independent tab journal backup (%i)
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/libexec/helium/tab-journal-backup.sh cycle %h/.config/helium/tab-journal-%i.conf
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%h/.local/share/helium-tab-journal-generations %h/.local/state/helium-tab-journal

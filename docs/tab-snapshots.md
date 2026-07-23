@@ -34,8 +34,10 @@ helium-tabs validate \
   --generation GENERATION
 ```
 
-Capture validates window/tab/navigation bounds and rejects unsafe URL schemes.
-It also requires globally unique IDs, a pinned prefix, contiguous group
+Capture validates window/tab/navigation bounds and preserves every valid
+absolute browser URL scheme, including `chrome-native:`, `file:`,
+`chrome-extension:`, `devtools:`, `data:`, and `blob:`. It also requires
+globally unique IDs, a pinned prefix, contiguous group
 membership, exact group references, known Chromium group colors, valid active
 and current indexes, and explicit history/metadata provenance. Schema-1 input
 is migrated to schema 2. Missing schema-1 group visual metadata is recorded as
@@ -125,9 +127,35 @@ clean-exit state, launch a browser, merge data, accept a normal profile path,
 or expose a normal-launch restore path.
 
 `validate-browser-profile` is intentionally a pre-launch gate because Chromium
-adds files after first start. A native explicit-command-line importer that
-consumes the prepared topology only in this marked disposable profile is still
-browser integration work, as are the pinned Chromium compile, exact topology
-readback, first launch, and second restart. Until that importer exists, the
-prepared profile is a validated unopened reconstruction input, not a claim
-that Chromium has opened the tabs. There is no automatic promotion path.
+adds files after first start. The native importer source consumes this input
+only when `--helium-restore-disposable-tabs=d|da|oneplus` is present. That
+dedicated process returns before any snapshot export or password/cookie
+network sync. It validates the exact private source inventory, hashes,
+topology, total resource bounds and one safe blank anchor; reconstructs
+windows, bounded history, pinned order, groups and active tabs; directly reads
+the live model back; and uses durable receipt-then-marker transitions. A
+runtime failure records `failed` only after rollback readback; asynchronous
+window cleanup remains fail-closed `in-progress` and the disposable directory
+must be discarded.
+
+After the native process exits, inspect prepared, interrupted or terminal
+state without opening a browser:
+
+```sh
+helium-tabs validate-browser-state \
+  --destination "$disposable_root/drill-20260722"
+```
+
+The terminal receipt is bound to the exact source generation, device, profile,
+session hash and topology counts. Its success claim is deliberately
+`exact-supported-live-topology`: persistence in Chromium's native Sessions
+store is not proven until the same disposable profile closes, starts a second
+time without the import switch, and passes topology readback. The pinned
+compile and those first/second runtime drills remain open. There is no
+automatic promotion path.
+
+The schema window-list order records capture-time activation order as
+provenance. The importer preserves each window's internal topology and creates
+windows in schema order, but does not claim Chromium's global MRU/activation
+ordering because the cross-platform public window interface has no stable
+setter/readback contract for that order.
