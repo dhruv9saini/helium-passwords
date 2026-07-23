@@ -70,8 +70,8 @@ grep -Fq 'template_url->suggestions_url());' "$source_file"
 ! grep -Fq 'regulatory_api_turl->url());' "$source_file"
 ! grep -Fq '                                          search_url);' "$source_file"
 
-grep -qx 'helium-passwords/android-search-engine-api-compat.patch' \
-  <(tail -1 "$repo_root/patches/series")
+[[ "$(grep -Fxc 'helium-passwords/android-search-engine-api-compat.patch' \
+  "$repo_root/patches/series")" -eq 1 ]]
 [[ "$(grep -c '^diff --git ' "$patch_file")" -eq 1 ]]
 
 echo 'Android search-engine API compatibility patch passed'
