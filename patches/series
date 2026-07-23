@@ -1,2 +1,3 @@
 helium-passwords/restore-password-autofill.patch
 helium-passwords/restore-password-ui.patch
+helium-passwords/android-search-engine-api-compat.patch

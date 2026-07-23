@@ -1,0 +1,45 @@
+diff --git a/components/search_engines/android/template_url_service_android.cc b/components/search_engines/android/template_url_service_android.cc
+--- a/components/search_engines/android/template_url_service_android.cc
++++ b/components/search_engines/android/template_url_service_android.cc
+@@ -449,7 +449,8 @@ bool TemplateUrlServiceAndroid::SetPlayAPISearchEngine(
+     if (regulatory_api_turl->safe_for_autoreplace()) {
+       template_url_service_->ResetTemplateURL(
+           regulatory_api_turl, regulatory_api_turl->short_name(),
+-          regulatory_api_turl->keyword(), regulatory_api_turl->url());
++          regulatory_api_turl->keyword(), regulatory_api_turl->url(),
++          regulatory_api_turl->suggestions_url());
+     }
+   }
+ 
+@@ -503,8 +504,9 @@ bool TemplateUrlServiceAndroid::EditSearchEngine(
+     }
+   }
+ 
+-  template_url_service_->ResetTemplateURL(template_url, short_name, new_keyword,
+-                                          search_url);
++  template_url_service_->ResetTemplateURL(
++      template_url, short_name, new_keyword, search_url,
++      template_url->suggestions_url());
+   return true;
+ }
+ 
+@@ -566,7 +568,8 @@ bool TemplateUrlServiceAndroid::IsSearchEngineUrlValidToAdd(
+     JNIEnv* env,
+     const std::string& new_url) {
+   return IsSearchEngineURLValidToUse(new_url, template_url_service_,
+-                                     /*existing_url=*/nullptr);
++                                     /*existing_url=*/nullptr,
++                                     /*is_new_primary=*/false);
+ }
+ 
+ bool TemplateUrlServiceAndroid::IsSearchEngineUrlValidToEdit(
+@@ -576,7 +579,8 @@ bool TemplateUrlServiceAndroid::IsSearchEngineUrlValidToEdit(
+   const TemplateURL* existing_url =
+       template_url_service_->GetTemplateURLForKeyword(current_keyword);
+   return IsSearchEngineURLValidToUse(new_url, template_url_service_,
+-                                     existing_url);
++                                     existing_url,
++                                     /*is_new_primary=*/false);
+ }
+ 
+ base::android::ScopedJavaLocalRef<jstring>
