@@ -34,7 +34,10 @@ restores Chromium's native password manager.
   epochs fail closed. DBSC inventory is evidence only: never label every cookie
   at a site device-bound. A destination exception belongs to one canonical
   record key, remote revision, and payload; rollback preserves the last local
-  state, while a later revision or real local reauthentication may retry.
+  state. A later active-epoch revision may retry. A local cookie mutation while
+  the exception remains is unverified and must stay local until an exact-origin
+  native password flow is independently evidenced; never infer successful
+  reauthentication from rotation alone.
 - Treat synced payloads as sensitive. Avoid logging decrypted cookies,
   passwords, tokens, passphrases, or full cookie/password payloads.
 - Keep `README.md`, `docs/`, and this file current when integration paths or

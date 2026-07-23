@@ -134,24 +134,28 @@ export function applyCookieTransaction(preview, { rejectIdentity = "" } = {}) {
 export function scopeDestinationRejection({
   cookie,
   remote,
-  site,
+  schemefulSite,
   observedSessions = [],
 }) {
   const recordKey = canonicalCookieIdentity(cookie);
   if (!remote || remote.recordKey !== recordKey ||
       !Number.isInteger(remote.revision) || remote.revision <= 0 ||
       typeof remote.payloadFingerprint !== "string" ||
-      !remote.payloadFingerprint || typeof site !== "string" || !site) {
+      !remote.payloadFingerprint || typeof schemefulSite !== "string" ||
+      !schemefulSite) {
     throw new Error("invalid rejected remote cookie scope");
   }
   const seen = new Set();
-  const sessions = observedSessions.filter(session => session?.site === site)
+  const sessions = observedSessions
+    .filter(session => session?.schemefulSite === schemefulSite)
     .map(session => {
-      if (!session || typeof session.site !== "string" || !session.site ||
+      if (!session || typeof session.schemefulSite !== "string" ||
+          !session.schemefulSite ||
           typeof session.sessionId !== "string" || !session.sessionId) {
         throw new Error("invalid observed device-bound session identity");
       }
-      const identity = `${Buffer.byteLength(session.site, "utf8")}:${session.site}` +
+      const identity =
+        `${Buffer.byteLength(session.schemefulSite, "utf8")}:${session.schemefulSite}` +
         `${Buffer.byteLength(session.sessionId, "utf8")}:${session.sessionId}`;
       if (seen.has(identity)) {
         throw new Error("duplicate observed device-bound session identity");
@@ -164,26 +168,96 @@ export function scopeDestinationRejection({
     remoteRevision: remote.revision,
     remotePayloadFingerprint: remote.payloadFingerprint,
     reason: "destination-set-rejected",
-    site,
+    schemefulSite,
     observedSessions: sessions,
   };
 }
 
-export function migrateCookieStateV2(document) {
-  if (!document || document.schema_version !== 2 ||
+export function buildReauthenticationIntent(exceptions) {
+  if (!Array.isArray(exceptions)) {
+    throw new Error("destination exceptions must be an array");
+  }
+  const seen = new Set();
+  const targets = exceptions.map(exception => {
+    if (!exception || !/^[a-f0-9]{64}$/.test(exception.recordKey ?? "") ||
+        !Number.isInteger(exception.remoteRevision) ||
+        exception.remoteRevision <= 0 ||
+        !/^[a-f0-9]{64}$/.test(exception.remotePayloadFingerprint ?? "") ||
+        exception.reason !== "destination-set-rejected" ||
+        typeof exception.unverifiedLocalChange !== "boolean" ||
+        !Array.isArray(exception.observedSessions)) {
+      throw new Error("invalid destination exception");
+    }
+    if (seen.has(exception.recordKey)) {
+      throw new Error("duplicate destination exception");
+    }
+    seen.add(exception.recordKey);
+    const parsed = new URL(exception.schemefulSite);
+    if (!["http:", "https:"].includes(parsed.protocol) ||
+        parsed.username || parsed.password ||
+        parsed.origin !== exception.schemefulSite ||
+        parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      throw new Error("invalid schemeful site");
+    }
+    const sessions = exception.observedSessions.map(session => {
+      if (session?.schemefulSite !== exception.schemefulSite ||
+          typeof session.sessionId !== "string" || !session.sessionId) {
+        throw new Error("invalid observed site session");
+      }
+      return {
+        schemeful_site: session.schemefulSite,
+        session_id: session.sessionId,
+      };
+    });
+    return {
+      canonical_cookie_record_key: exception.recordKey,
+      remote_revision: String(exception.remoteRevision),
+      remote_payload_fingerprint: exception.remotePayloadFingerprint,
+      schemeful_site: exception.schemefulSite,
+      origin_status: "unavailable-not-observed",
+      login_entry_status: "unavailable-not-observed",
+      unverified_local_cookie_change: exception.unverifiedLocalChange,
+      observed_site_sessions: sessions,
+    };
+  }).sort((left, right) => left.canonical_cookie_record_key
+    .localeCompare(right.canonical_cookie_record_key));
+  return {
+    schema_version: 3,
+    action: "browser-native-password-reauthentication",
+    status: targets.length === 0
+      ? "idle"
+      : "blocked-no-exact-origin-or-login-entry-evidence",
+    reason: "destination-cookie-rejected",
+    navigation_allowed: false,
+    automatic_form_submission_allowed: false,
+    targets,
+  };
+}
+
+export function migrateCookieStateToV4(document) {
+  if (!document || ![2, 3].includes(document.schema_version) ||
       !document.records || typeof document.records !== "object" ||
       Array.isArray(document.records)) {
-    throw new Error("invalid cookie state schema 2 document");
+    throw new Error("invalid cookie state migration document");
   }
   const migrated = structuredClone(document);
-  migrated.schema_version = 3;
+  const oldSchema = migrated.schema_version;
+  migrated.schema_version = 4;
   for (const record of Object.values(migrated.records)) {
     if (!record || typeof record !== "object" || Array.isArray(record)) {
-      throw new Error("invalid cookie state schema 2 record");
+      throw new Error("invalid cookie state migration record");
     }
-    delete record.non_clonable;
-    delete record.non_clonable_reason;
-    delete record.site;
+    if (oldSchema === 2) {
+      delete record.non_clonable;
+      delete record.non_clonable_reason;
+      delete record.site;
+    }
+    if (oldSchema === 3 && record.destination_exception) {
+      record.destination_exception.schemeful_site =
+        record.destination_exception.site;
+      delete record.destination_exception.site;
+      record.destination_exception.unverified_local_change = false;
+    }
   }
   return migrated;
 }
@@ -259,6 +333,13 @@ export function decideCookieReconcile({
     }
     if (remote.payloadFingerprint !== state.remotePayloadFingerprint) {
       return { action: "stop", reason: "same-revision-payload-changed" };
+    }
+    if (state.destinationException &&
+        localFingerprint !== state.baselineLocalFingerprint) {
+      return {
+        action: "hold-local",
+        reason: "destination-exception-local-change-unverified",
+      };
     }
     return localFingerprint === state.baselineLocalFingerprint
       ? { action: "none" }

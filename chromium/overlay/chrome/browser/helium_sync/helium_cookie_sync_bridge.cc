@@ -25,7 +25,6 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/task/sequenced_task_runner.h"
 #include "base/time/time.h"
-#include "base/time/time_to_iso8601.h"
 #include "base/timer/timer.h"
 #include "base/values.h"
 #include "build/build_config.h"
@@ -49,9 +48,9 @@ constexpr char kCookieKind[] = "cookies";
 constexpr char kCookiePayloadFormat[] = "helium-cookie-v3";
 constexpr char kRollbackPayloadFormat[] = "helium-cookie-rollback-v1";
 constexpr char kRollbackPurpose[] = "cookie-apply-rollback-v1";
-constexpr int kStateSchema = 3;
+constexpr int kStateSchema = 4;
 constexpr int kRollbackSchema = 1;
-constexpr int kReauthSchema = 2;
+constexpr int kReauthSchema = 3;
 constexpr size_t kMaxCookieRecords = 50000;
 constexpr size_t kMaxCookiePayloadBytes = 64 * 1024;
 constexpr size_t kMaxRollbackPayloadBytes = 32 * 1024 * 1024;
@@ -72,8 +71,9 @@ struct DestinationException {
   int64_t remote_revision = 0;
   std::string remote_payload_fingerprint;
   std::string reason;
-  std::string site;
+  std::string schemeful_site;
   std::set<std::string> observed_session_ids;
+  bool unverified_local_change = false;
 };
 
 struct RecordState {
@@ -143,9 +143,9 @@ std::string TimeToJSON(base::Time value) {
       value.is_null() ? 0 : value.ToDeltaSinceWindowsEpoch().InMicroseconds());
 }
 
-std::optional<base::Time> TimeFromJSON(const base::DictValue& value,
+std::optional<base::Time> TimeFromJSON(const base::DictValue &value,
                                        std::string_view key) {
-  const std::string* encoded = value.FindString(key);
+  const std::string *encoded = value.FindString(key);
   int64_t micros = 0;
   if (!encoded || !base::StringToInt64(*encoded, &micros) || micros < 0) {
     return std::nullopt;
@@ -155,9 +155,9 @@ std::optional<base::Time> TimeFromJSON(const base::DictValue& value,
                            base::Microseconds(micros));
 }
 
-std::optional<int64_t> Int64FromJSON(const base::DictValue& value,
+std::optional<int64_t> Int64FromJSON(const base::DictValue &value,
                                      std::string_view key) {
-  const std::string* encoded = value.FindString(key);
+  const std::string *encoded = value.FindString(key);
   int64_t parsed = 0;
   if (!encoded || !base::StringToInt64(*encoded, &parsed) || parsed < 0) {
     return std::nullopt;
@@ -165,8 +165,8 @@ std::optional<int64_t> Int64FromJSON(const base::DictValue& value,
   return parsed;
 }
 
-std::optional<base::DictValue> CookieToValue(
-    const net::CanonicalCookie& cookie) {
+std::optional<base::DictValue>
+CookieToValue(const net::CanonicalCookie &cookie) {
   base::DictValue value;
   value.Set("name", cookie.Name());
   value.Set("value", cookie.Value());
@@ -199,12 +199,12 @@ std::optional<base::DictValue> CookieToValue(
   return value;
 }
 
-std::optional<net::CanonicalCookie> CookieFromValue(
-    const base::DictValue& value) {
-  const std::string* name = value.FindString("name");
-  const std::string* cookie_value = value.FindString("value");
-  const std::string* domain = value.FindString("domain");
-  const std::string* path = value.FindString("path");
+std::optional<net::CanonicalCookie>
+CookieFromValue(const base::DictValue &value) {
+  const std::string *name = value.FindString("name");
+  const std::string *cookie_value = value.FindString("value");
+  const std::string *domain = value.FindString("domain");
+  const std::string *path = value.FindString("path");
   std::optional<base::Time> creation = TimeFromJSON(value, "creation");
   std::optional<base::Time> expiry = TimeFromJSON(value, "expiry");
   std::optional<base::Time> last_access = TimeFromJSON(value, "last_access");
@@ -227,8 +227,8 @@ std::optional<net::CanonicalCookie> CookieFromValue(
   }
 
   std::optional<net::CookiePartitionKey> partition_key;
-  if (const base::DictValue* partition = value.FindDict("partition_key")) {
-    const std::string* top_level_site = partition->FindString("top_level_site");
+  if (const base::DictValue *partition = value.FindDict("partition_key")) {
+    const std::string *top_level_site = partition->FindString("top_level_site");
     std::optional<bool> has_cross_site_ancestor =
         partition->FindBool("has_cross_site_ancestor");
     if (!top_level_site || !has_cross_site_ancestor) {
@@ -257,7 +257,7 @@ std::optional<net::CanonicalCookie> CookieFromValue(
   return std::move(*cookie);
 }
 
-std::optional<std::string> CookieIdentity(const net::CanonicalCookie& cookie) {
+std::optional<std::string> CookieIdentity(const net::CanonicalCookie &cookie) {
   std::string identity;
   auto append = [&identity](std::string_view part) {
     identity += base::NumberToString(part.size());
@@ -283,14 +283,14 @@ std::optional<std::string> CookieIdentity(const net::CanonicalCookie& cookie) {
   return identity;
 }
 
-std::optional<std::string> CookieRecordKey(const net::CanonicalCookie& cookie) {
+std::optional<std::string> CookieRecordKey(const net::CanonicalCookie &cookie) {
   std::optional<std::string> identity = CookieIdentity(cookie);
   return identity ? std::optional<std::string>(Sha256(*identity))
                   : std::nullopt;
 }
 
-std::optional<std::string> CookieFingerprint(
-    const net::CanonicalCookie& cookie) {
+std::optional<std::string>
+CookieFingerprint(const net::CanonicalCookie &cookie) {
   std::optional<base::DictValue> value = CookieToValue(cookie);
   if (!value) {
     return std::nullopt;
@@ -308,11 +308,11 @@ std::optional<std::string> CookieFingerprint(
   return Sha256(raw);
 }
 
-std::optional<CookieSnapshot> BuildSnapshot(
-    std::vector<net::CanonicalCookie> cookies,
-    base::Time now = base::Time::Now()) {
+std::optional<CookieSnapshot>
+BuildSnapshot(std::vector<net::CanonicalCookie> cookies,
+              base::Time now = base::Time::Now()) {
   CookieSnapshot out;
-  for (net::CanonicalCookie& cookie : cookies) {
+  for (net::CanonicalCookie &cookie : cookies) {
     if (cookie.IsExpired(now)) {
       continue;
     }
@@ -328,7 +328,7 @@ std::optional<CookieSnapshot> BuildSnapshot(
     return std::nullopt;
   }
   std::string fingerprint_input;
-  for (const auto& [key, cookie] : out.cookies) {
+  for (const auto &[key, cookie] : out.cookies) {
     std::optional<base::DictValue> value = CookieToValue(cookie);
     if (!value) {
       return std::nullopt;
@@ -340,7 +340,7 @@ std::optional<CookieSnapshot> BuildSnapshot(
   return out;
 }
 
-GURL SourceUrlForCookie(const net::CanonicalCookie& cookie) {
+GURL SourceUrlForCookie(const net::CanonicalCookie &cookie) {
   std::string source =
       cookie.SourceScheme() == net::CookieSourceScheme::kSecure ||
               cookie.SecureAttribute()
@@ -356,13 +356,13 @@ GURL SourceUrlForCookie(const net::CanonicalCookie& cookie) {
   return GURL(source);
 }
 
-std::string SiteForCookie(const net::CanonicalCookie& cookie) {
+std::string SchemefulSiteForCookie(const net::CanonicalCookie &cookie) {
   GURL source = SourceUrlForCookie(cookie);
   return source.is_valid() ? net::SchemefulSite(source).Serialize() : "";
 }
 
-std::optional<std::string> MakeCookiePayload(
-    const net::CanonicalCookie& cookie) {
+std::optional<std::string>
+MakeCookiePayload(const net::CanonicalCookie &cookie) {
   std::optional<base::DictValue> serialized = CookieToValue(cookie);
   if (!serialized) {
     return std::nullopt;
@@ -401,11 +401,11 @@ std::optional<RemoteCookie> ParseRemoteCookie(Record record) {
   if (!parsed || !parsed->is_dict()) {
     return std::nullopt;
   }
-  const std::string* format = parsed->GetDict().FindString("format");
+  const std::string *format = parsed->GetDict().FindString("format");
   if (!format || *format != kCookiePayloadFormat) {
     return std::nullopt;
   }
-  const base::DictValue* cookie_value = parsed->GetDict().FindDict("cookie");
+  const base::DictValue *cookie_value = parsed->GetDict().FindDict("cookie");
   if (!cookie_value) {
     return std::nullopt;
   }
@@ -427,7 +427,7 @@ std::optional<RemoteCookie> ParseRemoteCookie(Record record) {
   return out;
 }
 
-bool WriteSecretFile(const base::FilePath& path, std::string_view contents) {
+bool WriteSecretFile(const base::FilePath &path, std::string_view contents) {
   if (!base::CreateDirectory(path.DirName()) ||
       !base::ImportantFileWriter::WriteFileAtomically(path, contents,
                                                       "HeliumSync")) {
@@ -440,7 +440,7 @@ bool WriteSecretFile(const base::FilePath& path, std::string_view contents) {
 #endif
 }
 
-base::DictValue RecordStateToValue(const RecordState& state) {
+base::DictValue RecordStateToValue(const RecordState &state) {
   base::DictValue value;
   value.Set("remote_revision", base::NumberToString(state.remote_revision));
   value.Set("key_id", state.key_id);
@@ -456,9 +456,12 @@ base::DictValue RecordStateToValue(const RecordState& state) {
     exception.Set("remote_payload_fingerprint",
                   state.destination_exception->remote_payload_fingerprint);
     exception.Set("reason", state.destination_exception->reason);
-    exception.Set("site", state.destination_exception->site);
+    exception.Set("schemeful_site",
+                  state.destination_exception->schemeful_site);
+    exception.Set("unverified_local_change",
+                  state.destination_exception->unverified_local_change);
     base::ListValue sessions;
-    for (const std::string& session_id :
+    for (const std::string &session_id :
          state.destination_exception->observed_session_ids) {
       sessions.Append(session_id);
     }
@@ -479,14 +482,15 @@ base::DictValue RecordStateToValue(const RecordState& state) {
   return value;
 }
 
-std::optional<RecordState> RecordStateFromValue(const base::DictValue& value) {
+std::optional<RecordState> RecordStateFromValue(const base::DictValue &value,
+                                                int schema) {
   RecordState state;
   std::optional<int64_t> revision = Int64FromJSON(value, "remote_revision");
-  const std::string* key_id = value.FindString("key_id");
-  const std::string* device_id = value.FindString("device_id");
-  const std::string* remote_payload =
+  const std::string *key_id = value.FindString("key_id");
+  const std::string *device_id = value.FindString("device_id");
+  const std::string *remote_payload =
       value.FindString("remote_payload_fingerprint");
-  const std::string* baseline = value.FindString("baseline_cookie_fingerprint");
+  const std::string *baseline = value.FindString("baseline_cookie_fingerprint");
   std::optional<bool> deleted = value.FindBool("remote_deleted");
   if (!revision || !key_id || !device_id || !remote_payload || !baseline ||
       !deleted) {
@@ -498,27 +502,39 @@ std::optional<RecordState> RecordStateFromValue(const base::DictValue& value) {
   state.remote_payload_fingerprint = *remote_payload;
   state.baseline_cookie_fingerprint = *baseline;
   state.remote_deleted = *deleted;
-  if (const base::DictValue* exception =
+  if (const base::DictValue *exception =
           value.FindDict("destination_exception")) {
     DestinationException parsed;
     std::optional<int64_t> exception_revision =
         Int64FromJSON(*exception, "remote_revision");
-    const std::string* exception_payload =
+    const std::string *exception_payload =
         exception->FindString("remote_payload_fingerprint");
-    const std::string* reason = exception->FindString("reason");
-    const std::string* site = exception->FindString("site");
-    const base::ListValue* sessions =
+    const std::string *reason = exception->FindString("reason");
+    const std::string *schemeful_site =
+        exception->FindString(schema == 3 ? "site" : "schemeful_site");
+    std::optional<bool> unverified_local_change =
+        schema == 3 ? std::optional<bool>(false)
+                    : exception->FindBool("unverified_local_change");
+    const base::ListValue *sessions =
         exception->FindList("observed_session_ids");
     if (!exception_revision || *exception_revision <= 0 || !exception_payload ||
         !IsLowerHexDigest(*exception_payload) || !reason || reason->empty() ||
-        !site || site->empty() || !sessions) {
+        !schemeful_site || schemeful_site->empty() ||
+        !unverified_local_change || !sessions) {
+      return std::nullopt;
+    }
+    GURL schemeful_site_url(*schemeful_site);
+    if (!schemeful_site_url.is_valid() ||
+        net::SchemefulSite(schemeful_site_url).opaque() ||
+        net::SchemefulSite(schemeful_site_url).Serialize() != *schemeful_site) {
       return std::nullopt;
     }
     parsed.remote_revision = *exception_revision;
     parsed.remote_payload_fingerprint = *exception_payload;
     parsed.reason = *reason;
-    parsed.site = *site;
-    for (const base::Value& session : *sessions) {
+    parsed.schemeful_site = *schemeful_site;
+    parsed.unverified_local_change = *unverified_local_change;
+    for (const base::Value &session : *sessions) {
       if (!session.is_string() || session.GetString().empty() ||
           !parsed.observed_session_ids.insert(session.GetString()).second) {
         return std::nullopt;
@@ -530,13 +546,13 @@ std::optional<RecordState> RecordStateFromValue(const base::DictValue& value) {
     }
     state.destination_exception = std::move(parsed);
   }
-  if (const base::DictValue* pending = value.FindDict("pending_publish")) {
+  if (const base::DictValue *pending = value.FindDict("pending_publish")) {
     PendingPublish parsed;
     std::optional<int64_t> expected =
         Int64FromJSON(*pending, "expected_revision");
     std::optional<int64_t> target = Int64FromJSON(*pending, "target_revision");
-    const std::string* payload = pending->FindString("payload_fingerprint");
-    const std::string* cookie = pending->FindString("cookie_fingerprint");
+    const std::string *payload = pending->FindString("payload_fingerprint");
+    const std::string *cookie = pending->FindString("cookie_fingerprint");
     std::optional<bool> pending_deleted = pending->FindBool("deleted");
     if (!expected || !target || *target != *expected + 1 || !payload ||
         !cookie || !pending_deleted) {
@@ -552,11 +568,11 @@ std::optional<RecordState> RecordStateFromValue(const base::DictValue& value) {
   return state;
 }
 
-std::vector<CookieOperation> DiffSnapshots(const CookieSnapshot& before,
-                                           const CookieSnapshot& after,
-                                           const std::set<std::string>& keys) {
+std::vector<CookieOperation> DiffSnapshots(const CookieSnapshot &before,
+                                           const CookieSnapshot &after,
+                                           const std::set<std::string> &keys) {
   std::vector<CookieOperation> operations;
-  for (const std::string& key : keys) {
+  for (const std::string &key : keys) {
     auto old_cookie = before.cookies.find(key);
     auto new_cookie = after.cookies.find(key);
     if (old_cookie != before.cookies.end() &&
@@ -575,40 +591,37 @@ std::vector<CookieOperation> DiffSnapshots(const CookieSnapshot& before,
   return operations;
 }
 
-std::set<std::string> AllSnapshotKeys(const CookieSnapshot& left,
-                                      const CookieSnapshot& right) {
+std::set<std::string> AllSnapshotKeys(const CookieSnapshot &left,
+                                      const CookieSnapshot &right) {
   std::set<std::string> keys;
-  for (const auto& [key, cookie] : left.cookies) {
+  for (const auto &[key, cookie] : left.cookies) {
     keys.insert(key);
   }
-  for (const auto& [key, cookie] : right.cookies) {
+  for (const auto &[key, cookie] : right.cookies) {
     keys.insert(key);
   }
   return keys;
 }
 
-std::optional<CookieSnapshot> RefreshLiveSnapshot(
-    const CookieSnapshot& snapshot) {
+std::optional<CookieSnapshot>
+RefreshLiveSnapshot(const CookieSnapshot &snapshot) {
   std::vector<net::CanonicalCookie> cookies;
   cookies.reserve(snapshot.cookies.size());
-  for (const auto& [key, cookie] : snapshot.cookies) {
+  for (const auto &[key, cookie] : snapshot.cookies) {
     cookies.push_back(cookie);
   }
   return BuildSnapshot(std::move(cookies));
 }
 
-}  // namespace
+} // namespace
 
 class HeliumCookieSyncBridge::Impl {
- public:
-  Impl(Profile* profile,
-       std::unique_ptr<HeliumSyncClient> client,
-       base::FilePath state_path,
-       base::FilePath rollback_path,
+public:
+  Impl(Profile *profile, std::unique_ptr<HeliumSyncClient> client,
+       base::FilePath state_path, base::FilePath rollback_path,
        base::FilePath reauth_signal_path,
        base::RepeatingCallback<void(int64_t)> verified_baseline_callback)
-      : profile_(profile),
-        client_(std::move(client)),
+      : profile_(profile), client_(std::move(client)),
         state_path_(std::move(state_path)),
         rollback_path_(std::move(rollback_path)),
         reauth_signal_path_(std::move(reauth_signal_path)),
@@ -617,7 +630,7 @@ class HeliumCookieSyncBridge::Impl {
   ~Impl() { Stop(); }
 
   void Start() {
-    if (!profile_ || !client_ || !LoadState()) {
+    if (!profile_ || !client_ || !LoadState() || !WriteReauthSignal()) {
       LOG(WARNING) << "Helium cookie sync inactive: state is invalid";
       return;
     }
@@ -645,7 +658,7 @@ class HeliumCookieSyncBridge::Impl {
 
   void PullAndApply() { Reconcile(); }
 
-  bool EnrollmentActivated(std::string* error) {
+  bool EnrollmentActivated(std::string *error) {
     if (!client_ || !client_->ReloadEnrollmentState(error)) {
       return false;
     }
@@ -659,7 +672,7 @@ class HeliumCookieSyncBridge::Impl {
     return true;
   }
 
- private:
+private:
   bool LoadState() {
     state_ = BridgeState();
     if (!base::PathExists(state_path_)) {
@@ -682,16 +695,18 @@ class HeliumCookieSyncBridge::Impl {
       return true;
     }
     const bool migrate_schema_v2 = schema == 2;
-    if (!migrate_schema_v2 && schema != kStateSchema) {
+    const bool migrate_schema_v3 = schema == 3;
+    if (!migrate_schema_v2 && !migrate_schema_v3 && schema != kStateSchema) {
       return false;
     }
-    if (migrate_schema_v2) {
-      base::FilePath backup = state_path_.AddExtensionASCII("schema-v2.bak");
+    if (migrate_schema_v2 || migrate_schema_v3) {
+      base::FilePath backup = state_path_.AddExtensionASCII(
+          migrate_schema_v2 ? "schema-v2.bak" : "schema-v3.bak");
       if (!base::PathExists(backup) && !WriteSecretFile(backup, raw)) {
         return false;
       }
     }
-    if (const std::string* blocked =
+    if (const std::string *blocked =
             parsed->GetDict().FindString("blocked_reason")) {
       state_.blocked_reason = *blocked;
     }
@@ -703,7 +718,7 @@ class HeliumCookieSyncBridge::Impl {
     state_.verified_sequence = *verified_sequence;
     state_.migrated_from_policy_v1 =
         parsed->GetDict().FindBool("migrated_from_policy_v1").value_or(false);
-    const base::DictValue* records = parsed->GetDict().FindDict("records");
+    const base::DictValue *records = parsed->GetDict().FindDict("records");
     if (!records) {
       return false;
     }
@@ -711,18 +726,19 @@ class HeliumCookieSyncBridge::Impl {
       if (!IsLowerHexDigest(key) || !value.is_dict()) {
         return false;
       }
-      std::optional<RecordState> record = RecordStateFromValue(value.GetDict());
+      std::optional<RecordState> record =
+          RecordStateFromValue(value.GetDict(), schema);
       if (!record) {
         return false;
       }
       state_.records.emplace(key, std::move(*record));
     }
-    return !migrate_schema_v2 || SaveState();
+    return (!migrate_schema_v2 && !migrate_schema_v3) || SaveState();
   }
 
   bool SaveState() const {
     base::DictValue records;
-    for (const auto& [key, record] : state_.records) {
+    for (const auto &[key, record] : state_.records) {
       records.Set(key, RecordStateToValue(record));
     }
     base::DictValue root;
@@ -734,7 +750,7 @@ class HeliumCookieSyncBridge::Impl {
     root.Set("records", std::move(records));
     std::string raw;
     return base::JSONWriter::Write(root, &raw) &&
-           WriteSecretFile(state_path_, raw);
+           WriteSecretFile(state_path_, raw) && WriteReauthSignal();
   }
 
   void Block(std::string reason) {
@@ -765,7 +781,7 @@ class HeliumCookieSyncBridge::Impl {
     }
     pending_next_seq_ = result.next_seq;
     std::map<std::string, RemoteCookie> remote;
-    for (Record& record : result.records) {
+    for (Record &record : result.records) {
       if (record.kind != kCookieKind || !IsLowerHexDigest(record.key)) {
         Block("legacy-or-malformed-cookie-record");
         return;
@@ -795,7 +811,7 @@ class HeliumCookieSyncBridge::Impl {
       Block("local-cookie-snapshot-not-fully-serializable");
       return;
     }
-    auto* manager =
+    auto *manager =
         profile_->GetDefaultStoragePartition()->GetDeviceBoundSessionManager();
     if (!manager) {
       ReconcileSnapshots(std::move(remote), std::move(*local),
@@ -808,11 +824,10 @@ class HeliumCookieSyncBridge::Impl {
   }
 
   void OnDeviceBoundSessions(
-      std::map<std::string, RemoteCookie> remote,
-      CookieSnapshot local,
+      std::map<std::string, RemoteCookie> remote, CookieSnapshot local,
       std::vector<network::mojom::DeviceBoundSessionKeyPtr> sessions) {
     DeviceBoundSessionInventory inventory;
-    for (const auto& session : sessions) {
+    for (const auto &session : sessions) {
       if (!session || session->site.opaque() || session->id.empty()) {
         continue;
       }
@@ -827,7 +842,7 @@ class HeliumCookieSyncBridge::Impl {
                           DeviceBoundSessionInventory session_inventory) {
     observed_device_bound_sessions_ = std::move(session_inventory);
     // First resolve ambiguous successful pushes from the durable pending state.
-    for (auto& [key, record_state] : state_.records) {
+    for (auto &[key, record_state] : state_.records) {
       if (!record_state.pending) {
         continue;
       }
@@ -864,7 +879,7 @@ class HeliumCookieSyncBridge::Impl {
     }
 
     std::map<std::string, RemoteCookie> apply_updates;
-    for (auto& [key, remote_cookie] : remote) {
+    for (auto &[key, remote_cookie] : remote) {
       auto state_it = state_.records.find(key);
       auto local_it = local.cookies.find(key);
       std::string local_fingerprint = local_it == local.cookies.end()
@@ -890,7 +905,7 @@ class HeliumCookieSyncBridge::Impl {
         continue;
       }
 
-      RecordState& established = state_it->second;
+      RecordState &established = state_it->second;
       if (remote_cookie.record.revision < established.remote_revision) {
         Block("cookie-authority-revision-regressed");
         return;
@@ -906,6 +921,10 @@ class HeliumCookieSyncBridge::Impl {
           Block("cookie-same-revision-payload-changed");
           return;
         }
+        if (established.destination_exception &&
+            local_fingerprint != established.baseline_cookie_fingerprint) {
+          established.destination_exception->unverified_local_change = true;
+        }
         continue;
       }
       if (remote_cookie.record.key_id != client_->active_key_id()) {
@@ -919,7 +938,7 @@ class HeliumCookieSyncBridge::Impl {
       apply_updates.emplace(key, remote_cookie);
     }
 
-    for (const auto& [key, established] : state_.records) {
+    for (const auto &[key, established] : state_.records) {
       if (established.remote_revision > 0 && !remote.contains(key)) {
         Block("cookie-authority-record-disappeared");
         return;
@@ -938,9 +957,8 @@ class HeliumCookieSyncBridge::Impl {
     PublishLocalMutations(std::move(local));
   }
 
-  void AcceptRemoteState(const RemoteCookie& remote,
-                         std::string baseline) {
-    RecordState& state = state_.records[remote.record.key];
+  void AcceptRemoteState(const RemoteCookie &remote, std::string baseline) {
+    RecordState &state = state_.records[remote.record.key];
     state.remote_revision = remote.record.revision;
     state.key_id = remote.record.key_id;
     state.device_id = remote.record.device_id;
@@ -953,7 +971,7 @@ class HeliumCookieSyncBridge::Impl {
 
   void PublishLocalMutations(CookieSnapshot local) {
     if (client_->enrollment_phase() == "pending") {
-      for (const auto& [key, cookie] : local.cookies) {
+      for (const auto &[key, cookie] : local.cookies) {
         if (state_.records.contains(key)) {
           continue;
         }
@@ -970,12 +988,19 @@ class HeliumCookieSyncBridge::Impl {
       return;
     }
     std::vector<Record> mutations;
-    for (const auto& [key, cookie] : local.cookies) {
+    for (const auto &[key, cookie] : local.cookies) {
       if (mutations.size() == kMaxCookiePushRecords) {
         break;
       }
       auto state_it = state_.records.find(key);
       std::string fingerprint = local.cookie_fingerprints.at(key);
+      if (state_it != state_.records.end() &&
+          state_it->second.destination_exception) {
+        // A cookie mutation after a destination rejection is not evidence of
+        // successful login. Hold it locally until a concrete browser flow can
+        // verify reauthentication, or a later remote revision resolves it.
+        continue;
+      }
       if (state_it != state_.records.end() &&
           fingerprint == state_it->second.baseline_cookie_fingerprint) {
         continue;
@@ -995,17 +1020,18 @@ class HeliumCookieSyncBridge::Impl {
       mutation.revision = expected + 1;
       mutation.payload_json = *payload;
       mutations.push_back(std::move(mutation));
-      RecordState& pending_state = state_.records[key];
+      RecordState &pending_state = state_.records[key];
       pending_state.pending = PendingPublish{
           expected, expected + 1, Sha256(*payload), fingerprint, false};
     }
 
-    for (auto& [key, record_state] : state_.records) {
+    for (auto &[key, record_state] : state_.records) {
       if (mutations.size() == kMaxCookiePushRecords) {
         break;
       }
       if (record_state.remote_revision == 0 || record_state.remote_deleted ||
-          local.cookies.contains(key) || record_state.pending) {
+          local.cookies.contains(key) || record_state.pending ||
+          record_state.destination_exception) {
         continue;
       }
       Record mutation;
@@ -1052,8 +1078,7 @@ class HeliumCookieSyncBridge::Impl {
     }
     std::string error;
     if (!client_->AcknowledgeApplied(pending_next_seq_, &error)) {
-      LOG(WARNING) << "Helium cookie cursor acknowledgement failed: "
-                   << error;
+      LOG(WARNING) << "Helium cookie cursor acknowledgement failed: " << error;
       reconcile_in_flight_ = false;
       return false;
     }
@@ -1070,7 +1095,7 @@ class HeliumCookieSyncBridge::Impl {
                         std::map<std::string, RemoteCookie> updates) {
     CookieSnapshot target = before;
     std::set<std::string> keys;
-    for (const auto& [key, remote] : updates) {
+    for (const auto &[key, remote] : updates) {
       keys.insert(key);
       if (remote.effective_deleted) {
         target.cookies.erase(key);
@@ -1082,7 +1107,7 @@ class HeliumCookieSyncBridge::Impl {
       }
     }
     std::vector<net::CanonicalCookie> target_cookies;
-    for (const auto& [key, cookie] : target.cookies) {
+    for (const auto &[key, cookie] : target.cookies) {
       target_cookies.push_back(cookie);
     }
     std::optional<CookieSnapshot> normalized =
@@ -1095,7 +1120,7 @@ class HeliumCookieSyncBridge::Impl {
     std::vector<CookieOperation> operations =
         DiffSnapshots(before, target, keys);
     if (operations.empty()) {
-      for (const auto& [key, remote] : updates) {
+      for (const auto &[key, remote] : updates) {
         std::string baseline = target.cookies.contains(key)
                                    ? target.cookie_fingerprints.at(key)
                                    : kDeletedFingerprint;
@@ -1121,9 +1146,10 @@ class HeliumCookieSyncBridge::Impl {
       Block("cookie-rollback-seal-failed");
       return;
     }
-    size_t set_count = std::ranges::count_if(
-        operations,
-        [](const CookieOperation& operation) { return operation.set; });
+    size_t set_count =
+        std::ranges::count_if(operations, [](const CookieOperation &operation) {
+          return operation.set;
+        });
     RollbackJournal journal{"pending",          std::move(sealed),
                             before.fingerprint, target.fingerprint,
                             set_count,          operations.size() - set_count};
@@ -1142,8 +1168,8 @@ class HeliumCookieSyncBridge::Impl {
     StartNextOperation();
   }
 
-  std::optional<std::string> MakeRollbackPayload(
-      const CookieSnapshot& before) const {
+  std::optional<std::string>
+  MakeRollbackPayload(const CookieSnapshot &before) const {
     base::DictValue root;
     root.Set("format", kRollbackPayloadFormat);
     root.Set("cookies", before.serialized.Clone());
@@ -1156,8 +1182,8 @@ class HeliumCookieSyncBridge::Impl {
     return raw;
   }
 
-  std::optional<CookieSnapshot> ParseRollbackPayload(
-      std::string_view raw) const {
+  std::optional<CookieSnapshot>
+  ParseRollbackPayload(std::string_view raw) const {
     if (raw.size() > kMaxRollbackPayloadBytes) {
       return std::nullopt;
     }
@@ -1166,18 +1192,18 @@ class HeliumCookieSyncBridge::Impl {
     if (!parsed || !parsed->is_dict()) {
       return std::nullopt;
     }
-    const std::string* format = parsed->GetDict().FindString("format");
+    const std::string *format = parsed->GetDict().FindString("format");
     if (!format || *format != kRollbackPayloadFormat) {
       return std::nullopt;
     }
-    const base::ListValue* cookies = parsed->GetDict().FindList("cookies");
-    const std::string* fingerprint =
+    const base::ListValue *cookies = parsed->GetDict().FindList("cookies");
+    const std::string *fingerprint =
         parsed->GetDict().FindString("fingerprint");
     if (!cookies || !fingerprint || cookies->size() > kMaxCookieRecords) {
       return std::nullopt;
     }
     std::vector<net::CanonicalCookie> decoded;
-    for (const base::Value& value : *cookies) {
+    for (const base::Value &value : *cookies) {
       if (!value.is_dict()) {
         return std::nullopt;
       }
@@ -1196,7 +1222,7 @@ class HeliumCookieSyncBridge::Impl {
     return snapshot;
   }
 
-  bool SaveRollback(const RollbackJournal& journal) const {
+  bool SaveRollback(const RollbackJournal &journal) const {
     base::DictValue preview;
     preview.Set("before_fingerprint", journal.before_fingerprint);
     preview.Set("target_fingerprint", journal.target_fingerprint);
@@ -1229,26 +1255,26 @@ class HeliumCookieSyncBridge::Impl {
             kRollbackSchema) {
       return std::nullopt;
     }
-    const std::string* status = parsed->GetDict().FindString("status");
-    const base::DictValue* sealed =
+    const std::string *status = parsed->GetDict().FindString("status");
+    const base::DictValue *sealed =
         parsed->GetDict().FindDict("sealed_payload");
-    const base::DictValue* preview = parsed->GetDict().FindDict("preview");
+    const base::DictValue *preview = parsed->GetDict().FindDict("preview");
     if (!status ||
         (*status != "pending" && *status != "committed" &&
          *status != "recovered") ||
         !sealed || !preview) {
       return std::nullopt;
     }
-    const std::string* sealed_key_id = sealed->FindString("key_id");
-    const std::string* sealed_nonce = sealed->FindString("nonce");
-    const std::string* sealed_ciphertext = sealed->FindString("ciphertext");
+    const std::string *sealed_key_id = sealed->FindString("key_id");
+    const std::string *sealed_nonce = sealed->FindString("nonce");
+    const std::string *sealed_ciphertext = sealed->FindString("ciphertext");
     if (!sealed_key_id || sealed_key_id->empty() || !sealed_nonce ||
         sealed_nonce->empty() || !sealed_ciphertext ||
         sealed_ciphertext->empty()) {
       return std::nullopt;
     }
-    const std::string* before = preview->FindString("before_fingerprint");
-    const std::string* target = preview->FindString("target_fingerprint");
+    const std::string *before = preview->FindString("before_fingerprint");
+    const std::string *target = preview->FindString("target_fingerprint");
     std::optional<int> set_count = preview->FindInt("set_count");
     std::optional<int> delete_count = preview->FindInt("delete_count");
     if (!before || !target || !set_count || *set_count < 0 || !delete_count ||
@@ -1341,7 +1367,7 @@ class HeliumCookieSyncBridge::Impl {
     CookieOperation operation = std::move(operation_queue_.front());
     operation_queue_.pop_front();
     current_operation_ = operation;
-    network::mojom::CookieManager* manager =
+    network::mojom::CookieManager *manager =
         profile_->GetDefaultStoragePartition()
             ->GetCookieManagerForBrowserProcess();
     if (operation.set) {
@@ -1367,8 +1393,8 @@ class HeliumCookieSyncBridge::Impl {
         return;
       }
       rejected_record_keys_.insert(current_operation_->record_key);
-      rejected_sites_[current_operation_->record_key] =
-          SiteForCookie(current_operation_->cookie);
+      rejected_schemeful_sites_[current_operation_->record_key] =
+          SchemefulSiteForCookie(current_operation_->cookie);
       OnOperationFailed("destination-set-rejected");
       return;
     }
@@ -1428,12 +1454,11 @@ class HeliumCookieSyncBridge::Impl {
         Block("cookie-rollback-recovery-state-write-failed");
         return;
       }
-      std::map<std::string, DestinationException> exceptions;
-      for (const std::string& record_key : rejected_record_keys_) {
+      for (const std::string &record_key : rejected_record_keys_) {
         auto remote = apply_updates_.find(record_key);
-        auto site = rejected_sites_.find(record_key);
-        if (remote == apply_updates_.end() || site == rejected_sites_.end() ||
-            site->second.empty()) {
+        auto site = rejected_schemeful_sites_.find(record_key);
+        if (remote == apply_updates_.end() ||
+            site == rejected_schemeful_sites_.end() || site->second.empty()) {
           Block("cookie-rejection-scope-invalid");
           return;
         }
@@ -1446,16 +1471,14 @@ class HeliumCookieSyncBridge::Impl {
         exception.remote_payload_fingerprint =
             remote->second.payload_fingerprint;
         exception.reason = "destination-set-rejected";
-        exception.site = site->second;
+        exception.schemeful_site = site->second;
         auto observed = observed_device_bound_sessions_.find(site->second);
         if (observed != observed_device_bound_sessions_.end()) {
           exception.observed_session_ids = observed->second;
         }
         state_.records[record_key].destination_exception = exception;
-        exceptions.emplace(record_key, std::move(exception));
       }
-      if (!SaveState() ||
-          (!exceptions.empty() && !WriteReauthSignal(exceptions))) {
+      if (!SaveState()) {
         Block("cookie-rejection-state-write-failed");
         return;
       }
@@ -1471,7 +1494,7 @@ class HeliumCookieSyncBridge::Impl {
     }
 
     if (current->fingerprint != apply_target_.fingerprint) {
-      for (const auto& [key, remote] : apply_updates_) {
+      for (const auto &[key, remote] : apply_updates_) {
         bool matches = remote.effective_deleted
                            ? !current->cookies.contains(key)
                            : current->cookies.contains(key) &&
@@ -1482,16 +1505,17 @@ class HeliumCookieSyncBridge::Impl {
         }
         rejected_record_keys_.insert(key);
         if (remote.cookie) {
-          rejected_sites_[key] = SiteForCookie(*remote.cookie);
+          rejected_schemeful_sites_[key] =
+              SchemefulSiteForCookie(*remote.cookie);
         } else if (apply_before_.cookies.contains(key)) {
-          rejected_sites_[key] =
-              SiteForCookie(apply_before_.cookies.at(key));
+          rejected_schemeful_sites_[key] =
+              SchemefulSiteForCookie(apply_before_.cookies.at(key));
         }
       }
       OnOperationFailed("cookie-post-apply-verification-mismatch");
       return;
     }
-    for (const auto& [key, remote] : apply_updates_) {
+    for (const auto &[key, remote] : apply_updates_) {
       std::string baseline = current->cookies.contains(key)
                                  ? current->cookie_fingerprints.at(key)
                                  : kDeletedFingerprint;
@@ -1519,20 +1543,24 @@ class HeliumCookieSyncBridge::Impl {
     apply_target_ = CookieSnapshot();
     active_journal_.reset();
     rejected_record_keys_.clear();
-    rejected_sites_.clear();
+    rejected_schemeful_sites_.clear();
     observed_device_bound_sessions_.clear();
     unscoped_apply_failure_ = false;
     restoring_ = false;
   }
 
-  bool WriteReauthSignal(
-      const std::map<std::string, DestinationException>& exceptions) const {
+  bool WriteReauthSignal() const {
     base::ListValue targets;
-    for (const auto& [record_key, exception] : exceptions) {
+    for (const auto &[record_key, record_state] : state_.records) {
+      if (!record_state.destination_exception) {
+        continue;
+      }
+      const DestinationException &exception =
+          *record_state.destination_exception;
       base::ListValue sessions;
-      for (const std::string& session_id : exception.observed_session_ids) {
+      for (const std::string &session_id : exception.observed_session_ids) {
         base::DictValue session;
-        session.Set("site", exception.site);
+        session.Set("schemeful_site", exception.schemeful_site);
         session.Set("session_id", session_id);
         sessions.Append(std::move(session));
       }
@@ -1542,17 +1570,24 @@ class HeliumCookieSyncBridge::Impl {
                  base::NumberToString(exception.remote_revision));
       target.Set("remote_payload_fingerprint",
                  exception.remote_payload_fingerprint);
-      target.Set("site", exception.site);
+      target.Set("schemeful_site", exception.schemeful_site);
+      target.Set("origin_status", "unavailable-not-observed");
+      target.Set("login_entry_status", "unavailable-not-observed");
+      target.Set("unverified_local_cookie_change",
+                 exception.unverified_local_change);
       target.Set("observed_site_sessions", std::move(sessions));
       targets.Append(std::move(target));
     }
     base::DictValue root;
     root.Set("schema_version", kReauthSchema);
-    root.Set("action", "password-reauthentication-required");
-    root.Set("status", "pending-browser-integration");
+    root.Set("action", "browser-native-password-reauthentication");
+    root.Set("status", targets.empty()
+                           ? "idle"
+                           : "blocked-no-exact-origin-or-login-entry-evidence");
     root.Set("reason", "destination-cookie-rejected");
+    root.Set("navigation_allowed", false);
+    root.Set("automatic_form_submission_allowed", false);
     root.Set("targets", std::move(targets));
-    root.Set("created_at", base::TimeToISO8601(base::Time::Now()));
     std::string raw;
     return base::JSONWriter::Write(root, &raw) &&
            WriteSecretFile(reauth_signal_path_, raw);
@@ -1572,7 +1607,7 @@ class HeliumCookieSyncBridge::Impl {
   std::optional<CookieOperation> current_operation_;
   std::optional<RollbackJournal> active_journal_;
   std::set<std::string> rejected_record_keys_;
-  std::map<std::string, std::string> rejected_sites_;
+  std::map<std::string, std::string> rejected_schemeful_sites_;
   bool unscoped_apply_failure_ = false;
   bool restoring_ = false;
   bool reconcile_in_flight_ = false;
@@ -1583,35 +1618,25 @@ class HeliumCookieSyncBridge::Impl {
 };
 
 HeliumCookieSyncBridge::HeliumCookieSyncBridge(
-    Profile* profile,
-    std::unique_ptr<HeliumSyncClient> client,
-    base::FilePath state_path,
-    base::FilePath rollback_path,
+    Profile *profile, std::unique_ptr<HeliumSyncClient> client,
+    base::FilePath state_path, base::FilePath rollback_path,
     base::FilePath reauth_signal_path,
     base::RepeatingCallback<void(int64_t)> verified_baseline_callback)
-    : impl_(std::make_unique<Impl>(profile,
-                                   std::move(client),
-                                   std::move(state_path),
-                                   std::move(rollback_path),
-                                   std::move(reauth_signal_path),
-                                   std::move(verified_baseline_callback))) {}
+    : impl_(std::make_unique<Impl>(
+          profile, std::move(client), std::move(state_path),
+          std::move(rollback_path), std::move(reauth_signal_path),
+          std::move(verified_baseline_callback))) {}
 
 HeliumCookieSyncBridge::~HeliumCookieSyncBridge() = default;
 
-void HeliumCookieSyncBridge::Start() {
-  impl_->Start();
-}
+void HeliumCookieSyncBridge::Start() { impl_->Start(); }
 
-void HeliumCookieSyncBridge::Stop() {
-  impl_->Stop();
-}
+void HeliumCookieSyncBridge::Stop() { impl_->Stop(); }
 
-void HeliumCookieSyncBridge::PullAndApply() {
-  impl_->PullAndApply();
-}
+void HeliumCookieSyncBridge::PullAndApply() { impl_->PullAndApply(); }
 
-bool HeliumCookieSyncBridge::EnrollmentActivated(std::string* error) {
+bool HeliumCookieSyncBridge::EnrollmentActivated(std::string *error) {
   return impl_->EnrollmentActivated(error);
 }
 
-}  // namespace helium_sync
+} // namespace helium_sync

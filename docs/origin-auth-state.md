@@ -5,7 +5,8 @@ depend on a device-bound session or on localStorage, IndexedDB, service-worker
 storage, Cache Storage, or another origin-owned store. This audit records that
 boundary without copying any of those stores.
 
-`scripts/session-state/origin-state-audit.mjs` is a strict metadata-only
+`scripts/session-state/origin-state-audit.mjs` is a strict schema-2,
+metadata-only
 classifier. It accepts exact HTTPS origins, controlled test outcomes, opaque
 evidence references, and the SHA-256 of one synthetic or disposable-browser
 artifact. It rejects unknown fields, URL credentials, paths and query strings,
@@ -25,7 +26,8 @@ Every origin has:
 
 - cookie apply, authenticated-session, and device-bound-session observations;
 - zero or more unique state kinds from `local-storage`, `indexed-db`,
-  `service-worker`, `cache-storage`, and `other-origin-state`; and
+  `service-worker`, `cache-storage`, and `other-origin-state`, each with
+  separate preview, apply, readback, and rollback results; and
 - an opaque `evidence_ref` when and only when an observation was made.
 
 An evidence reference is a correlation label, never a cookie name, value,
@@ -51,6 +53,13 @@ Synthetic input can produce only labels beginning with `synthetic-` (or
 portability claim. Even `destination-verified` does not generalize to another
 device, browser build, site revision, or later token rotation.
 
+The adapter registry is intentionally empty. An evidence file cannot invent an
+adapter name and mark its own transfer successful. Source must first add one
+reviewed, exact-origin adapter, and that adapter must separately prove preview,
+apply, readback, and rollback. Until then, `adapter` must be `none` and every
+transaction result must be `not-tested`; required state is classified
+`required-unsupported`.
+
 ## Synthetic invocation
 
 Create a non-secret fixture artifact and an evidence JSON file whose
@@ -63,6 +72,57 @@ node scripts/session-state/origin-state-audit.mjs \
 
 The command writes classifications and opaque references to stdout. Its output
 does not contain cookie values or origin-store data.
+
+## Why automatic reauthentication is blocked
+
+The cookie bridge can derive only the cookie's canonical identity and a
+schemeful site. A cookie domain may cover several origins, and neither its
+domain nor path identifies a login page. Chromium 150's password manager is
+owned by a concrete `WebContents`; it discovers forms in that page and offers
+native fill through its per-tab `PasswordManagerClient`. There is no safe
+profile-level operation that takes a cookie site and starts a password login.
+This boundary was checked against locked Chromium commit
+`24b04c927b23c39cf9c5227cc8dc6f64a744c8e9` in
+`components/password_manager/core/browser/password_manager_client.h` and
+`chrome/browser/password_manager/chrome_password_manager_client.h`.
+
+After a destination rejects a cookie, the bridge therefore restores and
+readback-verifies the complete last-good local cookie snapshot, persists the
+exception for exactly that record, revision, and encrypted-payload
+fingerprint, and writes `cookie-reauth-required.json`. The signal deliberately
+contains `schemeful_site`, `origin_status=unavailable-not-observed`,
+`login_entry_status=unavailable-not-observed`,
+`navigation_allowed=false`, and
+`automatic_form_submission_allowed=false`. A same-revision remote record is
+suppressed. A later local cookie mutation is held locally as unverified and is
+not published as proof of login, which stops rotation ping-pong. A higher
+authoritative remote revision may retry; concurrent local and remote changes
+still fail closed.
+
+A disposable-browser collector must provide the exact origin and verified
+login entry before browser integration can open a local page and let
+Chromium's normal password manager offer fill. Helium must never guess that
+entry from the cookie domain, inject a credential, or submit a form.
+
+## Why origin-state transfer is blocked
+
+The pinned Chromium local-storage interface exposes per-key `Put`/`Delete` and
+`GetAll`, but its own contract says a successful mutation reply does not prove
+the value is still present because another page can race it. It has no
+multi-key transaction for atomic replacement. IndexedDB, Cache Storage, and
+service-worker data have still broader application-owned schemas. Copying or
+live-merging those databases would not provide an atomic, validated transfer.
+The checked locked interfaces are
+`components/services/storage/public/mojom/local_storage_control.mojom`,
+`third_party/blink/public/mojom/dom_storage/storage_area.mojom`, and
+`content/public/browser/storage_partition.h`.
+
+An eventual adapter must be exact-origin and evidence-specific, stop or
+otherwise isolate writers, take a complete rollback snapshot, preview one
+replacement, apply through a reviewed Chromium API, perform an independent
+readback, and prove rollback into disposable state. The schema-2 transaction
+fields make those gates explicit without transporting state values or
+pretending an adapter exists.
 
 ## Browser gate still required
 

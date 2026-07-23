@@ -4,10 +4,11 @@ import test from "node:test";
 
 import {
   applyCookieTransaction,
+  buildReauthenticationIntent,
   canonicalCookieIdentity,
   EMPTY_COOKIE_FINGERPRINT,
   decideCookieReconcile,
-  migrateCookieStateV2,
+  migrateCookieStateToV4,
   previewCookieTransaction,
   scopeDestinationRejection,
 } from "./cookie-whole-profile-model.mjs";
@@ -258,11 +259,11 @@ test("destination rejection is exact and revision-scoped, then later state retri
   const destinationException = scopeDestinationRejection({
     cookie: firstCookie,
     remote: { recordKey, revision: 7, payloadFingerprint: "payload-a" },
-    site: "https://fixture.invalid",
+    schemefulSite: "https://fixture.invalid",
     observedSessions: [
-      { site: "https://fixture.invalid", sessionId: "session-b" },
-      { site: "https://fixture.invalid", sessionId: "session-a" },
-      { site: "https://other.invalid", sessionId: "other-session" },
+      { schemefulSite: "https://fixture.invalid", sessionId: "session-b" },
+      { schemefulSite: "https://fixture.invalid", sessionId: "session-a" },
+      { schemefulSite: "https://other.invalid", sessionId: "other-session" },
     ],
   });
   assert.equal(destinationException.recordKey, recordKey);
@@ -271,10 +272,10 @@ test("destination rejection is exact and revision-scoped, then later state retri
   assert.throws(() => scopeDestinationRejection({
     cookie: firstCookie,
     remote: { recordKey, revision: 7, payloadFingerprint: "payload-a" },
-    site: "https://fixture.invalid",
+    schemefulSite: "https://fixture.invalid",
     observedSessions: [
-      { site: "https://fixture.invalid", sessionId: "duplicate" },
-      { site: "https://fixture.invalid", sessionId: "duplicate" },
+      { schemefulSite: "https://fixture.invalid", sessionId: "duplicate" },
+      { schemefulSite: "https://fixture.invalid", sessionId: "duplicate" },
     ],
   }), /duplicate observed device-bound session identity/);
   assert.notEqual(scopeDestinationRejection({
@@ -284,7 +285,7 @@ test("destination rejection is exact and revision-scoped, then later state retri
       revision: 7,
       payloadFingerprint: "payload-other",
     },
-    site: "https://fixture.invalid",
+    schemefulSite: "https://fixture.invalid",
   }).recordKey, recordKey);
 
   const rejectedState = { ...baseline, destinationException };
@@ -299,7 +300,10 @@ test("destination rejection is exact and revision-scoped, then later state retri
     remote,
     recordKey,
     localFingerprint: "reauthenticated-local",
-  }), { action: "publish", expectedRevision: 7 });
+  }), {
+    action: "hold-local",
+    reason: "destination-exception-local-change-unverified",
+  });
   assert.deepEqual(reconcile({
     state: rejectedState,
     remote: { ...remote, revision: 8, payloadFingerprint: "payload-later" },
@@ -318,10 +322,65 @@ test("destination rejection is exact and revision-scoped, then later state retri
     recordKey,
     localFingerprint: "cookies-a",
   }), { action: "stop", reason: "destination-exception-scope-mismatch" });
+
+  const publishStart = cookie.indexOf("void PublishLocalMutations");
+  const publishEnd = cookie.indexOf("void OnPushComplete", publishStart);
+  const publish = cookie.slice(publishStart, publishEnd);
+  assert.match(publish,
+    /state_it->second\.destination_exception[\s\S]*continue;/);
+  assert.match(publish,
+    /record_state\.destination_exception[\s\S]*continue;/);
 });
 
-test("schema-2 cookie state migrates without preserving site-wide exceptions", () => {
-  const migrated = migrateCookieStateV2({
+test("reauthentication intent cannot guess an origin, navigate, or submit", () => {
+  const recordKey = canonicalCookieIdentity(firstCookie);
+  const intent = buildReauthenticationIntent([{
+    recordKey,
+    remoteRevision: 7,
+    remotePayloadFingerprint: "a".repeat(64),
+    reason: "destination-set-rejected",
+    schemefulSite: "https://fixture.invalid",
+    observedSessions: [{
+      schemefulSite: "https://fixture.invalid",
+      sessionId: "dbsc-fixture-session",
+    }],
+    unverifiedLocalChange: true,
+  }]);
+  assert.equal(intent.schema_version, 3);
+  assert.equal(intent.status,
+    "blocked-no-exact-origin-or-login-entry-evidence");
+  assert.equal(intent.navigation_allowed, false);
+  assert.equal(intent.automatic_form_submission_allowed, false);
+  assert.equal(intent.targets[0].schemeful_site, "https://fixture.invalid");
+  assert.equal(intent.targets[0].origin_status, "unavailable-not-observed");
+  assert.equal(intent.targets[0].login_entry_status,
+    "unavailable-not-observed");
+  assert.equal(intent.targets[0].unverified_local_cookie_change, true);
+  assert.equal("origin" in intent.targets[0], false);
+  assert.equal("login_entry" in intent.targets[0], false);
+
+  assert.deepEqual(buildReauthenticationIntent([]), {
+    schema_version: 3,
+    action: "browser-native-password-reauthentication",
+    status: "idle",
+    reason: "destination-cookie-rejected",
+    navigation_allowed: false,
+    automatic_form_submission_allowed: false,
+    targets: [],
+  });
+  assert.throws(() => buildReauthenticationIntent([{
+    recordKey,
+    remoteRevision: 7,
+    remotePayloadFingerprint: "a".repeat(64),
+    reason: "destination-set-rejected",
+    schemefulSite: "https://fixture.invalid/login",
+    observedSessions: [],
+    unverifiedLocalChange: false,
+  }]), /invalid schemeful site/);
+});
+
+test("cookie state migrations remove broad exceptions and name schemeful sites exactly", () => {
+  const migrated = migrateCookieStateToV4({
     schema_version: 2,
     verified_sequence: "91",
     records: {
@@ -346,7 +405,7 @@ test("schema-2 cookie state migrates without preserving site-wide exceptions", (
     },
   });
   const migratedRecord = migrated.records[canonicalCookieIdentity(firstCookie)];
-  assert.equal(migrated.schema_version, 3);
+  assert.equal(migrated.schema_version, 4);
   assert.equal(migrated.verified_sequence, "91");
   assert.equal(migratedRecord.remote_revision, "7");
   assert.equal(migratedRecord.remote_payload_fingerprint, "payload-a");
@@ -354,10 +413,38 @@ test("schema-2 cookie state migrates without preserving site-wide exceptions", (
   assert.equal("non_clonable" in migratedRecord, false);
   assert.equal("non_clonable_reason" in migratedRecord, false);
   assert.equal("site" in migratedRecord, false);
-  assert.throws(() => migrateCookieStateV2({
+  const migratedV3 = migrateCookieStateToV4({
+    schema_version: 3,
+    verified_sequence: "92",
+    records: {
+      [canonicalCookieIdentity(firstCookie)]: {
+        remote_revision: "8",
+        key_id: "key-a",
+        device_id: "device-a",
+        remote_payload_fingerprint: "b".repeat(64),
+        baseline_cookie_fingerprint: "cookies-b",
+        remote_deleted: false,
+        destination_exception: {
+          remote_revision: "8",
+          remote_payload_fingerprint: "b".repeat(64),
+          reason: "destination-set-rejected",
+          site: "https://fixture.invalid",
+          observed_session_ids: [],
+        },
+      },
+    },
+  });
+  assert.equal(migratedV3.schema_version, 4);
+  const migratedV3Exception =
+    migratedV3.records[canonicalCookieIdentity(firstCookie)].destination_exception;
+  assert.equal(migratedV3Exception.schemeful_site, "https://fixture.invalid");
+  assert.equal(migratedV3Exception.unverified_local_change, false);
+  assert.equal("site" in migratedV3Exception, false);
+
+  assert.throws(() => migrateCookieStateToV4({
     schema_version: 2,
     records: [],
-  }), /invalid cookie state schema 2 document/);
+  }), /invalid cookie state migration document/);
 });
 
 test("native source is whole-profile, partition-complete, rollback-first, and native-only", () => {
@@ -383,14 +470,22 @@ test("native source is whole-profile, partition-complete, rollback-first, and na
   assert.match(cookie, /remote_revision/);
   assert.match(cookie, /observed_site_sessions/);
   assert.match(cookie, /session->id/);
-  assert.match(cookie, /pending-browser-integration/);
+  assert.match(cookie, /blocked-no-exact-origin-or-login-entry-evidence/);
+  assert.match(cookie, /navigation_allowed", false/);
+  assert.match(cookie, /automatic_form_submission_allowed", false/);
+  assert.match(cookie, /origin_status", "unavailable-not-observed"/);
+  assert.match(cookie, /login_entry_status", "unavailable-not-observed"/);
+  assert.match(cookie, /unverified_local_change/);
+  assert.match(cookie, /record_state\.destination_exception/);
   assert.match(cookie, /client_->active_key_id\(\)/);
   assert.match(cookie, /cookie-newer-record-uses-stale-key-epoch/);
   assert.match(cookie, /schema-v2\.bak/);
-  assert.match(cookie, /return !migrate_schema_v2 \|\| SaveState\(\)/);
+  assert.match(cookie, /schema-v3\.bak/);
+  assert.match(cookie,
+    /return \(!migrate_schema_v2 && !migrate_schema_v3\) \|\| SaveState\(\)/);
   assert.match(clientHeader, /active_key_id\(\) const/);
   assert.match(client, /sync response uses an unknown content key epoch/);
-  assert.match(enrollmentCLI, /const cookieBridgeStateSchema = 3/);
+  assert.match(enrollmentCLI, /const cookieBridgeStateSchema = 4/);
   assert.equal((enrollmentCLI.match(/cookieBridgeStateSchema/g) ?? []).length, 3);
   assert.doesNotMatch(cookie, /device_bound_sites|non_clonable|auxiliary_state/);
   assert.match(cookie, /expected_revision/);
