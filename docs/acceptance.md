@@ -261,7 +261,10 @@ destination is authenticated or that any site session is portable.
 - `tab-recovery-health.sh` always emits exactly three distinct mechanism
   statuses. A missing, stale, wrong-device, future, symlinked, group-readable,
   or malformed proof makes only that named mechanism unhealthy; replicas do
-  not create extra status entries.
+  not create extra status entries. Produce these statuses only through the
+  authenticated evidence workflow in `tab-runtime-proof.md`: native requires
+  one clean/crash/second-restart proof; neutral and full-profile each require
+  two validated proofs from distinct source destinations.
 - Corrupt one neutral exporter, full-profile producer, scheduler, recovery
   key, retention plan, newest generation, and destination independently. In
   every case only that mechanism becomes red and a sibling recovery path

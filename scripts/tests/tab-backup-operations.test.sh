@@ -248,6 +248,19 @@ restore_directory="${temporary}/disposable-restore"
 test -f "${restore_directory}/session.json"
 test -f "${restore_directory}/restore-manifest.json"
 grep -q 'fixture.invalid' "${restore_directory}/session.json"
+source_receipt="${restore_directory}.helium-tab-offdevice-source.env"
+test -f "${source_receipt}"
+test "$(stat -c %a "${source_receipt}")" = 600
+grep -Fxq 'schema_version=1' "${source_receipt}"
+grep -Fxq 'mechanism=neutral-topology' "${source_receipt}"
+grep -Fxq 'source_device=da' "${source_receipt}"
+grep -Fxq 'profile=default' "${source_receipt}"
+grep -Fxq "generation=${generation}" "${source_receipt}"
+grep -Fxq 'source_destination=d-copy' "${source_receipt}"
+grep -Eq '^cipher_sha256=[a-f0-9]{64}$' "${source_receipt}"
+grep -Eq '^backup_manifest_sha256=[a-f0-9]{64}$' "${source_receipt}"
+grep -Fxq "restore_session_sha256=$(jq -r '.session.sha256' \
+	"${restore_directory}/restore-manifest.json")" "${source_receipt}"
 
 nas_restore_directory="${temporary}/disposable-restore-nas"
 "${repo_root}/scripts/tabs/tab-backup.sh" restore-to-disposable "${config}" \
@@ -255,6 +268,12 @@ nas_restore_directory="${temporary}/disposable-restore-nas"
 "${temporary}/bin/helium-tabs" validate-restore \
 	--destination "${nas_restore_directory}" >/dev/null
 cmp "${restore_directory}/session.json" "${nas_restore_directory}/session.json"
+nas_source_receipt="${nas_restore_directory}.helium-tab-offdevice-source.env"
+grep -Fxq 'source_destination=nas-on-lm' "${nas_source_receipt}"
+cmp <(grep -E '^(generation|cipher_sha256|restore_session_sha256)=' \
+	"${source_receipt}") \
+	<(grep -E '^(generation|cipher_sha256|restore_session_sha256)=' \
+	"${nas_source_receipt}")
 
 disposable_root="${temporary}/disposable-browser-root"
 mkdir -m 700 "${disposable_root}"

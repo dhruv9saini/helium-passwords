@@ -445,7 +445,8 @@ fetch_destination_file() {
 
 restore_disposable() {
     local destination_id=$1 generation=$2 restore_destination=$3 index temporary expected_hash archive listing temp_store
-    local identity_mode restored_manifest
+    local identity_mode restored_manifest source_receipt source_receipt_temporary
+    local backup_manifest_hash restored_session_hash
     valid_generation "${generation}" || { echo "invalid generation" >&2; return 1; }
     tab_ops_require_absolute restore_destination "${restore_destination}"
     [ ! -e "${restore_destination}" ] || { echo "restore destination already exists" >&2; return 1; }
@@ -461,6 +462,8 @@ restore_disposable() {
     temporary=$(mktemp -d /tmp/helium-tab-restore.XXXXXX)
     cleanup_restore() {
         local result=$?
+		[ -z "${source_receipt_temporary:-}" ] ||
+			rm -f -- "${source_receipt_temporary}" 2>/dev/null || true
 		[ -z "${temporary:-}" ] || find "${temporary}" -depth -delete 2>/dev/null || true
         return "${result}"
     }
@@ -519,8 +522,38 @@ restore_disposable() {
 		echo "disposable restore receipt mismatch" >&2
 		return 1
 	}
+	source_receipt="${restore_destination}.helium-tab-offdevice-source.env"
+	[ ! -e "${source_receipt}" ] || {
+		echo "off-device source receipt already exists" >&2
+		return 1
+	}
+	backup_manifest_hash=$(sha256sum "${temporary}/generation.backup.env" |
+		awk '{print $1}')
+	restored_session_hash=$(jq -er '.session.sha256 |
+		select(test("^[a-f0-9]{64}$"))' \
+		"${temporary}/restore-validation.json")
+	source_receipt_temporary=$(mktemp \
+		"$(dirname -- "${source_receipt}")/.helium-tab-source-receipt.XXXXXX")
+	chmod 600 "${source_receipt_temporary}"
+	{
+		printf 'schema_version=1\nmechanism=neutral-topology\n'
+		printf 'source_device=%s\nprofile=%s\ngeneration=%s\n' \
+			"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${generation}"
+		printf 'source_destination=%s\ncipher_sha256=%s\n' \
+			"${destination_id}" "${expected_hash}"
+		printf 'backup_manifest_sha256=%s\nrestore_session_sha256=%s\n' \
+			"${backup_manifest_hash}" "${restored_session_hash}"
+		printf 'restored_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	} >"${source_receipt_temporary}"
+	ln -- "${source_receipt_temporary}" "${source_receipt}" || {
+		echo "could not publish off-device source receipt without replacement" >&2
+		return 1
+	}
+	rm -f -- "${source_receipt_temporary}"
+	source_receipt_temporary=
     find "${temporary}" -depth -delete
     trap - EXIT
+	printf 'source_receipt=%s\n' "${source_receipt}"
 }
 
 [ "$#" -ge 2 ] || { usage; exit 2; }
