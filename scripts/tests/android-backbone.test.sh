@@ -62,6 +62,21 @@ first_sync=$(grep -n '^sync' "$plan" | head -1 | cut -d: -f1)
 
 grep -Fq '"$core_root/utils/prune_binaries.py" --keep-contingent-paths \' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
+grep -Fq 'restore-android-pruned-pref-inputs.sh' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh"
+grep -Fq 'validate-android-java-pref-inputs.sh' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh"
+prune_line=$(grep -n 'prune_binaries.py" --keep-contingent-paths' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
+restore_line=$(grep -n 'restore-android-pruned-pref-inputs.sh' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
+transform_line=$(grep -n 'apply_transforms "$source_tree"' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
+pref_validation_line=$(grep -n 'validate-android-java-pref-inputs.sh' \
+  "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
+[[ "$prune_line" -lt "$restore_line" ]]
+[[ "$restore_line" -lt "$transform_line" ]]
+[[ "$transform_line" -lt "$pref_validation_line" ]]
 prune_fixture="$test_root/prune-fixture"
 mkdir -p "$prune_fixture/chrome/android/java/res_chromium_base/values"
 printf '<resources/>\n' > \
