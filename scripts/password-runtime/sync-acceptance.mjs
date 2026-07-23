@@ -295,7 +295,7 @@ export function validateSyncAcceptance(syncRun, publicRun) {
   };
 }
 
-export async function verifySyncRun({runRoot, fixtureEvidence}) {
+async function auditSyncEvidence({runRoot, fixtureEvidence}) {
   const audited = await auditRun({runRoot, fixtureEvidence});
   const publicReceiptFile = await readJSON(path.join(audited.root, "receipt.json"), "public acceptance receipt");
   exactKeys(publicReceiptFile.value, [
@@ -321,6 +321,40 @@ export async function verifySyncRun({runRoot, fixtureEvidence}) {
     ...result,
     verified_at: new Date().toISOString(),
   };
+  return {audited, receipt};
+}
+
+export async function auditVerifiedSyncRun({runRoot, fixtureEvidence}) {
+  const {audited, receipt: expected} = await auditSyncEvidence({
+    runRoot,
+    fixtureEvidence,
+  });
+  const existing = await readJSON(
+    path.join(audited.root, "sync-receipt.json"),
+    "Sync acceptance receipt",
+  );
+  exactKeys(existing.value, [
+    "schema_version", "result", "artifact_sha256", "run_nonce",
+    "public_receipt_sha256", "credential_key", "saved_revision",
+    "updated_revision", "tombstone_revision", "verified_at",
+  ], "Sync acceptance receipt");
+  const {verified_at: existingVerifiedAt, ...existingStable} = existing.value;
+  const {verified_at: expectedVerifiedAt, ...expectedStable} = expected;
+  if (typeof existingVerifiedAt !== "string" ||
+      typeof expectedVerifiedAt !== "string" ||
+      !equalJSON(existingStable, expectedStable)) {
+    throw new Error("Sync acceptance receipt does not match the current native evidence");
+  }
+  return {
+    root: audited.root,
+    run: audited.run,
+    receipt: existing.value,
+    receipt_sha256: sha256(existing.raw),
+  };
+}
+
+export async function verifySyncRun({runRoot, fixtureEvidence}) {
+  const {audited, receipt} = await auditSyncEvidence({runRoot, fixtureEvidence});
   await writeJSON(path.join(audited.root, "sync-receipt.json"), receipt, {exclusive: true});
   return receipt;
 }

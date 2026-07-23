@@ -103,6 +103,10 @@ For the native lifecycle, run the private extension in
 Its receipt binds secret-free bridge state and readable-journal metadata to the
 public screenshots and enforces save/update/tombstone revisions plus three
 byte-identical no-op restart snapshots.
+The consolidated artifact-bound flow and final receipt are defined in
+[`three-client-disposable-acceptance.md`](three-client-disposable-acceptance.md).
+Its fake-file tests validate only receipt admission; the real Go sync-store
+tests remain the protocol proof, and a compiled-browser run remains mandatory.
 
 - d is explicitly created as the sole seed. da and oneplus start pending and
   pull d's inventory without publishing any pre-existing local credential.
