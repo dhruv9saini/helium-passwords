@@ -98,6 +98,8 @@ if "${repo_root}/scripts/verify-linux-runtime.sh" "${bad_artifact}" \
 fi
 
 grep -q 'bash scripts/build.sh -c' "${repo_root}/scripts/build-chromiumer-linux.sh"
+grep -q 'HELIUM_REAL_NINJA=' "${repo_root}/scripts/build-chromiumer-linux.sh"
+grep -q 'scripts/chromiumer-bin' "${repo_root}/scripts/build-chromiumer-linux.sh"
 if grep -q docker "${repo_root}/scripts/build-chromiumer-linux.sh"; then
   echo "Linux build driver must run directly in the enforced job cgroup" >&2
   exit 1

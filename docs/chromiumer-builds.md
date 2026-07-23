@@ -207,7 +207,18 @@ process tree and job-tree disk accounting, and chromiumer has no Docker daemon.
 The public driver instead enters the pinned Nix FHS environment and calls the
 prepared platform's native build script directly. It independently requires
 the two-job environment, job cgroup, job-owned `TMPDIR`, exact Linux/core/
-Chromium commits, and a clean staged source before compilation:
+Chromium commits, and a clean staged source before compilation.
+
+The pinned Linux platform calls raw `ninja`. The
+[Ninja manual](https://ninja-build.org/manual.html#_running_ninja) specifies an
+explicit `-j` count; Ninja does not read the wrapper's `NINJA_JOBS` variable.
+The driver therefore puts the checked-in
+`scripts/chromiumer-bin/ninja` shim first on `PATH`, binds its real Ninja path
+before doing so, and rejects any caller-supplied `-j` override. Every Ninja
+invocation in the platform build consequently receives explicit `-j 2`; the
+CPU quota and `TasksMax` remain independent outer bounds.
+
+Start the job with:
 
 ```sh
 scripts/chromiumer-job.sh start "$job" \
@@ -330,6 +341,31 @@ scripts/verify-linux-runtime.sh \
   /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.tar.xz \
   /srv/nas/helium-builds/"$job"/verified
 ```
+
+For the first public run, classify a failure before changing source or limits:
+
+```sh
+scripts/chromiumer-job.sh terminal "$job"
+scripts/chromiumer-job.sh status "$job"
+scripts/chromiumer-job.sh limits "$job"
+scripts/chromiumer-job.sh logs "$job" 240
+```
+
+- A patch or GN error before Ninja is a source-composition failure. Fix it in
+  the public repository and use a new job ID; never edit the staged checkout.
+- A C++, Rust, TypeScript, or link error is a real full-target compile failure.
+  Preserve the exact diagnostic and source manifest before fixing the public
+  patch. In particular, do not describe the Android focused target as proof
+  that desktop-only settings, app-menu, omnibox, or toolbar files compile.
+- `oom-kill`, the 5 GiB cgroup maximum, the 80 GiB disk ceiling, or the eight
+  hour deadline is capacity evidence, not a source failure. Do not raise a
+  limit or retry at 100 GiB without a separate capacity decision.
+- A successful Ninja followed by a missing runtime entry, Nix mismatch, or
+  manifest/inventory failure is a packaging/provenance failure. The compiled
+  output is not an admitted artifact.
+- Only a fetched archive that passes `verify-linux-runtime.sh` can proceed to
+  the disposable native-password protocol. Preserve a failed workspace until
+  its useful diagnostics are returned; never manually delete it.
 
 The destination must not exist. Verification rejects an unexpected source
 train, field/file inventory, symlink, patch, GN args, Nix environment, or

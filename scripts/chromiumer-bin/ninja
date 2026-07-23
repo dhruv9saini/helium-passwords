@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[ "${HELIUM_BUILD_JOBS:-}" = 2 ] || {
+    echo "Chromiumer Ninja requires HELIUM_BUILD_JOBS=2" >&2
+    exit 1
+}
+[ -n "${HELIUM_REAL_NINJA:-}" ] && [ -x "${HELIUM_REAL_NINJA}" ] || {
+    echo "Chromiumer Ninja requires an executable HELIUM_REAL_NINJA" >&2
+    exit 1
+}
+[ "$(realpath -e "${HELIUM_REAL_NINJA}")" != \
+    "$(realpath -e "${BASH_SOURCE[0]}")" ] || {
+    echo "Chromiumer Ninja refuses a recursive real-Ninja path" >&2
+    exit 1
+}
+
+for argument in "$@"; do
+    case "${argument}" in
+        -j|-j*|--jobs|--jobs=*)
+            echo "Chromiumer Ninja owns the fixed two-job limit" >&2
+            exit 1
+            ;;
+    esac
+done
+
+exec "${HELIUM_REAL_NINJA}" -j "${HELIUM_BUILD_JOBS}" "$@"
