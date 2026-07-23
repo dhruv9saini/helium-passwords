@@ -243,6 +243,8 @@ and Brotli fixture:
   before response completion (network read count alone is not evidence);
 - chunk order and final payload are correct;
 - the page remains interactive during the stream;
+- an activated disposable Service Worker relays an additional identity stream
+  without buffering it;
 - background/foreground and network handoff have a recorded result; and
 - the upstream-control and patched-APK comparison identifies any regression.
 
@@ -287,6 +289,12 @@ main process and one exact abstract socket, forwards only that socket, and then
 requires CDP's `Android-Package` and embedded WebKit source revision to match
 the artifact. A same-version different APK, generic/fallback Chrome socket,
 wrong package, or wrong source revision fails before a probe target is created.
+
+After both device runs pass, use the artifact-carried
+`verify-probe-pair.sh` to create the A/B receipt. It refuses a different private
+source commit, Chromium commit, runtime kit, fixture certificate, media byte
+manifest, lifecycle matrix, or package-bound result. Separate individually
+passing result files are not an accepted A/B comparison.
 
 After deterministic gates pass, run ChatGPT as a manual end-to-end scenario and
 record only timing/status observations, never conversation content or tokens.

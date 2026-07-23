@@ -32,6 +32,7 @@ test("private fixture certificate override admits only one exact leaf SPKI", () 
 
 test("Android CDP identity is bound to the admitted package, source, and socket", () => {
   const chromiumCommit = "c".repeat(40);
+  const heliumSyncCommit = "d".repeat(40);
   const artifactSha256 = "a".repeat(64);
   const browserInfo = {
     "Android-Package": "computer.helium.sync.test",
@@ -40,17 +41,20 @@ test("Android CDP identity is bound to the admitted package, source, and socket"
   assert.deepEqual(validateAndroidBrowserIdentity(browserInfo, {
     expectedPackage: "computer.helium.sync.test",
     expectedChromiumCommit: chromiumCommit,
+    expectedHeliumSyncCommit: heliumSyncCommit,
     expectedArtifactSha256: artifactSha256,
   }), {
     package: "computer.helium.sync.test",
     artifact_sha256: artifactSha256,
     chromium_commit: chromiumCommit,
+    helium_sync_commit: heliumSyncCommit,
   });
   assert.throws(() => validateAndroidBrowserIdentity({
     ...browserInfo, "Android-Package": "computer.helium.control.test",
   }, {
     expectedPackage: "computer.helium.sync.test",
     expectedChromiumCommit: chromiumCommit,
+    expectedHeliumSyncCommit: heliumSyncCommit,
     expectedArtifactSha256: artifactSha256,
   }), /different Android package/);
   assert.throws(() => validateAndroidBrowserIdentity({
@@ -58,8 +62,14 @@ test("Android CDP identity is bound to the admitted package, source, and socket"
   }, {
     expectedPackage: "computer.helium.sync.test",
     expectedChromiumCommit: chromiumCommit,
+    expectedHeliumSyncCommit: heliumSyncCommit,
     expectedArtifactSha256: artifactSha256,
   }), /revision does not match/);
+  assert.throws(() => validateAndroidBrowserIdentity(browserInfo, {
+    expectedPackage: "computer.helium.sync.test",
+    expectedChromiumCommit: chromiumCommit,
+    expectedArtifactSha256: artifactSha256,
+  }), /identity is invalid/);
 
   const socket = "helium_sync_test_devtools_remote";
   assert.equal(validateRemoteDebuggingSocket([
@@ -172,6 +182,8 @@ test("probe page contains the codec and browser-observable streaming gates", asy
   assert.match(page, /interaction_ticks/);
   assert.match(page, /new EventSource/);
   assert.match(page, /response\.body\.getReader/);
+  assert.match(page, /navigator\.serviceWorker\.register/);
+  assert.match(page, /\/sw\/stream/);
   assert.match(page, /transport_warmup_h3/);
   assert.match(page, /visibilitychange/);
   assert.match(page, /connectionchange/);
@@ -182,6 +194,9 @@ test("probe page contains the codec and browser-observable streaming gates", asy
   const runner = await fsp.readFile(new URL("../android-media/run-cdp-probe.mjs", import.meta.url), "utf8");
   assert.match(runner, /Target\.createBrowserContext/);
   assert.match(runner, /Target\.disposeBrowserContext/);
+  const worker = await fetch(`${fixture.origin}/service-worker.js`);
+  assert.equal(worker.headers.get("service-worker-allowed"), "/");
+  assert.match(await worker.text(), /event\.respondWith\(fetch/);
 });
 
 test("CDP result validation fails closed on buffered, reordered, or failed playback", () => {
@@ -190,15 +205,16 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     arrivals: [1, 2, 3, 4],
     interaction_ticks: 3,
     chunk_milestones: [
-      { count: 1, at_ms: 10 }, { count: 2, at_ms: 20 },
-      { count: 3, at_ms: 30 }, { count: 4, at_ms: 40 },
+      { count: 1, at_ms: 10 }, { count: 2, at_ms: 110 },
+      { count: 3, at_ms: 210 }, { count: 4, at_ms: 310 },
     ],
     headers_ms: 1,
-    completed_ms: 45,
+    completed_ms: 350,
   };
   const result = {
     schema_version: 1,
     expected_chunks: 4,
+    expected_delay_ms: 100,
     finished_at: "2026-07-21T00:00:00Z",
     required_transport_protocols: [],
     required_lifecycle: {
@@ -208,9 +224,15 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
     fetch_identity: stream,
     fetch_gzip: stream,
     fetch_br: stream,
+    service_worker: {
+      supported: true,
+      controlled: true,
+      script_url: "/service-worker.js",
+      stream,
+    },
     sse: {
       values: ["chunk-01", "chunk-02", "chunk-03", "chunk-04"],
-      arrivals: [1, 2, 3, 4],
+      arrivals: [10, 110, 210, 310],
       interaction_ticks: 3,
     },
     capabilities: {
@@ -243,6 +265,7 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
       android_package: "computer.helium.sync.test",
       artifact_sha256: "a".repeat(64),
       chromium_commit: "b".repeat(40),
+      helium_sync_commit: "c".repeat(40),
       device_socket: "helium_sync_test_devtools_remote",
       fixture_origin: "http://127.0.0.1:44721",
     },
@@ -312,7 +335,21 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
         { count: 3, at_ms: 30 }, { count: 4, at_ms: 40 },
       ],
     },
-  }), /milestone timing evidence was invalid/);
+  }), /timing did not prove progressive delivery/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    service_worker: { ...result.service_worker, controlled: false },
+  }), /Service Worker did not control/);
+  assert.throws(() => validateProbeResult({
+    ...result,
+    fetch_identity: {
+      ...stream,
+      chunk_milestones: [
+        { count: 1, at_ms: 10 }, { count: 2, at_ms: 11 },
+        { count: 3, at_ms: 12 }, { count: 4, at_ms: 13 },
+      ],
+    },
+  }), /did not prove progressive delivery/);
   assert.equal(validateProbeResult({
     ...result,
     required_lifecycle: { background_foreground: true, network_handoff: true },

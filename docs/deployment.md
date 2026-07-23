@@ -273,7 +273,8 @@ addresses, page content, or profile data.
 
 A passing result requires three observable
 numbered-chunk milestones for identity, gzip, and Brotli Fetch responses,
-ordered SSE, verified MP4/WebM/MSE fixtures, completed playback, video
+strictly time-separated milestone and ordered SSE delivery, a controlled
+Service Worker streaming pass-through, verified MP4/WebM/MSE fixtures, completed playback, video
 dimensions, decoded-audio evidence, required codec capabilities, and browser
 product/protocol provenance. When requested, the same result must contain
 actual `h2` and `h3` `PerformanceResourceTiming.nextHopProtocol` values, an
@@ -282,6 +283,24 @@ event. The probe consumes an initial HTTP/3-origin response to allow Alt-Svc
 discovery, records its protocol/status/timing, and then requires the measured
 stream to use `h3`. Run the identical command with a new directory for the same-commit
 upstream control; ChatGPT timing remains a separate content-free manual gate.
+
+Do not compare the two results by inspection. After both exact commands pass,
+produce one immutable pair receipt with the verifier carried by either admitted
+artifact (the verifier sources must be byte-identical):
+
+```sh
+"$sync_acceptance/runtime-acceptance/verify-probe-pair.sh" \
+  "$sync_acceptance" "$sync_evidence" \
+  "$control_acceptance" "$control_evidence" \
+  /srv/nas/helium-acceptance-evidence/JOB/oneplus-media-ab.env
+```
+
+The pair gate requires both disposable package roles, the same full Helium
+Sync and Chromium commits, byte-identical probe sources and media manifest,
+the same private fixture receipt, HTTP/2 and HTTP/3, background and foreground,
+Wi-Fi-to-cellular handoff, Service Worker streaming, and artifact-bound CDP
+results. It fails closed instead of accepting two passing runs from different
+source locks.
 
 A copied backup never opens a browser.
 

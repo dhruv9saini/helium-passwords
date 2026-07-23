@@ -63,6 +63,7 @@ case "$script" in
     while :; do sleep 1; done
     ;;
   */run-cdp-probe.mjs)
+    printf '%s\n' "$*" > "$HELIUM_TEST_NODE_LOG"
     output=
     ready=
     while [[ $# -gt 0 ]]; do
@@ -82,6 +83,7 @@ chmod +x "$test_root/bin/adb" "$test_root/bin/node"
 
 export HELIUM_TEST_ADB_LOG="$test_root/adb.log"
 export HELIUM_TEST_INSTALLED_APK="$acceptance/Browser-test.apk"
+export HELIUM_TEST_NODE_LOG="$test_root/node.log"
 PATH="$test_root/bin:$PATH" \
   "$repo_root/scripts/android-media/run-device-probe.sh" \
   "$acceptance" USB-SERIAL "$test_root/evidence" \
@@ -113,6 +115,8 @@ grep -q 'shell svc wifi enable' "$test_root/adb.log"
 grep -q 'shell dumpsys package computer.helium.sync.test' "$test_root/adb.log"
 grep -q 'exec-out cat /data/app/test/base.apk' "$test_root/adb.log"
 grep -q 'localabstract:helium_sync_test_devtools_remote' "$test_root/adb.log"
+grep -q -- '--expected-helium-sync-commit 1111111111111111111111111111111111111111' \
+  "$test_root/node.log"
 ! grep -q 'localabstract:chrome_devtools_remote' "$test_root/adb.log"
 grep -q 'forward --remove tcp:9222' "$test_root/adb.log"
 grep -q 'reverse --remove tcp:44721' "$test_root/adb.log"

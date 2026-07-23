@@ -32,6 +32,7 @@ export function validateFixtureBrowserCommandLine(argumentsList, expectedSPKI) {
 export function validateAndroidBrowserIdentity(browserInfo, options) {
   if (!PACKAGE_PATTERN.test(options.expectedPackage || "") ||
       !COMMIT_PATTERN.test(options.expectedChromiumCommit || "") ||
+      !COMMIT_PATTERN.test(options.expectedHeliumSyncCommit || "") ||
       !SHA256_PATTERN.test(options.expectedArtifactSha256 || "")) {
     throw new Error("expected Android artifact identity is invalid");
   }
@@ -46,6 +47,7 @@ export function validateAndroidBrowserIdentity(browserInfo, options) {
     package: options.expectedPackage,
     artifact_sha256: options.expectedArtifactSha256,
     chromium_commit: options.expectedChromiumCommit,
+    helium_sync_commit: options.expectedHeliumSyncCommit,
   };
 }
 
@@ -129,21 +131,39 @@ export function validateProbeResult(result) {
   if (!Number.isSafeInteger(result.expected_chunks) || result.expected_chunks < 3) {
     throw new Error("probe did not report a valid expected chunk count");
   }
+  if (!Number.isSafeInteger(result.expected_delay_ms) ||
+      result.expected_delay_ms < 10 || result.expected_delay_ms > 5000) {
+    throw new Error("probe did not report the admitted chunk delay");
+  }
   const expectedValues = Array.from(
     { length: result.expected_chunks }, (_, index) => `chunk-${String(index + 1).padStart(2, "0")}`,
   );
   const expected = `${expectedValues.join("\n")}\n`;
   for (const encoding of ["identity", "gzip", "br"]) {
     const stream = result[`fetch_${encoding}`];
-    validateFetchStream(stream, encoding, expected, result.expected_chunks);
+    validateFetchStream(
+      stream, encoding, expected, result.expected_chunks, result.expected_delay_ms,
+    );
   }
+  const serviceWorker = result.service_worker;
+  if (serviceWorker?.supported !== true || serviceWorker?.controlled !== true ||
+      serviceWorker?.script_url !== "/service-worker.js") {
+    throw new Error("Service Worker did not control the disposable streaming probe");
+  }
+  validateFetchStream(
+    serviceWorker.stream, "Service Worker", expected, result.expected_chunks,
+    result.expected_delay_ms,
+  );
   if (!Array.isArray(result.required_transport_protocols) ||
       result.required_transport_protocols.some(protocol => !new Set(["h2", "h3"]).has(protocol)) ||
       new Set(result.required_transport_protocols).size !== result.required_transport_protocols.length) {
     throw new Error("required transport protocol list was invalid");
   }
   for (const protocol of result.required_transport_protocols) {
-    validateFetchStream(result[`fetch_${protocol}`], protocol, expected, result.expected_chunks, protocol);
+    validateFetchStream(
+      result[`fetch_${protocol}`], protocol, expected, result.expected_chunks,
+      result.expected_delay_ms, protocol,
+    );
   }
   if (result.required_transport_protocols.includes("h3")) {
     const warmup = result.transport_warmup_h3;
@@ -158,6 +178,7 @@ export function validateProbeResult(result) {
   if (!Array.isArray(result.sse.arrivals) || result.sse.arrivals.length < 3) {
     throw new Error("SSE stream did not arrive progressively");
   }
+  validateProgressiveTimes(result.sse.arrivals, "SSE", result.expected_delay_ms);
   if (!Number.isInteger(result.sse.interaction_ticks) || result.sse.interaction_ticks < 2) {
     throw new Error("SSE stream blocked page progress");
   }
@@ -240,6 +261,7 @@ export function validateProbeResult(result) {
       !PACKAGE_PATTERN.test(result.runtime?.android_package || "") ||
       !SHA256_PATTERN.test(result.runtime?.artifact_sha256 || "") ||
       !COMMIT_PATTERN.test(result.runtime?.chromium_commit || "") ||
+      !COMMIT_PATTERN.test(result.runtime?.helium_sync_commit || "") ||
       !SOCKET_PATTERN.test(result.runtime?.device_socket || "")) {
     throw new Error("runtime browser and fixture provenance was not recorded");
   }
@@ -271,7 +293,9 @@ export function validateProbeResult(result) {
   return result;
 }
 
-function validateFetchStream(stream, label, expected, expectedChunks, expectedProtocol = "") {
+function validateFetchStream(
+  stream, label, expected, expectedChunks, expectedDelayMs, expectedProtocol = "",
+) {
   if (stream?.text !== expected) throw new Error(`${label} Fetch stream was incomplete or reordered`);
   if (!Array.isArray(stream.arrivals) || stream.arrivals.length < 2) {
     throw new Error(`${label} Fetch stream did not arrive progressively`);
@@ -293,13 +317,22 @@ function validateFetchStream(stream, label, expected, expectedChunks, expectedPr
     throw new Error(`${label} Fetch timing evidence was invalid`);
   }
   const milestoneTimes = stream.chunk_milestones.map(item => item?.at_ms);
-  if (milestoneTimes.some((time, index) =>
-    !Number.isInteger(time) || time < stream.headers_ms || time > stream.completed_ms ||
-    (index > 0 && time < milestoneTimes[index - 1]))) {
+  if (milestoneTimes.some(time =>
+    !Number.isInteger(time) || time < stream.headers_ms || time > stream.completed_ms)) {
     throw new Error(`${label} Fetch milestone timing evidence was invalid`);
   }
+  validateProgressiveTimes(milestoneTimes, `${label} Fetch`, expectedDelayMs);
   if (expectedProtocol && stream.protocol !== expectedProtocol) {
     throw new Error(`${label} Fetch negotiated ${stream.protocol || "no protocol"}, expected ${expectedProtocol}`);
+  }
+}
+
+function validateProgressiveTimes(times, label, expectedDelayMs) {
+  if (!Array.isArray(times) || times.length < 3 ||
+      times.some((time, index) => !Number.isInteger(time) || time < 0 ||
+        (index > 0 && time <= times[index - 1])) ||
+      times.at(-1) - times[0] < Math.max(1, Math.floor(expectedDelayMs / 2))) {
+    throw new Error(`${label} timing did not prove progressive delivery`);
   }
 }
 
@@ -393,6 +426,7 @@ export async function runProbe(options) {
       android_package: artifactIdentity.package,
       artifact_sha256: artifactIdentity.artifact_sha256,
       chromium_commit: artifactIdentity.chromium_commit,
+      helium_sync_commit: artifactIdentity.helium_sync_commit,
       device_socket: options.expectedDeviceSocket,
       device_socket_switch: admittedSocketSwitch,
       cdp_origin: cdpURL.origin,
@@ -571,7 +605,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         "cdp", "fixture", "output", "h2", "h3", "ready-file",
         "fixture-spki", "require-lifecycle", "require-network-handoff",
         "expected-package", "expected-artifact-sha256", "expected-chromium-commit",
-        "expected-device-socket",
+        "expected-helium-sync-commit", "expected-device-socket",
       ]);
       const unexpected = Object.keys(args).filter(name => !allowedArgs.has(name));
       if (unexpected.length) {
@@ -589,6 +623,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       args.expectedPackage = args["expected-package"];
       args.expectedArtifactSha256 = args["expected-artifact-sha256"];
       args.expectedChromiumCommit = args["expected-chromium-commit"];
+      args.expectedHeliumSyncCommit = args["expected-helium-sync-commit"];
       args.expectedDeviceSocket = args["expected-device-socket"];
       const result = await runProbe(args);
       process.stdout.write(`${JSON.stringify({event:"probe_passed", output:path.resolve(args.output), capabilities:result.capabilities})}\n`);

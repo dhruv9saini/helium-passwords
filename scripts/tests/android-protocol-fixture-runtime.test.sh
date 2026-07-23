@@ -26,20 +26,26 @@ fixture_host=$(jq -er '.Self.DNSName | rtrimstr(".")' <<<"$status")
 fixture_ip=$(jq -er '[.Self.TailscaleIPs[] | select(test("^[0-9]+\\."))][0]' <<<"$status")
 [[ "$fixture_host" == *.ts.net && "$fixture_ip" == 100.* ]]
 
-for port in "$FIXTURE_BACKEND_PORT" "$FIXTURE_H2_PORT" "$FIXTURE_H3_PORT"; do
-  ! ss -ltnH "( sport = :$port )" | grep -q . || {
-    echo "TCP port $port is already in use" >&2
-    exit 1
-  }
-done
-! ss -lunH "( sport = :$FIXTURE_H3_PORT )" | grep -q . || {
-  echo "UDP port $FIXTURE_H3_PORT is already in use" >&2
+find_test_ports() {
+  local base=$((46000 + (BASHPID % 1000) * 3))
+  local attempt backend h2 h3
+  for attempt in {1..100}; do
+    backend=$base
+    h2=$((base + 1))
+    h3=$((base + 2))
+    if ! ss -ltnH "( sport = :$backend or sport = :$h2 or sport = :$h3 )" | grep -q . &&
+       ! ss -lunH "( sport = :$h2 or sport = :$h3 )" | grep -q .; then
+      FIXTURE_BACKEND_PORT=$backend
+      FIXTURE_H2_PORT=$h2
+      FIXTURE_H3_PORT=$h3
+      return
+    fi
+    base=$((base + 3))
+  done
+  echo 'no isolated protocol-fixture test port range is free' >&2
   exit 1
 }
-! ss -lunH "( sport = :$FIXTURE_H2_PORT )" | grep -q . || {
-  echo "UDP port $FIXTURE_H2_PORT is already in use" >&2
-  exit 1
-}
+find_test_ports
 
 proof_dir=$(mktemp -d /tmp/helium-media-source-proof.XXXXXX)
 backend_pid=

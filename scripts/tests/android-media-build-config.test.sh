@@ -91,7 +91,9 @@ grep -Fq 'android-build-environment.sh" record' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'run-device-probe.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'schema_version=3' \
+grep -Fq 'verify-probe-pair.sh' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'schema_version=4' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'probe_schema_version=1' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
