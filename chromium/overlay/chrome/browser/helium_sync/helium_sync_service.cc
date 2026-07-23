@@ -17,7 +17,6 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
-#include "chrome/browser/helium_sync/helium_tab_journal_bridge.h"
 #include "chrome/browser/helium_sync/helium_tab_restore_bridge.h"
 #include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
 #include "chrome/browser/profiles/profile.h"
@@ -52,7 +51,6 @@ constexpr char kCookieStateFile[] = "cookie-state.json";
 constexpr char kCookieRollbackFile[] = "cookie-rollback.json";
 constexpr char kCookieReauthSignalFile[] = "cookie-reauth-required.json";
 constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
-constexpr char kTabJournalRootFile[] = "tab_journal_root";
 
 #if BUILDFLAG(IS_ANDROID)
 void AndroidStatusLog(const std::string &message) {
@@ -147,13 +145,6 @@ HeliumSyncService::HeliumSyncService(Profile *profile) {
             profile, base::FilePath::FromUTF8Unsafe(*export_path));
     tab_snapshot_bridge_->Start();
   }
-  if (std::optional<std::string> journal_root =
-          ReadConfigValue(config_dir, kTabJournalRootFile)) {
-    tab_journal_bridge_ = std::make_unique<helium_sync::HeliumTabJournalBridge>(
-        profile, base::FilePath::FromUTF8Unsafe(*journal_root));
-    tab_journal_bridge_->Start();
-  }
-
   std::optional<std::string> token = ReadConfigValue(config_dir, kTokenFile);
   std::optional<std::string> base_url_value =
       ReadConfigValue(config_dir, kBaseUrlFile);
@@ -232,10 +223,6 @@ void HeliumSyncService::Shutdown() {
   if (tab_snapshot_bridge_) {
     tab_snapshot_bridge_->Stop();
     tab_snapshot_bridge_.reset();
-  }
-  if (tab_journal_bridge_) {
-    tab_journal_bridge_->Stop();
-    tab_journal_bridge_.reset();
   }
   if (tab_restore_bridge_) {
     tab_restore_bridge_->Stop();

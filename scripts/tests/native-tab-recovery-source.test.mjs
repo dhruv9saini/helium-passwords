@@ -9,10 +9,6 @@ const service = source(
   "chromium/overlay/chrome/browser/helium_sync/helium_sync_service.cc");
 const importer = source(
   "chromium/overlay/chrome/browser/helium_sync/helium_tab_restore_bridge.cc");
-const journal = source(
-  "chromium/overlay/chrome/browser/helium_sync/helium_tab_journal_bridge.cc");
-const snapshot = source(
-  "chromium/overlay/chrome/browser/helium_sync/helium_tab_snapshot_bridge.cc");
 const build = source(
   "chromium/overlay/chrome/browser/helium_sync/BUILD.gn");
 
@@ -48,48 +44,32 @@ test("explicit topology importer is unreachable from normal launch", () => {
   assert.match(importer, /verified-rollback/);
 });
 
-test("journal is an independent observer and SQLite hash-chain producer", () => {
-  for (const callback of [
-    "OnTabAdded", "OnActiveTabChanged", "OnTabRemoved", "OnTabMoved",
-    "OnWebContentsReplaced", "PrimaryPageChanged", "TitleWasSet",
-  ]) {
-    assert.match(journal, new RegExp(callback));
-  }
-  assert.match(journal, /CREATE TABLE events/);
-  assert.match(journal, /PRIMARY KEY\(epoch, sequence\)/);
-  assert.match(journal, /PRAGMA journal_mode=WAL/);
-  assert.match(journal, /PRAGMA synchronous=FULL/);
-  assert.match(journal, /HashEvent\(/);
-  assert.match(journal, /previous_sha256/);
-  assert.match(journal, /kHeartbeatInterval = base::Minutes\(5\)/);
-  assert.match(journal, /sequence_ > 0[\s\S]*heartbeat_timer_\.Start/);
-  assert.match(journal,
-    /if \(!AppendCheckpoint\([\s\S]*FailClosed\("initial-checkpoint"\)[\s\S]*if \(sequence_ > 0\) \{[\s\S]*heartbeat_timer_\.Start/);
-  assert.match(journal, /sequence_ >= kMaxEventsPerEpoch[\s\S]*RotateEpoch/);
-  assert.match(journal, /bool RotateEpoch\(\)/);
-  assert.match(journal, /PollTopology/);
-  assert.match(journal, /last_payload_/);
-  assert.match(journal, /initial-checkpoint/);
-  assert.match(journal, /final-checkpoint/);
-  assert.match(journal, /kJournalRootMarker/);
-  assert.match(journal, /journal_root_\.IsParent\(profile_->GetPath\(\)\)/);
-  assert.match(journal, /GetURL\(\)/);
-  assert.match(journal, /GetTitle\(\)/);
-  assert.match(journal, /ListTabGroups\(\)/);
-  assert.match(journal, /GetTabGroupVisualData/);
-  assert.match(journal, /visual->is_collapsed\(\)/);
-  assert.match(journal, /url\.is_valid\(\) && !url\.scheme\(\)\.empty\(\)/);
-  assert.match(journal, /deferred incomplete topology/);
-  assert.doesNotMatch(journal, /BuildSnapshot|Session_|Tabs_|HeliumSyncClient/);
-  assert.doesNotMatch(snapshot, /HeliumTabJournalBridge|CREATE TABLE events/);
+test("only the neutral importer is wired into the tab recovery overlay", () => {
+  assert.match(build, /"helium_tab_restore_bridge\.cc"/);
+  assert.match(build, /"\/\/components\/sessions"/);
+  assert.doesNotMatch(build, /helium_tab_journal_bridge|\/\/sql/);
+  assert.doesNotMatch(service, /HeliumTabJournalBridge|tab_journal_root/);
+  assert.equal(fs.existsSync(repoURL(
+    "chromium/overlay/chrome/browser/helium_sync/helium_tab_journal_bridge.cc")),
+    false);
 });
 
-test("journal and importer are wired against explicit pinned dependencies", () => {
-  assert.match(build, /"helium_tab_journal_bridge\.cc"/);
-  assert.match(build, /"helium_tab_restore_bridge\.cc"/);
-  assert.match(build, /"\/\/sql"/);
-  assert.match(build, /"\/\/components\/sessions"/);
-  const journalStart = service.indexOf("tab_journal_bridge_->Start()");
-  const tokenRead = service.indexOf("ReadConfigValue(config_dir, kTokenFile)");
-  assert.ok(journalStart >= 0 && tokenRead > journalStart);
+test("retired capsule and event-journal tooling is absent", () => {
+  for (const retired of [
+    "chromium/overlay/chrome/browser/helium_sync/helium_tab_journal_bridge.h",
+    "cmd/helium-session-capsule",
+    "cmd/helium-tab-journal",
+    "internal/sessioncapsule",
+    "internal/tabjournal",
+    "scripts/tabs/native-session-capsule-backup.sh",
+    "scripts/tabs/native-session-capsule.conf.example",
+    "scripts/tabs/tab-journal-backup.sh",
+    "scripts/tabs/tab-journal.conf.example",
+    "systemd/helium-native-session-capsule@.service",
+    "systemd/helium-native-session-capsule@.timer",
+    "systemd/helium-tab-journal-backup@.service",
+    "systemd/helium-tab-journal-backup@.timer",
+  ]) {
+    assert.equal(fs.existsSync(repoURL(retired)), false, retired);
+  }
 });

@@ -154,6 +154,13 @@ restores Chromium's native password manager.
   profile. `validate-browser-profile` is a pre-launch gate; an explicit
   disposable-only native importer, full topology readback, and second-restart
   runtime proof remain acceptance work.
+- Tab durability has exactly three mechanisms: Chromium native clean/crash
+  recovery, neutral `helium-tabs` topology generations, and stopped encrypted
+  full-profile generations. Off-device destinations are replicas inside the
+  neutral or full-profile mechanism. Do not add a tab sync kind, raw native
+  session copier, event journal, alternate normal-launch bridge, or additional
+  mechanism count. Keep neutral and full-profile producers, configs, recovery
+  recipients, retention, restore commands, and health proofs independent.
 - `scripts/android-local/start-arch-xmonad-root.sh` also keeps Android
   Tailscale usable for chroot `ssh`/`mosh`: if `com.tailscale.ipn` is installed
   and `ARCH_X11_TAILSCALE_CONNECT` is not `0`, startup whitelists the app from

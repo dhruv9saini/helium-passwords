@@ -8,8 +8,6 @@ source_set("helium_sync") {
     "helium_sync_service.h",
     "helium_sync_service_factory.cc",
     "helium_sync_service_factory.h",
-    "helium_tab_journal_bridge.cc",
-    "helium_tab_journal_bridge.h",
     "helium_tab_restore_bridge.cc",
     "helium_tab_restore_bridge.h",
     "helium_tab_snapshot_bridge.cc",
@@ -39,7 +37,6 @@ source_set("helium_sync") {
     "//net",
     "//services/network/public/cpp",
     "//services/network/public/mojom",
-    "//sql",
     "//ui/base",
     "//url",
   ]
