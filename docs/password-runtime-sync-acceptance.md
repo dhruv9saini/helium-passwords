@@ -51,6 +51,13 @@ or retroactive snapshot if the named public step is no longer the most recent
 capture. A failure invalidates the run; start a new disposable result directory
 rather than editing `run.json` or `sync-run.json`.
 
+The private run is schema 2 and copies the public run's exact 256-bit
+`run_nonce`. Capture and verification fail if either run has an older schema,
+an absent or malformed nonce, or different nonces. The shared capture gate
+accepts only a structurally complete PNG with valid chunk CRCs; the final
+private verifier invokes the shared audit again and therefore revalidates every
+PNG and its recorded SHA-256 before reading Sync metadata.
+
 ## Verify
 
 After all twelve public steps and the six private snapshots, create the public
@@ -67,8 +74,10 @@ node scripts/password-runtime/sync-acceptance.mjs verify \
 ```
 
 The second command rehashes the browser artifact, every public screenshot, the
-fixture evidence, and the public receipt before checking Sync metadata. It
-creates mode-0600 `sync-receipt.json`, bound to `receipt.json`, and refuses to
+fixture evidence, and the exact schema-2 public receipt before checking Sync
+metadata. The public receipt and fixture evidence must carry the same
+`run_nonce` as both run files. It creates a schema-2, mode-0600
+`sync-receipt.json`, bound to `receipt.json` and that nonce, and refuses to
 replace an existing private receipt.
 
 A pass proves one browser-originated save revision, exactly one update

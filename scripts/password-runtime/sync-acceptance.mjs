@@ -7,7 +7,8 @@ import {pathToFileURL} from "node:url";
 
 import {auditRun, NATIVE_PASSWORD_STEPS} from "./acceptance.mjs";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
+const RUN_NONCE = /^[0-9a-f]{64}$/;
 export const SYNC_PASSWORD_STEPS = Object.freeze([
   "saved_store",
   "saved_restart_autofill",
@@ -154,7 +155,14 @@ export function summarizeJournal(raw) {
 async function loadPublicRun(runRoot) {
   const root = path.resolve(runRoot);
   const {value} = await readJSON(path.join(root, "run.json"), "public password acceptance run");
-  if (value.run_root !== root || !equalJSON(value.expected_steps, NATIVE_PASSWORD_STEPS) ||
+  exactKeys(value, [
+    "schema_version", "run_root", "platform", "package", "artifact_path",
+    "artifact_sha256", "artifact_receipt", "artifact_receipt_sha256",
+    "profile_path", "created_at", "run_nonce", "expected_steps", "captures",
+  ], "public password acceptance run");
+  if (value.schema_version !== 2 || value.run_root !== root ||
+      !RUN_NONCE.test(value.run_nonce) ||
+      !equalJSON(value.expected_steps, NATIVE_PASSWORD_STEPS) ||
       !Array.isArray(value.captures) || !/^[0-9a-f]{64}$/.test(value.artifact_sha256)) {
     throw new Error("public password acceptance run is invalid");
   }
@@ -172,14 +180,19 @@ async function loadSyncRun(root, publicRun, {create = false} = {}) {
       schema_version: SCHEMA_VERSION,
       run_root: root,
       artifact_sha256: publicRun.artifact_sha256,
+      run_nonce: publicRun.run_nonce,
       expected_steps: SYNC_PASSWORD_STEPS,
       captures: [],
     };
     await writeJSON(syncPath, sync, {exclusive: true});
   }
-  exactKeys(sync, ["schema_version", "run_root", "artifact_sha256", "expected_steps", "captures"], "Sync acceptance run");
+  exactKeys(sync, [
+    "schema_version", "run_root", "artifact_sha256", "run_nonce",
+    "expected_steps", "captures",
+  ], "Sync acceptance run");
   if (sync.schema_version !== SCHEMA_VERSION || sync.run_root !== root ||
       sync.artifact_sha256 !== publicRun.artifact_sha256 ||
+      !RUN_NONCE.test(sync.run_nonce) || sync.run_nonce !== publicRun.run_nonce ||
       !equalJSON(sync.expected_steps, SYNC_PASSWORD_STEPS) || !Array.isArray(sync.captures)) {
     throw new Error("Sync password acceptance run is invalid");
   }
@@ -231,6 +244,9 @@ function latestJournalRecord(capture, key) {
 }
 
 export function validateSyncAcceptance(syncRun, publicRun) {
+  if (!RUN_NONCE.test(syncRun.run_nonce) || syncRun.run_nonce !== publicRun.run_nonce) {
+    throw new Error("Sync acceptance run belongs to a different public acceptance nonce");
+  }
   if (!equalJSON(syncRun.expected_steps, SYNC_PASSWORD_STEPS) ||
       !equalJSON(syncRun.captures.map(item => item.step), SYNC_PASSWORD_STEPS)) {
     throw new Error("Sync acceptance steps are incomplete or out of order");
@@ -297,11 +313,14 @@ export async function verifySyncRun({runRoot, fixtureEvidence}) {
   const publicReceiptFile = await readJSON(path.join(audited.root, "receipt.json"), "public acceptance receipt");
   exactKeys(publicReceiptFile.value, [
     "schema_version", "result", "artifact_sha256", "artifact_receipt_sha256",
-    "platform", "package", "fixture_origin", "screenshots",
+    "platform", "package", "run_nonce", "fixture_origin", "screenshots",
     "fixture_evidence_sha256", "verified_at",
   ], "public acceptance receipt");
   const {verified_at: publicVerifiedAt, ...publicReceipt} = publicReceiptFile.value;
-  if (typeof publicVerifiedAt !== "string" || !equalJSON(publicReceipt, audited.receipt)) {
+  if (publicReceipt.schema_version !== 2 ||
+      !RUN_NONCE.test(publicReceipt.run_nonce) ||
+      publicReceipt.run_nonce !== audited.run.run_nonce ||
+      typeof publicVerifiedAt !== "string" || !equalJSON(publicReceipt, audited.receipt)) {
     throw new Error("public acceptance receipt does not match the current artifact evidence");
   }
   const sync = await loadSyncRun(audited.root, audited.run);
@@ -310,6 +329,7 @@ export async function verifySyncRun({runRoot, fixtureEvidence}) {
     schema_version: SCHEMA_VERSION,
     result: "passed",
     artifact_sha256: audited.run.artifact_sha256,
+    run_nonce: audited.run.run_nonce,
     public_receipt_sha256: sha256(publicReceiptFile.raw),
     ...result,
     verified_at: new Date().toISOString(),

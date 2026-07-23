@@ -22,10 +22,10 @@ import {
 
 const credentialKey = `credential/v2/${"c".repeat(64)}`;
 const keyID = "a1b2c3d4e5f60708";
-const PNG = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  Buffer.from("synthetic Sync screenshot bytes"),
-]);
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
 
 async function writeLinuxArtifactReceipt(root, artifact) {
   const artifactHash = crypto.createHash("sha256")
@@ -85,9 +85,9 @@ function record(seq, revision, deleted) {
   });
 }
 
-function fixtureEvidence() {
+function fixtureEvidence(runNonce) {
   return {
-    schema_version: 1,
+    schema_version: 2,
     completed_at: new Date().toISOString(),
     fixture_origin: "http://127.0.0.1:44722",
     observations: {
@@ -100,6 +100,7 @@ function fixtureEvidence() {
       deleted_restart_empty: true,
     },
     evidence_contains_submitted_values: false,
+    run_nonce: runNonce,
   };
 }
 
@@ -115,7 +116,7 @@ test("private receipt binds public UI evidence to exact revisions, tombstone, an
     await fsp.writeFile(artifact, "synthetic browser artifact", {mode: 0o700});
     await fsp.writeFile(screenshot, PNG, {mode: 0o600});
     const artifactReceipt = await writeLinuxArtifactReceipt(root, artifact);
-    await initializeRun({
+    const publicRun = await initializeRun({
       artifact, artifactReceipt, output: runRoot, platform: "linux",
     });
     const snapshots = {
@@ -152,21 +153,46 @@ test("private receipt binds public UI evidence to exact revisions, tombstone, an
         });
       }
     }
-    await fsp.writeFile(evidencePath, `${JSON.stringify(fixtureEvidence())}\n`, {mode: 0o600});
+    await fsp.writeFile(
+      evidencePath,
+      `${JSON.stringify(fixtureEvidence(publicRun.run_nonce))}\n`,
+      {mode: 0o600},
+    );
     await verifyRun({runRoot, fixtureEvidence: evidencePath});
+    const publicReceiptPath = path.join(runRoot, "receipt.json");
+    const publicReceipt = JSON.parse(await fsp.readFile(publicReceiptPath, "utf8"));
+    assert.equal(publicReceipt.schema_version, 2);
+    assert.equal(publicReceipt.run_nonce, publicRun.run_nonce);
+    await fsp.writeFile(publicReceiptPath, `${JSON.stringify({
+      ...publicReceipt,
+      run_nonce: "f".repeat(64),
+    })}\n`, {mode: 0o600});
+    await assert.rejects(
+      verifySyncRun({runRoot, fixtureEvidence: evidencePath}),
+      /public acceptance receipt does not match|acceptance nonce/,
+    );
+    await fsp.writeFile(publicReceiptPath, `${JSON.stringify(publicReceipt)}\n`, {mode: 0o600});
     const receipt = await verifySyncRun({runRoot, fixtureEvidence: evidencePath});
     assert.equal(receipt.result, "passed");
+    assert.equal(receipt.schema_version, 2);
+    assert.equal(receipt.run_nonce, publicRun.run_nonce);
     assert.equal(receipt.saved_revision, "1");
     assert.equal(receipt.updated_revision, "2");
     assert.equal(receipt.tombstone_revision, "3");
     assert.equal((await fsp.stat(path.join(runRoot, "sync-receipt.json"))).mode & 0o777, 0o600);
 
-    const publicRun = JSON.parse(await fsp.readFile(path.join(runRoot, "run.json"), "utf8"));
+    const persistedPublicRun = JSON.parse(await fsp.readFile(path.join(runRoot, "run.json"), "utf8"));
     const syncRun = JSON.parse(await fsp.readFile(path.join(runRoot, "sync-run.json"), "utf8"));
+    assert.equal(syncRun.schema_version, 2);
+    assert.equal(syncRun.run_nonce, persistedPublicRun.run_nonce);
     assert.deepEqual(syncRun.captures.map(capture => capture.step), SYNC_PASSWORD_STEPS);
     const corrupted = structuredClone(syncRun);
     corrupted.captures.find(item => item.step === "saved_restart_autofill").journal.sha256 = "f".repeat(64);
-    assert.throws(() => validateSyncAcceptance(corrupted, publicRun), /unchanged restart/);
+    assert.throws(() => validateSyncAcceptance(corrupted, persistedPublicRun), /unchanged restart/);
+    assert.throws(() => validateSyncAcceptance({
+      ...syncRun,
+      run_nonce: "e".repeat(64),
+    }, persistedPublicRun), /different public acceptance nonce/);
   } finally {
     await fsp.rm(root, {recursive: true, force: true});
   }
