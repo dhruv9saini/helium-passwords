@@ -410,17 +410,51 @@ scripts/chromiumer-job.sh start "$job" \
     --summary "Linux x86_64 browser artifact and password acceptance input" \
     --next "Fetch and verify the packaged artifact, then run the disposable password gate." -- \
     scripts/chromiumer-nix.sh run -- \
-      bash scripts/build-chromiumer-linux.sh x86_64
+      bash scripts/build-chromiumer-linux.sh \
+        helium-passwords x86_64 linux-x86_64 "$job"
 ```
 
-The driver writes exactly one return artifact at
-`.build/artifacts/helium-passwords-linux-x86_64.tar.xz`. It contains the raw
-runtime plus the source/tree, Helium core, Chromium, Linux platform, resolved
-GN arguments, Passwords patch hashes, Nix closure, and complete runtime hash
-inventory. This command is not ready until the current Nix expression's
-expression-hash-named GC root has been realized and a fresh 80 GiB preflight
-passes. An older `chromium-150-*` root is not accepted as evidence for a
-changed expression.
+Product, architecture, deployment target, and build job ID are mandatory;
+there is no inferred product or host-architecture default. The public binding
+in `linux-product.conf` requires `helium-passwords`, maps `x86_64` to
+`linux-x86_64` and `arm64` to `linux-arm64`, binds the Passwords commit to
+the repository `HEAD`, and records the Git null OID for the inapplicable
+private Sync commit. A different product or product/architecture target fails
+before source preparation.
+
+The driver writes one archive and its build-produced deployment receipt:
+
+```text
+.build/artifacts/helium-passwords-linux-x86_64.tar.xz
+.build/artifacts/helium-passwords-linux-x86_64.receipt.env
+```
+
+The archive contains the raw runtime plus the source/tree, public/private/core/
+Chromium commits, explicit target and job ID, Linux platform, resolved GN
+arguments, Passwords patch hashes, Nix closure, and complete runtime hash
+inventory. The separate strict schema-1 receipt binds the archive hash and
+size, target, all four commit slots, job ID, provenance-manifest hash, and UTC
+creation time. It is created only by the packager; never hand-author one after
+a build.
+
+The pinned Helium Linux platform also supports an x86_64-hosted `ARCH=arm64`
+cross-build and writes `target_cpu = "arm64"`. Start that as a separate job
+with the same wrapper limits and explicit inputs:
+
+```sh
+scripts/chromiumer-job.sh start "$arm_job" \
+    --summary "Linux arm64 Helium Passwords artifact" \
+    --next "Fetch both files and verify the arm64 runtime receipt." -- \
+    scripts/chromiumer-nix.sh run -- \
+      bash scripts/build-chromiumer-linux.sh \
+        helium-passwords arm64 linux-arm64 "$arm_job"
+```
+
+Source support and synthetic packaging checks do not substitute for a
+completed arm64 compile. Either command is not ready until the current Nix
+expression's expression-hash-named GC root has been realized and a fresh
+capacity preflight passes. An older `chromium-150-*` root is not accepted as
+evidence for a changed expression.
 
 Android source acquisition has one public backbone entry point:
 
@@ -510,6 +544,8 @@ when intentionally returning to another `lm` directory:
 
 ```sh
 scripts/chromiumer-job.sh fetch "$job" \
+    .build/artifacts/helium-passwords-linux-x86_64.receipt.env
+scripts/chromiumer-job.sh fetch "$job" \
     .build/artifacts/helium-passwords-linux-x86_64.tar.xz
 
 scripts/chromiumer-job.sh fetch "$job" \
@@ -517,13 +553,20 @@ scripts/chromiumer-job.sh fetch "$job" \
     /srv/nas/helium-builds/"$job"
 ```
 
+Fetch the small deployment receipt first and the archive last. The wrapper's
+remote cleanup admission then remains bound to the returned archive SHA-256;
+the runtime verifier independently binds that archive to the fetched
+deployment receipt.
+
 Transport checksum verification is necessary but not sufficient. Before a
 Linux runtime reaches da, validate its internal source and file inventories
 from the same public commit that was staged:
 
 ```sh
 scripts/verify-linux-runtime.sh \
+  helium-passwords x86_64 linux-x86_64 \
   /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.tar.xz \
+  /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.receipt.env \
   /srv/nas/helium-builds/"$job"/verified
 ```
 
@@ -553,14 +596,19 @@ scripts/chromiumer-job.sh logs "$job" 240
   the disposable native-password protocol. Preserve a failed workspace until
   its useful diagnostics are returned; never manually delete it.
 
-The destination must not exist. Verification rejects an unexpected source
-train, field/file inventory, symlink, canonical patch-series member, GN args,
-Nix environment, or runtime hash. It writes a mode-0600 version-2
-`artifact-receipt.env` that admits exactly one upstream
-`runtime/helium-wrapper` entry point and binds the complete runtime checksum
-inventory. The native password gate rechecks every listed runtime file after
-transfer, so an unchanged wrapper cannot conceal a changed browser binary,
-library, or resource.
+The destination must not exist. Verification first validates the
+build-produced deployment receipt with an exact field inventory and no legacy
+schema fallback, then requires its commits, job, and provenance hash to match
+the archive manifest. It also rejects an unexpected source train, product,
+architecture, target, field/file inventory, symlink, canonical patch-series
+member, GN args, Nix environment, or runtime hash. The destination is
+published atomically only after the complete check. It contains a mode-0600
+copy of the deployment receipt and a separate mode-0600 version-2
+`artifact-receipt.env` for disposable runtime acceptance. The latter admits
+exactly one `runtime/helium-wrapper` entry point and binds the complete runtime
+checksum inventory. It is not an installer receipt. The native password gate
+rechecks every listed runtime file after transfer, so an unchanged wrapper
+cannot conceal a changed browser binary, library, or resource.
 
 The wrapper compares remote and returned SHA-256 values and writes an artifact
 receipt. Cleanup refuses to remove a production workspace until that receipt

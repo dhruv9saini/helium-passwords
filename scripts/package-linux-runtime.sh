@@ -2,30 +2,57 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: scripts/package-linux-runtime.sh x86_64 PLATFORM_CHECKOUT OUTPUT.tar.xz" >&2
+    cat >&2 <<'EOF'
+usage: scripts/package-linux-runtime.sh PRODUCT ARCH TARGET BUILD-JOB-ID PLATFORM-CHECKOUT OUTPUT.tar.xz OUTPUT.receipt.env
+EOF
 }
 
-[ "$#" -eq 3 ] && [ "$1" = x86_64 ] || {
+[ "$#" -eq 7 ] || {
     usage
     exit 2
 }
 
-arch=$1
-checkout=$(realpath -e "$2")
-output=$3
+product=$1
+arch=$2
+target=$3
+build_job_id=$4
+checkout=$(realpath -e "$5")
+output=$6
+receipt=$7
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+source_info=$("${root_dir}/scripts/linux-product-provenance.sh" \
+    "${product}" "${arch}" "${target}")
+[[ "${build_job_id}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
+    echo "invalid build job id" >&2
+    exit 2
+}
+source_value() {
+    awk -F= -v key="$1" \
+        '$1 == key { print substr($0, length(key) + 2); exit }' \
+        <<<"${source_info}"
+}
+source_commit=$(source_value source_commit)
+source_tree=$(source_value source_tree)
+passwords_commit=$(source_value helium_passwords_commit)
+sync_commit=$(source_value helium_sync_commit)
+core_commit=$(source_value helium_core_commit)
+chromium_version=$(source_value chromium_version)
+chromium_commit=$(source_value chromium_commit)
 output_parent=$(realpath -m "$(dirname "${output}")")
 output="${output_parent}/$(basename "${output}")"
-bundle_name="helium-passwords-linux-${arch}"
+receipt_parent=$(realpath -m "$(dirname "${receipt}")")
+receipt="${receipt_parent}/$(basename "${receipt}")"
+bundle_name="${product}-linux-${arch}"
 source_dir="${checkout}/build/src"
 out_dir="${source_dir}/out/Default"
 
-[[ "$(basename "${output}")" = *.tar.xz ]] || {
-    echo "output must end in .tar.xz" >&2
+[ "$(basename "${output}")" = "${bundle_name}.tar.xz" ] && \
+    [ "$(basename "${receipt}")" = "${bundle_name}.receipt.env" ] || {
+    echo "artifact and receipt names must match explicit product and architecture" >&2
     exit 2
 }
-[ ! -e "${output}" ] || {
-    echo "refusing to replace existing artifact: ${output}" >&2
+[ ! -e "${output}" ] && [ ! -e "${receipt}" ] || {
+    echo "refusing to replace existing artifact or receipt" >&2
     exit 1
 }
 for path in "${checkout}/.helium-platform-source.env" "${out_dir}/args.gn" \
@@ -36,15 +63,12 @@ for path in "${checkout}/.helium-platform-source.env" "${out_dir}/args.gn" \
     }
 done
 [ -z "$(git -C "${root_dir}" status --porcelain --untracked-files=all)" ] || {
-    echo "public source must be clean before packaging" >&2
+    echo "Helium source must be clean before packaging" >&2
     exit 1
 }
 
-source_commit=$(git -C "${root_dir}" rev-parse HEAD)
-source_tree=$(git -C "${root_dir}" rev-parse 'HEAD^{tree}')
-core_commit=$(git -C "${root_dir}" rev-parse HEAD:helium-chromium)
 [ "$(git -C "${root_dir}/helium-chromium" rev-parse HEAD)" = "${core_commit}" ] || {
-    echo "public Helium checkout does not match its committed gitlink" >&2
+    echo "Helium checkout does not match its committed gitlink" >&2
     exit 1
 }
 [ "$(git -C "${checkout}/helium-chromium" rev-parse HEAD)" = "${core_commit}" ] || {
@@ -60,19 +84,22 @@ platform_commit=$(git -C "${checkout}" rev-parse HEAD)
     echo "prepared Linux checkout uses the wrong platform commit" >&2
     exit 1
 }
-chromium_version=$(tr -d '\r\n' <"${root_dir}/helium-chromium/chromium_version.txt")
-chromium_commit=$(awk -F= '$1 == "HELIUM_ANDROID_CHROMIUM_COMMIT" { print $2; exit }' \
-    "${root_dir}/chromium/android-build.lock")
 [ "$(git -C "${source_dir}" rev-parse HEAD)" = "${chromium_commit}" ] || {
     echo "built Chromium source does not match the locked commit" >&2
     exit 1
 }
-grep -Fqx 'target_cpu = "x64"' "${out_dir}/args.gn" || {
-    echo "Linux GN args do not identify x86_64" >&2
+case "${arch}" in
+    x86_64) target_cpu=x64 ;;
+    arm64) target_cpu=arm64 ;;
+    *) exit 2 ;;
+esac
+grep -Fqx "target_cpu = \"${target_cpu}\"" "${out_dir}/args.gn" || {
+    echo "Linux GN args do not identify ${arch}" >&2
     exit 1
 }
 
 mkdir -p "${output_parent}"
+mkdir -p "${receipt_parent}"
 temporary=$(mktemp -d "${output_parent}/.helium-linux-package.XXXXXX")
 cleanup() {
     find "${temporary}" -depth -delete
@@ -132,15 +159,19 @@ nix_provenance_sha256=$(sha256sum "${provenance}/chromiumer-nix.env" | awk '{ pr
 patch_inventory_sha256=$(sha256sum "${provenance}/patches.sha256" | awk '{ print $1 }')
 runtime_inventory_sha256=$(sha256sum "${provenance}/runtime.sha256" | awk '{ print $1 }')
 cat >"${provenance}/manifest.env" <<EOF
-schema_version=1
-product=helium-passwords
+schema_version=2
+product=${product}
 platform=linux
 arch=${arch}
+target=${target}
 source_commit=${source_commit}
 source_tree=${source_tree}
+helium_passwords_commit=${passwords_commit}
+helium_sync_commit=${sync_commit}
 helium_core_commit=${core_commit}
 chromium_version=${chromium_version}
 chromium_commit=${chromium_commit}
+build_job_id=${build_job_id}
 platform_repository=${HELIUM_LINUX_REPO}
 platform_commit=${platform_commit}
 gn_args_sha256=${gn_args_sha256}
@@ -151,9 +182,17 @@ EOF
 
 archive="${temporary}/$(basename "${output}")"
 tar --create --xz --file="${archive}" --directory="${temporary}" "${bundle_name}"
+provenance_sha256=$(sha256sum "${provenance}/manifest.env" | awk '{ print $1 }')
+staged_receipt="${temporary}/$(basename "${receipt}")"
+"${root_dir}/scripts/write-deployment-artifact-receipt.sh" \
+    "${archive}" "${target}" "${sync_commit}" "${passwords_commit}" \
+    "${core_commit}" "${chromium_commit}" "${build_job_id}" \
+    "${provenance_sha256}" "${staged_receipt}" >/dev/null
 mv --no-clobber "${archive}" "${output}"
-[ -f "${output}" ] || {
-    echo "failed to publish Linux artifact" >&2
+mv --no-clobber "${staged_receipt}" "${receipt}"
+[ -f "${output}" ] && [ -f "${receipt}" ] || {
+    echo "failed to publish Linux artifact and receipt" >&2
     exit 1
 }
-printf 'artifact=%s\nsha256=%s\n' "${output}" "$(sha256sum "${output}" | awk '{ print $1 }')"
+printf 'artifact=%s\nreceipt=%s\nsha256=%s\n' \
+    "${output}" "${receipt}" "$(sha256sum "${output}" | awk '{ print $1 }')"
