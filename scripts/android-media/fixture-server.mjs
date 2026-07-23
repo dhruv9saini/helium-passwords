@@ -61,7 +61,18 @@ export async function createFixtureServer(options = {}) {
 async function handleRequest(request, response, options) {
   const url = new URL(request.url || "/", "http://fixture.invalid");
   if (request.method === "GET" && (url.pathname === "/" || url.pathname === "/probe")) {
-    send(response, 200, "text/html; charset=utf-8", probePage(options.chunks));
+    send(response, 200, "text/html; charset=utf-8", probePage(options.chunks, options.delayMs));
+    return;
+  }
+  if (request.method === "GET" && url.pathname === "/service-worker.js") {
+    const body = streamingServiceWorker();
+    response.writeHead(200, {
+      "cache-control": "no-store",
+      "content-length": Buffer.byteLength(body),
+      "content-type": "text/javascript; charset=utf-8",
+      "service-worker-allowed": "/",
+    });
+    response.end(body);
     return;
   }
   if (request.method === "GET" && url.pathname === "/manifest.json") {
@@ -211,7 +222,24 @@ function mediaType(name) {
   return "video/mp4";
 }
 
-function probePage(expectedChunks) {
+function streamingServiceWorker() {
+  return `'use strict';
+self.addEventListener('install', event => event.waitUntil(self.skipWaiting()));
+self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url);
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin ||
+      url.pathname !== '/sw/stream') return;
+  const encoding = url.searchParams.get('encoding') || 'identity';
+  if (!['identity', 'gzip', 'br'].includes(encoding)) return;
+  const upstream = new URL('/stream/fetch', self.location.origin);
+  upstream.searchParams.set('encoding', encoding);
+  event.respondWith(fetch(upstream, {cache: 'no-store', credentials: 'same-origin'}));
+});
+`;
+}
+
+function probePage(expectedChunks, expectedDelayMs) {
   return `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -222,7 +250,13 @@ function probePage(expectedChunks) {
 <div id="videos"></div>
 <script>
 const resultNode = document.querySelector('#result');
-const results = {schema_version: 1, expected_chunks: ${expectedChunks}, user_agent: navigator.userAgent, started_at: new Date().toISOString()};
+const results = {
+  schema_version: 1,
+  expected_chunks: ${expectedChunks},
+  expected_delay_ms: ${expectedDelayMs},
+  user_agent: navigator.userAgent,
+  started_at: new Date().toISOString(),
+};
 const mp4Mime = 'video/mp4; codecs="avc1.42E01E, mp4a.40.2"';
 const mp4HighMime = 'video/mp4; codecs="avc1.640028, mp4a.40.2"';
 const webmMime = 'video/webm; codecs="vp09.00.10.08, opus"';
@@ -284,6 +318,41 @@ async function stream(path) {
     protocol: timing?.nextHopProtocol || '',
     response_encoding: response.headers.get('content-encoding') || 'identity',
   };
+}
+async function serviceWorkerStream() {
+  if (!('serviceWorker' in navigator)) {
+    return {supported:false,controlled:false,error:'Service Worker unavailable'};
+  }
+  try {
+    const registration = await navigator.serviceWorker.register('/service-worker.js', {scope:'/'});
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller) {
+      await new Promise((resolve, reject) => {
+        const controlled = () => {
+          if (!navigator.serviceWorker.controller) return;
+          clearTimeout(timer);
+          navigator.serviceWorker.removeEventListener('controllerchange', controlled);
+          resolve();
+        };
+        const timer = setTimeout(() => {
+          navigator.serviceWorker.removeEventListener('controllerchange', controlled);
+          reject(new Error('Service Worker control timeout'));
+        }, 5000);
+        navigator.serviceWorker.addEventListener('controllerchange', controlled);
+        controlled();
+      });
+    }
+    const controller = navigator.serviceWorker.controller;
+    if (!controller) throw new Error('Service Worker did not control the disposable probe');
+    return {
+      supported:true,
+      controlled:true,
+      script_url:new URL(registration.active?.scriptURL || '', location.href).pathname,
+      stream:await stream('/sw/stream?encoding=identity'),
+    };
+  } catch (error) {
+    return {supported:true,controlled:Boolean(navigator.serviceWorker.controller),error:String(error)};
+  }
 }
 async function warmTransport(path) {
   const started = performance.now();
@@ -456,6 +525,8 @@ async function widevineSupport() {
     catch (error) { results['fetch_' + encoding] = {error:String(error)}; }
     show();
   }
+  results.service_worker = await serviceWorkerStream();
+  show();
   for (const protocol of ['h2','h3']) {
     const endpoint = new URLSearchParams(location.search).get(protocol);
     if (!endpoint) continue;

@@ -83,12 +83,18 @@ installs or launches it. That directory carries `run-device-probe.sh`, which
 owns the fixed ADB mappings, background/resume cycle, optional Wi-Fi-to-cellular
 handoff with restoration, immutable evidence directory, and protocol/lifecycle
 validation. The exact device command is in `deployment.md`. Acceptance still
-requires same-SHA upstream-control and Sync APKs on oneplus for H.264/AAC, MSE,
+requires same-source upstream-control and Sync APKs on oneplus for H.264/AAC, MSE,
 VP9/Opus, progressive Fetch, gzip/Brotli, SSE, actually negotiated HTTP/2 and
 HTTP/3, background/foreground, and network handoff.
 The carried probe records EME and `com.widevine.alpha` availability separately;
 ordinary codec playback never proves DRM, and protected playback remains
 outside the passing gate until a CDM is deliberately provisioned.
+
+Each artifact also carries the A/B pair verifier. The probe requires a
+controlled disposable Service Worker to relay a progressive Fetch response;
+the final pair receipt proves that Sync and control used the same private
+source commit, Chromium commit, runtime harness, media bytes, protocol fixture,
+and lifecycle matrix. Two standalone pass files are insufficient.
 
 The rootless lm protocol fixture service is enabled with a repository-external
 private CA/leaf and its credential-free HTTP/2-only/HTTP/3 behavior passes lm

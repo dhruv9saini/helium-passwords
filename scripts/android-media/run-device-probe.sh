@@ -255,6 +255,7 @@ probe_args=(
   --expected-package "$package"
   --expected-artifact-sha256 "$apk_sha256"
   --expected-chromium-commit "$chromium_commit"
+  --expected-helium-sync-commit "$helium_sync_commit"
   --expected-device-socket "$device_socket"
 )
 [[ -z "$h2" ]] || probe_args+=(--h2 "$h2")
