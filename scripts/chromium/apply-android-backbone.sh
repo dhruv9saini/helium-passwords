@@ -124,7 +124,7 @@ apply_backbone() {
 
   "$core_root/utils/prune_binaries.py" --keep-contingent-paths \
     "$source_tree" "$core_root/pruning.list"
-  "$repo_root/scripts/chromium/restore-android-pruned-pref-inputs.sh" \
+  "$repo_root/scripts/chromium/restore-android-pruned-build-inputs.sh" \
     "$source_tree" "$HELIUM_ANDROID_CHROMIUM_COMMIT" "$core_root/pruning.list"
   apply_series core "$core_root/patches" "$source_tree"
   "$repo_root/scripts/chromium/apply-git-series.sh" \

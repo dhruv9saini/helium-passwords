@@ -63,7 +63,7 @@ first_sync=$(grep -n '^sync' "$plan" | head -1 | cut -d: -f1)
 
 grep -Fq '"$core_root/utils/prune_binaries.py" --keep-contingent-paths \' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
-grep -Fq 'restore-android-pruned-pref-inputs.sh' \
+grep -Fq 'restore-android-pruned-build-inputs.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
 grep -Fq 'validate-android-java-pref-inputs.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
@@ -71,7 +71,7 @@ grep -Fq 'validate-android-pruned-service-consumers.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh"
 prune_line=$(grep -n 'prune_binaries.py" --keep-contingent-paths' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
-restore_line=$(grep -n 'restore-android-pruned-pref-inputs.sh' \
+restore_line=$(grep -n 'restore-android-pruned-build-inputs.sh' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
 transform_line=$(grep -n 'apply_transforms "$source_tree"' \
   "$repo_root/scripts/chromium/apply-android-backbone.sh" | cut -d: -f1)
