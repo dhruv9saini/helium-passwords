@@ -139,6 +139,11 @@ directory, writes one mode-0600 marker, and never clears or force-stops an app.
 On the next launch the native service sees that marker before enrollment,
 requires the debuggable test package and an otherwise empty cookie store, and
 returns without starting normal password or cookie sync.
+The browser opens the marker with `O_NOFOLLOW|O_NONBLOCK`, then requires a
+regular file with the exact mode, size, and contents before the first
+CookieManager read. The output directory must not exist. An unsafe marker or
+output path suppresses normal sync but deliberately writes no report through
+that untrusted path; the package-scoped log is the only failure signal.
 
 The fixed synthetic transaction creates a known destination cookie, persists
 its complete snapshot before apply, imports a three-record target through

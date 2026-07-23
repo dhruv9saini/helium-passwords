@@ -43,6 +43,52 @@ test("native cookie fixture is disposable-only and suppresses normal sync", () =
   assert.doesNotMatch(normalBridge, /HeliumSyncClient|Latest\(|Push\(|DevTools|CDP/);
 });
 
+test("marker admission rejects links, FIFOs, and wrong-sized files before reading", () => {
+  const markerReader = fixture.slice(
+    fixture.indexOf("bool ReadAcceptanceMarker"),
+    fixture.indexOf("bool CanWriteAcceptanceFile"),
+  );
+  assert.match(markerReader, /O_NOFOLLOW/);
+  assert.match(markerReader, /O_NONBLOCK/);
+  assert.match(markerReader, /fstat/);
+  assert.match(markerReader, /S_ISREG/);
+  assert.match(markerReader, /st_mode & 0777\) != 0600/);
+  assert.match(markerReader, /st_size != static_cast<off_t>\(kExpectedSize\)/);
+  assert.ok(
+    markerReader.indexOf("fstat") < markerReader.indexOf("read(marker_fd.get()"),
+    "descriptor type, mode, and exact size must be checked before marker content is read",
+  );
+});
+
+test("unsafe output paths fail without traversing or reporting through them", () => {
+  const start = fixture.slice(
+    fixture.indexOf("void Start()"),
+    fixture.indexOf("void Stop()"),
+  );
+  assert.match(start, /base::PathExists\(output_dir_\)/);
+  assert.match(start, /base::IsLink\(output_dir_\)/);
+  assert.ok(
+    start.indexOf("base::IsLink(output_dir_)") <
+      start.indexOf("output_paths_admitted_ = true"),
+    "the output parent must be absent and non-symlinked before writes are admitted",
+  );
+  const writer = fixture.slice(
+    fixture.indexOf("bool CanWriteAcceptanceFile"),
+    fixture.indexOf("std::optional<net::CanonicalCookie>"),
+  );
+  assert.match(writer, /path\.DirName\(\) != output_dir_/);
+  assert.match(writer, /base::IsLink\(output_dir_\)/);
+  assert.match(writer, /base::IsLink\(path\)/);
+  assert.match(writer, /directory_permissions != 0700/);
+  assert.match(writer, /file_permissions != 0600/);
+  const fail = fixture.slice(
+    fixture.indexOf("void Fail("),
+    fixture.indexOf("raw_ptr<Profile>"),
+  );
+  assert.match(fail, /if \(output_paths_admitted_/);
+  assert.doesNotMatch(fail, /WriteSecretFile/);
+});
+
 test("fixture uses the canonical native CookieManager transaction surface", () => {
   assert.match(fixture, /GetCookieManagerForBrowserProcess/);
   assert.match(fixture, /GetAllCookies/);

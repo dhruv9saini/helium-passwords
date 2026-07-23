@@ -42,7 +42,13 @@
 #include "url/gurl.h"
 
 #if BUILDFLAG(IS_ANDROID)
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 #include "base/android/apk_info.h"
+#include "base/files/scoped_file.h"
+#include "base/posix/eintr_wrapper.h"
 #endif
 
 namespace helium_sync {
@@ -631,6 +637,7 @@ public:
   explicit Impl(Profile *profile)
       : profile_(profile),
         marker_path_(profile->GetPath().AppendASCII(kAcceptanceMarker)),
+        output_dir_(profile->GetPath().AppendASCII("helium-sync")),
         report_path_(profile->GetPath().AppendASCII(kAcceptanceReport)),
         rollback_path_(profile->GetPath().AppendASCII(kAcceptanceRollback)) {}
 
@@ -642,17 +649,16 @@ public:
 
 #if BUILDFLAG(IS_ANDROID)
     std::string marker;
-    int permissions = 0;
     if (profile_->GetPath().BaseName().AsUTF8Unsafe() != "Default" ||
-        base::IsLink(marker_path_) || base::DirectoryExists(marker_path_) ||
-        !base::ReadFileToString(marker_path_, &marker) ||
-        marker != kAcceptanceMarkerContents ||
-        !base::GetPosixFilePermissions(marker_path_, &permissions) ||
-        permissions != 0600 || base::PathExists(report_path_) ||
-        base::PathExists(rollback_path_)) {
+        base::IsLink(profile_->GetPath()) || !ReadAcceptanceMarker(&marker) ||
+        marker != kAcceptanceMarkerContents || base::PathExists(output_dir_) ||
+        base::IsLink(output_dir_) || base::PathExists(report_path_) ||
+        base::IsLink(report_path_) || base::PathExists(rollback_path_) ||
+        base::IsLink(rollback_path_)) {
       Fail("disposable-profile-marker-or-output-invalid");
       return;
     }
+    output_paths_admitted_ = true;
     if (base::android::apk_info::package_name() !=
             "computer.helium.sync.test" ||
         !base::android::apk_info::is_debug_app()) {
@@ -686,6 +692,80 @@ private:
   network::mojom::CookieManager *manager() {
     return profile_->GetDefaultStoragePartition()
         ->GetCookieManagerForBrowserProcess();
+  }
+
+#if BUILDFLAG(IS_ANDROID)
+  bool ReadAcceptanceMarker(std::string *contents) {
+    constexpr size_t kExpectedSize = sizeof(kAcceptanceMarkerContents) - 1;
+    base::ScopedFD marker_fd(
+        HANDLE_EINTR(open(marker_path_.value().c_str(),
+                          O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK)));
+    struct stat marker_stat;
+    if (!marker_fd.is_valid() ||
+        HANDLE_EINTR(fstat(marker_fd.get(), &marker_stat)) != 0 ||
+        !S_ISREG(marker_stat.st_mode) || (marker_stat.st_mode & 0777) != 0600 ||
+        marker_stat.st_size != static_cast<off_t>(kExpectedSize)) {
+      return false;
+    }
+
+    contents->assign(kExpectedSize, '\0');
+    size_t offset = 0;
+    while (offset < contents->size()) {
+      const ssize_t read_size =
+          HANDLE_EINTR(read(marker_fd.get(), contents->data() + offset,
+                            contents->size() - offset));
+      if (read_size <= 0) {
+        contents->clear();
+        return false;
+      }
+      offset += static_cast<size_t>(read_size);
+    }
+    char trailing;
+    if (HANDLE_EINTR(read(marker_fd.get(), &trailing, 1)) != 0) {
+      contents->clear();
+      return false;
+    }
+    return true;
+  }
+#endif
+
+  bool CanWriteAcceptanceFile(const base::FilePath &path) const {
+    if (!output_paths_admitted_ || path.DirName() != output_dir_ ||
+        base::IsLink(output_dir_) ||
+        (base::PathExists(output_dir_) &&
+         !base::DirectoryExists(output_dir_)) ||
+        base::PathExists(path) || base::IsLink(path)) {
+      return false;
+    }
+#if BUILDFLAG(IS_POSIX)
+    int directory_permissions = 0;
+    if (base::DirectoryExists(output_dir_) &&
+        (!base::GetPosixFilePermissions(output_dir_, &directory_permissions) ||
+         directory_permissions != 0700)) {
+      return false;
+    }
+#endif
+    return true;
+  }
+
+  bool WriteAcceptanceFile(const base::FilePath &path,
+                           std::string_view contents) {
+    if (!CanWriteAcceptanceFile(path) || !WriteSecretFile(path, contents) ||
+        base::IsLink(output_dir_) || base::IsLink(path) ||
+        !base::DirectoryExists(output_dir_)) {
+      return false;
+    }
+#if BUILDFLAG(IS_POSIX)
+    int directory_permissions = 0;
+    int file_permissions = 0;
+    if (!base::GetPosixFilePermissions(output_dir_, &directory_permissions) ||
+        directory_permissions != 0700 ||
+        !base::GetPosixFilePermissions(path, &file_permissions) ||
+        file_permissions != 0600) {
+      return false;
+    }
+#endif
+    return true;
   }
 
   std::optional<net::CanonicalCookie>
@@ -886,7 +966,7 @@ private:
     root.Set("fingerprint", destination_.fingerprint);
     std::string raw;
     return base::JSONWriter::Write(root, &raw) &&
-           WriteSecretFile(rollback_path_, raw);
+           WriteAcceptanceFile(rollback_path_, raw);
   }
 
   bool HasDistinctPartitionIdentities(const CookieSnapshot &snapshot) {
@@ -1000,7 +1080,7 @@ private:
     std::string raw;
     base::DictValue report = Report("passed", "");
     if (!base::JSONWriter::Write(report, &raw) ||
-        !WriteSecretFile(report_path_, raw)) {
+        !WriteAcceptanceFile(report_path_, raw)) {
       LOG(ERROR) << "Helium cookie acceptance could not write its result";
       return;
     }
@@ -1016,15 +1096,16 @@ private:
     current_operation_.reset();
     std::string raw;
     base::DictValue report = Report("failed", reason);
-    if (!base::PathExists(report_path_) &&
-        base::JSONWriter::Write(report, &raw)) {
-      WriteSecretFile(report_path_, raw);
+    if (output_paths_admitted_ && !base::PathExists(report_path_) &&
+        !base::IsLink(report_path_) && base::JSONWriter::Write(report, &raw)) {
+      WriteAcceptanceFile(report_path_, raw);
     }
     LOG(ERROR) << "Helium cookie acceptance failed: " << reason;
   }
 
   raw_ptr<Profile> profile_;
   const base::FilePath marker_path_;
+  const base::FilePath output_dir_;
   const base::FilePath report_path_;
   const base::FilePath rollback_path_;
   CookieSnapshot destination_;
@@ -1039,6 +1120,7 @@ private:
   bool rejection_observed_ = false;
   bool rollback_verified_ = false;
   bool cleanup_verified_ = false;
+  bool output_paths_admitted_ = false;
   base::WeakPtrFactory<Impl> weak_factory_{this};
 };
 
