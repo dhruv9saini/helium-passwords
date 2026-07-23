@@ -35,6 +35,105 @@ scripts/chromiumer-job.sh preflight 80
 `connection` must report `connection=ok`, `host=chromiumer`, and `user=d`.
 `preflight` is deliberately stricter and must succeed before staging.
 
+## Independent lm Management Paths
+
+Build control has two independently probed SSH routes to the same pinned host
+identity:
+
+```text
+Tailscale: chromiumer / chromiumer.tail0168aa.ts.net
+Direct LAN: 192.168.5.27
+SSH user: d
+Identity: /home/d/.ssh/helium_chromiumer_ed25519
+HostKeyAlias: chromiumer
+```
+
+The single reviewed configuration is
+`chromiumer-management.conf`. It contains addresses, the existing private-key
+path, the pinned known-host alias, and numeric policy—not a private key,
+password, token, or mail credential. Installation copies it mode 0600 to
+`/home/d/.config/helium/chromiumer-management.conf`; both admission and the
+persistent monitor read that exact file.
+
+Before either `start` or `resume` creates a remote build unit, registering its
+local management timer requires three consecutive complete probe cycles.
+Every cycle must prove:
+
+- a default IPv4 route exists and the Tailscale DNS name resolves;
+- `tailscale ping --until-direct` reports a direct peer route rather than
+  DERP, and non-interactive strict-host-key SSH succeeds through the
+  `chromiumer` alias; and
+- non-interactive SSH independently succeeds to `192.168.5.27` while forcing
+  the same dedicated identity and pinned `HostKeyAlias=chromiumer`.
+
+Any failed cycle immediately refuses start; admission does not loop until a
+degraded path happens to pass.
+Successful registration atomically creates one mode-private state file bound
+to the configuration SHA-256, then enables that job's timer before the wrapper
+asks chromiumer to start. This is an lm control-plane gate only: it does not
+replace, seed, bypass, or weaken chromiumer's cgroup limits, allocated-block
+watchdog, health readiness proof, or eight-hour unit deadline.
+
+Install the reviewed source on lm only when no older active job depends on a
+different installed worker:
+
+```sh
+cd /home/d/coding/helium/helium-passwords
+scripts/install-chromiumer-management.sh
+systemctl --user cat helium-chromiumer-management@.timer
+```
+
+Registration enables one persistent user-systemd timer instance for that job.
+The `d` user has systemd lingering enabled on lm, so these timers survive
+detached shells, tmux loss, logout, and lm restart. Every 60 seconds each
+timer runs its own low-priority oneshot. It runs as `d` with `CPUQuota=5%`,
+`MemoryMax=64M`, `TasksMax=16`, `Nice=15`, and idle I/O scheduling. The
+current management state and pending cancellation are stored content-free in
+one atomic state file; historical poll output is the systemd journal:
+
+```text
+/home/d/.local/state/helium-chromiumer-management/jobs/<job>.env
+```
+
+Use:
+
+```sh
+scripts/chromiumer-job.sh management-status "$job"
+systemctl --user status \
+  "helium-chromiumer-management@${job}.timer" --no-pager
+journalctl --user \
+  --unit="helium-chromiumer-management@${job}.service" \
+  --since today --no-pager
+```
+
+A Tailscale-only failure is an explicit transition alarm; the LAN route
+remains available for terminal inspection. A LAN-only failure is recorded the
+same way. A single or double simultaneous failure never cancels a build.
+After three consecutive 60-second cycles with neither management route, the
+monitor durably records `cancel_pending=yes`. Delivery is impossible while
+both routes are down, so it attempts no imaginary cancellation. On the first
+cycle where either route recovers, it first checks the remote terminal record
+and immediately sends the pending worker cancellation over that recovered
+route if the job is still nonterminal. Cancellation delivery and the path used
+are retained in the state file and journal, respectively.
+
+The one operator cancellation command uses the same durable mechanism:
+
+```sh
+scripts/chromiumer-job.sh cancel "$job"
+```
+
+If either route is available it delivers immediately. If both are unavailable,
+the request remains pending and is delivered on the first recovery. There is
+no second direct-SSH cancellation path in the wrapper.
+
+The offline management test uses fake route, DNS, Tailscale, SSH, terminal, and
+cancellation commands. It starts no unit, build, Mailbridge turn, or mail:
+
+```sh
+bash scripts/tests/chromiumer-management.test.sh
+```
+
 ## Enforced Production Policy
 
 The **local wrapper** is `scripts/chromiumer-job.sh` in the Helium checkout on
