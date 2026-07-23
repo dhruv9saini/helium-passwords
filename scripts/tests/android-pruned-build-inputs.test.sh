@@ -162,12 +162,12 @@ mkdir -p "$out_dir"
 cat > "$out_dir/build.ninja" <<'EOF'
 rule package
   command = touch $out
-build chrome_public_apk: package ../../components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../chrome/common/pref_names.h
+build chrome_public_apk: package ../../components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat ../../components/safe_browsing/core/common/safe_browsing_prefs.h ../../components/signin/public/base/signin_pref_names.cc ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../chrome/common/pref_names.h
 EOF
 graph_validator="$repo_root/scripts/chromium/validate-android-pruned-build-graph.sh"
 "$graph_validator" "$source_root" "$out_dir" "$pinned_commit" \
   "$pruning_list" chrome_public_apk | \
-  grep -qx 'android_pruned_build_graph=verified target=chrome_public_apk count=3'
+  grep -qx 'android_pruned_build_graph=verified target=chrome_public_apk count=5'
 
 mkdir -p "$source_root/third_party/angle/third_party/r8"
 printf 'synthetic ANGLE D8\n' \
@@ -176,7 +176,7 @@ printf '%s\n' 'third_party/angle/third_party/r8/custom_d8.jar' >> "$pruning_list
 cat > "$out_dir/build.ninja" <<'EOF'
 rule package
   command = touch $out
-build chrome_public_apk: package ../../components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../third_party/angle/third_party/r8/custom_d8.jar
+build chrome_public_apk: package ../../components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat ../../components/safe_browsing/core/common/safe_browsing_prefs.h ../../components/signin/public/base/signin_pref_names.cc ../../third_party/r8/custom_d8.jar ../../third_party/r8/custom_r8.jar ../../third_party/angle/third_party/r8/custom_d8.jar
 EOF
 if "$graph_validator" "$source_root" "$out_dir" "$pinned_commit" \
   "$pruning_list" chrome_public_apk > "$test_root/unexpected-graph.out" 2>&1; then
@@ -192,7 +192,7 @@ sed -i '/third_party\/angle\/third_party\/r8\/custom_d8.jar/d' "$pruning_list"
 cat > "$out_dir/build.ninja" <<'EOF'
 rule package
   command = touch $out
-build chrome_public_apk: package ../../third_party/r8/custom_d8.jar
+build chrome_public_apk: package ../../components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat ../../components/safe_browsing/core/common/safe_browsing_prefs.h ../../components/signin/public/base/signin_pref_names.cc ../../third_party/r8/custom_d8.jar
 EOF
 if "$graph_validator" "$source_root" "$out_dir" "$pinned_commit" \
   "$pruning_list" chrome_public_apk > "$test_root/missing-graph.out" 2>&1; then

@@ -48,18 +48,20 @@ awk -v prefix="$source_prefix" -v root="$source_root/" '
   index($0, root) == 1 { print substr($0, length(root) + 1) }
 ' "$temporary_root/inputs.raw" | LC_ALL=C sort -u > "$temporary_root/inputs.relative"
 LC_ALL=C sort -u "$pruning_list" > "$temporary_root/pruning.sorted"
-comm -12 "$temporary_root/inputs.relative" "$temporary_root/pruning.sorted" \
+LC_ALL=C comm -12 "$temporary_root/inputs.relative" "$temporary_root/pruning.sorted" \
   > "$temporary_root/reachable-pruned.sorted"
 
 cat > "$temporary_root/expected.sorted" <<'EOF'
 components/privacy_sandbox/privacy_sandbox_attestations/preload/privacy-sandbox-attestations.dat
+components/safe_browsing/core/common/safe_browsing_prefs.h
+components/signin/public/base/signin_pref_names.cc
 third_party/r8/custom_d8.jar
 third_party/r8/custom_r8.jar
 EOF
 
-unexpected=$(comm -13 "$temporary_root/expected.sorted" \
+unexpected=$(LC_ALL=C comm -13 "$temporary_root/expected.sorted" \
   "$temporary_root/reachable-pruned.sorted")
-missing=$(comm -23 "$temporary_root/expected.sorted" \
+missing=$(LC_ALL=C comm -23 "$temporary_root/expected.sorted" \
   "$temporary_root/reachable-pruned.sorted")
 if [[ -n "$unexpected" ]]; then
   printf 'unexpected pruned Android target input:\n%s\n' "$unexpected" >&2
@@ -73,4 +75,4 @@ fi
 while IFS= read -r relative_path; do
   printf 'android_pruned_graph_input=%s\n' "$relative_path"
 done < "$temporary_root/reachable-pruned.sorted"
-printf 'android_pruned_build_graph=verified target=%s count=3\n' "$target"
+printf 'android_pruned_build_graph=verified target=%s count=5\n' "$target"
