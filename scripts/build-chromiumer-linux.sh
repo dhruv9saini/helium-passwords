@@ -2,17 +2,29 @@
 set -euo pipefail
 
 usage() {
-    echo "usage: scripts/build-chromiumer-linux.sh x86_64" >&2
+    echo "usage: scripts/build-chromiumer-linux.sh PRODUCT ARCH TARGET BUILD-JOB-ID" >&2
 }
 
-[ "$#" -eq 1 ] && [ "$1" = x86_64 ] || {
+[ "$#" -eq 4 ] || {
     usage
     exit 2
 }
 
+product=$1
+arch=$2
+target=$3
+build_job_id=$4
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
 checkout="${root_dir}/build/platforms/linux"
-artifact="${root_dir}/.build/artifacts/helium-passwords-linux-x86_64.tar.xz"
+artifact="${root_dir}/.build/artifacts/${product}-linux-${arch}.tar.xz"
+receipt="${root_dir}/.build/artifacts/${product}-linux-${arch}.receipt.env"
+
+"${root_dir}/scripts/linux-product-provenance.sh" \
+    "${product}" "${arch}" "${target}" >/dev/null
+[[ "${build_job_id}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
+    echo "invalid build job id" >&2
+    exit 2
+}
 
 [ "$(uname -n | cut -d. -f1)" = chromiumer ] || {
     echo "Linux Chromium builds run only on chromiumer" >&2
@@ -46,23 +58,26 @@ ninja_shim_dir="${root_dir}/scripts/chromiumer-bin"
     echo "real Ninja resolved to the Chromiumer shim" >&2
     exit 1
 }
-[ ! -e "${artifact}" ] || {
-    echo "refusing to replace existing artifact: ${artifact}" >&2
+[ ! -e "${artifact}" ] && [ ! -e "${receipt}" ] || {
+    echo "refusing to replace existing Linux artifact or receipt" >&2
     exit 1
 }
 [ -z "$(git -C "${root_dir}" status --porcelain --untracked-files=all)" ] || {
-    echo "public source must be clean before a provenance-bound build" >&2
+    echo "Helium source must be clean before a provenance-bound build" >&2
     exit 1
 }
 
 "${root_dir}/scripts/prepare-platform.sh" linux "${checkout}" >/dev/null
 (
     cd "${checkout}"
-    env -u CI ARCH=x86_64 HELIUM_BUILD_JOBS=2 \
+    env -u CI ARCH="${arch}" HELIUM_BUILD_JOBS=2 \
         HELIUM_REAL_NINJA="${real_ninja}" \
         PATH="${ninja_shim_dir}:${PATH}" \
         bash scripts/build.sh -c
 )
-"${root_dir}/scripts/package-linux-runtime.sh" x86_64 "${checkout}" "${artifact}"
+"${root_dir}/scripts/package-linux-runtime.sh" \
+    "${product}" "${arch}" "${target}" "${build_job_id}" \
+    "${checkout}" "${artifact}" "${receipt}"
 
-printf 'linux_artifact=%s\n' "${artifact#"${root_dir}"/}"
+printf 'linux_artifact=%s\nlinux_receipt=%s\n' \
+    "${artifact#"${root_dir}"/}" "${receipt#"${root_dir}"/}"
