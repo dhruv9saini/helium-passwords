@@ -75,10 +75,10 @@ node scripts/tabs/tab-runtime-proof.mjs native \
 ```
 
 The runner serves three inert pages on an ephemeral loopback HTTP origin,
-creates them through CDP in the new profile, closes cleanly, verifies a clean
-restart, sends SIGKILL, verifies crash recovery, and verifies one more clean
-restart. Each readback must contain exactly the expected page targets and
-window partition. It records the pinned executable hash and
+creates them through CDP across two windows in the new profile, closes cleanly,
+verifies a clean restart, sends SIGKILL, verifies crash recovery, and verifies
+one more clean restart. Each readback must contain exactly the expected page
+targets and window partition. It records the pinned executable hash and
 `Browser.getVersion` result.
 
 Emit native health only from that authenticated proof:

@@ -185,7 +185,14 @@ const handle = message => {
     case "Target.createTarget": {
       if (windows.length === 0) windows.push({id: 1, targets: []});
       const target = newTarget(message.params.url);
-      windows[0].targets.push(target);
+      if (message.params.newWindow) {
+        windows.push({
+          id: Math.max(...windows.map(window => window.id)) + 1,
+          targets: [target],
+        });
+      } else {
+        windows[windows.length - 1].targets.push(target);
+      }
       persist();
       result = {targetId: target.targetId};
       break;

@@ -453,19 +453,25 @@ async function setNativeFixture(browser, expected) {
   if (pages.length < 1) {
     fail("browser did not create an initial disposable page");
   }
-  const urls = expected.windows[0].urls;
-  await navigateTarget(browser, pages[0].targetId, urls[0]);
+  await navigateTarget(browser, pages[0].targetId,
+    expected.windows[0].urls[0]);
   for (const target of pages.slice(1)) {
     await browser.request("Target.closeTarget", {targetId: target.targetId});
   }
-  for (const url of urls.slice(1)) {
-    const created = await browser.request("Target.createTarget", {
-      url,
-      newWindow: false,
-      background: true,
-    });
-    if (typeof created.targetId !== "string") {
-      fail("CDP fixture tab creation failed");
+  for (let windowIndex = 0;
+       windowIndex < expected.windows.length;
+       windowIndex += 1) {
+    const urls = expected.windows[windowIndex].urls;
+    const firstTab = windowIndex === 0 ? 1 : 0;
+    for (let tabIndex = firstTab; tabIndex < urls.length; tabIndex += 1) {
+      const created = await browser.request("Target.createTarget", {
+        url: urls[tabIndex],
+        newWindow: windowIndex > 0 && tabIndex === 0,
+        background: true,
+      });
+      if (typeof created.targetId !== "string") {
+        fail("CDP fixture tab creation failed");
+      }
     }
   }
 }
@@ -494,9 +500,10 @@ async function fixtureServer() {
   });
   const address = server.address();
   const origin = `http://127.0.0.1:${address.port}`;
+  const urls = [...pages.keys()].map(item => `${origin}${item}`);
   const topology = normalizeTopology({
     schema_version: 1,
-    windows: [{urls: [...pages.keys()].map(item => `${origin}${item}`)}],
+    windows: [{urls: urls.slice(0, 2)}, {urls: urls.slice(2)}],
   });
   return {
     server,
