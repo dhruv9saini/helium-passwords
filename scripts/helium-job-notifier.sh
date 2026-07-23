@@ -154,7 +154,8 @@ terminal_value() {
 
 write_event_prompt() {
     local path=$1
-    local job product result duration exit_code reason sources summary success_next key event temp
+    local job product result duration exit_code reason sources summary success_next
+    local key event temp workspace_owner parent_job
     job=$(jq -r .job_id "${path}")
     product=$(jq -r .product "${path}")
     result=$(jq -r .result "${path}")
@@ -165,6 +166,11 @@ write_event_prompt() {
     summary=$(jq -r .summary "${path}")
     success_next=$(jq -r .success_next "${path}")
     key=$(jq -r .analysis_key "${path}")
+    workspace_owner=$(awk -F= '$1 == "workspace_owner" { print $2; exit }' \
+        <<<"${sources}")
+    [ -n "${workspace_owner}" ] || workspace_owner=${job}
+    parent_job=$(awk -F= '$1 == "parent_job" { print $2; exit }' \
+        <<<"${sources}")
     event="${events_dir}/${job}.txt"
     temp="${event}.tmp.$$"
     {
@@ -176,6 +182,10 @@ write_event_prompt() {
         printf 'Exit code: %s\n' "${exit_code}"
         printf 'Recorded reason: %s\n\n' "${reason}"
         printf 'Pinned source provenance:\n%s\n\n' "${sources}"
+        if [ -n "${parent_job}" ]; then
+            printf 'Continuation parent: %s\n' "${parent_job}"
+            printf 'Preserved workspace owner: %s\n\n' "${workspace_owner}"
+        fi
         printf 'Test or artifact summary:\n%s\n\n' "${summary}"
         printf 'Previously expected success action:\n%s\n\n' "${success_next}"
         printf 'Repository paths on lm:\n'
@@ -187,10 +197,10 @@ write_event_prompt() {
         printf 'scripts/chromiumer-job.sh status %s\n' "${job}"
         printf 'scripts/chromiumer-job.sh logs %s 400\n' "${job}"
         printf "ssh -o BatchMode=yes chromiumer 'journalctl --user --unit=helium-watch-%s.service --no-pager --lines=400'\n" "${job}"
-        printf "ssh -o BatchMode=yes chromiumer 'find /home/d/helium-builds/work/%s/source -path \"*/android-artifacts/*\" -type f -printf \"%%p %%s bytes\\n\"'\n\n" "${job}"
+        printf "ssh -o BatchMode=yes chromiumer 'find /home/d/helium-builds/work/%s/source -path \"*/android-artifacts/*\" -type f -printf \"%%p %%s bytes\\n\"'\n\n" "${workspace_owner}"
         printf 'Evidence and artifact locations:\n'
         printf -- '- Chromiumer state: /home/d/.local/state/helium-builds/%s\n' "${job}"
-        printf -- '- Chromiumer workspace: /home/d/helium-builds/work/%s/source\n' "${job}"
+        printf -- '- Chromiumer workspace: /home/d/helium-builds/work/%s/source\n' "${workspace_owner}"
         printf -- '- Returned artifacts: /srv/nas/helium-builds/%s\n' "${job}"
         printf -- '- Disposable acceptance: /srv/nas/helium-acceptance/%s\n\n' "${job}"
         printf 'Current project objective:\n'

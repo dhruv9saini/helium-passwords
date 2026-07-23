@@ -16,6 +16,8 @@ chromium_version=148.0.7778.178
 HELIUM_ANDROID_CHROMIUM_COMMIT=chromium123
 HELIUM_ANDROID_CORE_COMMIT=core123
 HELIUM_ANDROID_DEPOT_TOOLS_COMMIT=depot123
+workspace_owner=preserved-owner
+parent_job=timed-out-parent
 EOF
 chmod 600 "${source_info}"
 
@@ -170,7 +172,9 @@ for result in success failure timeout cancellation; do
     grep -q '/home/d/coding/helium/helium-sync' "${event}"
     grep -q "scripts/chromiumer-job.sh logs ${job} 400" "${event}"
     grep -q "/home/d/.local/state/helium-builds/${job}" "${event}"
-    grep -q "/home/d/helium-builds/work/${job}/source" "${event}"
+    grep -q 'Continuation parent: timed-out-parent' "${event}"
+    grep -q 'Preserved workspace owner: preserved-owner' "${event}"
+    grep -q '/home/d/helium-builds/work/preserved-owner/source' "${event}"
     grep -q "/srv/nas/helium-builds/${job}" "${event}"
     grep -q 'Current project objective:' "${event}"
     grep -q 'Determine the real cause rather than repeating the recorded reason' "${event}"

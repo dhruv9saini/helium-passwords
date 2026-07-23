@@ -1,128 +1,267 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-test_root=$(mktemp -d /tmp/helium-chromiumer-resume.XXXXXX)
-cleanup() {
-    find "$test_root" -depth -delete
-}
-trap cleanup EXIT
+repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
+worker="${repo_root}/scripts/chromiumer-worker.sh"
+wrapper="${repo_root}/scripts/chromiumer-job.sh"
+test_root=$(mktemp -d /tmp/helium-resume.XXXXXX)
+trap 'find "${test_root}" -depth -delete' EXIT
 
-export HELIUM_CHROMIUMER_STATE_ROOT="$test_root/state"
-export HELIUM_CHROMIUMER_WORK_ROOT="$test_root/work"
 # shellcheck source=../chromiumer-worker.sh
-source "$repo_root/scripts/chromiumer-worker.sh"
+source "${worker}"
+state_root="${test_root}/state"
+work_root="${test_root}/work"
+mkdir -p "${state_root}" "${work_root}" "${test_root}/bin"
 
-require_worker_host() {
-    :
-}
+cat >"${test_root}/bin/systemctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+case "$*" in
+    "--user --quiet is-active helium-watch-readiness.service")
+        [ -e "${RESUME_TEST_WATCH_ACTIVE}" ]
+        ;;
+    "--user --quiet is-active "*) exit 1 ;;
+    "--user stop "*) exit 0 ;;
+    *)
+        printf 'unexpected systemctl arguments: %s\n' "$*" >&2
+        exit 2
+        ;;
+esac
+EOF
+chmod 700 "${test_root}/bin/systemctl"
+
+cat >"${test_root}/bin/systemd-run" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%q ' "$@" >>"${RESUME_TEST_SYSTEMD_RUNS}"
+printf '\n' >>"${RESUME_TEST_SYSTEMD_RUNS}"
+EOF
+chmod 700 "${test_root}/bin/systemd-run"
+cat >"${test_root}/bin/hostname" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "$#" -eq 1 ] && [ "$1" = -s ]
+printf 'chromiumer\n'
+EOF
+chmod 700 "${test_root}/bin/hostname"
+export PATH="${test_root}/bin:${PATH}"
+export RESUME_TEST_SYSTEMD_RUNS="${test_root}/systemd-runs"
+export RESUME_TEST_WATCH_ACTIVE="${test_root}/watch-active"
+
 preflight() {
-    printf 'test_preflight_profile=%s\n' "$1"
-    printf 'test_preflight_budget_gib=%s\n' "$2"
-    printf 'test_preflight_probe=%s\n' "$3"
-    printf 'test_preflight_accounted=%s\n' "$4"
+    [ "$1" = production ]
+    [ "$2" = 1 ]
+    [ "$3" = "$4" ]
+    [ -d "$3" ]
+    printf 'preflight=ok\nworkspace=%s\n' "$3" \
+        >>"${test_root}/preflight-calls"
 }
 
-source_job=resume-source
-destination_job=resume-destination
-source_state="$HELIUM_CHROMIUMER_STATE_ROOT/$source_job"
-source_root="$HELIUM_CHROMIUMER_WORK_ROOT/$source_job"
-mkdir -p "$source_state" "$source_root/source/.build/out"
-cat >"$source_state/stage.env" <<'EOF'
+write_parent() {
+    local job=$1
+    local command=$2
+    local state="${state_root}/${job}"
+    local workspace="${work_root}/${job}"
+    mkdir -p "${state}" "${workspace}/source"
+    cat >"${state}/stage.env" <<EOF
 profile=production
-disk_budget_gib=80
-disk_budget_bytes=85899345920
+disk_budget_gib=1
+disk_budget_bytes=1073741824
+workspace_owner=${job}
 staged_at=2026-07-23T00:00:00+00:00
 EOF
-cat >"$source_state/source.manifest" <<'EOF'
-repository=helium-sync
-commit=1111111111111111111111111111111111111111
-tree=2222222222222222222222222222222222222222
+    cat >"${state}/policy.env" <<EOF
+profile=production
+disk_budget_bytes=1073741824
+command=${command}
+started_at_epoch=1
 EOF
-cat >"$source_state/terminal.env" <<'EOF'
+    cat >"${state}/terminal.env" <<'EOF'
 state=terminal
 result=timeout
 exit_code=124
+started_at_epoch=1
+finished_at_epoch=28801
+duration_seconds=28800
+reason=systemd stopped the job at its wall-time limit
 EOF
-printf 'sha256=3333333333333333333333333333333333333333333333333333333333333333\n' \
-    >"$source_state/artifact-returned.env"
-printf 'retained Ninja state\n' >"$source_root/source/.build/out/.ninja_log"
-
-output=$(resume_stage "$source_job" "$destination_job")
-destination_state="$HELIUM_CHROMIUMER_STATE_ROOT/$destination_job"
-destination_root="$HELIUM_CHROMIUMER_WORK_ROOT/$destination_job"
-
-[[ ! -e "$source_root" ]]
-[[ -f "$destination_root/source/.build/out/.ninja_log" ]]
-grep -qx 'retained Ninja state' \
-    "$destination_root/source/.build/out/.ninja_log"
-cmp "$source_state/source.manifest" "$destination_state/source.manifest"
-cmp "$source_state/stage.env" "$destination_state/stage.env"
-grep -qx "resumed_from_job=$source_job" "$destination_state/resume.env"
-grep -qx 'resumed_from_result=timeout' "$destination_state/resume.env"
-grep -qx \
-    'resumed_from_reason=systemd stopped the job at its wall-time limit' \
-    "$destination_state/resume.env"
-grep -qx 'disk_budget_bytes=85899345920' "$destination_state/resume.env"
-grep -qx "resumed_to_job=$destination_job" "$source_state/resumed-to.env"
-grep -qx "resume_source_job=$source_job" <<<"$output"
-grep -qx "resume_destination_job=$destination_job" <<<"$output"
-grep -qx "source_dir=$destination_root/source" <<<"$output"
-
-readiness_job=readiness-source
-readiness_destination=readiness-destination
-readiness_state="$HELIUM_CHROMIUMER_STATE_ROOT/$readiness_job"
-readiness_root="$HELIUM_CHROMIUMER_WORK_ROOT/$readiness_job"
-mkdir -p "$readiness_state" "$readiness_root/source"
-cp "$source_state/stage.env" "$readiness_state/stage.env"
-cp "$source_state/source.manifest" "$readiness_state/source.manifest"
-cat >"$readiness_state/terminal.env" <<'EOF'
-state=terminal
-result=failure
-exit_code=125
-reason=health watchdog failed before readiness
+    cat >"${state}/source.manifest" <<'EOF'
+repository=helium-sync
+origin=git@github.com:example/helium-sync.git
+commit=1111111111111111111111111111111111111111
+tree=2222222222222222222222222222222222222222
+helium_submodule=3333333333333333333333333333333333333333
+chromium_version=150.0.7871.181
+archive_sha256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+transferred_at=2026-07-23T00:00:00+00:00
+transferred_from=lm
 EOF
-cat >"$readiness_state/watchdog-stop.env" <<'EOF'
-reason=health watchdog failed before readiness
-EOF
-cp "$source_state/artifact-returned.env" \
-    "$readiness_state/artifact-returned.env"
-readiness_output=$(resume_stage "$readiness_job" "$readiness_destination")
-readiness_destination_state="$HELIUM_CHROMIUMER_STATE_ROOT/$readiness_destination"
-readiness_destination_root="$HELIUM_CHROMIUMER_WORK_ROOT/$readiness_destination"
-[[ ! -e "$readiness_root" ]]
-[[ -d "$readiness_destination_root/source" ]]
-grep -qx 'resumed_from_result=failure' \
-    "$readiness_destination_state/resume.env"
-grep -qx 'resumed_from_reason=health watchdog failed before readiness' \
-    "$readiness_destination_state/resume.env"
-grep -qx "resume_source_job=$readiness_job" <<<"$readiness_output"
+    printf 'unfinished-object\n' >"${workspace}/source/object.o"
+}
 
-failed_job=failed-source
-failed_state="$HELIUM_CHROMIUMER_STATE_ROOT/$failed_job"
-failed_root="$HELIUM_CHROMIUMER_WORK_ROOT/$failed_job"
-mkdir -p "$failed_state" "$failed_root/source"
-cp "$source_state/stage.env" "$failed_state/stage.env"
-cp "$source_state/source.manifest" "$failed_state/source.manifest"
-printf 'state=terminal\nresult=failure\nexit_code=1\n' \
-    >"$failed_state/terminal.env"
-cp "$source_state/artifact-returned.env" \
-    "$failed_state/artifact-returned.env"
-if (resume_stage "$failed_job" refused-destination) \
-    >"$test_root/refused.out" 2>&1; then
-    echo 'non-timeout resume source unexpectedly passed' >&2
+build_command=(sh -c 'printf "resume fixture\n"')
+build_command_text=$(command_text "${build_command[@]}")
+parent=resume-parent
+child=resume-child
+write_parent "${parent}" "${build_command_text}"
+cat >"${state_root}/${parent}/artifact-returned.env" <<'EOF'
+returned_at=2026-07-23T08:00:00+00:00
+sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+EOF
+
+resume_init "${parent}" "${child}" -- "${build_command[@]}" \
+    >"${test_root}/resume-init.out"
+exec 9>&-
+grep -Fqx "continuation=${child}" "${test_root}/resume-init.out"
+grep -Fqx "parent_job=${parent}" "${test_root}/resume-init.out"
+grep -Fqx "workspace_owner=${parent}" "${test_root}/resume-init.out"
+grep -Fqx 'existing=false' "${test_root}/resume-init.out"
+grep -Fqx "child_job=${child}" \
+    "${state_root}/${parent}/continued-by.env"
+grep -Fqx "parent_job=${parent}" "${state_root}/${child}/resume.env"
+grep -Fqx "workspace_owner=${parent}" "${state_root}/${child}/stage.env"
+cmp "${state_root}/${parent}/source.manifest" \
+    "${state_root}/${child}/source.manifest"
+[ "$(stat -c %a "${state_root}/${child}/source.manifest")" = 600 ]
+[ ! -e "${work_root}/${child}" ]
+
+source_report=$(source_info "${child}")
+grep -Fqx 'repository=helium-sync' <<<"${source_report}"
+grep -Fqx "workspace_owner=${parent}" <<<"${source_report}"
+grep -Fqx "parent_job=${parent}" <<<"${source_report}"
+
+# An uncertain client retry is idempotent only for the exact same parent,
+# child, source, and command.
+resume_init "${parent}" "${child}" -- "${build_command[@]}" \
+    >"${test_root}/resume-init-again.out"
+grep -Fqx 'existing=true' "${test_root}/resume-init-again.out"
+if (resume_init "${parent}" resume-other -- "${build_command[@]}") \
+    >"${test_root}/second.out" 2>"${test_root}/second.error"; then
+    echo "one timeout parent admitted two continuations" >&2
     exit 1
 fi
-grep -qx \
-    "resume source is not a resumable retained terminal job: $failed_job" \
-    "$test_root/refused.out"
-[[ -d "$failed_root/source" ]]
-[[ ! -e "$HELIUM_CHROMIUMER_WORK_ROOT/refused-destination" ]]
-[[ ! -e "$HELIUM_CHROMIUMER_STATE_ROOT/refused-destination" ]]
+grep -Fq 'disqualifying state: continued-by.env' \
+    "${test_root}/second.error"
+if (resume_init "${parent}" resume-wrong -- sh -c 'exit 0') \
+    >"${test_root}/wrong.out" 2>"${test_root}/wrong.error"; then
+    echo "a changed continuation command was admitted" >&2
+    exit 1
+fi
 
-grep -Fq 'resume-stage <terminal-job-id> <new-job-id>' \
-    "$repo_root/scripts/chromiumer-job.sh"
-grep -Fq 'resume-stage) [ "$#" -eq 2 ] || exit 2; resume_stage "$@" ;;' \
-    "$repo_root/scripts/chromiumer-job.sh"
+resume_start "${child}" -- "${build_command[@]}" \
+    >"${test_root}/resume-start.out"
+exec 9>&-
+[ "$(wc -l <"${RESUME_TEST_SYSTEMD_RUNS}")" -eq 2 ]
+grep -Fq -- '--property=RuntimeMaxSec=28800' "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--property=CPUQuota=200%' "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--property=MemoryMax=5G' "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--property=TasksMax=256' "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fqx "workspace_owner=${parent}" \
+    "${state_root}/${child}/policy.env"
+grep -Fqx "parent_job=${parent}" "${state_root}/${child}/policy.env"
+grep -Fqx "work_dir=${work_root}/${parent}/source" \
+    "${state_root}/${child}/policy.env"
+grep -Fqx 'watchdog_ready_seconds=600' \
+    "${state_root}/${child}/policy.env"
+grep -Fq ' helium-watch-resume-child.service 600 1 -- ' \
+    "${RESUME_TEST_SYSTEMD_RUNS}"
+[ "$(grep -Fc "preflight=ok" "${test_root}/preflight-calls")" -ge 2 ]
+if grep '^workspace=' "${test_root}/preflight-calls" |
+    grep -Fvx "workspace=${work_root}/${parent}" >/dev/null; then
+    echo "continuation preflight accounted the wrong workspace" >&2
+    exit 1
+fi
 
-echo 'Chromiumer retained timeout resume contract passed'
+cat >"${state_root}/${child}/terminal.env" <<'EOF'
+state=terminal
+result=success
+exit_code=0
+started_at_epoch=1
+finished_at_epoch=2
+duration_seconds=1
+reason=build command completed
+EOF
+resume_start "${child}" -- "${build_command[@]}" \
+    >"${test_root}/resume-start-again.out"
+grep -Fqx 'existing=true' "${test_root}/resume-start-again.out"
+[ "$(wc -l <"${RESUME_TEST_SYSTEMD_RUNS}")" -eq 2 ]
+
+# Readiness is a proof gate: even an otherwise runnable command cannot begin
+# until the independent watcher publishes its initial healthy scan.
+readiness_state="${test_root}/readiness-state"
+mkdir "${readiness_state}"
+cat >"${readiness_state}/policy.env" <<EOF
+started_at_epoch=$(date +%s)
+EOF
+: >"${RESUME_TEST_WATCH_ACTIVE}"
+timeout 10 "${worker}" run "${readiness_state}" \
+    helium-watch-readiness.service 6 1 -- \
+    sh -c ': >"$1"' sh "${test_root}/command-started" &
+readiness_pid=$!
+sleep 2
+[ ! -e "${test_root}/command-started" ]
+printf 'watchdog_ready_at=%s\n' "$(date --iso-8601=seconds)" \
+    >"${readiness_state}/watchdog-ready.env"
+wait "${readiness_pid}"
+grep -Fqx 'result=success' "${readiness_state}/terminal.env"
+[ -e "${test_root}/command-started" ]
+find "${RESUME_TEST_WATCH_ACTIVE}" -delete
+
+artifact_report=$(artifact_info "${child}" object.o)
+artifact_sha=$(awk -F= '$1 == "sha256" { print $2 }' <<<"${artifact_report}")
+[ -n "${artifact_sha}" ]
+mark_returned "${child}" "${artifact_sha}"
+if (cleanup_job "${parent}") >"${test_root}/parent-cleanup.out" \
+    2>"${test_root}/parent-cleanup.error"; then
+    echo "a superseded segment cleaned the shared workspace" >&2
+    exit 1
+fi
+grep -Fq 'segment that has a continuation' \
+    "${test_root}/parent-cleanup.error"
+cleanup_job "${child}" >"${test_root}/cleanup.out"
+exec 9>&-
+[ ! -e "${work_root}/${parent}" ]
+grep -Fqx "cleaned_by_job=${child}" \
+    "${state_root}/${parent}/workspace-cleaned-by.env"
+if (cleanup_job "${child}") >"${test_root}/cleanup-again.out" \
+    2>"${test_root}/cleanup-again.error"; then
+    echo "shared workspace cleanup ran twice" >&2
+    exit 1
+fi
+grep -Fq 'workspace was already cleaned' "${test_root}/cleanup-again.error"
+
+abort_parent=abort-parent
+abort_child=abort-child
+write_parent "${abort_parent}" "${build_command_text}"
+resume_init "${abort_parent}" "${abort_child}" -- "${build_command[@]}" \
+    >/dev/null
+exec 9>&-
+resume_abort "${abort_child}" >"${test_root}/abort.out"
+exec 9>&-
+[ ! -e "${state_root}/${abort_child}" ]
+[ ! -e "${state_root}/${abort_parent}/continued-by.env" ]
+[ -e "${work_root}/${abort_parent}/source/object.o" ]
+cat >"${state_root}/${abort_parent}/watchdog-stop.env" <<'EOF'
+reason=synthetic watchdog failure
+EOF
+if (resume_init "${abort_parent}" watchdog-child -- "${build_command[@]}") \
+    >"${test_root}/watchdog.out" 2>"${test_root}/watchdog.error"; then
+    echo "a watchdog-stopped parent was resumed" >&2
+    exit 1
+fi
+grep -Fq 'disqualifying state: watchdog-stop.env' \
+    "${test_root}/watchdog.error"
+
+# The public control client must arm a unique Mailbridge-observed job before
+# asking the worker to launch it, and expose the one-command interface.
+grep -Fq 'resume <timed-out-job> <new-job-id>' "${wrapper}"
+register_line=$(grep -n '"${local_notifier}" register "${job}"' "${wrapper}" |
+    tail -1 | cut -d: -f1)
+start_line=$(grep -n 'resume-start "${job}"' "${wrapper}" | cut -d: -f1)
+[ "${register_line}" -lt "${start_line}" ]
+grep -Fq 'resume-init "${parent}" "${job}" -- "$@"' "${wrapper}"
+grep -Fq 'resume-abort "${job}"' "${wrapper}"
+
+printf 'chromiumer_resume=passed\n'
+printf 'parent_job=%s\ncontinuation_job=%s\n' "${parent}" "${child}"
+printf 'systemd_segments=%s\n' 1

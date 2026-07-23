@@ -9,6 +9,7 @@ remote_state=.local/state/helium-builds
 remote_work=helium-builds/work
 default_artifact_root=${HELIUM_ARTIFACT_ROOT:-/srv/nas/helium-builds}
 local_notifier=${HELIUM_JOB_NOTIFIER:-/home/d/.local/libexec/helium-job-notifier}
+local_management=${HELIUM_CHROMIUMER_MANAGEMENT:-/home/d/.local/libexec/helium-chromiumer-management}
 
 usage() {
     cat >&2 <<'EOF'
@@ -18,13 +19,14 @@ Commands:
   connection
   preflight <disk-budget-gib>
   stage <job-id> <disk-budget-gib> [repository]
-  resume-stage <terminal-job-id> <new-job-id>
   start <job-id> --summary <text> --next <success-action> -- <command> [arguments...]
+  resume <timed-out-job> <new-job-id> --summary <text> --next <success-action> -- <command> [arguments...]
   status <job-id>
   terminal <job-id>
   limits <job-id>
   logs <job-id> [line-count]
   cancel <job-id>
+  management-status <job-id>
   fetch <job-id> <relative-artifact> [lm-or-NAS-directory]
   cleanup <job-id>
   test
@@ -164,16 +166,6 @@ stage() {
     trap - EXIT
 }
 
-resume_stage() {
-    local source_job=$1
-    local destination_job=$2
-    validate_job "${source_job}"
-    validate_job "${destination_job}"
-    install_worker
-    remote_exec "${remote_worker}" resume-stage \
-        "${source_job}" "${destination_job}"
-}
-
 start() {
     local job=$1
     shift
@@ -203,13 +195,23 @@ start() {
         echo "Helium job notifier is not installed: ${local_notifier}" >&2
         exit 1
     }
+    [ -x "${local_management}" ] || {
+        echo "Chromiumer management monitor is not installed: ${local_management}" >&2
+        exit 1
+    }
     install_worker
 
+    local management_registered=false
+    local remote_start_attempted=false
     local temp_dir source_file source_info repository product registration existing output
     temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
     source_file="${temp_dir}/source.env"
     cleanup_start() {
         local result=$?
+        if [ "${management_registered}" = true ] && \
+            [ "${remote_start_attempted}" = false ]; then
+            "${local_management}" unregister "${job}" >/dev/null 2>&1 || true
+        fi
         find "${temp_dir}" -depth -delete
         return "${result}"
     }
@@ -226,14 +228,114 @@ start() {
             exit 1
             ;;
     esac
+    "${local_management}" register "${job}"
+    management_registered=true
     registration=$("${local_notifier}" register "${job}" "${product}" "${summary}" \
         "${success_next}" "${source_file}")
     existing=$(awk -F= '$1 == "existing" { print $2; exit }' <<<"${registration}")
 
+    remote_start_attempted=true
     if ! output=$(remote_exec "${remote_worker}" start production "${job}" \
         "${remote_work}/${job}/source" -- "$@"); then
         if [ "${existing}" = false ]; then
             "${local_notifier}" abandon "${job}" >/dev/null || true
+        fi
+        return 1
+    fi
+    printf '%s\nnotification=armed\n' "${output}"
+    find "${temp_dir}" -depth -delete
+    trap - EXIT
+}
+
+resume() {
+    local parent=$1
+    local job=$2
+    shift 2
+    validate_job "${parent}"
+    validate_job "${job}"
+    [ "${parent}" != "${job}" ] || {
+        echo "continuation job id must differ from its parent" >&2
+        exit 2
+    }
+    [ "${1:-}" = --summary ] && [ "$#" -ge 6 ] || {
+        usage
+        exit 2
+    }
+    local summary=$2
+    shift 2
+    [ "${1:-}" = --next ] || {
+        usage
+        exit 2
+    }
+    local success_next=$2
+    shift 2
+    [ "${1:-}" = -- ] || {
+        usage
+        exit 2
+    }
+    shift
+    [ "$#" -gt 0 ] || {
+        echo "missing build command" >&2
+        exit 2
+    }
+    [ -x "${local_notifier}" ] || {
+        echo "Helium job notifier is not installed: ${local_notifier}" >&2
+        exit 1
+    }
+    [ -x "${local_management}" ] || {
+        echo "Chromiumer management monitor is not installed: ${local_management}" >&2
+        exit 1
+    }
+    install_worker
+
+    local initialized=false
+    local registered=false
+    local management_registered=false
+    local temp_dir source_file source_info repository product output
+    temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
+    source_file="${temp_dir}/source.env"
+    cleanup_resume() {
+        local result=$?
+        if [ "${initialized}" = true ] && [ "${registered}" = false ]; then
+            remote_exec "${remote_worker}" resume-abort "${job}" \
+                >/dev/null 2>&1 || true
+        fi
+        if [ "${management_registered}" = true ] && \
+            [ "${registered}" = false ]; then
+            "${local_management}" unregister "${job}" >/dev/null 2>&1 || true
+        fi
+        find "${temp_dir}" -depth -delete
+        return "${result}"
+    }
+    trap cleanup_resume EXIT
+
+    remote_exec "${remote_worker}" resume-init "${parent}" "${job}" -- "$@"
+    initialized=true
+    "${local_management}" register "${job}"
+    management_registered=true
+    source_info=$(remote_exec "${remote_worker}" source-info "${job}")
+    printf '%s\n' "${source_info}" >"${source_file}"
+    chmod 600 "${source_file}"
+    repository=$(awk -F= '$1 == "repository" { print $2; exit }' <<<"${source_info}")
+    case "${repository}" in
+        helium-passwords) product="Helium Passwords" ;;
+        helium-sync) product="Helium Sync" ;;
+        *)
+            echo "unsupported staged Helium repository: ${repository}" >&2
+            exit 1
+            ;;
+    esac
+    "${local_notifier}" register "${job}" "${product}" "${summary}" \
+        "${success_next}" "${source_file}"
+    registered=true
+
+    if ! output=$(remote_exec "${remote_worker}" resume-start "${job}" -- "$@"); then
+        if remote_exec "${remote_worker}" resume-abort "${job}" \
+            >/dev/null 2>&1; then
+            initialized=false
+            "${local_notifier}" abandon "${job}" >/dev/null || true
+            "${local_management}" unregister "${job}" >/dev/null 2>&1 || true
+            management_registered=false
         fi
         return 1
     fi
@@ -263,8 +365,19 @@ logs() {
 }
 
 cancel() {
-    install_worker
-    remote_exec "${remote_worker}" cancel "$1"
+    [ -x "${local_management}" ] || {
+        echo "Chromiumer management monitor is not installed: ${local_management}" >&2
+        exit 1
+    }
+    "${local_management}" cancel "$1"
+}
+
+management_status() {
+    [ -x "${local_management}" ] || {
+        echo "Chromiumer management monitor is not installed: ${local_management}" >&2
+        exit 1
+    }
+    "${local_management}" status "$1"
 }
 
 fetch_artifact() {
@@ -353,13 +466,14 @@ case "${command}" in
     connection) [ "$#" -eq 0 ] || exit 2; connection ;;
     preflight) [ "$#" -eq 1 ] || exit 2; preflight "$@" ;;
     stage) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; stage "$@" ;;
-    resume-stage) [ "$#" -eq 2 ] || exit 2; resume_stage "$@" ;;
     start) [ "$#" -ge 7 ] || exit 2; start "$@" ;;
+    resume) [ "$#" -ge 8 ] || exit 2; resume "$@" ;;
     status) [ "$#" -eq 1 ] || exit 2; status "$@" ;;
     terminal) [ "$#" -eq 1 ] || exit 2; terminal "$@" ;;
     limits) [ "$#" -eq 1 ] || exit 2; limits "$@" ;;
     logs) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || exit 2; logs "$@" ;;
     cancel) [ "$#" -eq 1 ] || exit 2; cancel "$@" ;;
+    management-status) [ "$#" -eq 1 ] || exit 2; management_status "$@" ;;
     fetch) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; fetch_artifact "$@" ;;
     cleanup) [ "$#" -eq 1 ] || exit 2; cleanup "$@" ;;
     test) [ "$#" -eq 0 ] || exit 2; test_wrapper ;;

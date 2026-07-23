@@ -56,52 +56,6 @@ du_bytes=$(du -sx -B1 "${many_files}" | awk '{ print $1 }')
     exit 1
 }
 
-readiness_bin="${test_root}/readiness-bin"
-readiness_state="${test_root}/readiness-state"
-readiness_work="${test_root}/readiness-work"
-readiness_active="${test_root}/readiness-active"
-mkdir -p "${readiness_bin}" "${readiness_state}" "${readiness_work}"
-touch "${readiness_active}"
-cat >"${readiness_bin}/systemctl" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-[ "$#" -eq 4 ] && [ "$1" = --user ] && [ "$2" = --quiet ] && \
-    [ "$3" = is-active ] && [ "$4" = helium-job-readiness.service ] || {
-    printf 'unexpected systemctl arguments: %s\n' "$*" >&2
-    exit 2
-}
-[ -e "${WATCHDOG_READINESS_ACTIVE}" ]
-EOF
-chmod 700 "${readiness_bin}/systemctl"
-(
-    disk_usage_bytes() {
-        sleep 10
-        printf '0\n'
-    }
-    export PATH="${readiness_bin}:${PATH}"
-    export WATCHDOG_READINESS_ACTIVE="${readiness_active}"
-    watch_job "${readiness_state}" "${readiness_work}" \
-        helium-job-readiness.service "$((1024 * 1024))" 1 1 30 1
-) &
-readiness_pid=$!
-for _attempt in $(seq 1 20); do
-    [ ! -f "${readiness_state}/watchdog-ready.env" ] || break
-    sleep 0.1
-done
-[ -f "${readiness_state}/watchdog-ready.env" ] || {
-    echo "watchdog did not become ready while its initial disk scan ran" >&2
-    exit 1
-}
-grep -qx 'initial_disk_scan=running' \
-    "${readiness_state}/watchdog-ready.env"
-[ ! -e "${readiness_state}/health.env" ] || {
-    echo "blocked initial disk scan unexpectedly completed" >&2
-    exit 1
-}
-kill -0 "${readiness_pid}"
-find "${readiness_active}" -delete
-wait "${readiness_pid}"
-
 fake_bin="${test_root}/bin"
 state_dir="${test_root}/state"
 mkdir -p "${fake_bin}" "${state_dir}"

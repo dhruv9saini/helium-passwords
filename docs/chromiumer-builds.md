@@ -35,6 +35,105 @@ scripts/chromiumer-job.sh preflight 80
 `connection` must report `connection=ok`, `host=chromiumer`, and `user=d`.
 `preflight` is deliberately stricter and must succeed before staging.
 
+## Independent lm Management Paths
+
+Build control has two independently probed SSH routes to the same pinned host
+identity:
+
+```text
+Tailscale: chromiumer / chromiumer.tail0168aa.ts.net
+Direct LAN: 192.168.5.27
+SSH user: d
+Identity: /home/d/.ssh/helium_chromiumer_ed25519
+HostKeyAlias: chromiumer
+```
+
+The single reviewed configuration is
+`chromiumer-management.conf`. It contains addresses, the existing private-key
+path, the pinned known-host alias, and numeric policy—not a private key,
+password, token, or mail credential. Installation copies it mode 0600 to
+`/home/d/.config/helium/chromiumer-management.conf`; both admission and the
+persistent monitor read that exact file.
+
+Before either `start` or `resume` creates a remote build unit, registering its
+local management timer requires three consecutive complete probe cycles.
+Every cycle must prove:
+
+- a default IPv4 route exists and the Tailscale DNS name resolves;
+- `tailscale ping --until-direct` reports a direct peer route rather than
+  DERP, and non-interactive strict-host-key SSH succeeds through the
+  `chromiumer` alias; and
+- non-interactive SSH independently succeeds to `192.168.5.27` while forcing
+  the same dedicated identity and pinned `HostKeyAlias=chromiumer`.
+
+Any failed cycle immediately refuses start; admission does not loop until a
+degraded path happens to pass.
+Successful registration atomically creates one mode-private state file bound
+to the configuration SHA-256, then enables that job's timer before the wrapper
+asks chromiumer to start. This is an lm control-plane gate only: it does not
+replace, seed, bypass, or weaken chromiumer's cgroup limits, allocated-block
+watchdog, health readiness proof, or eight-hour unit deadline.
+
+Install the reviewed source on lm only when no older active job depends on a
+different installed worker:
+
+```sh
+cd /home/d/coding/helium/helium-passwords
+scripts/install-chromiumer-management.sh
+systemctl --user cat helium-chromiumer-management@.timer
+```
+
+Registration enables one persistent user-systemd timer instance for that job.
+The `d` user has systemd lingering enabled on lm, so these timers survive
+detached shells, tmux loss, logout, and lm restart. Every 60 seconds each
+timer runs its own low-priority oneshot. It runs as `d` with `CPUQuota=5%`,
+`MemoryMax=64M`, `TasksMax=16`, `Nice=15`, and idle I/O scheduling. The
+current management state and pending cancellation are stored content-free in
+one atomic state file; historical poll output is the systemd journal:
+
+```text
+/home/d/.local/state/helium-chromiumer-management/jobs/<job>.env
+```
+
+Use:
+
+```sh
+scripts/chromiumer-job.sh management-status "$job"
+systemctl --user status \
+  "helium-chromiumer-management@${job}.timer" --no-pager
+journalctl --user \
+  --unit="helium-chromiumer-management@${job}.service" \
+  --since today --no-pager
+```
+
+A Tailscale-only failure is an explicit transition alarm; the LAN route
+remains available for terminal inspection. A LAN-only failure is recorded the
+same way. A single or double simultaneous failure never cancels a build.
+After three consecutive 60-second cycles with neither management route, the
+monitor durably records `cancel_pending=yes`. Delivery is impossible while
+both routes are down, so it attempts no imaginary cancellation. On the first
+cycle where either route recovers, it first checks the remote terminal record
+and immediately sends the pending worker cancellation over that recovered
+route if the job is still nonterminal. Cancellation delivery and the path used
+are retained in the state file and journal, respectively.
+
+The one operator cancellation command uses the same durable mechanism:
+
+```sh
+scripts/chromiumer-job.sh cancel "$job"
+```
+
+If either route is available it delivers immediately. If both are unavailable,
+the request remains pending and is delivered on the first recovery. There is
+no second direct-SSH cancellation path in the wrapper.
+
+The offline management test uses fake route, DNS, Tailscale, SSH, terminal, and
+cancellation commands. It starts no unit, build, Mailbridge turn, or mail:
+
+```sh
+bash scripts/tests/chromiumer-management.test.sh
+```
+
 ## Enforced Production Policy
 
 The **local wrapper** is `scripts/chromiumer-job.sh` in the Helium checkout on
@@ -60,7 +159,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | Job tree | explicit per-job allocated-block budget; the current full-target measurement uses `80 GiB`, while `100 GiB` is an optional larger ceiling only after a new capacity decision |
 | Root free space | `2 GiB` unprivileged floor, independent of the job budget and checked on `/` |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
-| Watchdog | independent unit: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, `0` swap, idle I/O, nice `15`, `TasksMax=16` |
+| Watchdog | separate cgroup: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, no swap, idle I/O, nice `15`, `TasksMax=16`, and a finite 600-second production readiness cap |
 | Wall time | hard `8h` systemd deadline |
 | Concurrency | one active `helium-job-*` service on chromiumer |
 
@@ -154,6 +253,17 @@ policy reason was recorded and records terminal failure `125` when no more
 specific reason exists. CPU, memory, task, I/O, and wall-time controls remain
 additional enforced bounds rather than substitutes for the watcher.
 
+Production allows at most 600 seconds for that first complete scan; the
+two-minute harmless test profile allows 10 seconds. This is a readiness bound,
+not permission to start from a stale preflight result. A retained 44.17 GiB
+Android workspace took 31.678 seconds to scan under the watchdog's low CPU and
+idle-I/O priority, while earlier actively mutating checkout scans took roughly
+four to five minutes. The 600-second cap is about nineteen times the retained
+scan and twice the largest observed moving-tree scan, leaving the watchdog
+low-priority while bounding a wedged scan. The command never starts without
+the newly written health record and readiness marker. The eight-hour build
+unit deadline remains unchanged and includes readiness time.
+
 ## Immutable Source Transfer
 
 Use a unique lowercase job ID. Staging refuses a dirty repository, requires the
@@ -203,6 +313,81 @@ wrapper then waits for the watchdog's first healthy sample before launching the
 requested build command. `--summary` records what the job tests or produces;
 `--next` is the useful action included in a success notification. Both are
 mandatory and must describe the particular job, not a generic build class.
+
+### Continuing an exact wall-time timeout
+
+An eight-hour deadline bounds one systemd unit; it does not imply that every
+two-job Chromium compile will finish in one unit. A healthy compile that
+reaches that exact deadline may continue in a new, independently bounded
+segment without retransferring source or discarding Ninja state:
+
+```sh
+parent=hs-android-150-sync-test-01
+job=hs-android-150-sync-test-01b
+scripts/chromiumer-job.sh resume "$parent" "$job" \
+    --summary "Continuation of the pinned Android compile and package gate" \
+    --next "Fetch and verify the exact-source Android artifact." -- \
+    env \
+      HELIUM_SYNC_REPO=. \
+      GITHUB_WORKSPACE=.build \
+      CHROMIUM_ANDROID_PHASE=all \
+      bash scripts/chromium/build-android-ci.sh
+```
+
+The command after `--` is mandatory and must byte-for-byte reproduce the
+parent policy's shell-escaped argument vector. This keeps the executable build
+plan explicit while letting Ninja reuse its dependency log and completed
+objects. The continuation is not a longer unit: it gets a new unique
+`helium-job-<job>.service`, watchdog, state directory, journal, terminal
+record, Mailbridge event key, and exact eight-hour `RuntimeMaxSec`.
+
+Admission fails closed unless all of these statements are true:
+
+- the parent has one complete terminal record with `result=timeout` and
+  `exit_code=124`;
+- it was a production job with a complete source manifest, matching owner
+  manifest, internally consistent policy/stage disk budget, and the exact
+  requested command;
+- no cancellation, watchdog stop, cleanup, or prior continuation exists (a
+  returned timeout-evidence artifact is permitted and remains recorded);
+- the parent units are inactive, the preserved workspace is present and
+  contained under the work root, no other Helium unit is active, and the new
+  job ID has no state or workspace collision;
+- normal production admission passes using the entire preserved owner
+  workspace as current use.
+
+For an 80 GiB owner that already uses 44 GiB on chromiumer's current root
+filesystem, the continuation gate is therefore approximately:
+
+```text
+80 GiB budget - 44 GiB allocated owner workspace + 2 GiB root floor
+= 38 GiB required filesystem availability
+```
+
+The worker records `parent_job`, `workspace_owner`, and the source-manifest
+SHA-256 in the continuation state. Only one child can claim a terminal segment.
+The control client creates that durable claim first, registers the new job
+with the lm notifier, and only then starts the unit. If notification
+registration fails, the still-unstarted claim is removed. If start delivery is
+uncertain, retrying the same parent, child, and command is idempotent; a
+different value is rejected.
+
+Use the continuation job ID with the normal `status`, `terminal`, `limits`,
+`logs`, `cancel`, and `fetch` commands. `source-info` and artifact lookup
+resolve its recorded owner workspace, while journals and terminal state remain
+segment-specific. Only the latest segment can clean the shared workspace, and
+only after its artifact-return receipt exists:
+
+```sh
+scripts/chromiumer-job.sh fetch "$job" \
+    .build/android-artifacts/chrome_public_apk-arm64.tar.xz
+scripts/chromiumer-job.sh cleanup "$job"
+```
+
+Cleanup rejects the timed-out parent, any non-latest segment, a second cleanup,
+an active Helium unit, or a missing receipt. It deletes the workspace owner
+once and retains every segment's manifests, policy, health, terminal,
+notification provenance, and journal.
 
 Public Linux x86_64 does not use the platform's Docker wrapper on chromiumer.
 A daemon-launched container would sit outside the transient user service's
@@ -451,9 +636,10 @@ scripts/chromiumer-job.sh logs "$job" 240
   Preserve the exact diagnostic and source manifest before fixing the public
   patch. In particular, do not describe the Android focused target as proof
   that desktop-only settings, app-menu, omnibox, or toolbar files compile.
-- `oom-kill`, the 5 GiB cgroup maximum, the 80 GiB disk ceiling, or the eight
-  hour deadline is capacity evidence, not a source failure. Do not raise a
-  limit or retry at 100 GiB without a separate capacity decision.
+- `oom-kill`, the 5 GiB cgroup maximum, or the 80 GiB disk ceiling is capacity
+  evidence, not a source failure. An exact healthy exit-124 wall timeout may
+  use the bounded continuation workflow above. Do not raise a limit or retry
+  at 100 GiB without a separate capacity decision.
 - A successful Ninja followed by a missing runtime entry, Nix mismatch, or
   manifest/inventory failure is a packaging/provenance failure. The compiled
   output is not an admitted artifact.

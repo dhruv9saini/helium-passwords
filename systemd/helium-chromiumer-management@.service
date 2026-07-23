@@ -1,0 +1,16 @@
+[Unit]
+Description=Monitor Chromiumer management paths for Helium job %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=HOME=/home/d
+Environment=PATH=/home/d/.local/bin:/usr/local/bin:/usr/bin
+ExecStart=/home/d/.local/libexec/helium-chromiumer-management poll-one %i
+UMask=0077
+Nice=15
+IOSchedulingClass=idle
+CPUQuota=5%
+MemoryMax=64M
+TasksMax=16
