@@ -18,6 +18,7 @@ Commands:
   connection
   preflight <disk-budget-gib>
   stage <job-id> <disk-budget-gib> [repository]
+  resume-stage <terminal-job-id> <new-job-id>
   start <job-id> --summary <text> --next <success-action> -- <command> [arguments...]
   status <job-id>
   terminal <job-id>
@@ -161,6 +162,16 @@ stage() {
     find "${temp_dir}" -depth -delete
     temp_dir=
     trap - EXIT
+}
+
+resume_stage() {
+    local source_job=$1
+    local destination_job=$2
+    validate_job "${source_job}"
+    validate_job "${destination_job}"
+    install_worker
+    remote_exec "${remote_worker}" resume-stage \
+        "${source_job}" "${destination_job}"
 }
 
 start() {
@@ -342,6 +353,7 @@ case "${command}" in
     connection) [ "$#" -eq 0 ] || exit 2; connection ;;
     preflight) [ "$#" -eq 1 ] || exit 2; preflight "$@" ;;
     stage) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; stage "$@" ;;
+    resume-stage) [ "$#" -eq 2 ] || exit 2; resume_stage "$@" ;;
     start) [ "$#" -ge 7 ] || exit 2; start "$@" ;;
     status) [ "$#" -eq 1 ] || exit 2; status "$@" ;;
     terminal) [ "$#" -eq 1 ] || exit 2; terminal "$@" ;;

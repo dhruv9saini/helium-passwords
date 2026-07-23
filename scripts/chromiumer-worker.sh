@@ -277,6 +277,103 @@ stage_abort() {
     fi
 }
 
+resume_stage() {
+    local source_job=$1
+    local destination_job=$2
+    validate_job "${source_job}"
+    validate_job "${destination_job}"
+    [ "${source_job}" != "${destination_job}" ] || {
+        echo "resume source and destination jobs must differ" >&2
+        exit 2
+    }
+    require_worker_host
+
+    local source_state="${state_root}/${source_job}"
+    local source_root="${work_root}/${source_job}"
+    local destination_state="${state_root}/${destination_job}"
+    local destination_root="${work_root}/${destination_job}"
+    [ -d "${source_root}/source" ] && \
+        [ -f "${source_state}/stage.env" ] && \
+        [ -f "${source_state}/source.manifest" ] && \
+        [ -f "${source_state}/terminal.env" ] || {
+        echo "resume source is not a retained terminal job: ${source_job}" >&2
+        exit 1
+    }
+    grep -qx 'result=timeout' "${source_state}/terminal.env" || {
+        echo "resume source did not terminate at its wall-time limit: ${source_job}" >&2
+        exit 1
+    }
+    [ -f "${source_state}/artifact-returned.env" ] || {
+        echo "resume source evidence has not been returned: ${source_job}" >&2
+        exit 1
+    }
+    [ ! -e "${destination_state}" ] && [ ! -e "${destination_root}" ] || {
+        echo "resume destination already exists: ${destination_job}" >&2
+        exit 1
+    }
+
+    local disk_budget_gib disk_budget_bytes workspace_bytes
+    disk_budget_gib=$(awk -F= '$1 == "disk_budget_gib" { print $2 }' \
+        "${source_state}/stage.env")
+    disk_budget_bytes=$(awk -F= '$1 == "disk_budget_bytes" { print $2 }' \
+        "${source_state}/stage.env")
+    [[ "${disk_budget_gib}" =~ ^[1-9][0-9]*$ ]] && \
+        [ "${disk_budget_bytes}" = "$(gib "${disk_budget_gib}")" ] || {
+        echo "invalid staged disk budget for ${source_job}" >&2
+        exit 1
+    }
+    preflight production "${disk_budget_gib}" "${source_root}" "${source_root}"
+    workspace_bytes=$(disk_usage_bytes "${source_root}")
+
+    local moved=false
+    cleanup_resume_stage() {
+        local result=$?
+        if [ "${result}" -ne 0 ]; then
+            if [ "${moved}" = true ] && [ -d "${destination_root}" ] && \
+                [ ! -e "${source_root}" ]; then
+                mv "${destination_root}" "${source_root}"
+            fi
+            if [ -d "${destination_state}" ]; then
+                require_contained_path "$(realpath -e "${destination_state}")" \
+                    "$(realpath -e "${state_root}")"
+                find "${destination_state}" -depth -delete
+            fi
+        fi
+        return "${result}"
+    }
+    trap cleanup_resume_stage EXIT
+
+    mkdir "${destination_state}"
+    cp "${source_state}/stage.env" "${destination_state}/stage.env"
+    cp "${source_state}/source.manifest" "${destination_state}/source.manifest"
+    mv "${source_root}" "${destination_root}"
+    moved=true
+
+    local resumed_at manifest_sha
+    resumed_at=$(date --iso-8601=seconds)
+    manifest_sha=$(sha256sum "${destination_state}/source.manifest" | \
+        awk '{ print $1 }')
+    {
+        printf 'resumed_from_job=%s\n' "${source_job}"
+        printf 'resumed_from_result=timeout\n'
+        printf 'resumed_at=%s\n' "${resumed_at}"
+        printf 'source_manifest_sha256=%s\n' "${manifest_sha}"
+        printf 'workspace_bytes=%s\n' "${workspace_bytes}"
+        printf 'disk_budget_bytes=%s\n' "${disk_budget_bytes}"
+    } >"${destination_state}/resume.env"
+    {
+        printf 'resumed_to_job=%s\n' "${destination_job}"
+        printf 'resumed_at=%s\n' "${resumed_at}"
+        printf 'source_manifest_sha256=%s\n' "${manifest_sha}"
+    } >"${source_state}/resumed-to.env"
+
+    trap - EXIT
+    printf 'resume_source_job=%s\nresume_destination_job=%s\nsource_dir=%s\nworkspace_bytes=%s\ndisk_budget_bytes=%s\nsource_manifest_sha256=%s\n' \
+        "${source_job}" "${destination_job}" \
+        "${destination_root}/source" "${workspace_bytes}" \
+        "${disk_budget_bytes}" "${manifest_sha}"
+}
+
 test_prepare() {
     local job=$1
     validate_job "${job}"
@@ -802,7 +899,9 @@ status_job() {
         "${job}" "$(systemctl --user is-active "${unit}" 2>/dev/null || true)" \
         "$(systemctl --user is-active "${watch_unit}" 2>/dev/null || true)" \
         "${state_dir}" "${unit}"
-    for file in policy.env watchdog-ready.env health.env disk-scan-retry.env result.env terminal.env watchdog-stop.env cancel.env; do
+    for file in policy.env resume.env resumed-to.env watchdog-ready.env \
+        health.env disk-scan-retry.env result.env terminal.env \
+        watchdog-stop.env cancel.env; do
         if [ -f "${state_dir}/${file}" ]; then
             printf -- '--- %s ---\n' "${file}"
             cat "${state_dir}/${file}"
@@ -959,6 +1058,7 @@ case "${command}" in
     stage-init) stage_init "$@" ;;
     stage-finish) stage_finish "$@" ;;
     stage-abort) stage_abort "$@" ;;
+    resume-stage) resume_stage "$@" ;;
     test-prepare) test_prepare "$@" ;;
     start) start_job "$@" ;;
     run) run_job "$@" ;;
