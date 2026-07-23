@@ -6,11 +6,19 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 
-const SCHEMA_VERSION = 1;
-const PROFILE_MARKER = "helium-password-runtime-v1\n";
+const SCHEMA_VERSION = 2;
+const PROFILE_MARKER = "helium-password-runtime-v2\n";
 const SCREENSHOT_MAX_BYTES = 32 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ANDROID_TEST_PACKAGE = /^(?:[a-z][a-z0-9_]*\.){2,}[a-z][a-z0-9_]*\.test$/;
+const RUN_NONCE = /^[0-9a-f]{64}$/;
+const PNG_CRC_TABLE = Object.freeze(Array.from({length: 256}, (_, value) => {
+  let crc = value;
+  for (let bit = 0; bit < 8; bit += 1) {
+    crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return crc >>> 0;
+}));
 
 export const NATIVE_PASSWORD_STEPS = Object.freeze([
   "settings_entry",
@@ -152,9 +160,10 @@ async function loadRun(runRoot) {
   exactKeys(value, [
     "schema_version", "run_root", "platform", "package", "artifact_path",
     "artifact_sha256", "artifact_receipt", "artifact_receipt_sha256",
-    "profile_path", "created_at", "expected_steps", "captures",
+    "profile_path", "created_at", "run_nonce", "expected_steps", "captures",
   ], "acceptance run");
   if (value.schema_version !== SCHEMA_VERSION || value.run_root !== root ||
+      !RUN_NONCE.test(value.run_nonce) ||
       !Array.isArray(value.expected_steps) || !Array.isArray(value.captures)) {
     throw new Error("acceptance run metadata is invalid");
   }
@@ -206,6 +215,7 @@ export async function initializeRun({
     artifact_receipt_sha256: linuxAdmission ? sha256(linuxAdmission.raw) : null,
     profile_path: profile,
     created_at: new Date().toISOString(),
+    run_nonce: crypto.randomBytes(32).toString("hex"),
     expected_steps: NATIVE_PASSWORD_STEPS,
     captures: [],
   };
@@ -218,14 +228,54 @@ async function validateScreenshot(filePath) {
   if (stat.size <= PNG_SIGNATURE.length || stat.size > SCREENSHOT_MAX_BYTES) {
     throw new Error("native UI screenshot size is invalid");
   }
-  const handle = await fsp.open(resolved, "r");
-  const signature = Buffer.alloc(PNG_SIGNATURE.length);
-  try {
-    await handle.read(signature, 0, signature.length, 0);
-  } finally {
-    await handle.close();
+  const png = await fsp.readFile(resolved);
+  if (!png.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) {
+    throw new Error("native UI screenshot is not PNG");
   }
-  if (!signature.equals(PNG_SIGNATURE)) throw new Error("native UI screenshot is not PNG");
+  let offset = PNG_SIGNATURE.length;
+  let chunkCount = 0;
+  let sawImageData = false;
+  let sawEnd = false;
+  while (offset < png.length) {
+    if (png.length - offset < 12) throw new Error("native UI PNG chunk is truncated");
+    const length = png.readUInt32BE(offset);
+    const typeOffset = offset + 4;
+    const dataOffset = typeOffset + 4;
+    const crcOffset = dataOffset + length;
+    const nextOffset = crcOffset + 4;
+    if (nextOffset > png.length) throw new Error("native UI PNG chunk exceeds the file");
+    const type = png.toString("ascii", typeOffset, dataOffset);
+    if (!/^[A-Za-z]{4}$/.test(type)) throw new Error("native UI PNG chunk type is invalid");
+    let crc = 0xffffffff;
+    for (let index = typeOffset; index < crcOffset; index += 1) {
+      crc = PNG_CRC_TABLE[(crc ^ png[index]) & 0xff] ^ (crc >>> 8);
+    }
+    if (((crc ^ 0xffffffff) >>> 0) !== png.readUInt32BE(crcOffset)) {
+      throw new Error(`native UI PNG ${type} checksum is invalid`);
+    }
+    if (chunkCount === 0) {
+      if (type !== "IHDR" || length !== 13) {
+        throw new Error("native UI PNG does not start with IHDR");
+      }
+      const width = png.readUInt32BE(dataOffset);
+      const height = png.readUInt32BE(dataOffset + 4);
+      if (width < 1 || height < 1 || width > 32768 || height > 32768) {
+        throw new Error("native UI PNG dimensions are invalid");
+      }
+    } else if (type === "IHDR") {
+      throw new Error("native UI PNG contains a duplicate IHDR");
+    }
+    if (type === "IDAT") sawImageData = true;
+    if (type === "IEND") {
+      if (length !== 0 || nextOffset !== png.length) {
+        throw new Error("native UI PNG has an invalid IEND");
+      }
+      sawEnd = true;
+    }
+    chunkCount += 1;
+    offset = nextOffset;
+  }
+  if (!sawImageData || !sawEnd) throw new Error("native UI PNG is incomplete");
   return resolved;
 }
 
@@ -253,13 +303,17 @@ function equalJSON(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-function validateFixtureEvidence(fixtureEvidence) {
+function validateFixtureEvidence(fixtureEvidence, runNonce) {
   exactKeys(fixtureEvidence, [
     "schema_version", "completed_at", "fixture_origin", "observations",
-    "evidence_contains_submitted_values",
+    "evidence_contains_submitted_values", "run_nonce",
   ], "fixture evidence");
-  if (fixtureEvidence.schema_version !== 1 || fixtureEvidence.evidence_contains_submitted_values !== false) {
+  if (fixtureEvidence.schema_version !== SCHEMA_VERSION ||
+      fixtureEvidence.evidence_contains_submitted_values !== false) {
     throw new Error("fixture evidence schema or secret boundary is invalid");
+  }
+  if (!RUN_NONCE.test(fixtureEvidence.run_nonce) || fixtureEvidence.run_nonce !== runNonce) {
+    throw new Error("fixture evidence belongs to a different acceptance run");
   }
   const fixtureURL = new URL(fixtureEvidence.fixture_origin);
   if (fixtureURL.protocol !== "http:" || fixtureURL.hostname !== "127.0.0.1") {
@@ -281,14 +335,15 @@ export function validateAcceptance(run, fixtureEvidence) {
       !equalJSON(run.captures.map(item => item.step), NATIVE_PASSWORD_STEPS)) {
     throw new Error("acceptance steps are incomplete or out of order");
   }
-  validateFixtureEvidence(fixtureEvidence);
+  validateFixtureEvidence(fixtureEvidence, run.run_nonce);
   return {
-    schema_version: 1,
+    schema_version: SCHEMA_VERSION,
     result: "passed",
     artifact_sha256: run.artifact_sha256,
     artifact_receipt_sha256: run.artifact_receipt_sha256,
     platform: run.platform,
     package: run.package,
+    run_nonce: run.run_nonce,
     fixture_origin: fixtureEvidence.fixture_origin,
     screenshots: run.captures.map(capture => ({
       step: capture.step,
@@ -392,7 +447,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         packageName: args.package || "",
         artifactReceipt: args["artifact-receipt"] || "",
       });
-      process.stdout.write(`${JSON.stringify({event: "initialized", run: run.run_root, profile: run.profile_path})}\n`);
+      process.stdout.write(`${JSON.stringify({
+        event: "initialized",
+        run: run.run_root,
+        profile: run.profile_path,
+        run_nonce: run.run_nonce,
+      })}\n`);
     } else if (command === "capture") {
       requireArgs(args, ["run", "step", "screenshot"]);
       const capture = await captureStep({runRoot: args.run, step: args.step, screenshot: args.screenshot});

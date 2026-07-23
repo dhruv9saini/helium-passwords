@@ -57,7 +57,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | Memory | `4G` high, `5G` hard max, `0` swap inside the unit |
 | I/O | weight `10`, Linux idle I/O scheduling class |
 | Processes/threads | `TasksMax=256` |
-| Job tree | explicit per-job allocated-block budget; `80 GiB` is the bounded-proof recommendation and `100 GiB` is the full-build recommendation |
+| Job tree | explicit per-job allocated-block budget; the current full-target measurement uses `80 GiB`, while `100 GiB` is an optional larger ceiling only after a new capacity decision |
 | Root free space | `2 GiB` unprivileged floor, independent of the job budget and checked on `/` |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
 | Watchdog | independent unit: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, `0` swap, idle I/O, nice `15`, `TasksMax=16` |
@@ -67,9 +67,13 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.
 The budget covers its source, output, temporary files, and redirected caches.
-Use `80` for the first bounded source/compile proof and `100` for a full build;
-these are command choices, not hidden defaults. The harmless wrapper test uses
-`1 GiB`.
+It does not select a Ninja target. The queued public 80 GiB run still invokes
+the platform's complete `chrome` and `chromedriver` targets; if it succeeds,
+the result is the full Linux runtime artifact. It is a capacity-bounded
+full-target attempt, not a small-target compile. `100` permits the identical
+command to allocate 20 GiB more and is appropriate only after an 80 GiB disk
+stop establishes the need and live capacity is reviewed. The harmless wrapper
+test uses `1 GiB`.
 
 The old worker coupled a fixed 100 GiB job ceiling to a fixed 20 GiB free-space
 reserve and consequently required 120 GiB for every production job. The
@@ -167,8 +171,8 @@ scripts/dev.sh check
 git status --short --branch
 
 job=hp-linux-150-passwords-01
-scripts/chromiumer-job.sh preflight 100
-scripts/chromiumer-job.sh stage "$job" 100
+scripts/chromiumer-job.sh preflight 80
+scripts/chromiumer-job.sh stage "$job" 80
 ```
 
 For the private repository, invoke the same inherited wrapper from Sync:
@@ -206,7 +210,18 @@ process tree and job-tree disk accounting, and chromiumer has no Docker daemon.
 The public driver instead enters the pinned Nix FHS environment and calls the
 prepared platform's native build script directly. It independently requires
 the two-job environment, job cgroup, job-owned `TMPDIR`, exact Linux/core/
-Chromium commits, and a clean staged source before compilation:
+Chromium commits, and a clean staged source before compilation.
+
+The pinned Linux platform calls raw `ninja`. The
+[Ninja manual](https://ninja-build.org/manual.html#_running_ninja) specifies an
+explicit `-j` count; Ninja does not read the wrapper's `NINJA_JOBS` variable.
+The driver therefore puts the checked-in
+`scripts/chromiumer-bin/ninja` shim first on `PATH`, binds its real Ninja path
+before doing so, and rejects any caller-supplied `-j` override. Every Ninja
+invocation in the platform build consequently receives explicit `-j 2`; the
+CPU quota and `TasksMax` remain independent outer bounds.
+
+Start the job with:
 
 ```sh
 scripts/chromiumer-job.sh start "$job" \
@@ -412,6 +427,31 @@ scripts/verify-linux-runtime.sh \
   /srv/nas/helium-builds/"$job"/verified
 ```
 
+For the first public run, classify a failure before changing source or limits:
+
+```sh
+scripts/chromiumer-job.sh terminal "$job"
+scripts/chromiumer-job.sh status "$job"
+scripts/chromiumer-job.sh limits "$job"
+scripts/chromiumer-job.sh logs "$job" 240
+```
+
+- A patch or GN error before Ninja is a source-composition failure. Fix it in
+  the public repository and use a new job ID; never edit the staged checkout.
+- A C++, Rust, TypeScript, or link error is a real full-target compile failure.
+  Preserve the exact diagnostic and source manifest before fixing the public
+  patch. In particular, do not describe the Android focused target as proof
+  that desktop-only settings, app-menu, omnibox, or toolbar files compile.
+- `oom-kill`, the 5 GiB cgroup maximum, the 80 GiB disk ceiling, or the eight
+  hour deadline is capacity evidence, not a source failure. Do not raise a
+  limit or retry at 100 GiB without a separate capacity decision.
+- A successful Ninja followed by a missing runtime entry, Nix mismatch, or
+  manifest/inventory failure is a packaging/provenance failure. The compiled
+  output is not an admitted artifact.
+- Only a fetched archive that passes `verify-linux-runtime.sh` can proceed to
+  the disposable native-password protocol. Preserve a failed workspace until
+  its useful diagnostics are returned; never manually delete it.
+
 The destination must not exist. Verification rejects an unexpected source
 train, field/file inventory, symlink, patch, GN args, Nix environment, or
 runtime hash and writes a mode-0600 `artifact-receipt.env` that admits exactly
@@ -438,11 +478,16 @@ SSD whose 116 GiB ext4 root filesystem exposed 113,542,557,696 bytes
 there is no separate build mount. The filesystem has 6,347,919,360 additional
 bytes reserved for root.
 
-An empty 80 GiB bounded proof requires 82 GiB on the current shared root and
-passes disk admission with 23.74 GiB of headroom. An empty 100 GiB job requires
-102 GiB and passes current disk admission with only 3.74 GiB of headroom. The
-existing SSD therefore supports the bounded proof without repartitioning or an
-OS replacement. A full build remains tight after provisioning the toolchain.
+At the initial audit, an empty 80 GiB job required 82 GiB on the current shared
+root and passed disk admission with 23.74 GiB of headroom. An empty 100 GiB job
+required 102 GiB and then had only 3.74 GiB of headroom. The later pinned Nix
+realization changed the relevant measured availability to 109,691,019,264
+bytes (102.1577 GiB): 20.1577 GiB above the 80 GiB job's 82 GiB gate, but only
+0.1577 GiB above the 100 GiB job's 102 GiB gate. Both gates retain the same
+independent 2 GiB root floor, but the larger one is operationally brittle on
+this disk. The current full-target attempt therefore uses the 80 GiB ceiling;
+crossing that ceiling is evidence for a new capacity decision, not permission
+to relabel the run or silently retry at 100 GiB.
 
 Android source preparation does not use depot_tools' local Git mirror.
 `gclient-sync-direct.sh` removes `GIT_CACHE_PATH` and indexed or legacy
@@ -522,7 +567,8 @@ The remaining build gates are:
    clean its final workspace, and explicitly hand off chromiumer admission.
 2. Re-run `connection` and `preflight 80`; unrelated disk growth can still
    correctly refuse the public job.
-3. Measure the public compile under the existing 5 GiB hard memory cap. Host
+3. Run the complete `chrome` plus `chromedriver` target under that 80 GiB
+   storage ceiling and the existing 5 GiB hard memory cap. Host
    swap cannot help the build because its cgroup has `MemorySwapMax=0`, and
    extra RAM does not raise `MemoryMax=5G`. If the proof hits that cap, record
    the failure before making a separate hardware and cgroup-policy decision.

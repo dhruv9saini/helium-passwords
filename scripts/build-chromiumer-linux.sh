@@ -36,6 +36,16 @@ for tool in git node ninja python3; do
         exit 1
     }
 done
+real_ninja=$(realpath -e "$(command -v ninja)")
+ninja_shim_dir="${root_dir}/scripts/chromiumer-bin"
+[ -x "${ninja_shim_dir}/ninja" ] || {
+    echo "bounded Chromiumer Ninja shim is missing" >&2
+    exit 1
+}
+[ "${real_ninja}" != "$(realpath -e "${ninja_shim_dir}/ninja")" ] || {
+    echo "real Ninja resolved to the Chromiumer shim" >&2
+    exit 1
+}
 [ ! -e "${artifact}" ] || {
     echo "refusing to replace existing artifact: ${artifact}" >&2
     exit 1
@@ -48,7 +58,10 @@ done
 "${root_dir}/scripts/prepare-platform.sh" linux "${checkout}" >/dev/null
 (
     cd "${checkout}"
-    env -u CI ARCH=x86_64 HELIUM_BUILD_JOBS=2 bash scripts/build.sh -c
+    env -u CI ARCH=x86_64 HELIUM_BUILD_JOBS=2 \
+        HELIUM_REAL_NINJA="${real_ninja}" \
+        PATH="${ninja_shim_dir}:${PATH}" \
+        bash scripts/build.sh -c
 )
 "${root_dir}/scripts/package-linux-runtime.sh" x86_64 "${checkout}" "${artifact}"
 

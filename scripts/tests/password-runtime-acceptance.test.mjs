@@ -14,10 +14,11 @@ import {
   verifyRun,
 } from "../password-runtime/acceptance.mjs";
 
-const PNG = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  Buffer.from("synthetic screenshot bytes"),
-]);
+const PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+  "base64",
+);
+const FIXTURE_NONCE = "a".repeat(64);
 
 async function writeLinuxArtifactReceipt(root, artifact) {
   const artifactHash = crypto.createHash("sha256")
@@ -77,12 +78,21 @@ async function completeFixture(fixture, evidence) {
 test("native fixture attests restart, update, and deletion without emitting submitted values", async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-native-fixture-"));
   const evidence = path.join(root, "fixture-evidence.json");
-  const fixture = await startNativePasswordFixture({evidencePath: evidence});
+  await assert.rejects(startNativePasswordFixture({evidencePath: evidence}), /runNonce/);
+  const fixture = await startNativePasswordFixture({
+    evidencePath: evidence,
+    runNonce: FIXTURE_NONCE,
+  });
   const username = "synthetic-user-never-emit";
   const initial = "synthetic-initial-never-emit";
   const replacement = "synthetic-generated-replacement-never-emit";
   try {
     assert.equal((await fetch(`${fixture.origin}/login`)).status, 200);
+    assert.equal((await postForm(`${fixture.origin}/session`, {
+      username,
+      password: initial,
+      unexpected: "synthetic-extra-field",
+    })).status, 400);
     assert.equal((await postForm(`${fixture.origin}/session`, {username, password: initial})).status, 303);
     assert.equal((await postForm(`${fixture.origin}/session`, {username, password: "wrong-synthetic-password"})).status, 409);
     await assert.rejects(fsp.stat(evidence), error => error.code === "ENOENT");
@@ -115,6 +125,8 @@ test("native fixture attests restart, update, and deletion without emitting subm
     const raw = await fsp.readFile(evidence, "utf8");
     for (const secret of [username, initial, replacement]) assert.doesNotMatch(raw, new RegExp(secret));
     const parsed = JSON.parse(raw);
+    assert.equal(parsed.schema_version, 2);
+    assert.equal(parsed.run_nonce, FIXTURE_NONCE);
     assert.equal(parsed.evidence_contains_submitted_values, false);
     assert.ok(Object.values(parsed.observations).every(value => value === true));
   } finally {
@@ -127,12 +139,17 @@ test("artifact-bound receipt requires the complete ordered native UI lifecycle",
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-native-run-"));
   const artifact = path.join(root, "helium");
   const screenshot = path.join(root, "screen.png");
+  const invalidScreenshot = path.join(root, "invalid-screen.png");
   const runRoot = path.join(root, "acceptance");
   const evidence = path.join(root, "fixture-evidence.json");
   let fixture;
   try {
     await fsp.writeFile(artifact, "synthetic browser artifact", {mode: 0o700});
     await fsp.writeFile(screenshot, PNG, {mode: 0o600});
+    await fsp.writeFile(invalidScreenshot, Buffer.concat([
+      PNG.subarray(0, 8),
+      Buffer.from("not a complete PNG"),
+    ]), {mode: 0o600});
     await assert.rejects(initializeRun({
       artifact, output: path.join(root, "missing-receipt"), platform: "linux",
     }), /requires a verified artifact receipt/);
@@ -141,7 +158,13 @@ test("artifact-bound receipt requires the complete ordered native UI lifecycle",
       artifact, artifactReceipt, output: runRoot, platform: "linux",
     });
     assert.equal(run.profile_path, path.join(runRoot, "profile"));
+    assert.match(run.run_nonce, /^[0-9a-f]{64}$/);
     assert.match(run.artifact_receipt_sha256, /^[0-9a-f]{64}$/);
+    await assert.rejects(captureStep({
+      runRoot,
+      step: "settings_entry",
+      screenshot: invalidScreenshot,
+    }), /PNG/);
     await assert.rejects(captureStep({
       runRoot,
       step: "save_prompt",
@@ -150,19 +173,32 @@ test("artifact-bound receipt requires the complete ordered native UI lifecycle",
     for (const step of NATIVE_PASSWORD_STEPS) {
       await captureStep({runRoot, step, screenshot});
     }
-    fixture = await startNativePasswordFixture({evidencePath: evidence});
+    fixture = await startNativePasswordFixture({
+      evidencePath: evidence,
+      runNonce: run.run_nonce,
+    });
     const secrets = await completeFixture(fixture, evidence);
     for (const secret of [secrets.username, secrets.initial, secrets.replacement]) {
       assert.doesNotMatch(secrets.raw, new RegExp(secret));
     }
+    const wrongEvidence = path.join(root, "wrong-fixture-evidence.json");
+    const wrongFixture = JSON.parse(secrets.raw);
+    wrongFixture.run_nonce = "b".repeat(64);
+    await fsp.writeFile(wrongEvidence, `${JSON.stringify(wrongFixture)}\n`, {mode: 0o600});
+    await assert.rejects(auditRun({
+      runRoot,
+      fixtureEvidence: wrongEvidence,
+    }), /different acceptance run/);
     const receipt = await verifyRun({runRoot, fixtureEvidence: evidence});
     assert.equal(receipt.result, "passed");
+    assert.equal(receipt.schema_version, 2);
+    assert.equal(receipt.run_nonce, run.run_nonce);
     assert.equal(receipt.artifact_receipt_sha256, run.artifact_receipt_sha256);
     assert.equal(receipt.screenshots.length, NATIVE_PASSWORD_STEPS.length);
     assert.equal((await fsp.stat(path.join(runRoot, "receipt.json"))).mode & 0o777, 0o600);
     const firstScreenshot = path.join(runRoot, "screenshots", `01-${NATIVE_PASSWORD_STEPS[0]}.png`);
     await fsp.appendFile(firstScreenshot, "tampered");
-    await assert.rejects(auditRun({runRoot, fixtureEvidence: evidence}), /screenshot changed/);
+    await assert.rejects(auditRun({runRoot, fixtureEvidence: evidence}), /PNG|screenshot changed/);
   } finally {
     if (fixture) await fixture.close();
     await fsp.rm(root, {recursive: true, force: true});
