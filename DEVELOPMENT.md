@@ -83,18 +83,20 @@ checkout. It still does not prove that a patch applies to Chromium or that
 browser behavior works.
 
 Run the focused source-backed Passwords gate separately because it downloads
-15 official Chromium files and `scripts/dev.sh check` intentionally remains
+17 official Chromium files and `scripts/dev.sh check` intentionally remains
 offline/lightweight:
 
 ```sh
 scripts/check-password-patch-stack.sh
 ```
 
-The checker replays the Chromium 150 Helium patch order, skips only the
-password-disable patch exactly as platform preparation does, applies both
-restoration patches, and asserts the restored preference, native UI actions,
-menu, settings redirect, and importer paths. It is not a compile or runtime
-test.
+The checker fetches those files by the immutable Chromium commit in
+`chromium/android-build.lock`, verifies that the version and Helium-core locks
+match the committed submodule, replays the Chromium 150 Helium patch order,
+skips only the password-disable patch exactly as platform preparation does,
+applies both restoration patches, and asserts the restored preference, native
+save/update, generation, profile-store, UI action, menu, settings redirect,
+and importer paths. It is not a compile or runtime test.
 
 ## Upstream Update Train
 
