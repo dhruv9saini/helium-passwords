@@ -148,11 +148,12 @@ restores Chromium's native password manager.
 - A neutral tab restore may become a browser-readable profile only through
   `helium-tabs prepare-browser-profile`. The destination must be a new
   `drill-*` child of a mode-0700 root carrying the exact private disposable
-  marker. Preparation writes startup URLs to a new profile atomically, retains
-  the validated neutral receipt, and never launches Helium or targets an
-  existing profile. `validate-browser-profile` is a pre-launch gate; full
-  window/history/group reconstruction and second-restart runtime proof remain
-  acceptance work.
+  marker. Preparation retains the validated schema-2 neutral topology, writes
+  empty Preferences plus versioned prepared/profile markers atomically, and
+  never configures startup URLs, launches Helium, or targets an existing
+  profile. `validate-browser-profile` is a pre-launch gate; an explicit
+  disposable-only native importer, full topology readback, and second-restart
+  runtime proof remain acceptance work.
 - `scripts/android-local/start-arch-xmonad-root.sh` also keeps Android
   Tailscale usable for chroot `ssh`/`mosh`: if `com.tailscale.ipn` is installed
   and `ARCH_X11_TAILSCALE_CONNECT` is not `0`, startup whitelists the app from

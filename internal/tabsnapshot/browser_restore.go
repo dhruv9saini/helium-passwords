@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,28 +16,23 @@ import (
 )
 
 const (
-	disposableRootMarkerFile    = ".helium-tabs-disposable-root-v1"
-	disposableRootMarkerContent = "helium-tabs-disposable-root-v1\n"
-	browserProfileMarkerFile    = ".helium-tabs-disposable-browser-profile-v1"
-	browserProfileMarkerContent = "helium-tabs-disposable-browser-profile-v1\n"
-	browserRestoreManifestFile  = "browser-restore-manifest.json"
-	restoreSourceDirectory      = "restore-source"
-	preferencesFile             = "Preferences"
-	browserRestorePreparedState = "prepared-not-opened"
+	disposableRootMarkerFile     = ".helium-tabs-disposable-root-v1"
+	disposableRootMarkerContent  = "helium-tabs-disposable-root-v1\n"
+	browserProfileMarkerFile     = ".helium-tabs-disposable-browser-profile-v2"
+	browserProfileMarkerContent  = "helium-tabs-disposable-browser-profile-v2\n"
+	restorePreparedMarkerFile    = ".helium-tabs-restore-prepared-v2"
+	restorePreparedMarkerContent = "helium-tabs-restore-prepared-v2\n"
+	browserRestoreManifestFile   = "browser-restore-manifest.json"
+	restoreSourceDirectory       = "restore-source"
+	preferencesFile              = "Preferences"
+	browserRestorePreparedState  = "prepared-not-opened"
 )
-
-type browserPreferences struct {
-	Session browserStartupPreferences `json:"session"`
-}
-
-type browserStartupPreferences struct {
-	RestoreOnStartup int      `json:"restore_on_startup"`
-	StartupURLs      []string `json:"startup_urls"`
-}
 
 // PrepareDisposableBrowserProfile converts a validated neutral restore into a
 // new, unopened Chromium user-data directory under an explicitly marked
-// disposable root. It never launches a browser or accepts an existing target.
+// disposable root. It preserves the complete neutral topology for a future
+// explicit native restore switch; it never launches a browser or accepts an
+// existing target.
 func PrepareDisposableBrowserProfile(restoreDirectory, disposableRoot, profile string) (BrowserRestoreManifest, string, error) {
 	return prepareDisposableBrowserProfile(restoreDirectory, disposableRoot, profile, nil)
 }
@@ -89,6 +85,10 @@ func prepareDisposableBrowserProfile(
 		[]byte(browserProfileMarkerContent), 0600); err != nil {
 		return BrowserRestoreManifest{}, "", err
 	}
+	if err := writeSynced(filepath.Join(temporary, restorePreparedMarkerFile),
+		[]byte(restorePreparedMarkerContent), 0600); err != nil {
+		return BrowserRestoreManifest{}, "", err
+	}
 	for _, name := range []string{"restore-manifest.json", sessionFile} {
 		raw, err := os.ReadFile(filepath.Join(restoreDirectory, name))
 		if err != nil {
@@ -98,7 +98,7 @@ func prepareDisposableBrowserProfile(
 			return BrowserRestoreManifest{}, "", err
 		}
 	}
-	sourceManifest, err := ValidateRestore(restoreSource)
+	sourceManifest, err := normalizeRestoredSessionFiles(restoreSource)
 	if err != nil {
 		return BrowserRestoreManifest{}, "", fmt.Errorf("validate staged neutral restore: %w", err)
 	}
@@ -106,18 +106,15 @@ func prepareDisposableBrowserProfile(
 	if err != nil {
 		return BrowserRestoreManifest{}, "", err
 	}
-	startupURLs := currentURLs(session)
-	preferencesRaw, err := json.MarshalIndent(browserPreferences{
-		Session: browserStartupPreferences{RestoreOnStartup: 4, StartupURLs: startupURLs},
-	}, "", "  ")
-	if err != nil {
-		return BrowserRestoreManifest{}, "", fmt.Errorf("encode disposable browser preferences: %w", err)
+	if err := ValidateSessionForBrowserRestore(session); err != nil {
+		return BrowserRestoreManifest{}, "", fmt.Errorf("prepare browser topology: %w", err)
 	}
-	preferencesRaw = append(preferencesRaw, '\n')
+	preferencesRaw := []byte("{}\n")
 	if err := writeSynced(filepath.Join(defaultDirectory, preferencesFile), preferencesRaw, 0600); err != nil {
 		return BrowserRestoreManifest{}, "", err
 	}
 	preferencesHash := sha256.Sum256(preferencesRaw)
+	windowCount, tabCount, groupCount := topologyCounts(session)
 	manifest := BrowserRestoreManifest{
 		SchemaVersion:    BrowserRestoreSchemaVersion,
 		SourceGeneration: sourceManifest.SourceGeneration,
@@ -128,9 +125,12 @@ func prepareDisposableBrowserProfile(
 			SHA256: hex.EncodeToString(preferencesHash[:]),
 			Size:   int64(len(preferencesRaw)),
 		},
-		StartupURLCount: len(startupURLs),
-		PreparedAt:      time.Now().UTC(),
-		State:           browserRestorePreparedState,
+		WindowCount: windowCount,
+		TabCount:    tabCount,
+		GroupCount:  groupCount,
+		Invocation:  BrowserRestoreInvocation,
+		PreparedAt:  time.Now().UTC(),
+		State:       browserRestorePreparedState,
 	}
 	manifestRaw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -178,7 +178,14 @@ func ValidateDisposableBrowserProfile(directory string) (BrowserRestoreManifest,
 	if err != nil {
 		return BrowserRestoreManifest{}, fmt.Errorf("list disposable browser profile: %w", err)
 	}
-	expected := []string{browserProfileMarkerFile, "Default", browserRestoreManifestFile, restoreSourceDirectory}
+	expected := []string{
+		browserProfileMarkerFile,
+		restorePreparedMarkerFile,
+		"Default",
+		browserRestoreManifestFile,
+		restoreSourceDirectory,
+	}
+	sort.Strings(expected)
 	if len(entries) != len(expected) {
 		return BrowserRestoreManifest{}, errors.New("invalid disposable browser profile inventory")
 	}
@@ -188,6 +195,9 @@ func ValidateDisposableBrowserProfile(directory string) (BrowserRestoreManifest,
 		}
 	}
 	if err := requireMarker(filepath.Join(directory, browserProfileMarkerFile), browserProfileMarkerContent); err != nil {
+		return BrowserRestoreManifest{}, err
+	}
+	if err := requireMarker(filepath.Join(directory, restorePreparedMarkerFile), restorePreparedMarkerContent); err != nil {
 		return BrowserRestoreManifest{}, err
 	}
 	defaultDirectory := filepath.Join(directory, "Default")
@@ -206,12 +216,12 @@ func ValidateDisposableBrowserProfile(directory string) (BrowserRestoreManifest,
 	if err != nil {
 		return BrowserRestoreManifest{}, fmt.Errorf("read disposable browser preferences: %w", err)
 	}
-	var preferences browserPreferences
+	var preferences map[string]any
 	if err := decodeStrictJSON(preferencesRaw, &preferences); err != nil {
 		return BrowserRestoreManifest{}, fmt.Errorf("decode disposable browser preferences: %w", err)
 	}
-	if preferences.Session.RestoreOnStartup != 4 || len(preferences.Session.StartupURLs) == 0 {
-		return BrowserRestoreManifest{}, errors.New("invalid disposable browser startup preferences")
+	if len(preferences) != 0 {
+		return BrowserRestoreManifest{}, errors.New("disposable browser preferences must not auto-open tabs")
 	}
 
 	restoreSource := filepath.Join(directory, restoreSourceDirectory)
@@ -223,15 +233,10 @@ func ValidateDisposableBrowserProfile(directory string) (BrowserRestoreManifest,
 	if err != nil {
 		return BrowserRestoreManifest{}, err
 	}
-	expectedURLs := currentURLs(session)
-	if len(expectedURLs) != len(preferences.Session.StartupURLs) {
-		return BrowserRestoreManifest{}, errors.New("browser startup URL count does not match neutral restore")
+	if err := ValidateSessionForBrowserRestore(session); err != nil {
+		return BrowserRestoreManifest{}, fmt.Errorf("validate browser topology: %w", err)
 	}
-	for index := range expectedURLs {
-		if expectedURLs[index] != preferences.Session.StartupURLs[index] {
-			return BrowserRestoreManifest{}, errors.New("browser startup URLs do not match neutral restore")
-		}
-	}
+	windowCount, tabCount, groupCount := topologyCounts(session)
 
 	manifestPath := filepath.Join(directory, browserRestoreManifestFile)
 	if err := requirePrivateRegularFile(manifestPath); err != nil {
@@ -253,7 +258,10 @@ func ValidateDisposableBrowserProfile(directory string) (BrowserRestoreManifest,
 		manifest.SourceSession != sourceManifest.Session ||
 		manifest.Preferences.Size != int64(len(preferencesRaw)) ||
 		manifest.Preferences.SHA256 != hex.EncodeToString(preferencesHash[:]) ||
-		manifest.StartupURLCount != len(expectedURLs) || manifest.PreparedAt.IsZero() ||
+		manifest.WindowCount != windowCount || manifest.TabCount != tabCount ||
+		manifest.GroupCount != groupCount ||
+		manifest.Invocation != BrowserRestoreInvocation ||
+		manifest.PreparedAt.IsZero() ||
 		manifest.State != browserRestorePreparedState {
 		return BrowserRestoreManifest{}, errors.New("browser restore manifest mismatch")
 	}
@@ -303,18 +311,65 @@ func readRestoredSession(directory string) (Session, error) {
 	if err := decodeStrictJSON(raw, &session); err != nil {
 		return Session{}, fmt.Errorf("decode neutral restore session: %w", err)
 	}
-	if err := ValidateSession(session); err != nil {
+	normalized, err := NormalizeSession(session)
+	if err != nil {
 		return Session{}, err
 	}
-	return session, nil
+	return normalized, nil
 }
 
-func currentURLs(session Session) []string {
-	urls := make([]string, 0)
-	for _, window := range session.Windows {
-		for _, tab := range window.Tabs {
-			urls = append(urls, tab.Navigations[tab.CurrentIndex].URL)
-		}
+// normalizeRestoredSessionFiles migrates an authenticated neutral restore only
+// inside the unopened staging directory. The caller's source restore remains
+// untouched, and the updated receipt binds the canonical schema-two bytes.
+func normalizeRestoredSessionFiles(directory string) (RestoreManifest, error) {
+	manifest, err := ValidateRestore(directory)
+	if err != nil {
+		return RestoreManifest{}, err
 	}
-	return urls
+	session, err := readRestoredSession(directory)
+	if err != nil {
+		return RestoreManifest{}, err
+	}
+	raw, err := json.MarshalIndent(session, "", "  ")
+	if err != nil {
+		return RestoreManifest{}, fmt.Errorf("encode normalized neutral restore: %w", err)
+	}
+	raw = append(raw, '\n')
+	sum := sha256.Sum256(raw)
+	manifest.Session = FileRecord{
+		SHA256: hex.EncodeToString(sum[:]),
+		Size:   int64(len(raw)),
+	}
+	manifestRaw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return RestoreManifest{}, fmt.Errorf("encode normalized restore manifest: %w", err)
+	}
+	if err := os.Remove(filepath.Join(directory, sessionFile)); err != nil {
+		return RestoreManifest{}, fmt.Errorf("replace staged neutral session: %w", err)
+	}
+	if err := writeSynced(filepath.Join(directory, sessionFile), raw, 0600); err != nil {
+		return RestoreManifest{}, err
+	}
+	if err := os.Remove(filepath.Join(directory, "restore-manifest.json")); err != nil {
+		return RestoreManifest{}, fmt.Errorf("replace staged restore manifest: %w", err)
+	}
+	if err := writeSynced(filepath.Join(directory, "restore-manifest.json"),
+		append(manifestRaw, '\n'), 0600); err != nil {
+		return RestoreManifest{}, err
+	}
+	if err := syncDirectory(directory); err != nil {
+		return RestoreManifest{}, err
+	}
+	return ValidateRestore(directory)
+}
+
+func topologyCounts(session Session) (int, int, int) {
+	windowCount := len(session.Windows)
+	tabCount := 0
+	groupCount := 0
+	for _, window := range session.Windows {
+		tabCount += len(window.Tabs)
+		groupCount += len(window.Groups)
+	}
+	return windowCount, tabCount, groupCount
 }

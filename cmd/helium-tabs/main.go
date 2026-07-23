@@ -5,6 +5,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/dhruv9saini/helium-sync/internal/tabsnapshot"
@@ -73,6 +74,12 @@ func capture(args []string) error {
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&session); err != nil {
 		return fmt.Errorf("decode session input: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("decode session input: trailing JSON value")
+		}
+		return fmt.Errorf("decode session input trailer: %w", err)
 	}
 	store, err := tabsnapshot.Open(*root)
 	if err != nil {

@@ -1,6 +1,8 @@
 package tabsnapshot
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -294,7 +296,11 @@ func TestRestoreTargetsNewDisposableState(t *testing.T) {
 		t.Fatal("restore receipt does not bind the source generation and session")
 	}
 	if len(restored.Windows) != 1 || len(restored.Windows[0].Tabs) != 2 ||
-		!restored.Windows[0].Tabs[0].Pinned || restored.Windows[0].Tabs[0].Group != "work" {
+		!restored.Windows[0].Tabs[0].Pinned || restored.Windows[0].Tabs[0].Group != "" ||
+		restored.Windows[0].Tabs[1].Group != "work" ||
+		restored.Windows[0].Groups[0].Title != "Work" ||
+		restored.Windows[0].Groups[0].Color != "blue" ||
+		!restored.Windows[0].Groups[0].Collapsed {
 		t.Fatal("representative window/tab state was not restored")
 	}
 	if err := store.Restore(manifest.Generation, destination); err == nil {
@@ -354,7 +360,9 @@ func TestPrepareDisposableBrowserProfileConsumesValidatedNeutralRestore(t *testi
 		t.Fatal(err)
 	}
 	if destination != filepath.Join(root, "drill-fixture") ||
-		manifest.State != browserRestorePreparedState || manifest.StartupURLCount != 2 {
+		manifest.State != browserRestorePreparedState ||
+		manifest.WindowCount != 1 || manifest.TabCount != 2 || manifest.GroupCount != 1 ||
+		manifest.Invocation != BrowserRestoreInvocation {
 		t.Fatalf("unexpected browser restore result: %#v %q", manifest, destination)
 	}
 	validated, err := ValidateDisposableBrowserProfile(destination)
@@ -372,13 +380,30 @@ func TestPrepareDisposableBrowserProfileConsumesValidatedNeutralRestore(t *testi
 		strings.Contains(string(preferencesRaw), "exit_type") {
 		t.Fatal("disposable restore forged Chromium clean-exit state")
 	}
-	var preferences browserPreferences
+	var preferences map[string]any
 	if err := json.Unmarshal(preferencesRaw, &preferences); err != nil {
 		t.Fatal(err)
 	}
-	wantURLs := []string{"https://fixture.invalid/current", "chrome://newtab/"}
-	if fmt.Sprint(preferences.Session.StartupURLs) != fmt.Sprint(wantURLs) {
-		t.Fatalf("startup URLs = %v, want %v", preferences.Session.StartupURLs, wantURLs)
+	if len(preferences) != 0 {
+		t.Fatalf("preferences would auto-open tabs: %v", preferences)
+	}
+	if raw, err := os.ReadFile(filepath.Join(destination, restorePreparedMarkerFile)); err != nil ||
+		string(raw) != restorePreparedMarkerContent {
+		t.Fatalf("prepared restore marker = %q %v", raw, err)
+	}
+	prepared, err := readRestoredSession(filepath.Join(destination, restoreSourceDirectory))
+	if err != nil {
+		t.Fatal(err)
+	}
+	window := prepared.Windows[0]
+	if window.ActiveIndex != 1 || len(window.Groups) != 1 ||
+		window.Groups[0].ID != "work" || window.Groups[0].Title != "Work" ||
+		window.Groups[0].Color != "blue" || !window.Groups[0].Collapsed ||
+		len(window.Tabs) != 2 || !window.Tabs[0].Pinned ||
+		window.Tabs[1].Group != "work" ||
+		window.Tabs[0].CurrentIndex != 1 ||
+		len(window.Tabs[0].Navigations) != 2 {
+		t.Fatalf("prepared browser source lost local topology: %#v", prepared)
 	}
 	if _, err := ValidateRestore(restoreDirectory); err != nil {
 		t.Fatalf("neutral restore source changed: %v", err)
@@ -430,6 +455,37 @@ func TestDisposableBrowserProfileRequiresMarkerAndNewTarget(t *testing.T) {
 	if _, _, err := PrepareDisposableBrowserProfile(
 		restoreDirectory, root, "default"); err == nil {
 		t.Fatal("non-drill profile name was accepted")
+	}
+}
+
+func TestDisposableBrowserProfileRejectsUnrecoverableLegacyGroupMetadata(t *testing.T) {
+	store := openTestStore(t)
+	request := testCapture(time.Now(), false)
+	request.Session.SchemaVersion = LegacySessionSchemaVersion
+	request.Session.Windows[0].Groups = nil
+	for index := range request.Session.Windows[0].Tabs {
+		request.Session.Windows[0].Tabs[index].HistoryState = ""
+	}
+	manifest, err := store.Capture(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restoreDirectory := filepath.Join(t.TempDir(), "legacy-neutral-restore")
+	if err := store.Restore(manifest.Generation, restoreDirectory); err != nil {
+		t.Fatal(err)
+	}
+	root := markedDisposableRoot(t)
+	if _, _, err := PrepareDisposableBrowserProfile(
+		restoreDirectory, root, "drill-legacy-group"); err == nil ||
+		!strings.Contains(err.Error(), "lacks restorable visual metadata") {
+		t.Fatalf("legacy group metadata was not rejected: %v", err)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name() != disposableRootMarkerFile {
+		t.Fatalf("rejected legacy restore left staging data: %v", entries)
 	}
 }
 
@@ -490,6 +546,153 @@ func TestCaptureRejectsMalformedOrUnsafeSession(t *testing.T) {
 	}
 }
 
+func TestCaptureMigratesSchemaOneWithoutInventingTopologyMetadata(t *testing.T) {
+	store := openTestStore(t)
+	request := testCapture(time.Now(), false)
+	request.Session.SchemaVersion = LegacySessionSchemaVersion
+	request.Session.Windows[0].Groups = nil
+	for index := range request.Session.Windows[0].Tabs {
+		request.Session.Windows[0].Tabs[index].HistoryState = ""
+	}
+	manifest, err := store.Capture(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(store.generations, manifest.Generation, sessionFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var migrated Session
+	if err := decodeStrictJSON(raw, &migrated); err != nil {
+		t.Fatal(err)
+	}
+	if migrated.SchemaVersion != SessionSchemaVersion ||
+		migrated.Windows[0].Tabs[0].HistoryState != HistoryLegacyBounded ||
+		migrated.Windows[0].Tabs[1].HistoryState != HistoryLegacyBounded {
+		t.Fatalf("schema-one navigation provenance was not preserved: %#v", migrated)
+	}
+	group := migrated.Windows[0].Groups[0]
+	if group.ID != "work" || group.MetadataState != GroupMetadataLegacyUnavailable ||
+		group.Title != "" || group.Color != "" || group.Collapsed {
+		t.Fatalf("schema-one migration invented group metadata: %#v", group)
+	}
+	if err := ValidateSessionForBrowserRestore(migrated); err == nil ||
+		!strings.Contains(err.Error(), "lacks restorable visual metadata") {
+		t.Fatalf("legacy group was accepted for browser restore: %v", err)
+	}
+}
+
+func TestHistoricalSchemaOneGenerationRestoresAsSchemaTwo(t *testing.T) {
+	store := openTestStore(t)
+	capture := testCapture(time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC), false)
+	manifest, err := store.Capture(capture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := capture.Session
+	legacy.SchemaVersion = LegacySessionSchemaVersion
+	legacy.Windows[0].Groups = nil
+	for index := range legacy.Windows[0].Tabs {
+		legacy.Windows[0].Tabs[index].HistoryState = ""
+	}
+	raw, err := json.MarshalIndent(legacy, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw, '\n')
+	sum := sha256.Sum256(raw)
+	manifest.Files[sessionFile] = FileRecord{
+		SHA256: hex.EncodeToString(sum[:]),
+		Size:   int64(len(raw)),
+	}
+	manifestRaw, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	generationDirectory := filepath.Join(store.generations, manifest.Generation)
+	if err := os.WriteFile(filepath.Join(generationDirectory, sessionFile), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(generationDirectory, manifestFile),
+		append(manifestRaw, '\n'), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Validate(manifest.Generation); err != nil {
+		t.Fatalf("historical schema-one generation did not validate through migration: %v", err)
+	}
+	destination := filepath.Join(t.TempDir(), "historical-restore")
+	if err := store.Restore(manifest.Generation, destination); err != nil {
+		t.Fatal(err)
+	}
+	restored, err := readRestoredSession(destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.SchemaVersion != SessionSchemaVersion ||
+		restored.Windows[0].Groups[0].MetadataState != GroupMetadataLegacyUnavailable {
+		t.Fatalf("historical restore was not migrated explicitly: %#v", restored)
+	}
+	if _, err := ValidateRestore(destination); err != nil {
+		t.Fatalf("migrated neutral restore failed receipt validation: %v", err)
+	}
+}
+
+func TestSchemaTwoTopologyValidationFailsClosed(t *testing.T) {
+	tests := []struct {
+		name string
+		edit func(*Session)
+		want string
+	}{
+		{
+			name: "pinned-and-grouped",
+			edit: func(session *Session) {
+				session.Windows[0].Tabs[0].Group = "work"
+			},
+			want: "both pinned and grouped",
+		},
+		{
+			name: "unknown-group-color",
+			edit: func(session *Session) {
+				session.Windows[0].Groups[0].Color = "ultraviolet"
+			},
+			want: "invalid visual metadata",
+		},
+		{
+			name: "unknown-history-state",
+			edit: func(session *Session) {
+				session.Windows[0].Tabs[0].HistoryState = "maybe"
+			},
+			want: "unsupported history state",
+		},
+		{
+			name: "group-not-contiguous",
+			edit: func(session *Session) {
+				window := &session.Windows[0]
+				window.Tabs = append(window.Tabs, Tab{
+					ID:           "tab-3",
+					HistoryState: HistoryBounded,
+					Navigations:  []Navigation{{URL: "https://fixture.invalid/middle", Title: ""}},
+				}, Tab{
+					ID:           "tab-4",
+					Group:        "work",
+					HistoryState: HistoryBounded,
+					Navigations:  []Navigation{{URL: "https://fixture.invalid/last", Title: ""}},
+				})
+			},
+			want: "not contiguous",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			session := testCapture(time.Now(), false).Session
+			test.edit(&session)
+			if err := ValidateSession(session); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("validation error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func openTestStore(t *testing.T) *Store {
 	t.Helper()
 	store, err := Open(filepath.Join(t.TempDir(), "snapshots"))
@@ -541,11 +744,18 @@ func testCapture(capturedAt time.Time, protected bool) CaptureRequest {
 			Windows: []Window{{
 				ID:          "window-1",
 				ActiveIndex: 1,
+				Groups: []Group{{
+					ID:            "work",
+					Title:         "Work",
+					Color:         "blue",
+					Collapsed:     true,
+					MetadataState: GroupMetadataComplete,
+				}},
 				Tabs: []Tab{
 					{
 						ID:           "tab-1",
 						Pinned:       true,
-						Group:        "work",
+						HistoryState: HistoryBounded,
 						CurrentIndex: 1,
 						Navigations: []Navigation{
 							{URL: "https://fixture.invalid/previous", Title: "Previous"},
@@ -554,8 +764,10 @@ func testCapture(capturedAt time.Time, protected bool) CaptureRequest {
 					},
 					{
 						ID:           "tab-2",
+						Group:        "work",
+						HistoryState: HistoryBounded,
 						CurrentIndex: 0,
-						Navigations:  []Navigation{{URL: "chrome://newtab/"}},
+						Navigations:  []Navigation{{URL: "chrome://newtab/", Title: ""}},
 					},
 				},
 			}},

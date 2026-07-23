@@ -17,12 +17,16 @@ go build -o "${temporary}/bin/helium-tabs" "${repo_root}/cmd/helium-tabs"
 browser_export="${temporary}/browser-export.json"
 cat >"${browser_export}" <<'JSON'
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "windows": [{
     "id": "window-fixture",
     "active_index": 0,
+    "groups": [],
     "tabs": [{
       "id": "tab-fixture",
+      "pinned": false,
+      "group": "",
+      "history_state": "bounded",
       "current_index": 0,
       "navigations": [{"url": "https://fixture.invalid/", "title": "Fixture"}]
     }]
@@ -264,9 +268,17 @@ browser_profile=$(jq -r '.destination' <<<"${browser_restore_output}")
 [ "${browser_profile}" = "${disposable_root}/drill-fixture" ]
 "${temporary}/bin/helium-tabs" validate-browser-profile \
 	--profile-dir "${browser_profile}" >/dev/null
-jq -e '.session.restore_on_startup == 4 and
-	(.session.startup_urls == ["https://fixture.invalid/"])' \
+jq -e 'length == 0' \
 	"${browser_profile}/Default/Preferences" >/dev/null
+jq -e '.schema_version == 2 and .window_count == 1 and
+	.tab_count == 1 and .group_count == 0 and
+	.invocation == "explicit-command-line-only" and
+	.state == "prepared-not-opened"' \
+	"${browser_profile}/browser-restore-manifest.json" >/dev/null
+test -f "${browser_profile}/.helium-tabs-restore-prepared-v2"
+jq -e '.schema_version == 2 and
+	.windows[0].tabs[0].history_state == "bounded"' \
+	"${browser_profile}/restore-source/session.json" >/dev/null
 if grep -Eq 'exited_cleanly|exit_type' "${browser_profile}/Default/Preferences"; then
 	echo "disposable browser restore forged clean-exit state" >&2
 	exit 1

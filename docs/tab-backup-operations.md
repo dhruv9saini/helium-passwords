@@ -234,14 +234,17 @@ wrapper must run on the snapshot's source device and cannot open or merge the
 result into another device's browser.
 
 After that neutral restore succeeds, `helium-tabs prepare-browser-profile`
-may prepare a browser-readable copy only as a new `drill-*` child of an
+may prepare a native-import-ready copy only as a new `drill-*` child of an
 operator-created mode-0700 root containing the exact
 `.helium-tabs-disposable-root-v1` marker. The command revalidates the neutral
-receipt, retains its source files, writes only current URLs as startup URLs,
-validates staging, and atomically publishes the unopened profile. It never
-launches a browser or accepts an existing target. Run
-`validate-browser-profile --profile-dir PATH` before first launch; the exact
-commands and current reconstruction limits are in `tab-snapshots.md`.
+receipt, migrates schema-1 neutral data without inventing missing metadata,
+retains the complete schema-2 window/tab/group/navigation topology, writes an
+empty Chromium Preferences object, binds counts and hashes in a versioned
+manifest, validates staging, and atomically publishes the unopened profile.
+It never launches a browser, configures startup URLs, or accepts an existing
+target. Run `validate-browser-profile --profile-dir PATH` before a future
+explicit disposable-only native import; the exact commands and current
+reconstruction boundary are in `tab-snapshots.md`.
 
 If a local generation itself is corrupt, preserve it explicitly before
 unblocking retention:
@@ -299,10 +302,12 @@ directory. It never deletes bytes and it never happens automatically.
   host-key fingerprints match the servers' own ED25519 public keys. Private
   keys remain only on their source devices; no age recovery identity was
   created or copied.
-- The source adapter and native five-minute refresh contract are implemented
-  and synthetic-tested. The native bridge still requires a chromiumer compile
-  and disposable-profile run before any scheduler is enabled or source is
-  promoted beyond disabled staging.
+- The source adapter, schema-2 topology model, migration/validation, unopened
+  disposable preparation, and native five-minute refresh contract are
+  implemented and synthetic-tested. The native bridge still requires a
+  chromiumer compile. A marked-profile native importer and first/second
+  disposable browser runs remain open before any scheduler is enabled or
+  source is promoted beyond disabled staging.
 
 These are deployment gates, not reasons to weaken destination independence or
 copy unencrypted tab data through an intermediary.

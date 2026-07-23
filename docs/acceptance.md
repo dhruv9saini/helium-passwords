@@ -209,10 +209,12 @@ The fixture server issues controlled cookies and rotating opaque tokens.
   strict schemas, permissions, symlink rejection, and exact two-file
   inventory. `prepare-browser-profile` accepts only a nonexistent `drill-*`
   child of an exactly marked mode-0700 disposable root, never a normal profile.
-  Before first launch, `validate-browser-profile` proves the current startup
-  URLs still match the retained neutral restore and that no clean-exit state
-  was forged. Normal launch never rewrites clean-exit state or broadly deletes
-  pages through CDP.
+  Before first launch, `validate-browser-profile` proves the complete retained
+  topology matches manifest counts and hashes, both versioned disposable
+  markers are exact, Preferences are empty, and no startup or clean-exit state
+  was forged. A future explicit disposable-only native importer must reconstruct
+  and read back every supported field; normal launch never consumes a backup,
+  rewrites clean-exit state, or broadly deletes pages through CDP.
 - Corrupt the newest local session, newest local snapshot, NAS copy, and second
   host copy separately; in every case a different independent recovery path
   succeeds without changing a live profile.

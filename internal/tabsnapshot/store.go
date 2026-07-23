@@ -14,15 +14,19 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 const (
-	manifestFile    = "manifest.json"
-	sessionFile     = "session.json"
-	maxSessionBytes = 16 * 1024 * 1024
-	maxWindows      = 100
-	maxTabs         = 5000
-	maxNavigations  = 100
+	manifestFile       = "manifest.json"
+	sessionFile        = "session.json"
+	maxSessionBytes    = 16 * 1024 * 1024
+	maxWindows         = 100
+	maxTabs            = 5000
+	maxNavigations     = 100
+	maxIdentifierBytes = 128
+	maxURLBytes        = 8192
+	maxTitleBytes      = 4096
 )
 
 type Store struct {
@@ -53,6 +57,11 @@ func Open(root string) (*Store, error) {
 }
 
 func (store *Store) Capture(request CaptureRequest) (Manifest, error) {
+	normalized, err := NormalizeSession(request.Session)
+	if err != nil {
+		return Manifest{}, err
+	}
+	request.Session = normalized
 	if err := validateCaptureRequest(request); err != nil {
 		return Manifest{}, err
 	}
@@ -82,7 +91,7 @@ func (store *Store) Capture(request CaptureRequest) (Manifest, error) {
 	}
 	sum := sha256.Sum256(raw)
 	manifest := Manifest{
-		SchemaVersion:    SchemaVersion,
+		SchemaVersion:    ManifestSchemaVersion,
 		Generation:       generation,
 		ParentGeneration: parent,
 		Device:           request.Device,
@@ -152,7 +161,7 @@ func (store *Store) Validate(generation string) (Manifest, error) {
 	if err := decodeStrictJSON(manifestRaw, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode manifest: %w", err)
 	}
-	if manifest.SchemaVersion != SchemaVersion || manifest.Generation != generation ||
+	if manifest.SchemaVersion != ManifestSchemaVersion || manifest.Generation != generation ||
 		manifest.Validation != "valid" || manifest.CapturedAt.IsZero() ||
 		strings.TrimSpace(manifest.Device) == "" || strings.TrimSpace(manifest.Profile) == "" ||
 		strings.TrimSpace(manifest.BrowserVersion) == "" ||
@@ -187,7 +196,7 @@ func (store *Store) Validate(generation string) (Manifest, error) {
 	if err := decodeStrictJSON(raw, &session); err != nil {
 		return Manifest{}, fmt.Errorf("decode session: %w", err)
 	}
-	if err := ValidateSession(session); err != nil {
+	if _, err := NormalizeSession(session); err != nil {
 		return Manifest{}, err
 	}
 	return manifest, nil
@@ -264,11 +273,29 @@ func (store *Store) Restore(generation string, destination string) error {
 			_ = os.RemoveAll(temporary)
 		}
 	}()
-	session, err := os.ReadFile(filepath.Join(store.generations, generation, sessionFile))
+	rawSession, err := os.ReadFile(filepath.Join(store.generations, generation, sessionFile))
 	if err != nil {
 		return fmt.Errorf("read restore session: %w", err)
 	}
-	if err := writeSynced(filepath.Join(temporary, sessionFile), session, 0600); err != nil {
+	var session Session
+	if err := decodeStrictJSON(rawSession, &session); err != nil {
+		return fmt.Errorf("decode restore session: %w", err)
+	}
+	session, err = NormalizeSession(session)
+	if err != nil {
+		return fmt.Errorf("migrate restore session: %w", err)
+	}
+	rawSession, err = json.MarshalIndent(session, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode restore session: %w", err)
+	}
+	rawSession = append(rawSession, '\n')
+	sessionHash := sha256.Sum256(rawSession)
+	sessionRecord := FileRecord{
+		SHA256: hex.EncodeToString(sessionHash[:]),
+		Size:   int64(len(rawSession)),
+	}
+	if err := writeSynced(filepath.Join(temporary, sessionFile), rawSession, 0600); err != nil {
 		return err
 	}
 	restoreManifest, err := json.MarshalIndent(RestoreManifest{
@@ -278,7 +305,7 @@ func (store *Store) Restore(generation string, destination string) error {
 		SourceProfile:    manifest.Profile,
 		RestoredAt:       time.Now().UTC(),
 		Validation:       "valid",
-		Session:          manifest.Files[sessionFile],
+		Session:          sessionRecord,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -363,7 +390,7 @@ func ValidateRestore(destination string) (RestoreManifest, error) {
 	if err := decodeStrictJSON(rawSession, &session); err != nil {
 		return RestoreManifest{}, fmt.Errorf("decode restored session: %w", err)
 	}
-	if err := ValidateSession(session); err != nil {
+	if _, err := NormalizeSession(session); err != nil {
 		return RestoreManifest{}, err
 	}
 	return manifest, nil
@@ -408,7 +435,7 @@ func (store *Store) Quarantine(generation string, reason string) (string, error)
 }
 
 func ValidateSession(session Session) error {
-	if session.SchemaVersion != SchemaVersion {
+	if session.SchemaVersion != SessionSchemaVersion {
 		return fmt.Errorf("unsupported session schema %d", session.SchemaVersion)
 	}
 	if len(session.Windows) == 0 || len(session.Windows) > maxWindows {
@@ -417,9 +444,10 @@ func ValidateSession(session Session) error {
 	tabCount := 0
 	windowIDs := make(map[string]struct{})
 	tabIDs := make(map[string]struct{})
+	groupIDs := make(map[string]struct{})
 	for _, window := range session.Windows {
-		if window.ID == "" {
-			return errors.New("window id is required")
+		if !validSnapshotIdentifier(window.ID) {
+			return errors.New("window id is invalid")
 		}
 		if _, exists := windowIDs[window.ID]; exists {
 			return fmt.Errorf("duplicate window id %q", window.ID)
@@ -428,27 +456,163 @@ func ValidateSession(session Session) error {
 		if len(window.Tabs) == 0 || window.ActiveIndex < 0 || window.ActiveIndex >= len(window.Tabs) {
 			return fmt.Errorf("window %q has invalid active tab", window.ID)
 		}
-		for _, tab := range window.Tabs {
+		windowGroups := make(map[string]Group, len(window.Groups))
+		for _, group := range window.Groups {
+			if !validSnapshotIdentifier(group.ID) {
+				return fmt.Errorf("window %q has an invalid group id", window.ID)
+			}
+			if _, exists := groupIDs[group.ID]; exists {
+				return fmt.Errorf("duplicate group id %q", group.ID)
+			}
+			groupIDs[group.ID] = struct{}{}
+			switch group.MetadataState {
+			case GroupMetadataComplete:
+				if !validGroupColor(group.Color) || !utf8.ValidString(group.Title) ||
+					len(group.Title) > maxTitleBytes {
+					return fmt.Errorf("group %q has invalid visual metadata", group.ID)
+				}
+			case GroupMetadataLegacyUnavailable:
+				if group.Title != "" || group.Color != "" || group.Collapsed {
+					return fmt.Errorf("legacy group %q invents unavailable metadata", group.ID)
+				}
+			default:
+				return fmt.Errorf("group %q has unsupported metadata state", group.ID)
+			}
+			windowGroups[group.ID] = group
+		}
+
+		groupFirst := make(map[string]int)
+		groupLast := make(map[string]int)
+		groupCount := make(map[string]int)
+		seenUnpinned := false
+		for tabIndex, tab := range window.Tabs {
 			tabCount++
 			if tabCount > maxTabs {
 				return fmt.Errorf("session exceeds %d tabs", maxTabs)
 			}
-			if tab.ID == "" {
-				return errors.New("tab id is required")
+			if !validSnapshotIdentifier(tab.ID) {
+				return errors.New("tab id is invalid")
 			}
 			if _, exists := tabIDs[tab.ID]; exists {
 				return fmt.Errorf("duplicate tab id %q", tab.ID)
 			}
 			tabIDs[tab.ID] = struct{}{}
+			if tab.Pinned {
+				if seenUnpinned {
+					return fmt.Errorf("window %q has a pinned tab outside the pinned prefix", window.ID)
+				}
+			} else {
+				seenUnpinned = true
+			}
+			switch tab.HistoryState {
+			case HistoryBounded, HistoryCurrentOnlyUnloaded, HistoryLegacyBounded:
+			default:
+				return fmt.Errorf("tab %q has unsupported history state", tab.ID)
+			}
 			if len(tab.Navigations) == 0 || len(tab.Navigations) > maxNavigations ||
 				tab.CurrentIndex < 0 || tab.CurrentIndex >= len(tab.Navigations) {
 				return fmt.Errorf("tab %q has invalid navigation history", tab.ID)
 			}
 			for _, navigation := range tab.Navigations {
 				parsed, err := url.Parse(navigation.URL)
-				if err != nil || !allowedScheme(parsed.Scheme) {
+				if err != nil || len(navigation.URL) > maxURLBytes ||
+					len(navigation.Title) > maxTitleBytes ||
+					!utf8.ValidString(navigation.Title) ||
+					!allowedScheme(parsed.Scheme) ||
+					(parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host == "" {
 					return fmt.Errorf("tab %q has disallowed URL", tab.ID)
 				}
+			}
+			if tab.Group != "" {
+				if tab.Pinned {
+					return fmt.Errorf("tab %q cannot be both pinned and grouped", tab.ID)
+				}
+				if _, exists := windowGroups[tab.Group]; !exists {
+					return fmt.Errorf("tab %q references unknown group %q", tab.ID, tab.Group)
+				}
+				if groupCount[tab.Group] == 0 {
+					groupFirst[tab.Group] = tabIndex
+				}
+				groupLast[tab.Group] = tabIndex
+				groupCount[tab.Group]++
+			}
+		}
+		for groupID := range windowGroups {
+			count := groupCount[groupID]
+			if count == 0 {
+				return fmt.Errorf("group %q has no tabs", groupID)
+			}
+			if groupLast[groupID]-groupFirst[groupID]+1 != count {
+				return fmt.Errorf("group %q is not contiguous", groupID)
+			}
+		}
+	}
+	return nil
+}
+
+// NormalizeSession performs the only supported schema migration. Schema-1
+// captures preserved group membership but not group visual metadata, so the
+// migration records that absence explicitly instead of guessing a title,
+// color, or collapsed state. Browser preparation may preserve those captures
+// as neutral data but refuses to apply a group with unavailable metadata.
+func NormalizeSession(session Session) (Session, error) {
+	switch session.SchemaVersion {
+	case SessionSchemaVersion:
+		if err := ValidateSession(session); err != nil {
+			return Session{}, err
+		}
+		return session, nil
+	case LegacySessionSchemaVersion:
+	default:
+		return Session{}, fmt.Errorf("unsupported session schema %d", session.SchemaVersion)
+	}
+
+	migrated := Session{
+		SchemaVersion: SessionSchemaVersion,
+		Windows:       make([]Window, 0, len(session.Windows)),
+	}
+	for _, legacyWindow := range session.Windows {
+		if len(legacyWindow.Groups) != 0 {
+			return Session{}, errors.New("schema-1 session unexpectedly contains group metadata")
+		}
+		window := Window{
+			ID:          legacyWindow.ID,
+			ActiveIndex: legacyWindow.ActiveIndex,
+			Groups:      []Group{},
+			Tabs:        make([]Tab, 0, len(legacyWindow.Tabs)),
+		}
+		seenGroups := make(map[string]struct{})
+		for _, legacyTab := range legacyWindow.Tabs {
+			tab := legacyTab
+			tab.HistoryState = HistoryLegacyBounded
+			tab.Navigations = append([]Navigation(nil), legacyTab.Navigations...)
+			window.Tabs = append(window.Tabs, tab)
+			if tab.Group != "" {
+				if _, exists := seenGroups[tab.Group]; !exists {
+					seenGroups[tab.Group] = struct{}{}
+					window.Groups = append(window.Groups, Group{
+						ID:            tab.Group,
+						MetadataState: GroupMetadataLegacyUnavailable,
+					})
+				}
+			}
+		}
+		migrated.Windows = append(migrated.Windows, window)
+	}
+	if err := ValidateSession(migrated); err != nil {
+		return Session{}, fmt.Errorf("migrate schema-1 session: %w", err)
+	}
+	return migrated, nil
+}
+
+func ValidateSessionForBrowserRestore(session Session) error {
+	if err := ValidateSession(session); err != nil {
+		return err
+	}
+	for _, window := range session.Windows {
+		for _, group := range window.Groups {
+			if group.MetadataState != GroupMetadataComplete {
+				return fmt.Errorf("group %q lacks restorable visual metadata", group.ID)
 			}
 		}
 	}
@@ -529,6 +693,27 @@ func generationTime(value string) (time.Time, error) {
 func allowedScheme(scheme string) bool {
 	switch strings.ToLower(scheme) {
 	case "http", "https", "chrome", "about":
+		return true
+	default:
+		return false
+	}
+}
+
+func validSnapshotIdentifier(value string) bool {
+	if value == "" || len(value) > maxIdentifierBytes || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if character < 0x20 || character == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+func validGroupColor(value string) bool {
+	switch value {
+	case "grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange":
 		return true
 	default:
 		return false
@@ -620,6 +805,9 @@ func requirePrivateRegularFile(path string) error {
 }
 
 func decodeStrictJSON(raw []byte, destination any) error {
+	if !utf8.Valid(raw) {
+		return errors.New("JSON is not valid UTF-8")
+	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {

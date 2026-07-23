@@ -13,8 +13,10 @@ probe is read-only acceptance instrumentation and is outside sync composition.
 Tabs are not sync data. The wire kinds are exactly `passwords` and `cookies`;
 the server rejects every other kind. No endpoint, credential, or record schema
 can carry a tab. Each device keeps its own Chromium session recovery and local
-tab snapshot repository. A restore can target only a new disposable directory
-and can never auto-open a tab.
+tab snapshot repository. The neutral snapshot preserves bounded local
+window/tab/group/navigation topology, but preparation writes no startup URLs
+and can target only a new, explicitly marked disposable directory. No sync
+record, backup copy, normal launch, or preparation command can auto-open a tab.
 
 ## Trust and data flow
 
