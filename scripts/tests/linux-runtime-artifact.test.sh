@@ -179,9 +179,15 @@ if "${repo_root}/scripts/verify-deployment-artifact-receipt.sh" \
     echo "tampered Linux artifact passed deployment verification" >&2
     exit 1
 fi
+if [ "${product}" = helium-sync ]; then
+    wrong_product=helium-passwords
+else
+    wrong_product=helium-sync
+fi
 if "${repo_root}/scripts/linux-product-provenance.sh" \
-    helium-sync x86_64 linux-x86_64 >/dev/null 2>&1; then
-    echo "wrong product passed the public repository binding" >&2
+    "${wrong_product}" x86_64 "${HELIUM_LINUX_X86_64_TARGET}" \
+    >/dev/null 2>&1; then
+    echo "wrong product passed the repository binding" >&2
     exit 1
 fi
 

@@ -46,7 +46,7 @@ mise entry point for every harness command:
 ```sh
 node_runtime=(mise exec node@24.18.0 -- node)
 verified=/PATH/ON/DA/verified
-browser="$verified/helium-passwords-linux-x86_64/runtime/helium-wrapper"
+browser="$verified/helium-sync-linux-x86_64/runtime/helium-wrapper"
 artifact_receipt="$verified/artifact-receipt.env"
 run=/home/d/.local/state/helium-password-acceptance/PASSWORD_JOB
 "${node_runtime[@]}" scripts/password-runtime/acceptance.mjs init \

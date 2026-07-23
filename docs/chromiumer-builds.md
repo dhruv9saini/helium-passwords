@@ -414,22 +414,22 @@ scripts/chromiumer-job.sh start "$job" \
     --next "Fetch and verify the packaged artifact, then run the disposable password gate." -- \
     scripts/chromiumer-nix.sh run -- \
       bash scripts/build-chromiumer-linux.sh \
-        helium-passwords x86_64 linux-x86_64 "$job"
+        helium-sync x86_64 linux-x86_64 "$job"
 ```
 
 Product, architecture, deployment target, and build job ID are mandatory;
-there is no inferred product or host-architecture default. The public binding
-in `linux-product.conf` requires `helium-passwords`, maps `x86_64` to
-`linux-x86_64` and `arm64` to `linux-arm64`, binds the Passwords commit to
-the repository `HEAD`, and records the Git null OID for the inapplicable
-private Sync commit. A different product or product/architecture target fails
+there is no inferred product or host-architecture default. The private binding
+in `linux-product.conf` requires `helium-sync`, maps `x86_64` to
+`linux-x86_64` and `arm64` to `linux-arm64-chroot`, binds the shared Passwords
+source to its exact public ancestor, and binds the private Sync commit to the
+repository `HEAD`. A different product or product/architecture target fails
 before source preparation.
 
 The driver writes one archive and its build-produced deployment receipt:
 
 ```text
-.build/artifacts/helium-passwords-linux-x86_64.tar.xz
-.build/artifacts/helium-passwords-linux-x86_64.receipt.env
+.build/artifacts/helium-sync-linux-x86_64.tar.xz
+.build/artifacts/helium-sync-linux-x86_64.receipt.env
 ```
 
 The archive contains the raw runtime plus the source/tree, public/private/core/
@@ -446,11 +446,11 @@ with the same wrapper limits and explicit inputs:
 
 ```sh
 scripts/chromiumer-job.sh start "$arm_job" \
-    --summary "Linux arm64 Helium Passwords artifact" \
+    --summary "Linux arm64 Helium Sync chroot artifact" \
     --next "Fetch both files and verify the arm64 runtime receipt." -- \
     scripts/chromiumer-nix.sh run -- \
       bash scripts/build-chromiumer-linux.sh \
-        helium-passwords arm64 linux-arm64 "$arm_job"
+        helium-sync arm64 linux-arm64-chroot "$arm_job"
 ```
 
 Source support and synthetic packaging checks do not substitute for a
@@ -638,9 +638,9 @@ when intentionally returning to another `lm` directory:
 
 ```sh
 scripts/chromiumer-job.sh fetch "$job" \
-    .build/artifacts/helium-passwords-linux-x86_64.receipt.env
+    .build/artifacts/helium-sync-linux-x86_64.receipt.env
 scripts/chromiumer-job.sh fetch "$job" \
-    .build/artifacts/helium-passwords-linux-x86_64.tar.xz
+    .build/artifacts/helium-sync-linux-x86_64.tar.xz
 
 scripts/chromiumer-job.sh fetch "$job" \
     .build/android-artifacts/chrome_public_apk-arm64.tar.xz \
@@ -658,9 +658,9 @@ from the same public commit that was staged:
 
 ```sh
 scripts/verify-linux-runtime.sh \
-  helium-passwords x86_64 linux-x86_64 \
-  /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.tar.xz \
-  /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.receipt.env \
+  helium-sync x86_64 linux-x86_64 \
+  /srv/nas/helium-builds/"$job"/helium-sync-linux-x86_64.tar.xz \
+  /srv/nas/helium-builds/"$job"/helium-sync-linux-x86_64.receipt.env \
   /srv/nas/helium-builds/"$job"/verified
 ```
 

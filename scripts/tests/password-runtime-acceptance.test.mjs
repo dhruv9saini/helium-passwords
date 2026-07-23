@@ -23,7 +23,7 @@ const FIXTURE_NONCE = "a".repeat(64);
 async function writeLinuxArtifactReceipt(root, artifact) {
   const artifactHash = crypto.createHash("sha256")
     .update(await fsp.readFile(artifact)).digest("hex");
-  const bundle = path.join(root, "helium-passwords-linux-x86_64");
+  const bundle = path.join(root, "helium-sync-linux-x86_64");
   const runtime = path.join(bundle, "runtime");
   const provenance = path.join(bundle, "provenance");
   const browser = path.join(runtime, "helium");
@@ -41,7 +41,7 @@ async function writeLinuxArtifactReceipt(root, artifact) {
   const receipt = path.join(root, "artifact-receipt.env");
   await fsp.writeFile(receipt, [
     "schema_version=2",
-    "product=helium-passwords",
+    "product=helium-sync",
     "platform=linux",
     "arch=x86_64",
     `source_commit=${"1".repeat(40)}`,
@@ -155,7 +155,7 @@ test("native fixture attests restart, update, and deletion without emitting subm
 test("artifact-bound receipt requires the complete ordered native UI lifecycle", async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-native-run-"));
   const artifact = path.join(
-    root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
+    root, "helium-sync-linux-x86_64", "runtime", "helium-wrapper");
   const screenshot = path.join(root, "screen.png");
   const invalidScreenshot = path.join(root, "invalid-screen.png");
   const runRoot = path.join(root, "acceptance");
@@ -209,7 +209,7 @@ test("artifact-bound receipt requires the complete ordered native UI lifecycle",
       fixtureEvidence: wrongEvidence,
     }), /different acceptance run/);
     const browser = path.join(
-      root, "helium-passwords-linux-x86_64", "runtime", "helium");
+      root, "helium-sync-linux-x86_64", "runtime", "helium");
     await fsp.appendFile(browser, "tampered");
     await assert.rejects(auditRun({
       runRoot,

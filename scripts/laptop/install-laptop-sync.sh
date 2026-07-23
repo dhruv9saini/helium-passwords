@@ -24,8 +24,7 @@ EOF
 target_for_host() {
   case $(uname -m) in
     x86_64) echo linux-x86_64 ;;
-    aarch64|arm64) echo linux-arm64 ;;
-    *) echo "unsupported laptop architecture" >&2; return 1 ;;
+    *) echo "Helium Sync laptop packaging currently supports x86_64 only" >&2; return 1 ;;
   esac
 }
 
@@ -67,14 +66,14 @@ rollback_release() {
 
 install_release() {
   local artifact=$1 artifact_receipt=$2 backup_config=$3 backup_receipt=$4
-  local admission backup_admission artifact_sha sync_commit head expected_profile_hash
+  local admission backup_admission artifact_sha sync_commit head expected_profile_hash bundle_root
   local release staging tools tools_staging stamp desktop_dir desktop_file scripts_dir
 
   artifact=$(realpath -e -- "$artifact")
   artifact_receipt=$(realpath -e -- "$artifact_receipt")
   backup_config=$(realpath -e -- "$backup_config")
   backup_receipt=$(realpath -e -- "$backup_receipt")
-  admission=$("$repo_root/scripts/deployment/verify-artifact-receipt.sh" \
+  admission=$("$repo_root/scripts/verify-deployment-artifact-receipt.sh" \
     "$artifact" "$artifact_receipt" "$(target_for_host)")
   artifact_sha=$(awk -F= '$1 == "artifact_sha256" {print $2}' <<<"$admission")
   sync_commit=$(awk -F= '$1 == "helium_sync_commit" {print $2}' <<<"$admission")
@@ -104,10 +103,16 @@ install_release() {
 
   if [[ ! -d "$release" ]]; then
     mkdir "$staging"
+    bundle_root=helium-sync-linux-x86_64
     while IFS= read -r member; do
       case "$member" in /*|..|../*|*/../*|*/..) echo "unsafe artifact member: $member" >&2; exit 1 ;; esac
     done < <(tar -tf "$artifact")
-    tar -xf "$artifact" -C "$staging"
+    [[ "$(tar -tf "$artifact" | awk -F/ 'NF {print $1}' | sort -u)" == "$bundle_root" ]] || {
+      echo "artifact root is not the Helium Sync x86_64 product" >&2
+      exit 1
+    }
+    tar -xf "$artifact" -C "$staging" --strip-components=2 \
+      "$bundle_root/runtime"
     missing=()
     for required in helium helium_crashpad_handler icudtl.dat resources.pak; do
       [[ -e "$staging/$required" && ! -L "$staging/$required" ]] || missing+=("$required")

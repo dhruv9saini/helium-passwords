@@ -12,6 +12,9 @@ const SCREENSHOT_MAX_BYTES = 32 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ANDROID_TEST_PACKAGE = /^(?:[a-z][a-z0-9_]*\.){2,}[a-z][a-z0-9_]*\.test$/;
 const RUN_NONCE = /^[0-9a-f]{64}$/;
+const LINUX_PRODUCT = "helium-sync";
+const LINUX_ARCH = "x86_64";
+const LINUX_BUNDLE = `${LINUX_PRODUCT}-linux-${LINUX_ARCH}`;
 const PNG_CRC_TABLE = Object.freeze(Array.from({length: 256}, (_, value) => {
   let crc = value;
   for (let bit = 0; bit < 8; bit += 1) {
@@ -201,8 +204,8 @@ async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPat
     "bundle_sha256", "provenance_manifest_sha256", "browser_sha256",
   ];
   if (values.get("schema_version") !== "2" ||
-      values.get("product") !== "helium-passwords" ||
-      values.get("platform") !== "linux" || values.get("arch") !== "x86_64" ||
+      values.get("product") !== LINUX_PRODUCT ||
+      values.get("platform") !== "linux" || values.get("arch") !== LINUX_ARCH ||
       path.resolve(path.dirname(receipt.resolved),
         values.get("browser_executable") || "") !== artifactPath ||
       values.get("browser_sha256") !== artifactHash ||
@@ -212,13 +215,12 @@ async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPat
   }
 
   const inventoryRelative = values.get("runtime_inventory") || "";
-  if (inventoryRelative !==
-      "helium-passwords-linux-x86_64/provenance/runtime.sha256" ||
+  if (inventoryRelative !== `${LINUX_BUNDLE}/provenance/runtime.sha256` ||
       !/^[0-9a-f]{64}$/.test(values.get("runtime_inventory_sha256") || "")) {
     throw new Error("Linux artifact receipt has an invalid runtime inventory");
   }
   const receiptRoot = path.dirname(receipt.resolved);
-  const bundleRoot = path.join(receiptRoot, "helium-passwords-linux-x86_64");
+  const bundleRoot = path.join(receiptRoot, LINUX_BUNDLE);
   const runtimeRoot = path.join(bundleRoot, "runtime");
   const inventory = await regularFile(
     path.join(receiptRoot, inventoryRelative), "Linux runtime inventory");
