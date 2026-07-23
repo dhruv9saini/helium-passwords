@@ -19,6 +19,7 @@ Commands:
   preflight <disk-budget-gib>
   stage <job-id> <disk-budget-gib> [repository]
   start <job-id> --summary <text> --next <success-action> -- <command> [arguments...]
+  resume <timed-out-job> <new-job-id> --summary <text> --next <success-action> -- <command> [arguments...]
   status <job-id>
   terminal <job-id>
   limits <job-id>
@@ -231,6 +232,90 @@ start() {
     trap - EXIT
 }
 
+resume() {
+    local parent=$1
+    local job=$2
+    shift 2
+    validate_job "${parent}"
+    validate_job "${job}"
+    [ "${parent}" != "${job}" ] || {
+        echo "continuation job id must differ from its parent" >&2
+        exit 2
+    }
+    [ "${1:-}" = --summary ] && [ "$#" -ge 6 ] || {
+        usage
+        exit 2
+    }
+    local summary=$2
+    shift 2
+    [ "${1:-}" = --next ] || {
+        usage
+        exit 2
+    }
+    local success_next=$2
+    shift 2
+    [ "${1:-}" = -- ] || {
+        usage
+        exit 2
+    }
+    shift
+    [ "$#" -gt 0 ] || {
+        echo "missing build command" >&2
+        exit 2
+    }
+    [ -x "${local_notifier}" ] || {
+        echo "Helium job notifier is not installed: ${local_notifier}" >&2
+        exit 1
+    }
+    install_worker
+
+    local initialized=false
+    local registered=false
+    local temp_dir source_file source_info repository product output
+    temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
+    source_file="${temp_dir}/source.env"
+    cleanup_resume() {
+        local result=$?
+        if [ "${initialized}" = true ] && [ "${registered}" = false ]; then
+            remote_exec "${remote_worker}" resume-abort "${job}" \
+                >/dev/null 2>&1 || true
+        fi
+        find "${temp_dir}" -depth -delete
+        return "${result}"
+    }
+    trap cleanup_resume EXIT
+
+    remote_exec "${remote_worker}" resume-init "${parent}" "${job}" -- "$@"
+    initialized=true
+    source_info=$(remote_exec "${remote_worker}" source-info "${job}")
+    printf '%s\n' "${source_info}" >"${source_file}"
+    chmod 600 "${source_file}"
+    repository=$(awk -F= '$1 == "repository" { print $2; exit }' <<<"${source_info}")
+    case "${repository}" in
+        helium-passwords) product="Helium Passwords" ;;
+        helium-sync) product="Helium Sync" ;;
+        *)
+            echo "unsupported staged Helium repository: ${repository}" >&2
+            exit 1
+            ;;
+    esac
+    "${local_notifier}" register "${job}" "${product}" "${summary}" \
+        "${success_next}" "${source_file}"
+    registered=true
+
+    if ! output=$(remote_exec "${remote_worker}" resume-start "${job}" -- "$@"); then
+        if remote_exec "${remote_worker}" resume-abort "${job}" \
+            >/dev/null 2>&1; then
+            initialized=false
+            "${local_notifier}" abandon "${job}" >/dev/null || true
+        fi
+        return 1
+    fi
+    printf '%s\nnotification=armed\n' "${output}"
+    find "${temp_dir}" -depth -delete
+    trap - EXIT
+}
+
 status() {
     install_worker
     remote_exec "${remote_worker}" status "$1"
@@ -343,6 +428,7 @@ case "${command}" in
     preflight) [ "$#" -eq 1 ] || exit 2; preflight "$@" ;;
     stage) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; stage "$@" ;;
     start) [ "$#" -ge 7 ] || exit 2; start "$@" ;;
+    resume) [ "$#" -ge 8 ] || exit 2; resume "$@" ;;
     status) [ "$#" -eq 1 ] || exit 2; status "$@" ;;
     terminal) [ "$#" -eq 1 ] || exit 2; terminal "$@" ;;
     limits) [ "$#" -eq 1 ] || exit 2; limits "$@" ;;

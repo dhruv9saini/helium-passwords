@@ -41,7 +41,7 @@ profile() {
             watchdog_interval=30
             watchdog_memory_high=64M
             watchdog_memory_max=128M
-            watchdog_ready_seconds=30
+            watchdog_ready_seconds=600
             supervisor_interval=1
             ;;
         test)
@@ -109,6 +109,121 @@ require_contained_path() {
     esac
 }
 
+exact_value() {
+    local file=$1
+    local key=$2
+    [ -f "${file}" ] && [ ! -L "${file}" ] || return 1
+    awk -v key="${key}" '
+        index($0, key "=") == 1 {
+            count += 1
+            value = substr($0, length(key) + 2)
+        }
+        END {
+            if (count != 1 || value == "") {
+                exit 1
+            }
+            print value
+        }
+    ' "${file}"
+}
+
+command_text() {
+    local text
+    printf -v text '%q ' "$@"
+    printf '%s\n' "${text}"
+}
+
+workspace_owner() {
+    local job=$1
+    validate_job "${job}"
+    local stage="${state_root}/${job}/stage.env"
+    [ -f "${stage}" ] || return 1
+
+    local count owner
+    count=$(awk '$0 ~ /^workspace_owner=/ { count += 1 } END { print count + 0 }' \
+        "${stage}")
+    case "${count}" in
+        0) owner=${job} ;;
+        1) owner=$(exact_value "${stage}" workspace_owner) ;;
+        *) return 1 ;;
+    esac
+    validate_job "${owner}"
+    printf '%s\n' "${owner}"
+}
+
+validate_source_manifest() {
+    local manifest=$1
+    local value
+    for key in repository origin commit tree helium_submodule chromium_version \
+        archive_sha256 transferred_at transferred_from; do
+        value=$(exact_value "${manifest}" "${key}") || {
+            echo "incomplete source provenance: missing or duplicate ${key}" >&2
+            return 1
+        }
+        case "${key}" in
+            commit|tree|helium_submodule)
+                [[ "${value}" =~ ^[0-9a-f]{40}$ ]] || {
+                    echo "invalid source provenance: ${key}" >&2
+                    return 1
+                }
+                ;;
+            archive_sha256)
+                [[ "${value}" =~ ^[0-9a-f]{64}$ ]] || {
+                    echo "invalid source provenance: ${key}" >&2
+                    return 1
+                }
+                ;;
+        esac
+    done
+}
+
+continuation_parent() {
+    local job=$1
+    local resume="${state_root}/${job}/resume.env"
+    [ -f "${resume}" ] || return 1
+    local parent
+    parent=$(exact_value "${resume}" parent_job)
+    validate_job "${parent}"
+    printf '%s\n' "${parent}"
+}
+
+validate_continuation_state() {
+    local child=$1
+    shift
+    validate_job "${child}"
+    local child_state="${state_root}/${child}"
+    local parent owner manifest_sha actual_sha
+    [ -d "${child_state}" ] && [ ! -L "${child_state}" ] || return 1
+    parent=$(continuation_parent "${child}") || return 1
+    owner=$(workspace_owner "${child}") || return 1
+    [ "$(exact_value "${child_state}/resume.env" workspace_owner)" = \
+        "${owner}" ] && \
+        [ "$(exact_value "${child_state}/resume.env" command)" = \
+            "$(command_text "$@")" ] && \
+        [ "$(exact_value "${state_root}/${parent}/continued-by.env" child_job)" = \
+            "${child}" ] && \
+        [ "$(exact_value "${state_root}/${parent}/continued-by.env" workspace_owner)" = \
+            "${owner}" ] || return 1
+
+    manifest_sha=$(exact_value "${child_state}/resume.env" \
+        source_manifest_sha256) || return 1
+    [[ "${manifest_sha}" =~ ^[0-9a-f]{64}$ ]] || return 1
+    validate_source_manifest "${child_state}/source.manifest" || return 1
+    validate_source_manifest "${state_root}/${owner}/source.manifest" || return 1
+    actual_sha=$(sha256sum "${child_state}/source.manifest" |
+        awk '{ print $1 }')
+    [ "${actual_sha}" = "${manifest_sha}" ] && \
+        cmp --silent "${child_state}/source.manifest" \
+            "${state_root}/${owner}/source.manifest" || return 1
+    [ ! -e "${state_root}/${parent}/watchdog-stop.env" ] && \
+        [ ! -e "${state_root}/${parent}/cancel.env" ] && \
+        [ ! -e "${state_root}/${parent}/cleanup.env" ] && \
+        [ ! -e "${state_root}/${owner}/workspace-cleaned-by.env" ] || return 1
+
+    continuation_state_parent=${parent}
+    continuation_state_owner=${owner}
+}
+
 preflight() {
     local profile_name=$1
     local disk_budget_gib=$2
@@ -123,7 +238,8 @@ preflight() {
     profile "${profile_name}"
     require_worker_host
 
-    local required=(awk df find flock grep install ionice journalctl ln nice realpath sed sha256sum stat systemctl systemd-run tar timeout)
+    local required=(awk cmp df find flock grep install ionice journalctl ln nice
+        realpath sed sha256sum stat systemctl systemd-run tar timeout)
     local tool
     for tool in "${required[@]}"; do
         command -v "${tool}" >/dev/null 2>&1 || {
@@ -224,8 +340,8 @@ stage_init() {
         exit 1
     }
     mkdir -p "${state_dir}" "${job_root}"
-    printf 'profile=production\ndisk_budget_gib=%s\ndisk_budget_bytes=%s\nstaged_at=%s\n' \
-        "${disk_budget_gib}" "$(gib "${disk_budget_gib}")" \
+    printf 'profile=production\ndisk_budget_gib=%s\ndisk_budget_bytes=%s\nworkspace_owner=%s\nstaged_at=%s\n' \
+        "${disk_budget_gib}" "$(gib "${disk_budget_gib}")" "${job}" \
         "$(date --iso-8601=seconds)" >"${state_dir}/stage.env"
 }
 
@@ -289,10 +405,238 @@ test_prepare() {
         exit 1
     }
     mkdir -p "${state_dir}" "${test_dir}"
-    printf 'profile=test\ndisk_budget_gib=%s\ndisk_budget_bytes=%s\nstaged_at=%s\n' \
-        "${disk_budget_gib}" "$(gib "${disk_budget_gib}")" \
+    printf 'profile=test\ndisk_budget_gib=%s\ndisk_budget_bytes=%s\nworkspace_owner=%s\nstaged_at=%s\n' \
+        "${disk_budget_gib}" "$(gib "${disk_budget_gib}")" "${job}" \
         "$(date --iso-8601=seconds)" >"${state_dir}/stage.env"
     printf '%s\n' "${test_dir}"
+}
+
+validate_resume_parent() {
+    local parent=$1
+    local child=$2
+    shift 2
+    validate_job "${parent}"
+    validate_job "${child}"
+    [ "${parent}" != "${child}" ] || {
+        echo "continuation job id must differ from its parent" >&2
+        return 1
+    }
+
+    local parent_state="${state_root}/${parent}"
+    local terminal="${parent_state}/terminal.env"
+    local stage="${parent_state}/stage.env"
+    local policy="${parent_state}/policy.env"
+    [ -d "${parent_state}" ] && [ ! -L "${parent_state}" ] || {
+        echo "unknown continuation parent: ${parent}" >&2
+        return 1
+    }
+    [ "$(exact_value "${terminal}" state)" = terminal ] && \
+        [ "$(exact_value "${terminal}" result)" = timeout ] && \
+        [ "$(exact_value "${terminal}" exit_code)" = 124 ] && \
+        [ "$(exact_value "${terminal}" reason)" = \
+            "systemd stopped the job at its wall-time limit" ] || {
+        echo "continuation parent is not an exact exit-124 terminal timeout" >&2
+        return 1
+    }
+    [ "$(exact_value "${stage}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" profile)" = production ] || {
+        echo "only production jobs can be continued" >&2
+        return 1
+    }
+    local staged_budget_gib staged_budget_bytes policy_budget_bytes
+    staged_budget_gib=$(exact_value "${stage}" disk_budget_gib)
+    staged_budget_bytes=$(exact_value "${stage}" disk_budget_bytes)
+    policy_budget_bytes=$(exact_value "${policy}" disk_budget_bytes)
+    [[ "${staged_budget_gib}" =~ ^[1-9][0-9]*$ ]] && \
+        [ "${staged_budget_bytes}" = "$(gib "${staged_budget_gib}")" ] && \
+        [ "${policy_budget_bytes}" = "${staged_budget_bytes}" ] || {
+        echo "continuation parent has inconsistent disk-budget provenance" >&2
+        return 1
+    }
+
+    local expected_command requested_command
+    expected_command=$(exact_value "${policy}" command)
+    requested_command=$(command_text "$@")
+    [ "${requested_command}" = "${expected_command}" ] || {
+        echo "continuation command must exactly match its parent command" >&2
+        return 1
+    }
+
+    local owner
+    owner=$(workspace_owner "${parent}") || {
+        echo "continuation parent has invalid workspace ownership" >&2
+        return 1
+    }
+    [ "${child}" != "${owner}" ] || {
+        echo "continuation job id conflicts with workspace owner" >&2
+        return 1
+    }
+    local owner_state="${state_root}/${owner}"
+    local job_root="${work_root}/${owner}"
+    local source_dir="${job_root}/source"
+    [ -d "${job_root}" ] && [ ! -L "${job_root}" ] && \
+        [ -d "${source_dir}" ] && [ ! -L "${source_dir}" ] || {
+        echo "continuation workspace is missing or unsafe" >&2
+        return 1
+    }
+    job_root=$(realpath -e "${job_root}")
+    source_dir=$(realpath -e "${source_dir}")
+    require_contained_path "${job_root}" "$(realpath -e "${work_root}")"
+    require_contained_path "${source_dir}" "${job_root}"
+
+    validate_source_manifest "${parent_state}/source.manifest" || return 1
+    [ -d "${owner_state}" ] && [ ! -L "${owner_state}" ] && \
+        validate_source_manifest "${owner_state}/source.manifest" && \
+        cmp --silent "${parent_state}/source.manifest" \
+            "${owner_state}/source.manifest" || {
+        echo "continuation source provenance differs from its workspace owner" >&2
+        return 1
+    }
+    for forbidden in watchdog-stop.env cancel.env cleanup.env continued-by.env; do
+        [ ! -e "${parent_state}/${forbidden}" ] || {
+            echo "continuation parent has disqualifying state: ${forbidden}" >&2
+            return 1
+        }
+    done
+    [ ! -e "${owner_state}/workspace-cleaned-by.env" ] || {
+        echo "continuation workspace was already cleaned" >&2
+        return 1
+    }
+    ! systemctl --user --quiet is-active "helium-job-${parent}.service" && \
+        ! systemctl --user --quiet is-active "helium-watch-${parent}.service" || {
+        echo "continuation parent is still active" >&2
+        return 1
+    }
+    [ ! -e "${state_root}/${child}" ] && \
+        [ ! -e "${work_root}/${child}" ] || {
+        echo "continuation job already exists: ${child}" >&2
+        return 1
+    }
+
+    resume_owner=${owner}
+    resume_budget_gib=${staged_budget_gib}
+    resume_budget_bytes=${staged_budget_bytes}
+    resume_command=${requested_command}
+}
+
+resume_init() {
+    local parent=$1
+    local child=$2
+    shift 2
+    [ "${1:-}" = -- ] || {
+        usage
+        exit 2
+    }
+    shift
+    [ "$#" -gt 0 ] || {
+        echo "missing continuation command" >&2
+        exit 2
+    }
+    validate_job "${parent}"
+    validate_job "${child}"
+
+    local child_state="${state_root}/${child}"
+    if [ -d "${child_state}" ]; then
+        if ! validate_continuation_state "${child}" "$@"; then
+            echo "continuation job conflicts with existing state: ${child}" >&2
+            exit 1
+        fi
+        [ "${continuation_state_parent}" = "${parent}" ] || {
+            echo "continuation job conflicts with existing state: ${child}" >&2
+            exit 1
+        }
+        printf 'continuation=%s\nparent_job=%s\nworkspace_owner=%s\nexisting=true\n' \
+            "${child}" "${parent}" "${continuation_state_owner}"
+        return
+    fi
+
+    mkdir -p "${state_root}"
+    exec 9>"${state_root}/start.lock"
+    flock -n 9 || {
+        echo "another start operation is in progress" >&2
+        exit 1
+    }
+    if ! validate_resume_parent "${parent}" "${child}" "$@"; then
+        exit 1
+    fi
+    if ! preflight production "${resume_budget_gib}" \
+        "${work_root}/${resume_owner}" "${work_root}/${resume_owner}"; then
+        exit 1
+    fi
+
+    local parent_state="${state_root}/${parent}"
+    local source_sha
+    source_sha=$(sha256sum "${parent_state}/source.manifest" | awk '{ print $1 }')
+    mkdir "${child_state}"
+    install -m 600 "${parent_state}/source.manifest" \
+        "${child_state}/source.manifest"
+    {
+        printf 'profile=production\n'
+        printf 'disk_budget_gib=%s\n' "${resume_budget_gib}"
+        printf 'disk_budget_bytes=%s\n' "${resume_budget_bytes}"
+        printf 'workspace_owner=%s\n' "${resume_owner}"
+        printf 'staged_at=%s\n' "$(date --iso-8601=seconds)"
+    } >"${child_state}/stage.env"
+    {
+        printf 'parent_job=%s\n' "${parent}"
+        printf 'workspace_owner=%s\n' "${resume_owner}"
+        printf 'source_manifest_sha256=%s\n' "${source_sha}"
+        printf 'command=%s\n' "${resume_command}"
+        printf 'admitted_at=%s\n' "$(date --iso-8601=seconds)"
+    } >"${child_state}/resume.env"
+
+    local claim="${parent_state}/continued-by.env"
+    local claim_temp="${claim}.tmp.$$"
+    {
+        printf 'child_job=%s\n' "${child}"
+        printf 'workspace_owner=%s\n' "${resume_owner}"
+        printf 'claimed_at=%s\n' "$(date --iso-8601=seconds)"
+    } >"${claim_temp}"
+    if ! ln "${claim_temp}" "${claim}" 2>/dev/null; then
+        find "${claim_temp}" -delete
+        find "${child_state}" -depth -delete
+        echo "continuation parent was claimed concurrently" >&2
+        exit 1
+    fi
+    find "${claim_temp}" -delete
+    printf 'continuation=%s\nparent_job=%s\nworkspace_owner=%s\nexisting=false\n' \
+        "${child}" "${parent}" "${resume_owner}"
+}
+
+resume_abort() {
+    local child=$1
+    validate_job "${child}"
+    local child_state="${state_root}/${child}"
+    local parent
+    parent=$(continuation_parent "${child}") || {
+        echo "job is not an admitted continuation: ${child}" >&2
+        exit 1
+    }
+
+    exec 9>"${state_root}/start.lock"
+    flock -n 9 || {
+        echo "another start operation is in progress" >&2
+        exit 1
+    }
+    for started in policy.env result.env terminal.env; do
+        [ ! -e "${child_state}/${started}" ] || {
+            echo "refusing to abandon a started continuation" >&2
+            exit 1
+        }
+    done
+    ! systemctl --user --quiet is-active "helium-job-${child}.service" && \
+        ! systemctl --user --quiet is-active "helium-watch-${child}.service" || {
+        echo "refusing to abandon an active continuation" >&2
+        exit 1
+    }
+    [ "$(exact_value "${state_root}/${parent}/continued-by.env" child_job)" = \
+        "${child}" ] || {
+        echo "continuation ownership claim is inconsistent" >&2
+        exit 1
+    }
+    find "${state_root}/${parent}/continued-by.env" -delete
+    find "${child_state}" -depth -delete
+    printf 'continuation_abandoned=%s\nparent_job=%s\n' "${child}" "${parent}"
 }
 
 write_policy() {
@@ -300,7 +644,9 @@ write_policy() {
     local profile_name=$2
     local work_dir=$3
     local disk_budget_bytes=$4
-    shift 4
+    local owner=$5
+    local parent=$6
+    shift 6
     local command_text
     printf -v command_text '%q ' "$@"
     local temp="${state_dir}/policy.env.tmp"
@@ -308,6 +654,10 @@ write_policy() {
         printf 'profile=%s\n' "${profile_name}"
         printf 'host=%s\n' "$(hostname -s)"
         printf 'work_dir=%s\n' "${work_dir}"
+        printf 'workspace_owner=%s\n' "${owner}"
+        if [ -n "${parent}" ]; then
+            printf 'parent_job=%s\n' "${parent}"
+        fi
         printf 'build_jobs=%s\n' "${build_jobs}"
         printf 'cpu_quota=%s\n' "${cpu_quota}"
         printf 'cpu_weight=%s\n' "${cpu_weight}"
@@ -352,26 +702,44 @@ start_job() {
 
     work_dir=$(realpath -e "${work_dir}")
     require_contained_path "${work_dir}" "$(realpath -e "${work_root}")"
-    local job_root="${work_root}/${job}"
+    local owner
+    owner=$(workspace_owner "${job}") || {
+        echo "job has invalid workspace ownership: ${job}" >&2
+        exit 1
+    }
+    local job_root="${work_root}/${owner}"
     job_root=$(realpath -e "${job_root}")
     require_contained_path "${job_root}" "$(realpath -e "${work_root}")"
+    require_contained_path "${work_dir}" "${job_root}"
 
     local state_dir="${state_root}/${job}"
     [ -f "${state_dir}/stage.env" ] || {
         echo "job is not staged: ${job}" >&2
         exit 1
     }
-    local disk_budget_gib disk_budget_bytes
-    disk_budget_gib=$(awk -F= '$1 == "disk_budget_gib" { print $2 }' \
-        "${state_dir}/stage.env")
-    disk_budget_bytes=$(awk -F= '$1 == "disk_budget_bytes" { print $2 }' \
-        "${state_dir}/stage.env")
+    local disk_budget_gib disk_budget_bytes parent=
+    disk_budget_gib=$(exact_value "${state_dir}/stage.env" disk_budget_gib)
+    disk_budget_bytes=$(exact_value "${state_dir}/stage.env" disk_budget_bytes)
     [[ "${disk_budget_gib}" =~ ^[1-9][0-9]*$ ]] && \
         [ "${disk_budget_bytes}" = "$(gib "${disk_budget_gib}")" ] || {
         echo "invalid staged disk budget for ${job}" >&2
         exit 1
     }
-    preflight "${profile_name}" "${disk_budget_gib}" "${job_root}" "${job_root}"
+    if [ -f "${state_dir}/resume.env" ]; then
+        if ! validate_continuation_state "${job}" "$@"; then
+            echo "continuation admission is inconsistent" >&2
+            exit 1
+        fi
+        parent=${continuation_state_parent}
+        [ "${continuation_state_owner}" = "${owner}" ] || {
+            echo "continuation workspace owner changed" >&2
+            exit 1
+        }
+    fi
+    if ! preflight "${profile_name}" "${disk_budget_gib}" \
+        "${job_root}" "${job_root}"; then
+        exit 1
+    fi
     [ ! -e "${state_dir}/policy.env" ] && [ ! -e "${state_dir}/result.env" ] || {
         echo "job has already been started: ${job}" >&2
         exit 1
@@ -394,7 +762,7 @@ start_job() {
     mkdir -p "${job_root}/cache" "${job_root}/tmp"
     install -m 700 "$0" "${worker}"
     write_policy "${state_dir}" "${profile_name}" "${work_dir}" \
-        "${disk_budget_bytes}" "$@"
+        "${disk_budget_bytes}" "${owner}" "${parent}" "$@"
 
     if ! systemd-run --user --unit="${unit%.service}" --collect \
         --property="Description=Isolated Helium build ${job}" \
@@ -423,6 +791,8 @@ start_job() {
         --setenv="TMPDIR=${job_root}/tmp" \
         "${worker}" run "${state_dir}" "${watch_unit}" \
         "${watchdog_ready_seconds}" "${supervisor_interval}" -- "$@"; then
+        write_terminal "${state_dir}" failure 125 \
+            "failed to create isolated build unit"
         echo "failed to create isolated build unit" >&2
         exit 1
     fi
@@ -447,12 +817,61 @@ start_job() {
             "${supervisor_interval}"; then
         record_watchdog_stop "${state_dir}" "health watchdog failed to start"
         systemctl --user stop "${unit}" >/dev/null 2>&1 || true
+        write_terminal "${state_dir}" failure 125 \
+            "health watchdog failed to start"
         echo "failed to create health watchdog; build stopped" >&2
         exit 1
     fi
 
     printf 'job=%s\nunit=%s\nwatch_unit=%s\nlogs=journalctl --user --unit=%s\nstate=%s\n' \
         "${job}" "${unit}" "${watch_unit}" "${unit}" "${state_dir}"
+}
+
+resume_start() {
+    local child=$1
+    shift
+    [ "${1:-}" = -- ] || {
+        usage
+        exit 2
+    }
+    shift
+    [ "$#" -gt 0 ] || {
+        echo "missing continuation command" >&2
+        exit 2
+    }
+    validate_job "${child}"
+    local child_state="${state_root}/${child}"
+    local parent owner
+    if ! validate_continuation_state "${child}" "$@"; then
+        echo "continuation admission is inconsistent" >&2
+        exit 1
+    fi
+    parent=${continuation_state_parent}
+    owner=${continuation_state_owner}
+
+    if [ -f "${child_state}/policy.env" ]; then
+        [ "$(exact_value "${child_state}/policy.env" command)" = \
+            "$(command_text "$@")" ] && \
+            [ "$(exact_value "${child_state}/policy.env" workspace_owner)" = \
+                "${owner}" ] && \
+            [ "$(exact_value "${child_state}/policy.env" parent_job)" = \
+                "${parent}" ] || {
+            echo "started continuation conflicts with requested command" >&2
+            exit 1
+        }
+        if systemctl --user --quiet is-active \
+            "helium-job-${child}.service" || \
+            [ -f "${child_state}/terminal.env" ]; then
+            printf 'job=%s\nparent_job=%s\nworkspace_owner=%s\nexisting=true\n' \
+                "${child}" "${parent}" "${owner}"
+            return
+        fi
+        echo "started continuation has neither an active unit nor terminal state" >&2
+        exit 1
+    fi
+
+    start_job production "${child}" "${work_root}/${owner}/source" -- "$@" || \
+        exit 1
 }
 
 run_job() {
@@ -802,7 +1221,10 @@ status_job() {
         "${job}" "$(systemctl --user is-active "${unit}" 2>/dev/null || true)" \
         "$(systemctl --user is-active "${watch_unit}" 2>/dev/null || true)" \
         "${state_dir}" "${unit}"
-    for file in policy.env watchdog-ready.env health.env disk-scan-retry.env result.env terminal.env watchdog-stop.env cancel.env; do
+    for file in stage.env resume.env policy.env continued-by.env \
+        watchdog-ready.env health.env disk-scan-retry.env result.env \
+        terminal.env watchdog-stop.env cancel.env artifact-returned.env \
+        cleanup.env workspace-cleaned-by.env; do
         if [ -f "${state_dir}/${file}" ]; then
             printf -- '--- %s ---\n' "${file}"
             cat "${state_dir}/${file}"
@@ -889,11 +1311,21 @@ source_info() {
         echo "job has no completed source manifest: ${job}" >&2
         exit 1
     }
+    validate_source_manifest "${manifest}"
     awk -F= '$1 == "repository" || $1 == "commit" || $1 == "tree" ||
         $1 == "helium_submodule" || $1 == "chromium_version" ||
         $1 == "HELIUM_ANDROID_CHROMIUM_COMMIT" ||
         $1 == "HELIUM_ANDROID_CORE_COMMIT" ||
         $1 == "HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" { print }' "${manifest}"
+    local owner parent
+    owner=$(workspace_owner "${job}") || {
+        echo "job has invalid workspace ownership: ${job}" >&2
+        exit 1
+    }
+    printf 'workspace_owner=%s\n' "${owner}"
+    if parent=$(continuation_parent "${job}" 2>/dev/null); then
+        printf 'parent_job=%s\n' "${parent}"
+    fi
 }
 
 artifact_info() {
@@ -904,7 +1336,12 @@ artifact_info() {
         echo "artifact path must be a contained relative path" >&2
         exit 2
     }
-    local source_root="${work_root}/${job}/source"
+    local owner
+    owner=$(workspace_owner "${job}") || {
+        echo "job has invalid workspace ownership: ${job}" >&2
+        exit 1
+    }
+    local source_root="${work_root}/${owner}/source"
     local artifact
     artifact=$(realpath -e "${source_root}/${relative}")
     require_contained_path "${artifact}" "$(realpath -e "${source_root}")"
@@ -929,9 +1366,19 @@ cleanup_job() {
     local job=$1
     validate_job "${job}"
     local state_dir="${state_root}/${job}"
-    local job_root="${work_root}/${job}"
+    local owner
+    owner=$(workspace_owner "${job}") || {
+        echo "job has invalid workspace ownership: ${job}" >&2
+        exit 1
+    }
+    local owner_state="${state_root}/${owner}"
+    local job_root="${work_root}/${owner}"
     ! systemctl --user --quiet is-active "helium-job-${job}.service" || {
         echo "refusing cleanup while job is active" >&2
+        exit 1
+    }
+    [ ! -e "${state_dir}/continued-by.env" ] || {
+        echo "refusing cleanup from a segment that has a continuation" >&2
         exit 1
     }
     if ! grep -qx 'profile=test' "${state_dir}/stage.env" 2>/dev/null && \
@@ -939,13 +1386,37 @@ cleanup_job() {
         echo "refusing cleanup until an artifact return receipt exists" >&2
         exit 1
     fi
+    [ ! -e "${owner_state}/workspace-cleaned-by.env" ] || {
+        echo "workspace was already cleaned" >&2
+        exit 1
+    }
+    [ -d "${job_root}" ] && [ ! -L "${job_root}" ] || {
+        echo "workspace owner is missing or unsafe" >&2
+        exit 1
+    }
+
+    exec 9>"${state_root}/start.lock"
+    flock -n 9 || {
+        echo "another start or cleanup operation is in progress" >&2
+        exit 1
+    }
+    ! systemctl --user --quiet is-active 'helium-job-*.service' || {
+        echo "refusing cleanup while a Helium build is active" >&2
+        exit 1
+    }
     if [ -d "${job_root}" ]; then
         require_contained_path "$(realpath -e "${job_root}")" "$(realpath -e "${work_root}")"
         find "${job_root}" -depth -delete
     fi
     printf 'workspace_cleaned_at=%s\n' "$(date --iso-8601=seconds)" \
         >"${state_dir}/cleanup.env"
-    printf 'workspace_cleaned=%s\nstate_retained=%s\n' "${job_root}" "${state_dir}"
+    {
+        printf 'cleaned_by_job=%s\n' "${job}"
+        printf 'workspace_owner=%s\n' "${owner}"
+        printf 'workspace_cleaned_at=%s\n' "$(date --iso-8601=seconds)"
+    } >"${owner_state}/workspace-cleaned-by.env"
+    printf 'workspace_cleaned=%s\nworkspace_owner=%s\nstate_retained=%s\n' \
+        "${job_root}" "${owner}" "${state_dir}"
 }
 
 if [ "${BASH_SOURCE[0]}" != "$0" ]; then
@@ -960,6 +1431,9 @@ case "${command}" in
     stage-finish) stage_finish "$@" ;;
     stage-abort) stage_abort "$@" ;;
     test-prepare) test_prepare "$@" ;;
+    resume-init) resume_init "$@" ;;
+    resume-start) resume_start "$@" ;;
+    resume-abort) resume_abort "$@" ;;
     start) start_job "$@" ;;
     run) run_job "$@" ;;
     watch) watch_job "$@" ;;

@@ -60,7 +60,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | Job tree | explicit per-job allocated-block budget; the current full-target measurement uses `80 GiB`, while `100 GiB` is an optional larger ceiling only after a new capacity decision |
 | Root free space | `2 GiB` unprivileged floor, independent of the job budget and checked on `/` |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
-| Watchdog | separate cgroup: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, no swap, idle I/O, nice `15`, and `TasksMax=16` |
+| Watchdog | separate cgroup: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, no swap, idle I/O, nice `15`, `TasksMax=16`, and a finite 600-second production readiness cap |
 | Wall time | hard `8h` systemd deadline |
 | Concurrency | one active `helium-job-*` service on chromiumer |
 
@@ -152,6 +152,17 @@ even if no policy reason was recorded. `MemoryMax`, `CPUQuota`, `TasksMax`,
 idle I/O priority, and the systemd runtime deadline remain additional enforced
 bounds rather than substitutes for the watcher.
 
+Production allows at most 600 seconds for that first complete scan; the
+two-minute harmless test profile allows 10 seconds. This is a readiness bound,
+not permission to start from a stale preflight result. A retained 44.17 GiB
+Android workspace took 31.678 seconds to scan under the watchdog's low CPU and
+idle-I/O priority, while earlier actively mutating checkout scans took roughly
+four to five minutes. The 600-second cap is about nineteen times the retained
+scan and twice the largest observed moving-tree scan, leaving the watchdog
+low-priority while bounding a wedged scan. The command never starts without
+the newly written health record and readiness marker. The eight-hour build
+unit deadline remains unchanged and includes readiness time.
+
 ## Immutable Source Transfer
 
 Use a unique lowercase job ID. Staging refuses a dirty repository, requires the
@@ -200,6 +211,81 @@ immediately after creating the isolated job and watchdog. `--summary` records
 what the job tests or produces; `--next` is the useful action included in a
 success notification. Both are mandatory and must describe the particular
 job, not a generic build class.
+
+### Continuing an exact wall-time timeout
+
+An eight-hour deadline bounds one systemd unit; it does not imply that every
+two-job Chromium compile will finish in one unit. A healthy compile that
+reaches that exact deadline may continue in a new, independently bounded
+segment without retransferring source or discarding Ninja state:
+
+```sh
+parent=hs-android-150-sync-test-01
+job=hs-android-150-sync-test-01b
+scripts/chromiumer-job.sh resume "$parent" "$job" \
+    --summary "Continuation of the pinned Android compile and package gate" \
+    --next "Fetch and verify the exact-source Android artifact." -- \
+    env \
+      HELIUM_SYNC_REPO=. \
+      GITHUB_WORKSPACE=.build \
+      CHROMIUM_ANDROID_PHASE=all \
+      bash scripts/chromium/build-android-ci.sh
+```
+
+The command after `--` is mandatory and must byte-for-byte reproduce the
+parent policy's shell-escaped argument vector. This keeps the executable build
+plan explicit while letting Ninja reuse its dependency log and completed
+objects. The continuation is not a longer unit: it gets a new unique
+`helium-job-<job>.service`, watchdog, state directory, journal, terminal
+record, Mailbridge event key, and exact eight-hour `RuntimeMaxSec`.
+
+Admission fails closed unless all of these statements are true:
+
+- the parent has one complete terminal record with `result=timeout` and
+  `exit_code=124`;
+- it was a production job with a complete source manifest, matching owner
+  manifest, internally consistent policy/stage disk budget, and the exact
+  requested command;
+- no cancellation, watchdog stop, cleanup, or prior continuation exists (a
+  returned timeout-evidence artifact is permitted and remains recorded);
+- the parent units are inactive, the preserved workspace is present and
+  contained under the work root, no other Helium unit is active, and the new
+  job ID has no state or workspace collision;
+- normal production admission passes using the entire preserved owner
+  workspace as current use.
+
+For an 80 GiB owner that already uses 44 GiB on chromiumer's current root
+filesystem, the continuation gate is therefore approximately:
+
+```text
+80 GiB budget - 44 GiB allocated owner workspace + 2 GiB root floor
+= 38 GiB required filesystem availability
+```
+
+The worker records `parent_job`, `workspace_owner`, and the source-manifest
+SHA-256 in the continuation state. Only one child can claim a terminal segment.
+The control client creates that durable claim first, registers the new job
+with the lm notifier, and only then starts the unit. If notification
+registration fails, the still-unstarted claim is removed. If start delivery is
+uncertain, retrying the same parent, child, and command is idempotent; a
+different value is rejected.
+
+Use the continuation job ID with the normal `status`, `terminal`, `limits`,
+`logs`, `cancel`, and `fetch` commands. `source-info` and artifact lookup
+resolve its recorded owner workspace, while journals and terminal state remain
+segment-specific. Only the latest segment can clean the shared workspace, and
+only after its artifact-return receipt exists:
+
+```sh
+scripts/chromiumer-job.sh fetch "$job" \
+    .build/android-artifacts/chrome_public_apk-arm64.tar.xz
+scripts/chromiumer-job.sh cleanup "$job"
+```
+
+Cleanup rejects the timed-out parent, any non-latest segment, a second cleanup,
+an active Helium unit, or a missing receipt. It deletes the workspace owner
+once and retains every segment's manifests, policy, health, terminal,
+notification provenance, and journal.
 
 Public Linux x86_64 does not use the platform's Docker wrapper on chromiumer.
 A daemon-launched container would sit outside the transient user service's
@@ -357,9 +443,10 @@ scripts/chromiumer-job.sh logs "$job" 240
   Preserve the exact diagnostic and source manifest before fixing the public
   patch. In particular, do not describe the Android focused target as proof
   that desktop-only settings, app-menu, omnibox, or toolbar files compile.
-- `oom-kill`, the 5 GiB cgroup maximum, the 80 GiB disk ceiling, or the eight
-  hour deadline is capacity evidence, not a source failure. Do not raise a
-  limit or retry at 100 GiB without a separate capacity decision.
+- `oom-kill`, the 5 GiB cgroup maximum, or the 80 GiB disk ceiling is capacity
+  evidence, not a source failure. An exact healthy exit-124 wall timeout may
+  use the bounded continuation workflow above. Do not raise a limit or retry
+  at 100 GiB without a separate capacity decision.
 - A successful Ninja followed by a missing runtime entry, Nix mismatch, or
   manifest/inventory failure is a packaging/provenance failure. The compiled
   output is not an admitted artifact.
