@@ -39,6 +39,12 @@ function sha256(data) {
   return crypto.createHash("sha256").update(data).digest("hex");
 }
 
+async function sha256File(filePath) {
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
+  return hash.digest("hex");
+}
+
 async function regularFile(filePath, name) {
   const resolved = path.resolve(filePath);
   const stat = await fsp.lstat(resolved);
@@ -119,7 +125,7 @@ async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPat
     "helium_core_commit", "chromium_version", "chromium_commit",
     "platform_commit", "bundle", "bundle_sha256",
     "provenance_manifest_sha256", "browser_executable", "browser_sha256",
-    "verified_at",
+    "runtime_inventory", "runtime_inventory_sha256", "verified_at",
   ].sort();
   if (JSON.stringify([...values.keys()].sort()) !== JSON.stringify(expectedKeys)) {
     throw new Error("Linux artifact receipt has an unexpected field inventory");
@@ -130,7 +136,7 @@ async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPat
   const digestFields = [
     "bundle_sha256", "provenance_manifest_sha256", "browser_sha256",
   ];
-  if (values.get("schema_version") !== "1" ||
+  if (values.get("schema_version") !== "2" ||
       values.get("product") !== "helium-passwords" ||
       values.get("platform") !== "linux" || values.get("arch") !== "x86_64" ||
       path.resolve(path.dirname(receipt.resolved),
@@ -139,6 +145,42 @@ async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPat
       commitFields.some(name => !/^[0-9a-f]{40}$/.test(values.get(name) || "")) ||
       digestFields.some(name => !/^[0-9a-f]{64}$/.test(values.get(name) || ""))) {
     throw new Error("Linux artifact receipt does not admit this audited browser executable");
+  }
+
+  const inventoryRelative = values.get("runtime_inventory") || "";
+  if (inventoryRelative !==
+      "helium-passwords-linux-x86_64/provenance/runtime.sha256" ||
+      !/^[0-9a-f]{64}$/.test(values.get("runtime_inventory_sha256") || "")) {
+    throw new Error("Linux artifact receipt has an invalid runtime inventory");
+  }
+  const receiptRoot = path.dirname(receipt.resolved);
+  const bundleRoot = path.join(receiptRoot, "helium-passwords-linux-x86_64");
+  const runtimeRoot = path.join(bundleRoot, "runtime");
+  const inventory = await regularFile(
+    path.join(receiptRoot, inventoryRelative), "Linux runtime inventory");
+  const inventoryRaw = await fsp.readFile(inventory.resolved, "utf8");
+  if (sha256(inventoryRaw) !== values.get("runtime_inventory_sha256")) {
+    throw new Error("Linux runtime inventory changed after artifact verification");
+  }
+  const seen = new Set();
+  for (const line of inventoryRaw.split("\n")) {
+    if (!line) continue;
+    const match = /^([0-9a-f]{64})  (runtime\/.+)$/.exec(line);
+    if (!match || match[2].includes("/../") || match[2].endsWith("/..") ||
+        seen.has(match[2])) {
+      throw new Error("Linux runtime inventory is malformed");
+    }
+    seen.add(match[2]);
+    const runtimeFile = await regularFile(
+      path.join(bundleRoot, match[2]), `Linux runtime file ${match[2]}`);
+    if (!runtimeFile.resolved.startsWith(`${runtimeRoot}${path.sep}`) ||
+        await sha256File(runtimeFile.resolved) !== match[1]) {
+      throw new Error(`Linux runtime file changed after artifact verification: ${match[2]}`);
+    }
+  }
+  if (!seen.has("runtime/helium") ||
+      !seen.has("runtime/helium-wrapper")) {
+    throw new Error("Linux runtime inventory omits the browser or launcher");
   }
   return {resolved: receipt.resolved, raw};
 }

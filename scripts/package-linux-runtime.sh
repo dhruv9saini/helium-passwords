@@ -122,12 +122,7 @@ ln -s helium "${runtime}/chrome"
 
 cp "${out_dir}/args.gn" "${provenance}/gn-args.txt"
 "${root_dir}/scripts/chromiumer-nix.sh" provenance >"${provenance}/chromiumer-nix.env"
-(
-    cd "${root_dir}"
-    sha256sum patches/helium-passwords/restore-password-autofill.patch \
-        patches/helium-passwords/restore-password-ui.patch \
-        patches/series >"${provenance}/patches.sha256"
-)
+"${root_dir}/scripts/patch-inventory.sh" >"${provenance}/patches.sha256"
 (
     cd "${bundle}"
     find runtime -type f -print0 | sort -z | xargs -0 sha256sum >provenance/runtime.sha256

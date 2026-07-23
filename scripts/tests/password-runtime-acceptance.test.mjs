@@ -23,9 +23,24 @@ const FIXTURE_NONCE = "a".repeat(64);
 async function writeLinuxArtifactReceipt(root, artifact) {
   const artifactHash = crypto.createHash("sha256")
     .update(await fsp.readFile(artifact)).digest("hex");
+  const bundle = path.join(root, "helium-passwords-linux-x86_64");
+  const runtime = path.join(bundle, "runtime");
+  const provenance = path.join(bundle, "provenance");
+  const browser = path.join(runtime, "helium");
+  await fsp.mkdir(runtime, {recursive: true});
+  await fsp.mkdir(provenance, {recursive: true});
+  await fsp.writeFile(browser, "synthetic browser binary", {mode: 0o700});
+  const inventory = path.join(provenance, "runtime.sha256");
+  const entries = [artifact, browser].sort();
+  const inventoryRaw = (await Promise.all(entries.map(async file => {
+    const digest = crypto.createHash("sha256")
+      .update(await fsp.readFile(file)).digest("hex");
+    return `${digest}  ${path.relative(bundle, file)}`;
+  }))).join("\n") + "\n";
+  await fsp.writeFile(inventory, inventoryRaw, {mode: 0o600});
   const receipt = path.join(root, "artifact-receipt.env");
   await fsp.writeFile(receipt, [
-    "schema_version=1",
+    "schema_version=2",
     "product=helium-passwords",
     "platform=linux",
     "arch=x86_64",
@@ -39,6 +54,8 @@ async function writeLinuxArtifactReceipt(root, artifact) {
     `provenance_manifest_sha256=${"6".repeat(64)}`,
     `browser_executable=${path.relative(root, artifact)}`,
     `browser_sha256=${artifactHash}`,
+    `runtime_inventory=${path.relative(root, inventory)}`,
+    `runtime_inventory_sha256=${crypto.createHash("sha256").update(inventoryRaw).digest("hex")}`,
     "verified_at=synthetic-fixture",
     "",
   ].join("\n"), {mode: 0o600});
@@ -137,13 +154,15 @@ test("native fixture attests restart, update, and deletion without emitting subm
 
 test("artifact-bound receipt requires the complete ordered native UI lifecycle", async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-native-run-"));
-  const artifact = path.join(root, "helium");
+  const artifact = path.join(
+    root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
   const screenshot = path.join(root, "screen.png");
   const invalidScreenshot = path.join(root, "invalid-screen.png");
   const runRoot = path.join(root, "acceptance");
   const evidence = path.join(root, "fixture-evidence.json");
   let fixture;
   try {
+    await fsp.mkdir(path.dirname(artifact), {recursive: true});
     await fsp.writeFile(artifact, "synthetic browser artifact", {mode: 0o700});
     await fsp.writeFile(screenshot, PNG, {mode: 0o600});
     await fsp.writeFile(invalidScreenshot, Buffer.concat([
@@ -189,6 +208,14 @@ test("artifact-bound receipt requires the complete ordered native UI lifecycle",
       runRoot,
       fixtureEvidence: wrongEvidence,
     }), /different acceptance run/);
+    const browser = path.join(
+      root, "helium-passwords-linux-x86_64", "runtime", "helium");
+    await fsp.appendFile(browser, "tampered");
+    await assert.rejects(auditRun({
+      runRoot,
+      fixtureEvidence: evidence,
+    }), /runtime file changed/);
+    await fsp.writeFile(browser, "synthetic browser binary", {mode: 0o700});
     const receipt = await verifyRun({runRoot, fixtureEvidence: evidence});
     assert.equal(receipt.result, "passed");
     assert.equal(receipt.schema_version, 2);

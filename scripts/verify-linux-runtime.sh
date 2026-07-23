@@ -189,7 +189,7 @@ browser_relative="${archive_root}/runtime/helium-wrapper"
 browser="${destination}/${browser_relative}"
 receipt="${destination}/artifact-receipt.env"
 cat >"${receipt}" <<EOF
-schema_version=1
+schema_version=2
 product=helium-passwords
 platform=linux
 arch=x86_64
@@ -203,6 +203,8 @@ bundle_sha256=$(sha256sum "${artifact}" | awk '{ print $1 }')
 provenance_manifest_sha256=$(sha256sum "${destination}/${archive_root}/provenance/manifest.env" | awk '{ print $1 }')
 browser_executable=${browser_relative}
 browser_sha256=$(sha256sum "${browser}" | awk '{ print $1 }')
+runtime_inventory=${archive_root}/provenance/runtime.sha256
+runtime_inventory_sha256=$(sha256sum "${destination}/${archive_root}/provenance/runtime.sha256" | awk '{ print $1 }')
 verified_at=$(date --iso-8601=seconds)
 EOF
 chmod 600 "${receipt}"

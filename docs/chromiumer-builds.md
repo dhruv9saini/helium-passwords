@@ -368,9 +368,13 @@ scripts/chromiumer-job.sh logs "$job" 240
   its useful diagnostics are returned; never manually delete it.
 
 The destination must not exist. Verification rejects an unexpected source
-train, field/file inventory, symlink, patch, GN args, Nix environment, or
-runtime hash and writes a mode-0600 `artifact-receipt.env` that admits exactly
-one upstream `runtime/helium-wrapper` entry point to the native password gate.
+train, field/file inventory, symlink, canonical patch-series member, GN args,
+Nix environment, or runtime hash. It writes a mode-0600 version-2
+`artifact-receipt.env` that admits exactly one upstream
+`runtime/helium-wrapper` entry point and binds the complete runtime checksum
+inventory. The native password gate rechecks every listed runtime file after
+transfer, so an unchanged wrapper cannot conceal a changed browser binary,
+library, or resource.
 
 The wrapper compares remote and returned SHA-256 values and writes an artifact
 receipt. Cleanup refuses to remove a production workspace until that receipt

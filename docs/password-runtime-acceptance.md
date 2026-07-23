@@ -30,11 +30,14 @@ therefore cannot be reused to admit a new artifact or screenshot sequence.
 
 First run `scripts/verify-linux-runtime.sh` on lm as documented in
 `chromiumer-builds.md`. Transfer the resulting verified directory and its
-mode-0600 receipt to da through the existing trusted artifact path without
-changing either file. On da, use a new result directory. `init` requires the
-verifier receipt, rehashes the admitted executable, and creates the only
-allowed profile below the result directory. Launch that exact executable with
-that exact `--user-data-dir`; never substitute an existing profile.
+mode-0600 receipt and its verified runtime directory to da through the existing
+trusted artifact path without changing any file. On da, use a new result
+directory. `init` requires the verifier receipt, rehashes the admitted launcher
+and every file in the receipt-bound runtime inventory, and creates the only
+allowed profile below the result directory. This prevents a changed browser
+binary, library, resource, or launcher from inheriting an earlier receipt.
+Launch that exact executable with that exact `--user-data-dir`; never
+substitute an existing profile.
 
 The audited da host has Node 24.18.0 installed through mise, but its
 non-interactive SSH `PATH` does not expose `node` directly. Use the verified
@@ -132,11 +135,11 @@ After the fixture writes its evidence, finalize once:
   --fixture-evidence "$run/fixture-evidence.json"
 ```
 
-`verify` rehashes the artifact, the Linux provenance receipt, and every
-captured screenshot; rechecks the Linux synthetic-profile marker or Android
-test-package admission; and verifies the fixture's loopback/no-secret
-contract. It creates `receipt.json` with mode 0600 and refuses to replace an
-existing receipt.
+`verify` rehashes the artifact, the Linux provenance receipt, every
+receipt-listed Linux runtime file, and every captured screenshot; rechecks the
+Linux synthetic-profile marker or Android test-package admission; and verifies
+the fixture's loopback/no-secret contract. It creates `receipt.json` with mode
+0600 and refuses to replace an existing receipt.
 
 ## Failure and cleanup
 
