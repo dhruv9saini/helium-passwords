@@ -226,10 +226,9 @@ destination is authenticated or that any site session is portable.
   clean.
 - No server request, record, schema, credential, or normal launch path contains
   tabs. A backup from one device is never displayed or auto-opened on another.
-- Prove all five mechanisms independently: Chromium clean/crash session
-  recovery, neutral topology generations, stopped full-profile generations,
-  stopped-only raw Sessions capsules, and the direct-observer SQLite event
-  journal. Two replicas of one generation still count as one mechanism.
+- Prove all three mechanisms independently: Chromium clean/crash session
+  recovery, neutral topology generations, and stopped encrypted full-profile
+  generations. Two replicas of one generation still count as one mechanism.
 - Each source runs its own capture/backup schedule. d and oneplus each copy to
   lm NAS and da; da copies to lm NAS and d. Destination namespaces never merge.
 - An empty, malformed, oversized, wrong-parent, or unknown-schema local
@@ -254,34 +253,19 @@ destination is authenticated or that any site session is portable.
   disposable profile without the import switch to prove Chromium persisted it.
   Normal launch never consumes a backup, rewrites clean-exit state, or broadly
   deletes pages through CDP.
-- The raw capsule capture fails while the shared browser-lifetime guard is
-  held, accepts only a stopped stable exact native inventory, validates the
-  pinned Chromium command framing and initial-state marker, and restores only
-  to a new marked `drill-native-*` state. Compare the result with the pinned
-  browser parser and restart it.
-- The journal initial checkpoint, mutation checkpoints, five-minute heartbeat,
-  two-second topology reconciliation, int64 sequence and hash chain validate
-  from an SQLite online backup. Crash resume restarts the heartbeat; the
-  100,000-record cap closes and rotates rather than bricking the producer.
-  Groups retain membership/title/color/collapse, and valid non-HTTP browser
-  URLs do not disable capture. A torn tail, gap, altered payload, stale latest
-  checkpoint or unknown event fails while an older epoch stays recoverable.
-  Restore the latest valid epoch as an escaped manual link catalog without
-  invoking the neutral importer or a browser.
-- The capsule and journal copy wrappers require the exact source hostname,
-  fixed lm-NAS-plus-peer topology, separately mounted NAS, dedicated pinned
-  SSH material, two distinct mechanism-specific recovery recipients, verified
-  SHA-256 sidecars, and two matching remote copies. Journal ciphertext uses
-  authenticated AES-256-GCM. Neither successful cycle leaves a plaintext
-  archive or local ciphertext spool.
-- `tab-recovery-health.sh` always emits exactly five distinct mechanism
+- A stopped full-profile generation uses a separate producer, configuration,
+  recipient set, format, retention state, and restore command from the neutral
+  snapshots. It streams directly to both off-device destinations, leaves no
+  plaintext archive or lm-local ciphertext spool, and restores only below a
+  marked mode-0700 disposable root.
+- `tab-recovery-health.sh` always emits exactly three distinct mechanism
   statuses. A missing, stale, wrong-device, future, symlinked, group-readable,
   or malformed proof makes only that named mechanism unhealthy; replicas do
   not create extra status entries.
-- Corrupt one exporter, scheduler, recovery key, retention plan, newest
-  generation and destination independently. In every case only that mechanism
-  becomes red and a different mechanism succeeds without changing a live
-  profile.
+- Corrupt one neutral exporter, full-profile producer, scheduler, recovery
+  key, retention plan, newest generation, and destination independently. In
+  every case only that mechanism becomes red and a sibling recovery path
+  remains usable without changing a live profile.
 
 ## Gate 5: Android Media
 

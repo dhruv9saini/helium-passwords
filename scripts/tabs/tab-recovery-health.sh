@@ -32,10 +32,8 @@ mechanisms=(
 	chromium-native-session
 	neutral-topology
 	full-profile
-	native-session-capsule
-	tab-event-journal
 )
-maximum_ages=(2592000 1800 604800 86400 900)
+maximum_ages=(2592000 1800 604800)
 now=$(date +%s)
 results=()
 

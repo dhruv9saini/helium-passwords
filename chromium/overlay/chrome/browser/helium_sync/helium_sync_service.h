@@ -18,7 +18,6 @@ class HeliumCookieAcceptanceFixture;
 class HeliumCookieSyncBridge;
 class HeliumPasswordSyncBridge;
 class HeliumSyncClient;
-class HeliumTabJournalBridge;
 class HeliumTabRestoreBridge;
 class HeliumTabSnapshotBridge;
 } // namespace helium_sync
@@ -44,7 +43,6 @@ private:
   std::unique_ptr<helium_sync::HeliumCookieSyncBridge> cookie_bridge_;
   std::unique_ptr<helium_sync::HeliumPasswordSyncBridge> password_bridge_;
   std::unique_ptr<helium_sync::HeliumSyncClient> enrollment_client_;
-  std::unique_ptr<helium_sync::HeliumTabJournalBridge> tab_journal_bridge_;
   std::unique_ptr<helium_sync::HeliumTabRestoreBridge> tab_restore_bridge_;
   std::unique_ptr<helium_sync::HeliumTabSnapshotBridge> tab_snapshot_bridge_;
   std::optional<int64_t> cookie_verified_sequence_;

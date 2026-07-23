@@ -307,11 +307,11 @@ directory. It never deletes bytes and it never happens automatically.
   disposable preparation, native five-minute refresh contract, explicit
   marked-profile importer, live topology readback and post-launch receipt
   validator are implemented and source/synthetic-tested. The three native tab
-  bridges still require a chromiumer compile. First/second disposable browser
-  runs remain open before any scheduler is enabled or source is promoted
-  beyond disabled staging. Raw native Sessions capsules and the independent
-  event journal are specified separately in
-  [tab-recovery-defense.md](tab-recovery-defense.md).
+  exporter/importer bridges still require a chromiumer compile. First/second
+  disposable browser runs remain open before any scheduler is enabled or
+  source is promoted beyond disabled staging. Chromium native recovery and
+  stopped encrypted full-profile generations are the other two mechanisms
+  specified in [tab-recovery-defense.md](tab-recovery-defense.md).
 
 These are deployment gates, not reasons to weaken destination independence or
 copy unencrypted tab data through an intermediary.
