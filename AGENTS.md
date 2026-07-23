@@ -96,11 +96,11 @@ restores Chromium's native password manager.
   copies credentials from the chroot. It requires a verified full-profile
   backup receipt, stops the app, and preserves the replaced enrollment. The
   `backup-android-chromium-profile.sh` producer force-stops the app and streams
-  `app_chrome` from root tar through age directly into two independent
-  destination filesystems; no plaintext archive is staged on lm. The producer
-  requires its preflight stream and encrypted stream to have the same SHA-256,
-  and the configurator recomputes that fingerprint before changing enrollment.
-  A mismatch is a hard stop.
+  `app_chrome` from root tar through age directly into the lm NAS and the
+  authenticated da peer destination; no plaintext archive or local ciphertext
+  spool is staged on lm. The producer requires its preflight stream and
+  encrypted stream to have the same SHA-256, and the configurator recomputes
+  that fingerprint before changing enrollment. A mismatch is a hard stop.
   chroot launcher requires `/usr/local/bin/helium` backed by the installed
   `/opt/helium-sync/helium`; it must never fall back to stock Chromium. Use
   `scripts/android-local/install-chroot-helium.sh` with a Linux ARM64 Helium
@@ -393,14 +393,20 @@ restores Chromium's native password manager.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 - `scripts/profile-backup/helium-profile-backup.sh` is the full-profile
-  pre-install gate for locally visible stopped profiles. It requires exactly
-  two destination filesystems independent of the source and each other,
-  encrypts one generation to at least two recovery recipients, records a
-  deterministic source-tree fingerprint, validates both copies, moves corrupt
-  copies to quarantine, retires old active generations without deleting them,
-  and restores only below a marked mode-0700 `drill-*` root. It never launches
-  a browser or makes a restored copy active. Do not confuse full-profile
-  rollback copies with cross-device tab transport; neither may auto-open tabs.
+  pre-install gate. Config schema 2 enforces the same direct topology as tabs:
+  d and oneplus use lm's separately mounted NAS plus da, and da uses that NAS
+  plus d. Remote destinations require a dedicated mode-0600 identity and pinned
+  known-hosts file with `ssh -F none`/BatchMode; the NAS mount and peer hostname
+  are verified before use. One compressed age ciphertext streams concurrently
+  into both private incoming directories without a plaintext archive or local
+  ciphertext spool. A schema-2 receipt binds the deterministic source-tree
+  fingerprint, ciphertext, recovery recipients, and exact topology. Status
+  validates both copies, quarantine and retention preserve generations, and
+  restore streams one verified copy only below a marked mode-0700 `drill-*`
+  root. Export the small receipt with `receipt-export` before giving it to an
+  installer. The tool never launches a browser or makes a restored copy active.
+  Do not confuse full-profile rollback copies with cross-device tab transport;
+  neither may auto-open tabs.
 - Android APKs intended for local phone use should be release-style,
   non-debuggable builds: keep `is_debug = false` and
   `dcheck_always_on = false`; do not set `is_desktop_android = true`.
