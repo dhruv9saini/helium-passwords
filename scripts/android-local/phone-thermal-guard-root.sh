@@ -5,7 +5,7 @@ STATE_DIR=${PHONE_THERMAL_GUARD_STATE_DIR:-/data/local/helium-phone-thermal-guar
 LOG="$STATE_DIR/thermal-guard.log"
 PID_FILE="$STATE_DIR/thermal-guard.pid"
 DEFAULTS_FILE="$STATE_DIR/frequency-max-defaults.env"
-INTERVAL=${PHONE_THERMAL_GUARD_INTERVAL:-${ARCH_DESKTOP_THERMAL_GUARD_INTERVAL:-3}}
+INTERVAL=${PHONE_THERMAL_GUARD_INTERVAL:-${ARCH_DESKTOP_THERMAL_GUARD_INTERVAL:-30}}
 BASE_CAP=${PHONE_THERMAL_BASE_CAP:-${ARCH_DESKTOP_THERMAL_BASE_CAP:-55}}
 LIGHT_CAP=${PHONE_THERMAL_LIGHT_CAP:-${ARCH_DESKTOP_THERMAL_LIGHT_CAP:-45}}
 MODERATE_CAP=${PHONE_THERMAL_MODERATE_CAP:-${ARCH_DESKTOP_THERMAL_MODERATE_CAP:-35}}
@@ -137,11 +137,14 @@ daemon_loop() {
   save_defaults
   printf '%s\n' "$$" >"$PID_FILE"
   log "thermal guard started"
+  previous_cap=
   while :; do
-    value=$(skin_value_int)
-    status=$(skin_status)
-    cap=$(cap_for_thermal "$value" "$status")
-    apply_cap "$cap"
+    sample=$(skin_line)
+    cap=$(cap_for_thermal "${sample%% *}" "${sample#* }")
+    if [ "$cap" != "$previous_cap" ]; then
+      apply_cap "$cap"
+      previous_cap=$cap
+    fi
     sleep "$INTERVAL"
   done
 }
@@ -167,7 +170,8 @@ case "${1:-start}" in
     ;;
   once)
     save_defaults
-    apply_cap "$(cap_for_thermal "$(skin_value_int)" "$(skin_status)")"
+    sample=$(skin_line)
+    apply_cap "$(cap_for_thermal "${sample%% *}" "${sample#* }")"
     ;;
   stop|restore)
     stop_guard

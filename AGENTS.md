@@ -357,8 +357,10 @@ restores Chromium's native password manager.
   connected-display auto-enable helper, and Arch Desktop resume starts it
   idempotently. It saves original CPU/devfreq max frequencies under
   `/data/local/helium-phone-thermal-guard`, applies conservative caps
-  immediately, and tightens them before skin thermal status reaches critical so
-  Android does not block external display hosting. Do not use
+  immediately, samples skin temperature once every 30 seconds by default, and
+  reapplies caps only when the selected thermal band changes. It tightens the
+  caps before skin thermal status reaches critical so Android does not block
+  external display hosting. Do not use
   `cmd thermalservice override-status` as a fix; that hides the framework state
   instead of reducing heat. By default hibernate leaves this guard running
   because the user prefers global throttling over losing external display. Set
