@@ -1,0 +1,17 @@
+diff --git a/mojo/public/tools/mojom/mojom_parser.py b/mojo/public/tools/mojom/mojom_parser.py
+--- a/mojo/public/tools/mojom/mojom_parser.py
++++ b/mojo/public/tools/mojom/mojom_parser.py
+@@ -218,8 +218,12 @@ class _FuncWrapper:
+ 
+ def _Shard(target_func, arg_list, processes=None):
+   arg_list = list(arg_list)
++  max_processes = int(
++      os.environ.get('AUTONINJA_JOBS', multiprocessing.cpu_count()))
+   if processes is None:
+-    processes = multiprocessing.cpu_count()
++    processes = max_processes
++  else:
++    processes = min(processes, max_processes)
+   # Seems optimal to have each process perform at least 2 tasks.
+   processes = min(processes, len(arg_list) // 2)
+ 

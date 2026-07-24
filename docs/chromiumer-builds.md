@@ -173,6 +173,10 @@ measured reclaim loop. It does not change the CPU, memory, I/O, task, disk,
 root-space, watchdog, or eight-hour bounds. The worker exports all four
 job-count variables as `1`; the pinned environment and platform entry points
 reject missing or different values instead of choosing their own defaults.
+Chromium's Mojom parser normally creates its own process pool independently of
+Ninja. The Sync patch series caps that pool with the existing
+`AUTONINJA_JOBS` value, so a serialized Android continuation cannot silently
+start four memory-heavy parser workers inside its one Ninja edge.
 
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.
