@@ -204,13 +204,32 @@ continuation_parent() {
     printf '%s\n' "${parent}"
 }
 
+source_build_jobs() {
+    local job=$1
+    validate_job "${job}"
+    local resume="${state_root}/${job}/resume.env"
+    local value parent
+    if [ -f "${resume}" ] && grep -q '^source_build_jobs=' "${resume}"; then
+        value=$(exact_value "${resume}" source_build_jobs) || return 1
+    elif [ -f "${resume}" ]; then
+        parent=$(continuation_parent "${job}") || return 1
+        value=$(exact_value "${state_root}/${parent}/policy.env" build_jobs) ||
+            return 1
+    else
+        value=$(exact_value "${state_root}/${job}/policy.env" build_jobs) ||
+            return 1
+    fi
+    [[ "${value}" =~ ^[1-9][0-9]*$ ]] || return 1
+    printf '%s\n' "${value}"
+}
+
 validate_continuation_state() {
     local child=$1
     shift
     validate_job "${child}"
     local child_state="${state_root}/${child}"
     local parent owner manifest_sha actual_sha parent_command requested_command
-    local command_mode
+    local command_mode expected_source_build_jobs
     [ -d "${child_state}" ] && [ ! -L "${child_state}" ] || return 1
     parent=$(continuation_parent "${child}") || return 1
     owner=$(workspace_owner "${child}") || return 1
@@ -231,6 +250,9 @@ validate_continuation_state() {
             "${child}" ] && \
         [ "$(exact_value "${state_root}/${parent}/continued-by.env" workspace_owner)" = \
             "${owner}" ] || return 1
+    expected_source_build_jobs=$(source_build_jobs "${parent}") || return 1
+    [ "$(exact_value "${child_state}/resume.env" source_build_jobs)" = \
+        "${expected_source_build_jobs}" ] || return 1
 
     manifest_sha=$(exact_value "${child_state}/resume.env" \
         source_manifest_sha256) || return 1
@@ -457,19 +479,47 @@ validate_resume_parent() {
         echo "unknown continuation parent: ${parent}" >&2
         return 1
     }
-    [ "$(exact_value "${terminal}" state)" = terminal ] && \
-        [ "$(exact_value "${terminal}" result)" = timeout ] && \
-        [ "$(exact_value "${terminal}" exit_code)" = 124 ] && \
-        [ "$(exact_value "${terminal}" reason)" = \
-            "systemd stopped the job at its wall-time limit" ] || {
-        echo "continuation parent is not an exact exit-124 terminal timeout" >&2
-        return 1
-    }
     [ "$(exact_value "${stage}" profile)" = production ] && \
         [ "$(exact_value "${policy}" profile)" = production ] || {
         echo "only production jobs can be continued" >&2
         return 1
     }
+    local terminal_mode=timeout
+    if ! [ "$(exact_value "${terminal}" state)" = terminal ] || \
+        ! [ "$(exact_value "${terminal}" result)" = timeout ] || \
+        ! [ "$(exact_value "${terminal}" exit_code)" = 124 ] || \
+        ! [ "$(exact_value "${terminal}" reason)" = \
+            "systemd stopped the job at its wall-time limit" ]; then
+        terminal_mode=source-policy-retry
+        local finished_at ready_at ready_epoch current_jobs source_jobs
+        [ "$(exact_value "${terminal}" state)" = terminal ] && \
+            [ "$(exact_value "${terminal}" result)" = failure ] && \
+            [ "$(exact_value "${terminal}" exit_code)" = 1 ] && \
+            [ "$(exact_value "${terminal}" reason)" = \
+                "build command exited non-zero" ] && \
+            [ -f "${parent_state}/resume.env" ] && \
+            [ "$(exact_value "${parent_state}/resume.env" command_mode)" = \
+                reduced-parallelism ] || {
+            echo "continuation parent is neither an exact timeout nor a reduced-parallelism source-policy failure" >&2
+            return 1
+        }
+        current_jobs=$(exact_value "${policy}" build_jobs) || return 1
+        source_jobs=$(source_build_jobs "${parent}") || return 1
+        [ "${current_jobs}" = 1 ] && [ "${source_jobs}" = 2 ] || {
+            echo "failed continuation did not cross the measured two-to-one source policy boundary" >&2
+            return 1
+        }
+        finished_at=$(exact_value "${terminal}" finished_at_epoch) || return 1
+        ready_at=$(exact_value "${parent_state}/watchdog-ready.env" \
+            watchdog_ready_at) || return 1
+        [[ "${finished_at}" =~ ^[0-9]+$ ]] || return 1
+        ready_epoch=$(date --date="${ready_at}" +%s) || return 1
+        [ "${finished_at}" -ge "${ready_epoch}" ] && \
+            [ $((finished_at - ready_epoch)) -le 5 ] || {
+            echo "failed continuation advanced beyond the source-policy entry gate" >&2
+            return 1
+        }
+    fi
     local staged_budget_gib staged_budget_bytes policy_budget_bytes
     staged_budget_gib=$(exact_value "${stage}" disk_budget_gib)
     staged_budget_bytes=$(exact_value "${stage}" disk_budget_bytes)
@@ -547,6 +597,8 @@ validate_resume_parent() {
     resume_command=${requested_command}
     resume_parent_command=${expected_command}
     resume_command_mode=${command_mode}
+    resume_source_build_jobs=$(source_build_jobs "${parent}")
+    resume_terminal_mode=${terminal_mode}
 }
 
 resume_init() {
@@ -614,6 +666,8 @@ resume_init() {
         printf 'parent_command=%s\n' "${resume_parent_command}"
         printf 'command=%s\n' "${resume_command}"
         printf 'command_mode=%s\n' "${resume_command_mode}"
+        printf 'source_build_jobs=%s\n' "${resume_source_build_jobs}"
+        printf 'parent_terminal_mode=%s\n' "${resume_terminal_mode}"
         printf 'admitted_at=%s\n' "$(date --iso-8601=seconds)"
     } >"${child_state}/resume.env"
 
@@ -678,7 +732,8 @@ write_policy() {
     local disk_budget_bytes=$4
     local owner=$5
     local parent=$6
-    shift 6
+    local source_jobs=$7
+    shift 7
     local command_text
     printf -v command_text '%q ' "$@"
     local temp="${state_dir}/policy.env.tmp"
@@ -691,6 +746,7 @@ write_policy() {
             printf 'parent_job=%s\n' "${parent}"
         fi
         printf 'build_jobs=%s\n' "${build_jobs}"
+        printf 'source_build_jobs=%s\n' "${source_jobs}"
         printf 'cpu_quota=%s\n' "${cpu_quota}"
         printf 'cpu_weight=%s\n' "${cpu_weight}"
         printf 'memory_high=%s\n' "${memory_high}"
@@ -749,7 +805,7 @@ start_job() {
         echo "job is not staged: ${job}" >&2
         exit 1
     }
-    local disk_budget_gib disk_budget_bytes parent=
+    local disk_budget_gib disk_budget_bytes parent='' source_jobs
     disk_budget_gib=$(exact_value "${state_dir}/stage.env" disk_budget_gib)
     disk_budget_bytes=$(exact_value "${state_dir}/stage.env" disk_budget_bytes)
     [[ "${disk_budget_gib}" =~ ^[1-9][0-9]*$ ]] && \
@@ -763,10 +819,14 @@ start_job() {
             exit 1
         fi
         parent=${continuation_state_parent}
+        source_jobs=$(exact_value "${state_dir}/resume.env" \
+            source_build_jobs)
         [ "${continuation_state_owner}" = "${owner}" ] || {
             echo "continuation workspace owner changed" >&2
             exit 1
         }
+    else
+        source_jobs=${build_jobs}
     fi
     if ! preflight "${profile_name}" "${disk_budget_gib}" \
         "${job_root}" "${job_root}"; then
@@ -794,7 +854,7 @@ start_job() {
     mkdir -p "${job_root}/cache" "${job_root}/tmp"
     install -m 700 "$0" "${worker}"
     write_policy "${state_dir}" "${profile_name}" "${work_dir}" \
-        "${disk_budget_bytes}" "${owner}" "${parent}" "$@"
+        "${disk_budget_bytes}" "${owner}" "${parent}" "${source_jobs}" "$@"
 
     if ! systemd-run --user --unit="${unit%.service}" --collect \
         --property="Description=Isolated Helium build ${job}" \
@@ -813,7 +873,7 @@ start_job() {
         --property=OOMPolicy=stop \
         --property=StandardOutput=journal \
         --property=StandardError=journal \
-        --setenv="HELIUM_BUILD_JOBS=${build_jobs}" \
+        --setenv="HELIUM_BUILD_JOBS=${source_jobs}" \
         --setenv="AUTONINJA_JOBS=${build_jobs}" \
         --setenv="NINJA_JOBS=${build_jobs}" \
         --setenv="GCLIENT_JOBS=${build_jobs}" \

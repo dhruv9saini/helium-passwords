@@ -383,7 +383,22 @@ filesystem, the continuation gate is therefore approximately:
 ```
 
 The worker records `parent_job`, `workspace_owner`, and the source-manifest
-SHA-256 in the continuation state. Only one child can claim a terminal segment.
+SHA-256 in the continuation state. It also records `source_build_jobs`
+separately from the current one-job execution policy. A source train that
+pinned `HELIUM_BUILD_JOBS=2` before serialization keeps that value only as its
+fail-closed Nix/source-entry attestation; the reduced continuation still gives
+Autoninja exactly one job. New source trains require all job-count variables
+to be one.
+
+A reduced continuation that fails at that historical source-entry assertion
+may itself be continued only when the worker proves all of the following:
+the source attestation is two, the current execution policy is one, the first
+continuation made the exact two-to-one Autoninja change, and it exited no more
+than five seconds after watchdog readiness. This narrowly recovers the
+orchestration-policy transition without admitting a retry after any compiler,
+linker, packaging, watchdog, disk, cancellation, or wall-time failure.
+
+Only one child can claim a terminal segment.
 The control client creates that durable claim first, registers the new job
 with the lm notifier, and only then starts the unit. If notification
 registration fails, the still-unstarted claim is removed. If start delivery is

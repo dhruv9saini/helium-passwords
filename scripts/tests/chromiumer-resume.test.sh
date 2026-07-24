@@ -73,6 +73,7 @@ EOF
     cat >"${state}/policy.env" <<EOF
 profile=production
 disk_budget_bytes=1073741824
+build_jobs=1
 command=${command}
 started_at_epoch=1
 EOF
@@ -123,6 +124,9 @@ grep -Fqx "workspace_owner=${parent}" "${state_root}/${child}/stage.env"
 grep -Fqx "parent_command=${build_command_text}" \
     "${state_root}/${child}/resume.env"
 grep -Fqx 'command_mode=exact' "${state_root}/${child}/resume.env"
+grep -Fqx 'source_build_jobs=1' "${state_root}/${child}/resume.env"
+grep -Fqx 'parent_terminal_mode=timeout' \
+    "${state_root}/${child}/resume.env"
 cmp "${state_root}/${parent}/source.manifest" \
     "${state_root}/${child}/source.manifest"
 [ "$(stat -c %a "${state_root}/${child}/source.manifest")" = 600 ]
@@ -217,6 +221,7 @@ grep -Fqx "work_dir=${work_root}/${parent}/source" \
 grep -Fqx 'watchdog_ready_seconds=600' \
     "${state_root}/${child}/policy.env"
 grep -Fqx 'build_jobs=1' "${state_root}/${child}/policy.env"
+grep -Fqx 'source_build_jobs=1' "${state_root}/${child}/policy.env"
 grep -Fq ' helium-watch-resume-child.service 600 1 -- ' \
     "${RESUME_TEST_SYSTEMD_RUNS}"
 [ "$(grep -Fc "preflight=ok" "${test_root}/preflight-calls")" -ge 2 ]
@@ -244,6 +249,58 @@ resume_start "${child}" -- "${build_command[@]}" \
     >"${test_root}/resume-start-again.out"
 grep -Fqx 'existing=true' "${test_root}/resume-start-again.out"
 [ "$(wc -l <"${RESUME_TEST_SYSTEMD_RUNS}")" -eq 2 ]
+
+# The policy was changed from two jobs to one after a retained source train
+# had already pinned two as its cgroup-entry attestation. A reduced continuation
+# that deterministically exits within five seconds of watchdog readiness may
+# be retried once while preserving that source attestation and keeping actual
+# Autoninja work serialized.
+retry_root=resume-policy-root
+retry_failed=resume-policy-failed
+retry_child=resume-policy-retry
+write_parent "${retry_root}" "$(command_text "${parallel_command[@]}")"
+sed -i 's/^build_jobs=1$/build_jobs=2/' \
+    "${state_root}/${retry_root}/policy.env"
+resume_init "${retry_root}" "${retry_failed}" -- \
+    "${reduced_command[@]}" >"${test_root}/retry-failed-init.out"
+exec 9>&-
+resume_start "${retry_failed}" -- "${reduced_command[@]}" \
+    >"${test_root}/retry-failed-start.out"
+exec 9>&-
+cat >"${state_root}/${retry_failed}/watchdog-ready.env" <<'EOF'
+watchdog_ready_at=2026-07-23T08:00:00+00:00
+EOF
+cat >"${state_root}/${retry_failed}/terminal.env" <<'EOF'
+state=terminal
+result=failure
+exit_code=1
+started_at_epoch=1784793590
+finished_at_epoch=1784793602
+duration_seconds=12
+reason=build command exited non-zero
+EOF
+cat >"${state_root}/${retry_failed}/result.env" <<'EOF'
+exit_code=1
+finished_at=2026-07-23T08:00:02+00:00
+EOF
+resume_init "${retry_failed}" "${retry_child}" -- \
+    "${reduced_command[@]}" >"${test_root}/retry-child.out"
+exec 9>&-
+grep -Fqx 'source_build_jobs=2' \
+    "${state_root}/${retry_child}/resume.env"
+grep -Fqx 'parent_terminal_mode=source-policy-retry' \
+    "${state_root}/${retry_child}/resume.env"
+resume_start "${retry_child}" -- "${reduced_command[@]}" \
+    >"${test_root}/retry-child-start.out"
+exec 9>&-
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--setenv=HELIUM_BUILD_JOBS=2'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--setenv=AUTONINJA_JOBS=1'
+grep -Fqx 'build_jobs=1' \
+    "${state_root}/${retry_child}/policy.env"
+grep -Fqx 'source_build_jobs=2' \
+    "${state_root}/${retry_child}/policy.env"
 
 # Readiness is a proof gate: even an otherwise runnable command cannot begin
 # until the independent watcher publishes its initial healthy scan.
