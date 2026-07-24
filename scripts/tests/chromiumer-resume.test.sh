@@ -203,6 +203,12 @@ grep -Fq -- '--property=RuntimeMaxSec=28800' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--property=CPUQuota=200%' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--property=MemoryMax=5G' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--property=TasksMax=256' "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--setenv=HELIUM_BUILD_JOBS=1' \
+    "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--setenv=AUTONINJA_JOBS=1' \
+    "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--setenv=NINJA_JOBS=1' "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--setenv=GCLIENT_JOBS=1' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fqx "workspace_owner=${parent}" \
     "${state_root}/${child}/policy.env"
 grep -Fqx "parent_job=${parent}" "${state_root}/${child}/policy.env"
@@ -210,6 +216,7 @@ grep -Fqx "work_dir=${work_root}/${parent}/source" \
     "${state_root}/${child}/policy.env"
 grep -Fqx 'watchdog_ready_seconds=600' \
     "${state_root}/${child}/policy.env"
+grep -Fqx 'build_jobs=1' "${state_root}/${child}/policy.env"
 grep -Fq ' helium-watch-resume-child.service 600 1 -- ' \
     "${RESUME_TEST_SYSTEMD_RUNS}"
 [ "$(grep -Fc "preflight=ok" "${test_root}/preflight-calls")" -ge 2 ]

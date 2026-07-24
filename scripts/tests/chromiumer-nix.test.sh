@@ -14,7 +14,10 @@ if tail -n 1 "${expression}" | grep -q '\.env'; then
     echo "chromiumer Nix expression returned the interactive shell attribute" >&2
     exit 1
 fi
-grep -q 'HELIUM_BUILD_JOBS=2' "${script}"
+grep -Fqx \
+    '    for variable in HELIUM_BUILD_JOBS AUTONINJA_JOBS NINJA_JOBS GCLIENT_JOBS; do' \
+    "${script}"
+grep -Fqx '        [ "${!variable:-}" = 1 ] || {' "${script}"
 grep -q 'helium-job-' "${script}"
 grep -q 'environment is not realised' "${script}"
 grep -q 'helium-chromium-150-env' "${script}"

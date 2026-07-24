@@ -5,8 +5,8 @@ problems. `scripts/chromiumer-job.sh` transfers clean committed source and the
 remote worker constrains the job. `scripts/chromiumer-nix.sh` supplies the
 userspace programs and shared libraries inside that already-constrained job.
 It cannot start a build directly: `run` refuses unless it sees chromiumer,
-`HELIUM_BUILD_JOBS=2`, the wrapper-owned temporary directory, and a
-`helium-job-*.service` cgroup.
+all four wrapper job variables set to exactly one, the wrapper-owned temporary
+directory, and a `helium-job-*.service` cgroup.
 
 The expression is `chromium/nix/chromiumer-shell.nix`. It uses the exact
 nixpkgs revision and hash selected by Chromium 150.0.7871.181 at commit

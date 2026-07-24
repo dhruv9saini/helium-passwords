@@ -106,7 +106,7 @@ pinned_chromium_commit=24b04c927b23c39cf9c5227cc8dc6f64a744c8e9
     GCLIENT_ENV_CAPTURE="$test_root/gclient.env" \
     CHILD_CAPTURE="$test_root/git-child.env" \
     MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
-    GCLIENT_JOBS=2 \
+    GCLIENT_JOBS=1 \
     GIT_CACHE_PATH="$test_root/forbidden-cache" \
     GIT_CONFIG_COUNT=4 \
     GIT_CONFIG_KEY_0=pack.threads \
@@ -126,7 +126,7 @@ pinned_chromium_commit=24b04c927b23c39cf9c5227cc8dc6f64a744c8e9
 cat > "$test_root/expected.argv" <<EOF
 sync
 --jobs
-2
+1
 --revision
 src@$pinned_chromium_commit
 --nohooks
@@ -146,16 +146,33 @@ if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
   GCLIENT_ENV_CAPTURE="$test_root/rejected.env" \
   CHILD_CAPTURE="$test_root/rejected-child.env" \
   MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
-  GCLIENT_JOBS=0 \
+  GCLIENT_JOBS=2 \
   "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
     "$test_root/depot-tools" "$pinned_depot_commit" \
   >"$test_root/rejected.out" 2>&1); then
-  echo 'zero gclient job count unexpectedly passed' >&2
+  echo 'non-policy gclient job count unexpectedly passed' >&2
   exit 1
 fi
-grep -qx 'GCLIENT_JOBS must be a positive integer' "$test_root/rejected.out"
+grep -qx 'GCLIENT_JOBS must remain 1 for the isolated Chromiumer policy' \
+  "$test_root/rejected.out"
 [[ ! -e "$test_root/rejected.argv" ]]
 [[ ! -e "$test_root/rejected-child.env" ]]
+
+if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
+  GCLIENT_CAPTURE="$test_root/missing-jobs.argv" \
+  GCLIENT_ENV_CAPTURE="$test_root/missing-jobs.env" \
+  CHILD_CAPTURE="$test_root/missing-jobs-child.env" \
+  MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
+  "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
+    "$test_root/depot-tools" "$pinned_depot_commit" \
+  >"$test_root/missing-jobs.out" 2>&1); then
+  echo 'missing gclient job policy unexpectedly passed' >&2
+  exit 1
+fi
+grep -qx 'GCLIENT_JOBS must remain 1 for the isolated Chromiumer policy' \
+  "$test_root/missing-jobs.out"
+[[ ! -e "$test_root/missing-jobs.argv" ]]
+[[ ! -e "$test_root/missing-jobs-child.env" ]]
 
 mkdir "$test_root/unsafe"
 printf 'cache_dir = "/tmp/not-disabled"\n' > "$test_root/unsafe/.gclient"
@@ -164,6 +181,7 @@ if (cd "$test_root/unsafe" && PATH="$test_root/bin:$PATH" \
   GCLIENT_ENV_CAPTURE="$test_root/unsafe.env" \
   CHILD_CAPTURE="$test_root/unsafe-child.env" \
   MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
+  GCLIENT_JOBS=1 \
   "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
     "$test_root/depot-tools" "$pinned_depot_commit" \
   >"$test_root/unsafe.out" 2>&1); then
@@ -181,6 +199,7 @@ if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
   GCLIENT_ENV_CAPTURE="$test_root/mutated.env" \
   CHILD_CAPTURE="$test_root/mutated-child.env" \
   MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
+  GCLIENT_JOBS=1 \
   "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
     "$test_root/depot-tools" "$pinned_depot_commit" \
   >"$test_root/mutated.out" 2>&1); then
@@ -199,6 +218,7 @@ if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
   GCLIENT_ENV_CAPTURE="$test_root/dirty.env" \
   CHILD_CAPTURE="$test_root/dirty-child.env" \
   MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
+  GCLIENT_JOBS=1 \
   "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
     "$test_root/depot-tools" "$pinned_depot_commit" \
   >"$test_root/dirty.out" 2>&1); then
@@ -217,6 +237,7 @@ if (cd "$test_root/work" && PATH="$test_root/bin:$PATH" \
   CHILD_CAPTURE="$test_root/post-mutation-child.env" \
   MUTATED_DEPOT_COMMIT="$mutated_depot_commit" \
   MUTATE_DEPOT_DURING_GCLIENT=true \
+  GCLIENT_JOBS=1 \
   "$repo_root/scripts/chromium/gclient-sync-direct.sh" \
     "$test_root/depot-tools" "$pinned_depot_commit" \
   >"$test_root/post-mutation.out" 2>&1); then

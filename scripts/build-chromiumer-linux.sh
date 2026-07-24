@@ -30,10 +30,12 @@ receipt="${root_dir}/.build/artifacts/${product}-linux-${arch}.receipt.env"
     echo "Linux Chromium builds run only on chromiumer" >&2
     exit 1
 }
-[ "${HELIUM_BUILD_JOBS:-}" = 2 ] || {
-    echo "Linux Chromium build requires the isolated two-job policy" >&2
-    exit 1
-}
+for variable in HELIUM_BUILD_JOBS AUTONINJA_JOBS NINJA_JOBS GCLIENT_JOBS; do
+    [ "${!variable:-}" = 1 ] || {
+        echo "Linux Chromium build requires ${variable}=1" >&2
+        exit 1
+    }
+done
 grep -Eq '/helium-job-[a-z0-9-]+\.service(/|$)' /proc/self/cgroup || {
     echo "Linux Chromium build is outside an isolated Helium cgroup" >&2
     exit 1
@@ -70,7 +72,7 @@ ninja_shim_dir="${root_dir}/scripts/chromiumer-bin"
 "${root_dir}/scripts/prepare-platform.sh" linux "${checkout}" >/dev/null
 (
     cd "${checkout}"
-    env -u CI ARCH="${arch}" HELIUM_BUILD_JOBS=2 \
+    env -u CI ARCH="${arch}" HELIUM_BUILD_JOBS=1 \
         HELIUM_REAL_NINJA="${real_ninja}" \
         PATH="${ninja_shim_dir}:${PATH}" \
         bash scripts/build.sh -c

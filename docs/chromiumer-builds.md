@@ -151,7 +151,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 
 | Resource | Production bound |
 | --- | --- |
-| Compiler/build jobs | `2`; exported as `HELIUM_BUILD_JOBS`, `AUTONINJA_JOBS`, `NINJA_JOBS`, and `GCLIENT_JOBS` |
+| Compiler/build/source-sync jobs | exactly `1`; exported as `HELIUM_BUILD_JOBS`, `AUTONINJA_JOBS`, `NINJA_JOBS`, and `GCLIENT_JOBS`, with consumers rejecting every other value |
 | CPU | hard `200%` quota, weight `10`, nice `15` |
 | Memory | `4G` high, `5G` hard max, `0` swap inside the unit |
 | I/O | weight `10`, Linux idle I/O scheduling class |
@@ -162,6 +162,17 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | Watchdog | separate cgroup: `10%` CPU, weight `10`, `64M` memory high / `128M` hard max, no swap, idle I/O, nice `15`, `TasksMax=16`, and a finite 600-second production readiness cap |
 | Wall time | hard `8h` systemd deadline |
 | Concurrency | one active `helium-job-*` service on chromiumer |
+
+The one-job value is an evidence-based host policy, not a Chromium default.
+Job `hs-android-150-sync-test-09` admitted two large Clang translation units
+under the unchanged `MemoryHigh=4G` and `MemoryMax=5G` bounds. The cgroup
+accumulated more than 4.7 million `memory.high` events and roughly 1 TB of
+filesystem rereads in about one hour without advancing Ninja, while the host
+remained responsive. Serializing source sync and compilation avoids that
+measured reclaim loop. It does not change the CPU, memory, I/O, task, disk,
+root-space, watchdog, or eight-hour bounds. The worker exports all four
+job-count variables as `1`; the pinned environment and platform entry points
+reject missing or different values instead of choosing their own defaults.
 
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.
@@ -317,7 +328,7 @@ mandatory and must describe the particular job, not a generic build class.
 ### Continuing an exact wall-time timeout
 
 An eight-hour deadline bounds one systemd unit; it does not imply that every
-two-job Chromium compile will finish in one unit. A healthy compile that
+one-job Chromium compile will finish in one unit. A healthy compile that
 reaches that exact deadline may continue in a new, independently bounded
 segment without retransferring source or discarding Ninja state:
 
@@ -401,7 +412,7 @@ A daemon-launched container would sit outside the transient user service's
 process tree and job-tree disk accounting, and chromiumer has no Docker daemon.
 The public driver instead enters the pinned Nix FHS environment and calls the
 prepared platform's native build script directly. It independently requires
-the two-job environment, job cgroup, job-owned `TMPDIR`, exact Linux/core/
+the one-job environment, job cgroup, job-owned `TMPDIR`, exact Linux/core/
 Chromium commits, and a clean staged source before compilation.
 
 The pinned Linux platform calls raw `ninja`. The
@@ -410,7 +421,7 @@ explicit `-j` count; Ninja does not read the wrapper's `NINJA_JOBS` variable.
 The driver therefore puts the checked-in
 `scripts/chromiumer-bin/ninja` shim first on `PATH`, binds its real Ninja path
 before doing so, and rejects any caller-supplied `-j` override. Every Ninja
-invocation in the platform build consequently receives explicit `-j 2`; the
+invocation in the platform build consequently receives explicit `-j 1`; the
 CPU quota and `TasksMax` remain independent outer bounds.
 
 Start the job with:
@@ -477,7 +488,7 @@ depot_tools self-update and its local Git cache, verifies the direct launcher
 before and after execution, and makes exactly one source request:
 
 ```text
-gclient sync --jobs 2 --revision src@<locked-full-sha> --nohooks --no-history
+gclient sync --jobs 1 --revision src@<locked-full-sha> --nohooks --no-history
 ```
 
 The helper then requires Chromium `HEAD` to equal the locked SHA. The locked

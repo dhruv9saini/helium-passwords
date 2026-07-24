@@ -46,14 +46,11 @@ while IFS= read -r variable; do
   esac
 done < <(compgen -e)
 
-args=(sync)
-if [[ -n "${GCLIENT_JOBS:-}" ]]; then
-  [[ "$GCLIENT_JOBS" =~ ^[1-9][0-9]*$ ]] || {
-    echo "GCLIENT_JOBS must be a positive integer" >&2
-    exit 64
-  }
-  args+=(--jobs "$GCLIENT_JOBS")
-fi
+[[ "${GCLIENT_JOBS:-}" == 1 ]] || {
+  echo "GCLIENT_JOBS must remain 1 for the isolated Chromiumer policy" >&2
+  exit 64
+}
+args=(sync --jobs "$GCLIENT_JOBS")
 
 "$script_dir/verify-depot-tools-cache-contract.sh" \
   "$depot_tools" "$expected_depot_tools_commit" >/dev/null

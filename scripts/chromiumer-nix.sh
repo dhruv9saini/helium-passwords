@@ -37,10 +37,13 @@ require_chromiumer() {
 }
 
 require_isolated_job() {
-    [ "${HELIUM_BUILD_JOBS:-}" = 2 ] || {
-        echo "operation must inherit HELIUM_BUILD_JOBS=2 from chromiumer-worker" >&2
-        exit 1
-    }
+    local variable
+    for variable in HELIUM_BUILD_JOBS AUTONINJA_JOBS NINJA_JOBS GCLIENT_JOBS; do
+        [ "${!variable:-}" = 1 ] || {
+            echo "operation must inherit ${variable}=1 from chromiumer-worker" >&2
+            exit 1
+        }
+    done
     grep -Eq '/helium-job-[a-z0-9-]+\.service(/|$)' /proc/self/cgroup || {
         echo "operation must execute inside an isolated helium-job systemd cgroup" >&2
         exit 1
