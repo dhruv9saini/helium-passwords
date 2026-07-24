@@ -108,8 +108,8 @@ verify_environment() {
 }
 
 record_environment() {
-  [[ "${HELIUM_BUILD_JOBS:-}" == 2 ]] || {
-    echo "Android build must inherit HELIUM_BUILD_JOBS=2" >&2
+  [[ "${HELIUM_BUILD_JOBS:-}" == 1 ]] || {
+    echo "Android build must inherit HELIUM_BUILD_JOBS=1" >&2
     exit 1
   }
   [[ -n "${HELIUM_NIX_RUN_COMMAND:-}" && \

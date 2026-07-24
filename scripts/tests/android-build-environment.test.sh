@@ -8,6 +8,14 @@ test_root=$(mktemp -d /tmp/helium-android-environment-test.XXXXXX)
 cleanup() { find "$test_root" -depth -delete; }
 trap cleanup EXIT
 nix_source_sha256=$(sha256sum "$repo_root/chromium/nix/chromiumer-shell.nix" | awk '{ print $1 }')
+environment_script="$repo_root/scripts/chromium/android-build-environment.sh"
+
+grep -Fq "[[ \"\${HELIUM_BUILD_JOBS:-}\" == 1 ]]" "$environment_script"
+grep -Fq 'Android build must inherit HELIUM_BUILD_JOBS=1' "$environment_script"
+if grep -Fq 'Android build must inherit HELIUM_BUILD_JOBS=2' "$environment_script"; then
+  echo "stale two-job Android build environment policy survived" >&2
+  exit 1
+fi
 
 cat > "$test_root/chromiumer-nix.env" <<EOF
 nix_environment=/nix/store/00000000000000000000000000000000-helium-chromium-150-env
