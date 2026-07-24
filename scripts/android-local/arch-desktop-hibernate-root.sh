@@ -49,9 +49,6 @@ pkill -f '[a]rch-desktop-session-watch.sh' >/dev/null 2>&1 || true
 "$ROOT/stop-arch-x11-root.sh" >>"$LOG" 2>&1 || true
 [ ! -x "$ROOT/input-display-assoc-root.sh" ] || "$ROOT/input-display-assoc-root.sh" clear >>"$LOG" 2>&1 || true
 "$ROOT/arch-desktop-display-mode-root.sh" reset >>"$LOG" 2>&1 || true
-if [ "${ARCH_DESKTOP_THERMAL_GUARD_ALWAYS:-1}" = 0 ]; then
-  [ ! -x "$ROOT/arch-desktop-thermal-guard-root.sh" ] || "$ROOT/arch-desktop-thermal-guard-root.sh" stop >>"$LOG" 2>&1 || true
-fi
 
 printf 'stopped\n' >"$STATE"
 log "hibernate completed"

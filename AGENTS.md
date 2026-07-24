@@ -353,19 +353,18 @@ restores Chromium's native password manager.
   thermal guard deployed to `/data/local/helium-phone-thermal-guard-root.sh`.
   The old
   `/data/local/chroots/arch/arch-desktop-thermal-guard-root.sh` path is only a
-  compatibility wrapper. The boot hook starts the phone-level guard before the
-  connected-display auto-enable helper, and Arch Desktop resume starts it
-  idempotently. It saves original CPU/devfreq max frequencies under
+  compatibility wrapper. The guard is scoped to the Arch Desktop session:
+  the phone boot hook leaves it stopped, Arch Desktop resume starts it before
+  X11, and every stop or hibernate restores the original frequency limits.
+  Installation mirrors the live X11 socket state instead of starting the guard
+  globally. It saves original CPU/devfreq max frequencies under
   `/data/local/helium-phone-thermal-guard`, applies conservative caps
   immediately, samples skin temperature once every 30 seconds by default, and
   reapplies caps only when the selected thermal band changes. It tightens the
   caps before skin thermal status reaches critical so Android does not block
   external display hosting. Do not use
   `cmd thermalservice override-status` as a fix; that hides the framework state
-  instead of reducing heat. By default hibernate leaves this guard running
-  because the user prefers global throttling over losing external display. Set
-  `ARCH_DESKTOP_THERMAL_GUARD_ALWAYS=0` only if hibernate should restore the
-  original max frequencies.
+  instead of reducing heat.
 - `android/arch-desktop-controller` is the phone-side controller app installed
   as `net.dhruv.archdesktop` / "Arch Desktop". It runs
   `/data/local/chroots/arch/arch-desktop-resume-root.sh` for cold starts and

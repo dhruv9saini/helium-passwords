@@ -96,8 +96,6 @@ setenforce 1 || true
 am force-stop com.termux.x11 >/dev/null 2>&1 || true
 [ "${ARCH_DESKTOP_STOP_KEEP_CONTROLLER:-0}" = 1 ] || am force-stop net.dhruv.archdesktop >/dev/null 2>&1 || true
 am force-stop org.lineageos.jelly >/dev/null 2>&1 || true
-if [ "${ARCH_DESKTOP_THERMAL_GUARD_ALWAYS:-1}" = 0 ]; then
-  [ ! -x "$ROOT/arch-desktop-thermal-guard-root.sh" ] || "$ROOT/arch-desktop-thermal-guard-root.sh" stop >>"$LOG" 2>&1 || true
-fi
+[ ! -x "$ROOT/arch-desktop-thermal-guard-root.sh" ] || "$ROOT/arch-desktop-thermal-guard-root.sh" stop >>"$LOG" 2>&1 || true
 
 log "Termux:X11 Arch desktop stopped"

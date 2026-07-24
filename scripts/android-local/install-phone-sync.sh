@@ -96,7 +96,11 @@ install -Dm644 /data/local/tmp/connected-display-auto-enable.jar \"\$ROOT/connec
 install -Dm755 /data/local/tmp/helium-phone-ui-service-root.sh /data/adb/service.d/99-helium-phone-ui.sh
 pm install -r /data/local/tmp/arch-desktop.apk >/dev/null
 \"\$ROOT/android-ui-preferences-root.sh\"
-/data/local/helium-phone-thermal-guard-root.sh start
+if [ -S \"\$ROOT/tmp/.X11-unix/X1\" ]; then
+  /data/local/helium-phone-thermal-guard-root.sh start
+else
+  /data/local/helium-phone-thermal-guard-root.sh stop
+fi
 \"\$ROOT/android-connected-display-auto-enable-root.sh\" restart
 \"\$ROOT/chroot-tailnet-dns-root.sh\"
 \"\$ROOT/fix-magic-keyboard-layout-root.sh\"
