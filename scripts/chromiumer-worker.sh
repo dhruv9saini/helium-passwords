@@ -133,6 +133,23 @@ command_text() {
     printf '%s\n' "${text}"
 }
 
+continuation_command_mode() {
+    local parent_command=$1
+    local requested_command=$2
+    if [ "${requested_command}" = "${parent_command}" ]; then
+        printf 'exact\n'
+        return
+    fi
+
+    local marker='AUTONINJA_JOBS=2 '
+    local suffix=${parent_command#*"${marker}"}
+    [ "${suffix}" != "${parent_command}" ] && \
+        [[ "${suffix}" != *"${marker}"* ]] && \
+        [ "${requested_command}" = \
+            "${parent_command/"${marker}"/AUTONINJA_JOBS=1 }" ] || return 1
+    printf 'reduced-parallelism\n'
+}
+
 workspace_owner() {
     local job=$1
     validate_job "${job}"
@@ -192,14 +209,24 @@ validate_continuation_state() {
     shift
     validate_job "${child}"
     local child_state="${state_root}/${child}"
-    local parent owner manifest_sha actual_sha
+    local parent owner manifest_sha actual_sha parent_command requested_command
+    local command_mode
     [ -d "${child_state}" ] && [ ! -L "${child_state}" ] || return 1
     parent=$(continuation_parent "${child}") || return 1
     owner=$(workspace_owner "${child}") || return 1
+    parent_command=$(exact_value \
+        "${state_root}/${parent}/policy.env" command) || return 1
+    requested_command=$(command_text "$@")
+    command_mode=$(continuation_command_mode \
+        "${parent_command}" "${requested_command}") || return 1
     [ "$(exact_value "${child_state}/resume.env" workspace_owner)" = \
         "${owner}" ] && \
         [ "$(exact_value "${child_state}/resume.env" command)" = \
-            "$(command_text "$@")" ] && \
+            "${requested_command}" ] && \
+        [ "$(exact_value "${child_state}/resume.env" parent_command)" = \
+            "${parent_command}" ] && \
+        [ "$(exact_value "${child_state}/resume.env" command_mode)" = \
+            "${command_mode}" ] && \
         [ "$(exact_value "${state_root}/${parent}/continued-by.env" child_job)" = \
             "${child}" ] && \
         [ "$(exact_value "${state_root}/${parent}/continued-by.env" workspace_owner)" = \
@@ -454,11 +481,12 @@ validate_resume_parent() {
         return 1
     }
 
-    local expected_command requested_command
+    local expected_command requested_command command_mode
     expected_command=$(exact_value "${policy}" command)
     requested_command=$(command_text "$@")
-    [ "${requested_command}" = "${expected_command}" ] || {
-        echo "continuation command must exactly match its parent command" >&2
+    command_mode=$(continuation_command_mode \
+        "${expected_command}" "${requested_command}") || {
+        echo "continuation command must match its parent or only reduce AUTONINJA_JOBS from 2 to 1" >&2
         return 1
     }
 
@@ -517,6 +545,8 @@ validate_resume_parent() {
     resume_budget_gib=${staged_budget_gib}
     resume_budget_bytes=${staged_budget_bytes}
     resume_command=${requested_command}
+    resume_parent_command=${expected_command}
+    resume_command_mode=${command_mode}
 }
 
 resume_init() {
@@ -581,7 +611,9 @@ resume_init() {
         printf 'parent_job=%s\n' "${parent}"
         printf 'workspace_owner=%s\n' "${resume_owner}"
         printf 'source_manifest_sha256=%s\n' "${source_sha}"
+        printf 'parent_command=%s\n' "${resume_parent_command}"
         printf 'command=%s\n' "${resume_command}"
+        printf 'command_mode=%s\n' "${resume_command_mode}"
         printf 'admitted_at=%s\n' "$(date --iso-8601=seconds)"
     } >"${child_state}/resume.env"
 

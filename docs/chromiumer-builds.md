@@ -334,10 +334,17 @@ scripts/chromiumer-job.sh resume "$parent" "$job" \
       bash scripts/chromium/build-android-ci.sh
 ```
 
-The command after `--` is mandatory and must byte-for-byte reproduce the
-parent policy's shell-escaped argument vector. This keeps the executable build
-plan explicit while letting Ninja reuse its dependency log and completed
-objects. The continuation is not a longer unit: it gets a new unique
+The command after `--` is mandatory and normally must byte-for-byte reproduce
+the parent policy's shell-escaped argument vector. The only admitted resource
+adjustment is changing one exact `AUTONINJA_JOBS=2` argument to
+`AUTONINJA_JOBS=1`. This lets a retained build serialize a linker/compiler
+pair that reached the unchanged cgroup memory-high boundary; increasing
+parallelism or changing any other token fails admission. The child records
+both commands and `command_mode=reduced-parallelism`.
+
+This keeps the executable build plan explicit while letting Ninja reuse its
+dependency log and completed objects. The continuation is not a longer unit:
+it gets a new unique
 `helium-job-<job>.service`, watchdog, state directory, journal, terminal
 record, Mailbridge event key, and exact eight-hour `RuntimeMaxSec`.
 

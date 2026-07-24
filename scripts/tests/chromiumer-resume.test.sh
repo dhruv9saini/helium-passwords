@@ -120,6 +120,9 @@ grep -Fqx "child_job=${child}" \
     "${state_root}/${parent}/continued-by.env"
 grep -Fqx "parent_job=${parent}" "${state_root}/${child}/resume.env"
 grep -Fqx "workspace_owner=${parent}" "${state_root}/${child}/stage.env"
+grep -Fqx "parent_command=${build_command_text}" \
+    "${state_root}/${child}/resume.env"
+grep -Fqx 'command_mode=exact' "${state_root}/${child}/resume.env"
 cmp "${state_root}/${parent}/source.manifest" \
     "${state_root}/${child}/source.manifest"
 [ "$(stat -c %a "${state_root}/${child}/source.manifest")" = 600 ]
@@ -148,6 +151,50 @@ if (resume_init "${parent}" resume-wrong -- sh -c 'exit 0') \
     exit 1
 fi
 
+# A continuation may make the one fail-closed resource adjustment needed
+# after a two-edge linker/compiler memory stall: reduce only AUTONINJA_JOBS
+# from two to one. No other command token can change.
+reduced_parent=resume-reduced-parent
+reduced_child=resume-reduced-child
+parallel_command=(env AUTONINJA_JOBS=2 GCLIENT_JOBS=2 sh -c \
+    'printf "parallel fixture\n"')
+reduced_command=(env AUTONINJA_JOBS=1 GCLIENT_JOBS=2 sh -c \
+    'printf "parallel fixture\n"')
+write_parent "${reduced_parent}" "$(command_text "${parallel_command[@]}")"
+resume_init "${reduced_parent}" "${reduced_child}" -- \
+    "${reduced_command[@]}" >"${test_root}/reduced.out"
+exec 9>&-
+grep -Fqx 'command_mode=reduced-parallelism' \
+    "${state_root}/${reduced_child}/resume.env"
+grep -Fqx "parent_command=$(command_text "${parallel_command[@]}")" \
+    "${state_root}/${reduced_child}/resume.env"
+grep -Fqx "command=$(command_text "${reduced_command[@]}")" \
+    "${state_root}/${reduced_child}/resume.env"
+
+write_parent resume-increased-parent \
+    "$(command_text "${parallel_command[@]}")"
+if (resume_init resume-increased-parent resume-increased-child -- \
+    env AUTONINJA_JOBS=3 GCLIENT_JOBS=2 sh -c \
+        'printf "parallel fixture\n"') \
+    >"${test_root}/increased.out" 2>"${test_root}/increased.error"; then
+    echo "a continuation increased build parallelism" >&2
+    exit 1
+fi
+grep -Fq 'only reduce AUTONINJA_JOBS from 2 to 1' \
+    "${test_root}/increased.error"
+
+write_parent resume-mutated-parent \
+    "$(command_text "${parallel_command[@]}")"
+if (resume_init resume-mutated-parent resume-mutated-child -- \
+    env AUTONINJA_JOBS=1 GCLIENT_JOBS=1 sh -c \
+        'printf "parallel fixture\n"') \
+    >"${test_root}/mutated.out" 2>"${test_root}/mutated.error"; then
+    echo "a continuation changed an unrelated command token" >&2
+    exit 1
+fi
+grep -Fq 'only reduce AUTONINJA_JOBS from 2 to 1' \
+    "${test_root}/mutated.error"
+
 resume_start "${child}" -- "${build_command[@]}" \
     >"${test_root}/resume-start.out"
 exec 9>&-
@@ -167,10 +214,15 @@ grep -Fq ' helium-watch-resume-child.service 600 1 -- ' \
     "${RESUME_TEST_SYSTEMD_RUNS}"
 [ "$(grep -Fc "preflight=ok" "${test_root}/preflight-calls")" -ge 2 ]
 if grep '^workspace=' "${test_root}/preflight-calls" |
-    grep -Fvx "workspace=${work_root}/${parent}" >/dev/null; then
+    grep -Fvx "workspace=${work_root}/${parent}" |
+    grep -Fvx "workspace=${work_root}/${reduced_parent}" >/dev/null; then
     echo "continuation preflight accounted the wrong workspace" >&2
     exit 1
 fi
+grep -Fqx "workspace=${work_root}/${parent}" \
+    "${test_root}/preflight-calls"
+grep -Fqx "workspace=${work_root}/${reduced_parent}" \
+    "${test_root}/preflight-calls"
 
 cat >"${state_root}/${child}/terminal.env" <<'EOF'
 state=terminal
