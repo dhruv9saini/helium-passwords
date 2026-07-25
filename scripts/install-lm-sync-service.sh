@@ -472,7 +472,7 @@ case "$action" in
       echo "production lm release must be built for linux/amd64" >&2
       exit 1
     }
-    temp_dir=$(mktemp -d /tmp/helium-sync-release.XXXXXX)
+    temp_dir=$(mktemp -d /var/tmp/helium-sync-release.XXXXXX)
     chown "$operator_user" "$temp_dir"
     cleanup() { find "$temp_dir" -depth -delete; }
     trap cleanup EXIT

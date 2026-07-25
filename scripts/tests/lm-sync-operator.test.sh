@@ -237,6 +237,8 @@ if unshare -Ur env "${operator_env[@]}" FUNNEL_STATUS_FIXTURE="$test_root/funnel
 fi
 
 unit="$repo_root/systemd/helium-syncd.service"
+grep -Fq 'mktemp -d /var/tmp/helium-sync-release.XXXXXX' \
+  "$repo_root/scripts/install-lm-sync-service.sh"
 for directive in \
   'User=helium-sync' \
   'EnvironmentFile=/etc/helium-sync/tls/current/endpoint.env' \
