@@ -464,9 +464,9 @@ Do not create personal state without explicit approval. For a disposable seed:
 ```sh
 umask 077
 helium-sync seed-init \
-  --device-id d \
-  --output-dir /secure/disposable/helium-sync-d \
-  --server-bootstrap /secure/disposable/server-bootstrap.json
+  --state-file /secure/disposable/helium-sync-d/client.json \
+  --token-file /secure/disposable/helium-sync-d/token \
+  --bootstrap-file /secure/disposable/server-bootstrap.json
 ```
 
 `client.json` schema 2 and `token` stay together in the client directory.
@@ -478,11 +478,12 @@ A joining disposable client starts pending and pull-only:
 
 ```sh
 helium-sync join-init \
-  --device-id da \
-  --output-dir /secure/disposable/helium-sync-da \
-  --server-request /secure/disposable/da-server-request.json
+  --device synthetic-join \
+  --state-file /secure/disposable/helium-sync-join/client.json \
+  --token-file /secure/disposable/helium-sync-join/token \
+  --auth-request-file /secure/disposable/join-server-request.json
 sudo scripts/install-lm-sync-service.sh enroll-device \
-  /secure/disposable/da-server-request.json
+  /secure/disposable/join-server-request.json
 ```
 
 The native password and cookie bridges must both pull, apply, read back, and
