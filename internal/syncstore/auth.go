@@ -104,8 +104,8 @@ func CreateDeviceRegistryFromBootstrap(path string,
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
-	if bootstrap.DeviceID != "d" {
-		return nil, errors.New("server bootstrap must describe seed device d")
+	if !validDeviceID.MatchString(bootstrap.DeviceID) {
+		return nil, errors.New("server bootstrap has an invalid seed device id")
 	}
 	if err := validateTokenHash(bootstrap.TokenSHA256); err != nil {
 		return nil, err
@@ -113,7 +113,7 @@ func CreateDeviceRegistryFromBootstrap(path string,
 	registry := &DeviceRegistry{path: path, document: registryDocument{
 		Version: deviceRegistryVersion,
 		Devices: []deviceEntry{{
-			ID: "d", Role: RoleSeed, Phase: PhaseActive,
+			ID: bootstrap.DeviceID, Role: RoleSeed, Phase: PhaseActive,
 			TokenHashes:        []string{bootstrap.TokenSHA256},
 			ConfirmedTokenHash: bootstrap.TokenSHA256,
 			Scopes:             []DeviceScope{ScopePull, ScopePush},
@@ -248,14 +248,16 @@ func (registry *DeviceRegistry) EnrollPullOnlyRequest(
 }
 
 func NewServerBootstrap(state *ClientState, token string) (ServerBootstrap, error) {
-	if state == nil || state.DeviceID != "d" || state.Role != RoleSeed ||
+	if state == nil || state.Role != RoleSeed ||
 		state.Phase != PhaseActive {
-		return ServerBootstrap{}, errors.New("server bootstrap requires active seed state d")
+		return ServerBootstrap{}, errors.New("server bootstrap requires an active seed state")
 	}
 	if err := validateToken(token); err != nil {
 		return ServerBootstrap{}, err
 	}
-	return ServerBootstrap{DeviceID: "d", TokenSHA256: hashToken(token)}, nil
+	return ServerBootstrap{
+		DeviceID: state.DeviceID, TokenSHA256: hashToken(token),
+	}, nil
 }
 
 func NewDeviceEnrollmentRequest(deviceID, token string) (DeviceEnrollmentRequest, error) {
@@ -315,11 +317,11 @@ func (registry *DeviceRegistry) promoteLocked(deviceID string) error {
 func (registry *DeviceRegistry) Revoke(deviceID string) error {
 	registry.mu.Lock()
 	defer registry.mu.Unlock()
-	if deviceID == "d" {
-		return errors.New("the sole seed device cannot be revoked")
-	}
 	for index := range registry.document.Devices {
 		if registry.document.Devices[index].ID == deviceID {
+			if registry.document.Devices[index].Role == RoleSeed {
+				return errors.New("the sole seed device cannot be revoked")
+			}
 			registry.document.Devices[index].Revoked = true
 			return registry.saveLocked()
 		}
@@ -439,10 +441,10 @@ func validateRegistry(document registryDocument) error {
 		}
 		if device.Role == RoleSeed {
 			seedCount++
-			if device.ID != "d" || device.Phase != PhaseActive ||
+			if device.Phase != PhaseActive ||
 				!sameScopes(device.Scopes,
 					[]DeviceScope{ScopePull, ScopePush}) {
-				return errors.New("seed must be active d with pull and push scopes")
+				return errors.New("seed must be active with pull and push scopes")
 			}
 		} else if device.Role != RoleJoin || device.ID == "d" ||
 			(device.Phase == PhasePending &&
@@ -456,7 +458,7 @@ func validateRegistry(document registryDocument) error {
 		}
 	}
 	if seedCount != 1 {
-		return errors.New("registry must contain exactly one d seed")
+		return errors.New("registry must contain exactly one seed")
 	}
 	return nil
 }

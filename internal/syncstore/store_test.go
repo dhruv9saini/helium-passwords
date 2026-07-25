@@ -197,6 +197,37 @@ func TestCredentialRotationRequiresNewTokenConfirmation(t *testing.T) {
 	}
 }
 
+func TestSyntheticSeedBootstrapUsesExplicitDeviceID(t *testing.T) {
+	root := t.TempDir()
+	state, err := CreateSeedStateForDevice(
+		filepath.Join(root, "seed.json"), "synthetic-seed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrap, err := NewServerBootstrap(state, seedToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bootstrap.DeviceID != "synthetic-seed" {
+		t.Fatalf("wrong bootstrap seed id: %q", bootstrap.DeviceID)
+	}
+	registry, err := CreateDeviceRegistryFromBootstrap(
+		filepath.Join(root, "devices.json"), bootstrap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	principal, err := registry.Authenticate(seedToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if principal.ID != "synthetic-seed" || principal.Role != RoleSeed {
+		t.Fatalf("wrong synthetic seed principal: %+v", principal)
+	}
+	if err := registry.Revoke("synthetic-seed"); err == nil {
+		t.Fatal("synthetic seed was revocable")
+	}
+}
+
 func TestClientRejectsHTTPSAndNonTailnetHTTP(t *testing.T) {
 	statePath := filepath.Join(t.TempDir(), "seed.json")
 	if _, err := CreateSeedState(statePath); err != nil {

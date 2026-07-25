@@ -62,10 +62,11 @@ func main() {
 
 func cmdSeedInit(args []string) error {
 	flags := flag.NewFlagSet("seed-init", flag.ContinueOnError)
+	device := flags.String("device", "d", "seed device id")
 	stateFile := flags.String(
-		"state-file", defaultClientStatePath(), "new d seed client state")
+		"state-file", defaultClientStatePath(), "new seed client state")
 	tokenFile := flags.String(
-		"token-file", defaultTokenPath(), "new d device credential")
+		"token-file", defaultTokenPath(), "new seed device credential")
 	bootstrapFile := flags.String(
 		"bootstrap-file", "", "new hash-only server bootstrap JSON")
 	if err := flags.Parse(args); err != nil {
@@ -87,7 +88,7 @@ func cmdSeedInit(args []string) error {
 	if err := ensureSecretFile(*tokenFile, 32); err != nil {
 		return err
 	}
-	state, err := syncstore.CreateSeedState(*stateFile)
+	state, err := syncstore.CreateSeedStateForDevice(*stateFile, *device)
 	if err != nil {
 		return err
 	}

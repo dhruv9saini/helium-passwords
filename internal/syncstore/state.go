@@ -21,7 +21,11 @@ type ClientState struct {
 }
 
 func CreateSeedState(path string) (*ClientState, error) {
-	return createClientState(path, "d", RoleSeed, PhaseActive)
+	return CreateSeedStateForDevice(path, "d")
+}
+
+func CreateSeedStateForDevice(path, deviceID string) (*ClientState, error) {
+	return createClientState(path, deviceID, RoleSeed, PhaseActive)
 }
 
 func CreateJoinState(path, deviceID string) (*ClientState, error) {
@@ -90,8 +94,8 @@ func (state *ClientState) validate() error {
 		return errors.New("invalid device id")
 	}
 	if state.Role == RoleSeed {
-		if state.DeviceID != "d" || state.Phase != PhaseActive {
-			return errors.New("only active d may have the seed role")
+		if state.Phase != PhaseActive {
+			return errors.New("the seed device must be active")
 		}
 	} else if state.Role != RoleJoin || state.DeviceID == "d" ||
 		(state.Phase != PhasePending && state.Phase != PhaseActive) {
