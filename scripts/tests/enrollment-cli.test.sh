@@ -12,91 +12,35 @@ go build -trimpath -o "$test_root/helium-sync" "$repo_root/cmd/helium-sync"
   --state-file "$test_root/d/client.json" \
   --token-file "$test_root/d/token" \
   --bootstrap-file "$test_root/relay/bootstrap.json" >/dev/null
-"$test_root/helium-sync" seed-public \
-  --state-file "$test_root/d/client.json" \
-  --output "$test_root/relay/seed-public" >/dev/null
 
-"$test_root/helium-sync" recovery-keygen \
-  --output-dir "$test_root/recovery-media-1" >/dev/null
-"$test_root/helium-sync" recovery-keygen \
-  --output-dir "$test_root/recovery-media-2" >/dev/null
-cat "$test_root/recovery-media-1/recipient.txt" \
-  "$test_root/recovery-media-2/recipient.txt" \
-  >"$test_root/relay/recovery-recipients.txt"
-recovery_output=$("$test_root/helium-sync" recovery-export \
-  --state-file "$test_root/d/client.json" \
-  --token-file "$test_root/d/token" \
-  --recipients-file "$test_root/relay/recovery-recipients.txt" \
-  --output "$test_root/relay/d-recovery.age")
-grep -q '^recipient_count=2$' <<<"$recovery_output"
-grep -Eq '^sha256=[0-9a-f]{64}$' <<<"$recovery_output"
-if grep -Fq -- "$(tr -d '\n' <"$test_root/d/token")" \
-  "$test_root/relay/d-recovery.age"; then
-  echo "recovery export contains the plaintext token" >&2
-  exit 1
-fi
-"$test_root/helium-sync" recovery-import \
-  --input "$test_root/relay/d-recovery.age" \
-  --identity-file "$test_root/recovery-media-1/identity.txt" \
-  --expected-seed-public-file "$test_root/relay/seed-public" \
-  --output-dir "$test_root/recovery-drill-1" >/dev/null
-"$test_root/helium-sync" recovery-import \
-  --input "$test_root/relay/d-recovery.age" \
-  --identity-file "$test_root/recovery-media-2/identity.txt" \
-  --expected-seed-public-file "$test_root/relay/seed-public" \
-  --output-dir "$test_root/recovery-drill-2" >/dev/null
-cmp "$test_root/d/token" "$test_root/recovery-drill-1/token"
-cmp "$test_root/d/token" "$test_root/recovery-drill-2/token"
-"$test_root/helium-sync" seed-public \
-  --state-file "$test_root/recovery-drill-1/client.json" \
-  --output "$test_root/relay/restored-seed-public" >/dev/null
-cmp "$test_root/relay/seed-public" "$test_root/relay/restored-seed-public"
-
-if "$test_root/helium-sync" recovery-export \
-  --state-file "$test_root/d/client.json" \
-  --token-file "$test_root/d/token" \
-  --recipients-file "$test_root/recovery-media-1/recipient.txt" \
-  --output "$test_root/relay/weak-recovery.age" >/dev/null 2>&1; then
-  echo "single-recipient recovery export was accepted" >&2
-  exit 1
-fi
-
-jq -e '.device_id == "d" and (.active_key_id | length > 0) and
+jq -e '.version == 2 and .device_id == "d" and .role == "seed" and
+  .phase == "active" and .revisions == {} and .sequence == "0"' \
+  "$test_root/d/client.json" >/dev/null
+jq -e '.device_id == "d" and
   (.token_sha256 | test("^[0-9a-f]{64}$")) and
-  (has("keys") | not) and (has("token") | not)' \
-  "$test_root/relay/bootstrap.json" >/dev/null
+  (has("token") | not)' "$test_root/relay/bootstrap.json" >/dev/null
 
 "$test_root/helium-sync" server-init \
   --data-dir "$test_root/server" \
   --devices-file "$test_root/server/devices.json" \
   --bootstrap-file "$test_root/relay/bootstrap.json" >/dev/null
 
-"$test_root/helium-sync" join-request \
+"$test_root/helium-sync" join-init \
   --device da \
-  --seed-public-file "$test_root/relay/seed-public" \
-  --pending-file "$test_root/da/join.pending.json" \
-  --request-file "$test_root/relay/da-join.json" \
+  --state-file "$test_root/da/client.json" \
   --auth-request-file "$test_root/relay/da-auth.json" \
   --token-file "$test_root/da/token" >/dev/null
-"$test_root/helium-sync" seed-wrap \
-  --state-file "$test_root/d/client.json" \
-  --request-file "$test_root/relay/da-join.json" \
-  --wrapped-file "$test_root/relay/da-wrapped.json"
 "$test_root/helium-sync" server-enroll \
   --devices-file "$test_root/server/devices.json" \
-  --auth-request-file "$test_root/relay/da-auth.json"
+  --auth-request-file "$test_root/relay/da-auth.json" >/dev/null
 
-active_key=$(jq -er .active_key_id "$test_root/relay/bootstrap.json")
-"$test_root/helium-sync" join-install \
-  --state-file "$test_root/da/client.json" \
-  --pending-file "$test_root/da/join.pending.json" \
-  --wrapped-file "$test_root/relay/da-wrapped.json" \
-  --required-key-id "$active_key" >/dev/null
-
-jq -e '.device_id == "da" and .role == "join" and .phase == "pending" and
-  (.local_seal_key | length > 0)' "$test_root/da/client.json" >/dev/null
+jq -e '.version == 2 and .device_id == "da" and .role == "join" and
+  .phase == "pending" and .revisions == {} and .sequence == "0"' \
+  "$test_root/da/client.json" >/dev/null
 jq -e '.devices | any(.id == "da" and .phase == "pending" and
-  .scopes == ["pull"] and (.token_sha256 | length == 1))' \
+  .scopes == ["pull"] and
+  (.token_hashes | length == 1) and
+  (.token_hashes[0] | length == 64))' \
   "$test_root/server/devices.json" >/dev/null
 
 if grep -Fq -- "$(tr -d '\n' <"$test_root/da/token")" \
@@ -112,5 +56,12 @@ if "$test_root/helium-sync" seed-init \
   echo "seed-init replaced existing material" >&2
   exit 1
 fi
+
+for obsolete in recovery-keygen recovery-export seed-public seed-wrap; do
+  if "$test_root/helium-sync" "$obsolete" >/dev/null 2>&1; then
+    echo "obsolete trust-policy command remained available: $obsolete" >&2
+    exit 1
+  fi
+done
 
 echo "enrollment_cli=passed"

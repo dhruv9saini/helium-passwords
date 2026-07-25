@@ -234,46 +234,29 @@ export function buildReauthenticationIntent(exceptions) {
   };
 }
 
-export function migrateCookieStateToV4(document) {
-  if (!document || ![2, 3].includes(document.schema_version) ||
+export function validateCookieStateV5(document) {
+  if (!document || document.schema_version !== 5 ||
       !document.records || typeof document.records !== "object" ||
       Array.isArray(document.records)) {
-    throw new Error("invalid cookie state migration document");
+    throw new Error("invalid cookie state document");
   }
-  const migrated = structuredClone(document);
-  const oldSchema = migrated.schema_version;
-  migrated.schema_version = 4;
-  for (const record of Object.values(migrated.records)) {
-    if (!record || typeof record !== "object" || Array.isArray(record)) {
-      throw new Error("invalid cookie state migration record");
-    }
-    if (oldSchema === 2) {
-      delete record.non_clonable;
-      delete record.non_clonable_reason;
-      delete record.site;
-    }
-    if (oldSchema === 3 && record.destination_exception) {
-      record.destination_exception.schemeful_site =
-        record.destination_exception.site;
-      delete record.destination_exception.site;
-      record.destination_exception.unverified_local_change = false;
+  for (const record of Object.values(document.records)) {
+    if (!record || typeof record !== "object" || Array.isArray(record) ||
+        "key_id" in record) {
+      throw new Error("invalid cookie state record");
     }
   }
-  return migrated;
+  return structuredClone(document);
 }
 
 export function decideCookieReconcile({
   state,
   remote,
   localFingerprint,
-  activeKeyId,
   recordKey = "",
   pendingEnrollment = false,
 }) {
   if (!localFingerprint) throw new Error("local fingerprint is required");
-  if (typeof activeKeyId !== "string" || !activeKeyId) {
-    throw new Error("active content key id is required");
-  }
   if (state?.blockedReason) {
     return { action: "stop", reason: state.blockedReason };
   }
@@ -297,9 +280,6 @@ export function decideCookieReconcile({
     }
     if (remote.revision === pending.targetRevision &&
         remote.payloadFingerprint === pending.payloadFingerprint) {
-      if (remote.keyId !== activeKeyId) {
-        return { action: "stop", reason: "publication-confirmed-under-stale-key-epoch" };
-      }
       return { action: "accept-publication" };
     }
     if (remote.revision === pending.expectedRevision &&
@@ -312,9 +292,6 @@ export function decideCookieReconcile({
 
   if (!state || state.remoteRevision === 0) {
     if (remote && !remote.deleted) {
-      if (remote.keyId !== activeKeyId) {
-        return { action: "stop", reason: "initial-record-uses-stale-key-epoch" };
-      }
       return pendingEnrollment || localFingerprint === EMPTY_COOKIE_FINGERPRINT
         ? { action: "apply" }
         : { action: "stop", reason: "uninitialized-local-and-remote-state" };
@@ -328,9 +305,6 @@ export function decideCookieReconcile({
     return { action: "stop", reason: "authority-revision-regressed" };
   }
   if (remote.revision === state.remoteRevision) {
-    if (remote.keyId !== state.keyId) {
-      return { action: "stop", reason: "same-revision-key-epoch-changed" };
-    }
     if (remote.payloadFingerprint !== state.remotePayloadFingerprint) {
       return { action: "stop", reason: "same-revision-payload-changed" };
     }
@@ -344,10 +318,6 @@ export function decideCookieReconcile({
     return localFingerprint === state.baselineLocalFingerprint
       ? { action: "none" }
       : { action: "publish", expectedRevision: state.remoteRevision };
-  }
-
-  if (remote.keyId !== activeKeyId) {
-    return { action: "stop", reason: "newer-record-uses-stale-key-epoch" };
   }
 
   return localFingerprint === state.baselineLocalFingerprint

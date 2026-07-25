@@ -51,12 +51,11 @@ test("native cookie apply uses Chromium CookieManager and rejects malformed auth
   assert.match(cookie, /SetCanonicalCookie/);
   assert.match(cookie, /DeleteCanonicalCookie/);
   assert.match(cookie, /record\.device_id\.empty\(\)/);
-  assert.match(cookie, /record\.key_id\.empty\(\)/);
-  assert.match(cookie, /cookie-same-revision-key-epoch-changed/);
-  assert.match(cookie, /cookie-newer-record-uses-stale-key-epoch/);
+  assert.doesNotMatch(cookie, /key_id|active_key_id|key-epoch/);
   assert.match(cookie, /CookiePartitionKey::FromUntrustedInput/);
   assert.match(cookie, /CookieRecordKey\(\*cookie\)/);
-  assert.match(cookie, /SealLocalPayload/);
+  assert.match(cookie, /root\.Set\("payload", std::move\(\*payload\)\)/);
+  assert.doesNotMatch(cookie, /SealLocalPayload|OpenLocalPayload|sealed_payload/);
   assert.match(cookie, /destination-set-rejected/);
 });
 

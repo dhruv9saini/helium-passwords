@@ -1,5 +1,5 @@
 [Unit]
-Description=Archive verified opaque Helium Sync state as the service account
+Description=Archive verified readable Helium Sync state as the service account
 
 [Service]
 Type=oneshot

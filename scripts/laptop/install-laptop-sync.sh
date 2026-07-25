@@ -16,7 +16,7 @@ usage:
   install-laptop-sync.sh rollback ARTIFACT-SHA256
 
 Install is refused unless the exact artifact has build provenance and the
-stopped personal profile has two verified encrypted backup copies.  Releases
+stopped personal profile has two verified private backup copies.  Releases
 are immutable generations; rollback only switches the current symlink.
 EOF
 }

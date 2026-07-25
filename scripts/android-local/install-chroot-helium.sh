@@ -12,8 +12,8 @@ usage:
   install-chroot-helium.sh install ARTIFACT ARTIFACT-RECEIPT PROFILE-BACKUP-CONFIG PROFILE-BACKUP-RECEIPT
   install-chroot-helium.sh rollback ARTIFACT-SHA256
 
-The browser must be stopped.  Install requires build provenance and two
-verified encrypted copies of the exact chroot profile.  Releases are retained
+The browser must be stopped. Install requires build provenance and two
+verified private copies of the exact chroot profile. Releases are retained
 under /opt/helium-sync-releases; rollback only changes a symlink.
 EOF
 }

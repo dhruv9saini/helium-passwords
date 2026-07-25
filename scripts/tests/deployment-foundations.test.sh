@@ -9,25 +9,18 @@ cleanup() { find "$test_root" "$tmp_destination" "$shm_destination" -depth -dele
 trap cleanup EXIT
 mkdir -p "$test_root/bin" "$test_root/home/.config/net.imput.helium/Default" \
   "$test_root/artifact/helium-sync-linux-x86_64/runtime"
-printf '%s\n' \
-  'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' \
-  'age1pppppppppppppppppppppppppppppppppppppppppppppppppppp' \
-  >"$test_root/recipients.txt"
-printf 'AGE-SECRET-KEY-fixture\n' >"$test_root/identity.txt"
 printf 'SYNTHETIC-SSH-PRIVATE-KEY\n' >"$test_root/ssh-identity"
 printf 'fixture-peer ssh-ed25519 SYNTHETIC\n' >"$test_root/known-hosts"
-chmod 600 "$test_root/recipients.txt" "$test_root/identity.txt" \
-  "$test_root/ssh-identity" "$test_root/known-hosts"
+chmod 600 "$test_root/ssh-identity" "$test_root/known-hosts"
 
 make_backup_receipt() {
   local source_path=$1 config=$2 generation=$3 profile_id=$4
-  local cipher=$test_root/cipher-$profile_id cipher_sha cipher_size
-  local recipients_sha topology_sha path_sha archive_root dest ns receipt tree_sha
+  local archive=$test_root/archive-$profile_id archive_sha archive_size
+  local topology_sha path_sha archive_root dest ns receipt tree_sha
   local fingerprint_kind
-  printf 'synthetic encrypted profile %s\n' "$profile_id" >"$cipher"
-  cipher_sha=$(sha256sum "$cipher" | awk '{print $1}')
-  cipher_size=$(stat -c %s "$cipher")
-  recipients_sha=$(sort -u "$test_root/recipients.txt" | sha256sum | awk '{print $1}')
+  printf 'synthetic archived profile %s\n' "$profile_id" >"$archive"
+  archive_sha=$(sha256sum "$archive" | awk '{print $1}')
+  archive_size=$(stat -c %s "$archive")
   topology_sha=$(
     printf '%s\n' \
       "nas-copy|nas|local|$(uname -n | cut -d. -f1)|$tmp_destination" \
@@ -50,12 +43,10 @@ make_backup_receipt() {
     fingerprint_kind='normalized-tree-v1'
   fi
   cat >"$config" <<EOF
-version=2
+version=3
 source_device=fixture
 profile_id=$profile_id
 source_path=$source_path
-age_recipients=$test_root/recipients.txt
-age_identity=$test_root/identity.txt
 ssh_user=d
 ssh_identity=$test_root/ssh-identity
 ssh_known_hosts=$test_root/known-hosts
@@ -68,10 +59,10 @@ EOF
   for dest in "$tmp_destination" "$shm_destination"; do
     ns=$dest/fixture/$profile_id/generations/$generation
     mkdir -p "$ns"
-    cp "$cipher" "$ns/profile.tar.zst.age"
+    cp "$archive" "$ns/profile.tar.zst"
     receipt=$ns/receipt.env
     cat >"$receipt" <<EOF
-schema_version=2
+schema_version=3
 source_device=fixture
 profile_id=$profile_id
 profile_path_sha256=$path_sha
@@ -79,14 +70,13 @@ source_tree_sha256=$tree_sha
 source_fingerprint_kind=$fingerprint_kind
 archive_root=$archive_root
 generation=$generation
-cipher_sha256=$cipher_sha
-cipher_size=$cipher_size
+archive_sha256=$archive_sha
+archive_size=$archive_size
 source_bytes=123
-recipients_sha256=$recipients_sha
 topology_sha256=$topology_sha
 created_at=2026-07-22T12:00:00Z
 EOF
-    chmod 600 "$receipt" "$ns/profile.tar.zst.age"
+    chmod 600 "$receipt" "$ns/profile.tar.zst"
   done
   printf '%s\n' "$tmp_destination/fixture/$profile_id/generations/$generation/receipt.env"
 }
@@ -136,34 +126,6 @@ elif [[ \${1:-} == exec-out ]]; then
   cat '$test_root/android-profile.tar'
 fi
 EOF
-cat >"$test_root/bin/age" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-mode= input=
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --encrypt) mode=encrypt; shift ;;
-    --decrypt) mode=decrypt; shift ;;
-    --recipients-file|--identity) shift 2 ;;
-    *) input=$1; shift ;;
-  esac
-done
-case "$mode" in
-  encrypt)
-    openssl enc -aes-256-cbc -pbkdf2 -pass pass:synthetic-deploy-test
-    ;;
-  decrypt)
-    if [[ -n "$input" ]]; then
-      openssl enc -d -aes-256-cbc -pbkdf2 \
-        -pass pass:synthetic-deploy-test -in "$input"
-    else
-      openssl enc -d -aes-256-cbc -pbkdf2 \
-        -pass pass:synthetic-deploy-test
-    fi
-    ;;
-  *) exit 64 ;;
-esac
-EOF
 cat >"$test_root/bin/findmnt" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -211,8 +173,7 @@ cat "$source_file" >"$target_file"
 chmod 600 "$target_file"
 EOF
 chmod 700 "$test_root/bin/git" "$test_root/bin/go" "$test_root/bin/adb" \
-  "$test_root/bin/age" "$test_root/bin/findmnt" "$test_root/bin/ssh" \
-  "$test_root/bin/rsync"
+  "$test_root/bin/findmnt" "$test_root/bin/ssh" "$test_root/bin/rsync"
 PATH="$test_root/bin:$PATH"
 export PATH
 export DEPLOY_TEST_SSH_IDENTITY="$test_root/ssh-identity"
@@ -266,10 +227,10 @@ mkdir -p "$test_root/enrollment"
 mkdir -p "$test_root/android-live/app_chrome/Default"
 printf 'synthetic Android profile\n' >"$test_root/android-live/app_chrome/Default/Preferences"
 tar -C "$test_root/android-live" -cf "$test_root/android-profile.tar" app_chrome
-printf 'https://lm.tailnet.test:44719\n' >"$test_root/enrollment/base_url"
+printf 'http://100.100.105.47:44719\n' >"$test_root/enrollment/base_url"
 printf fixture-token >"$test_root/enrollment/token"
 cat >"$test_root/enrollment/client.json" <<'EOF'
-{"version":1,"device_id":"oneplus","role":"join","phase":"pending","active_key_id":"key-a","keys":{"key-a":"ciphertext"},"local_seal_key":"local"}
+{"version":2,"device_id":"oneplus","role":"join","phase":"pending","revisions":{},"sequence":"0"}
 EOF
 chmod 600 "$test_root/enrollment/token" "$test_root/enrollment/client.json"
 android_config=$test_root/android-backup.conf
@@ -299,10 +260,10 @@ if ADB="$test_root/bin/adb" ADB_STREAM_COUNTER="$test_root/adb-stream-count" \
 fi
 test ! -e "$tmp_destination/fixture/android/generations/20260722T120300Z-dddddddddddddddd"
 
-sed -i 's#https://lm.tailnet.test:44719#http://127.0.0.1:44719#' "$test_root/enrollment/base_url"
+sed -i 's#http://100.100.105.47:44719#https://100.100.105.47:44719#' "$test_root/enrollment/base_url"
 if ADB="$test_root/bin/adb" "$repo_root/scripts/android-local/configure-android-chromium-sync.sh" \
   install "$test_root/enrollment" "$android_config" "$android_receipt" >/dev/null 2>&1; then
-  echo 'insecure Android sync URL passed configuration' >&2
+  echo 'inner TLS Android sync URL passed configuration' >&2
   exit 1
 fi
 

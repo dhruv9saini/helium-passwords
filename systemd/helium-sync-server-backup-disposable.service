@@ -1,5 +1,5 @@
 [Unit]
-Description=Back up synthetic disposable Helium Sync opaque state
+Description=Back up synthetic disposable Helium Sync readable state
 ConditionPathIsMountPoint=/srv/nas
 ConditionPathExists=%h/.local/state/helium-sync-disposable/SYNTHETIC_ONLY
 ConditionPathExists=%h/.local/state/helium-sync-disposable/server/devices.json

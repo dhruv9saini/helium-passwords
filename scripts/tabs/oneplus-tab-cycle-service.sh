@@ -97,7 +97,7 @@ preflight() {
 
     # This path is deliberately independent of systemd and /proc. The chroot
     # may report systemctl=offline and /proc may be absent; neither is invoked
-    # by this Magisk runner. The actual backup preflight checks age, jq,
+    # by this Magisk runner. The actual backup preflight checks jq,
     # helium-tabs, the fresh native export, and both outbound SSH destinations.
     if [ -r "${chroot_root}/proc/self/mountinfo" ]; then
         printf 'proc=mounted\n'

@@ -39,38 +39,6 @@ function canonicalKey(form) {
   return `credential/v2/${createHash("sha256").update(material).digest("hex")}`;
 }
 
-function legacyKey(form) {
-  const material = [form.signonRealm, form.url, form.usernameValue].join("\0");
-  return `credential/${createHash("sha256").update(material).digest("hex")}`;
-}
-
-function migrateSchema3(legacyCredentials, localForms) {
-  const groups = new Map();
-  for (const form of localForms) {
-    const key = legacyKey(form);
-    groups.set(key, [...(groups.get(key) || []), form]);
-  }
-  const canonical = {};
-  for (const [legacy, state] of Object.entries(legacyCredentials)) {
-    const candidates = groups.get(legacy) || [];
-    if (candidates.length > 1) throw new Error("legacy identity collision");
-    if (candidates.length === 0) {
-      if (!state.deleted) throw new Error("live legacy state has no identity");
-      continue;
-    }
-    if (state.deleted || state.fingerprint !== candidates[0].fingerprint) {
-      throw new Error("legacy state mismatch");
-    }
-    canonical[canonicalKey(candidates[0])] = {
-      fingerprint: "",
-      revision: 0,
-      deleted: true,
-      queued: {fingerprint: state.fingerprint, deleted: false},
-    };
-  }
-  return {legacyCredentials: structuredClone(legacyCredentials), canonical};
-}
-
 class PublicationModel {
   constructor(state) {
     this.state = structuredClone(state);
@@ -146,33 +114,10 @@ test("canonical identity follows Chromium's complete PasswordForm unique key", (
   const passwordElementVariant = {...baseForm, passwordElement: "secret"};
   assert.notEqual(canonicalKey(baseForm), canonicalKey(usernameElementVariant));
   assert.notEqual(canonicalKey(baseForm), canonicalKey(passwordElementVariant));
-  assert.equal(legacyKey(baseForm), legacyKey(usernameElementVariant));
-  assert.equal(legacyKey(baseForm), legacyKey(passwordElementVariant));
   assert.notEqual(
     canonicalKey({...baseForm, usernameElement: "a\0b"}),
     canonicalKey({...baseForm, usernameElement: "a", usernameValue: "b\0synthetic-user"}),
   );
-});
-
-test("schema-3 migration preserves state and refuses an old-key collision", () => {
-  const legacy = {
-    [legacyKey(baseForm)]: {
-      fingerprint: baseForm.fingerprint,
-      revision: 7,
-      deleted: false,
-    },
-  };
-  const migrated = migrateSchema3(legacy, [baseForm]);
-  assert.deepEqual(migrated.legacyCredentials, legacy);
-  assert.equal(migrated.canonical[canonicalKey(baseForm)].revision, 0);
-  assert.deepEqual(migrated.canonical[canonicalKey(baseForm)].queued, {
-    fingerprint: baseForm.fingerprint,
-    deleted: false,
-  });
-  assert.throws(() => migrateSchema3(legacy, [
-    baseForm,
-    {...baseForm, usernameElement: "email"},
-  ]), /legacy identity collision/);
 });
 
 test("rapid update and deletion serialize on successive expected revisions", () => {
@@ -237,14 +182,13 @@ test("unaccepted and stale publications retry or fail without false conflict", (
 });
 
 test("native source persists one pending publication before one-record push", () => {
-  assert.match(source, /kPasswordStateSchema = 4/);
+  assert.match(source, /kPasswordStateSchema = 6/);
   assert.match(source, /password-form-unique-key-v2/);
   assert.match(source, /credential\/v2\//);
   assert.match(source, /credential\.username_element/);
   assert.match(source, /credential\.password_element/);
   assert.match(source, /AppendU32/);
-  assert.match(source, /legacy_credential_state_/);
-  assert.match(source, /legacy-preserved/);
+  assert.doesNotMatch(source, /legacy|migration/i);
 
   const publish = source.slice(
     source.indexOf("void HeliumPasswordSyncBridge::PublishQueuedMutation"),

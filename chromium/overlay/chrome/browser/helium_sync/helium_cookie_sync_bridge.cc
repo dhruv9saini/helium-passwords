@@ -57,9 +57,8 @@ namespace {
 constexpr char kCookieKind[] = "cookies";
 constexpr char kCookiePayloadFormat[] = "helium-cookie-v3";
 constexpr char kRollbackPayloadFormat[] = "helium-cookie-rollback-v1";
-constexpr char kRollbackPurpose[] = "cookie-apply-rollback-v1";
-constexpr int kStateSchema = 4;
-constexpr int kRollbackSchema = 1;
+constexpr int kStateSchema = 5;
+constexpr int kRollbackSchema = 2;
 constexpr int kReauthSchema = 3;
 constexpr size_t kMaxCookieRecords = 50000;
 constexpr size_t kMaxCookiePayloadBytes = 64 * 1024;
@@ -95,7 +94,6 @@ struct DestinationException {
 
 struct RecordState {
   int64_t remote_revision = 0;
-  std::string key_id;
   std::string device_id;
   std::string remote_payload_fingerprint;
   std::string baseline_cookie_fingerprint;
@@ -107,7 +105,6 @@ struct RecordState {
 struct BridgeState {
   std::map<std::string, RecordState> records;
   std::string blocked_reason;
-  bool migrated_from_policy_v1 = false;
   int64_t verified_sequence = 0;
 };
 
@@ -138,7 +135,7 @@ struct CookieOperation {
 
 struct RollbackJournal {
   std::string status;
-  SealedPayload sealed_payload;
+  std::string payload_json;
   std::string before_fingerprint;
   std::string target_fingerprint;
   size_t set_count = 0;
@@ -460,7 +457,6 @@ bool WriteSecretFile(const base::FilePath &path, std::string_view contents) {
 base::DictValue RecordStateToValue(const RecordState &state) {
   base::DictValue value;
   value.Set("remote_revision", base::NumberToString(state.remote_revision));
-  value.Set("key_id", state.key_id);
   value.Set("device_id", state.device_id);
   value.Set("remote_payload_fingerprint", state.remote_payload_fingerprint);
   value.Set("baseline_cookie_fingerprint", state.baseline_cookie_fingerprint);
@@ -499,22 +495,18 @@ base::DictValue RecordStateToValue(const RecordState &state) {
   return value;
 }
 
-std::optional<RecordState> RecordStateFromValue(const base::DictValue &value,
-                                                int schema) {
+std::optional<RecordState> RecordStateFromValue(const base::DictValue &value) {
   RecordState state;
   std::optional<int64_t> revision = Int64FromJSON(value, "remote_revision");
-  const std::string *key_id = value.FindString("key_id");
   const std::string *device_id = value.FindString("device_id");
   const std::string *remote_payload =
       value.FindString("remote_payload_fingerprint");
   const std::string *baseline = value.FindString("baseline_cookie_fingerprint");
   std::optional<bool> deleted = value.FindBool("remote_deleted");
-  if (!revision || !key_id || !device_id || !remote_payload || !baseline ||
-      !deleted) {
+  if (!revision || !device_id || !remote_payload || !baseline || !deleted) {
     return std::nullopt;
   }
   state.remote_revision = *revision;
-  state.key_id = *key_id;
   state.device_id = *device_id;
   state.remote_payload_fingerprint = *remote_payload;
   state.baseline_cookie_fingerprint = *baseline;
@@ -527,11 +519,9 @@ std::optional<RecordState> RecordStateFromValue(const base::DictValue &value,
     const std::string *exception_payload =
         exception->FindString("remote_payload_fingerprint");
     const std::string *reason = exception->FindString("reason");
-    const std::string *schemeful_site =
-        exception->FindString(schema == 3 ? "site" : "schemeful_site");
+    const std::string *schemeful_site = exception->FindString("schemeful_site");
     std::optional<bool> unverified_local_change =
-        schema == 3 ? std::optional<bool>(false)
-                    : exception->FindBool("unverified_local_change");
+        exception->FindBool("unverified_local_change");
     const base::ListValue *sessions =
         exception->FindList("observed_session_ids");
     if (!exception_revision || *exception_revision <= 0 || !exception_payload ||
@@ -1210,25 +1200,8 @@ private:
       return false;
     }
     int schema = parsed->GetDict().FindInt("schema_version").value_or(0);
-    if (schema == 1) {
-      base::FilePath backup = state_path_.AddExtensionASCII("policy-v1.bak");
-      if (!base::PathExists(backup) && !base::CopyFile(state_path_, backup)) {
-        return false;
-      }
-      state_.migrated_from_policy_v1 = true;
-      return true;
-    }
-    const bool migrate_schema_v2 = schema == 2;
-    const bool migrate_schema_v3 = schema == 3;
-    if (!migrate_schema_v2 && !migrate_schema_v3 && schema != kStateSchema) {
+    if (schema != kStateSchema) {
       return false;
-    }
-    if (migrate_schema_v2 || migrate_schema_v3) {
-      base::FilePath backup = state_path_.AddExtensionASCII(
-          migrate_schema_v2 ? "schema-v2.bak" : "schema-v3.bak");
-      if (!base::PathExists(backup) && !WriteSecretFile(backup, raw)) {
-        return false;
-      }
     }
     if (const std::string *blocked =
             parsed->GetDict().FindString("blocked_reason")) {
@@ -1240,8 +1213,6 @@ private:
       return false;
     }
     state_.verified_sequence = *verified_sequence;
-    state_.migrated_from_policy_v1 =
-        parsed->GetDict().FindBool("migrated_from_policy_v1").value_or(false);
     const base::DictValue *records = parsed->GetDict().FindDict("records");
     if (!records) {
       return false;
@@ -1250,14 +1221,13 @@ private:
       if (!IsLowerHexDigest(key) || !value.is_dict()) {
         return false;
       }
-      std::optional<RecordState> record =
-          RecordStateFromValue(value.GetDict(), schema);
+      std::optional<RecordState> record = RecordStateFromValue(value.GetDict());
       if (!record) {
         return false;
       }
       state_.records.emplace(key, std::move(*record));
     }
-    return (!migrate_schema_v2 && !migrate_schema_v3) || SaveState();
+    return true;
   }
 
   bool SaveState() const {
@@ -1270,7 +1240,6 @@ private:
     root.Set("verified_sequence",
              base::NumberToString(state_.verified_sequence));
     root.Set("blocked_reason", state_.blocked_reason);
-    root.Set("migrated_from_policy_v1", state_.migrated_from_policy_v1);
     root.Set("records", std::move(records));
     std::string raw;
     return base::JSONWriter::Write(root, &raw) &&
@@ -1311,7 +1280,7 @@ private:
         return;
       }
       if (record.revision <= 0 || record.device_id.empty() ||
-          record.key_id.empty() || remote.contains(record.key)) {
+          remote.contains(record.key)) {
         Block("malformed-cookie-authority-metadata");
         return;
       }
@@ -1376,19 +1345,11 @@ private:
               record_state.pending->target_revision &&
           found->second.payload_fingerprint ==
               record_state.pending->payload_fingerprint &&
-          found->second.record.deleted == record_state.pending->deleted &&
-          found->second.record.key_id == client_->active_key_id()) {
+          found->second.record.deleted == record_state.pending->deleted) {
         AcceptRemoteState(found->second,
                           record_state.pending->cookie_fingerprint);
         state_.records[key].pending.reset();
         continue;
-      }
-      if (found != remote.end() &&
-          found->second.record.revision ==
-              record_state.pending->target_revision &&
-          found->second.record.key_id != client_->active_key_id()) {
-        Block("cookie-publication-confirmed-under-stale-key-epoch");
-        return;
       }
       if (found == remote.end() &&
           record_state.pending->expected_revision == 0) {
@@ -1412,10 +1373,6 @@ private:
 
       if (state_it == state_.records.end() ||
           state_it->second.remote_revision == 0) {
-        if (remote_cookie.record.key_id != client_->active_key_id()) {
-          Block("cookie-initial-record-uses-stale-key-epoch");
-          return;
-        }
         if (remote_cookie.effective_deleted ||
             local_it == local.cookies.end() ||
             client_->enrollment_phase() == "pending") {
@@ -1435,10 +1392,6 @@ private:
         return;
       }
       if (remote_cookie.record.revision == established.remote_revision) {
-        if (remote_cookie.record.key_id != established.key_id) {
-          Block("cookie-same-revision-key-epoch-changed");
-          return;
-        }
         if (remote_cookie.payload_fingerprint !=
                 established.remote_payload_fingerprint ||
             remote_cookie.record.deleted != established.remote_deleted) {
@@ -1450,10 +1403,6 @@ private:
           established.destination_exception->unverified_local_change = true;
         }
         continue;
-      }
-      if (remote_cookie.record.key_id != client_->active_key_id()) {
-        Block("cookie-newer-record-uses-stale-key-epoch");
-        return;
       }
       if (local_fingerprint != established.baseline_cookie_fingerprint) {
         Block("concurrent-local-and-remote-cookie-change");
@@ -1484,7 +1433,6 @@ private:
   void AcceptRemoteState(const RemoteCookie &remote, std::string baseline) {
     RecordState &state = state_.records[remote.record.key];
     state.remote_revision = remote.record.revision;
-    state.key_id = remote.record.key_id;
     state.device_id = remote.record.device_id;
     state.remote_payload_fingerprint = remote.payload_fingerprint;
     state.baseline_cookie_fingerprint = std::move(baseline);
@@ -1662,19 +1610,11 @@ private:
       Block("cookie-rollback-payload-invalid");
       return;
     }
-    SealedPayload sealed;
-    std::string seal_error;
-    if (!client_->SealLocalPayload(kRollbackPurpose, *rollback_plaintext,
-                                   &sealed, &seal_error)) {
-      LOG(WARNING) << "Helium cookie rollback seal failed: " << seal_error;
-      Block("cookie-rollback-seal-failed");
-      return;
-    }
     size_t set_count =
         std::ranges::count_if(operations, [](const CookieOperation &operation) {
           return operation.set;
         });
-    RollbackJournal journal{"pending",          std::move(sealed),
+    RollbackJournal journal{"pending",          std::move(*rollback_plaintext),
                             before.fingerprint, target.fingerprint,
                             set_count,          operations.size() - set_count};
     if (!SaveRollback(journal)) {
@@ -1755,11 +1695,12 @@ private:
     base::DictValue root;
     root.Set("schema_version", kRollbackSchema);
     root.Set("status", journal.status);
-    base::DictValue sealed;
-    sealed.Set("key_id", journal.sealed_payload.key_id);
-    sealed.Set("nonce", journal.sealed_payload.nonce);
-    sealed.Set("ciphertext", journal.sealed_payload.ciphertext);
-    root.Set("sealed_payload", std::move(sealed));
+    std::optional<base::Value> payload =
+        base::JSONReader::Read(journal.payload_json, base::JSON_PARSE_RFC);
+    if (!payload || !ParseRollbackPayload(journal.payload_json)) {
+      return false;
+    }
+    root.Set("payload", std::move(*payload));
     root.Set("preview", std::move(preview));
     std::string raw;
     return base::JSONWriter::Write(root, &raw) &&
@@ -1780,21 +1721,17 @@ private:
       return std::nullopt;
     }
     const std::string *status = parsed->GetDict().FindString("status");
-    const base::DictValue *sealed =
-        parsed->GetDict().FindDict("sealed_payload");
+    const base::Value *payload = parsed->GetDict().Find("payload");
     const base::DictValue *preview = parsed->GetDict().FindDict("preview");
     if (!status ||
         (*status != "pending" && *status != "committed" &&
          *status != "recovered") ||
-        !sealed || !preview) {
+        !payload || !preview) {
       return std::nullopt;
     }
-    const std::string *sealed_key_id = sealed->FindString("key_id");
-    const std::string *sealed_nonce = sealed->FindString("nonce");
-    const std::string *sealed_ciphertext = sealed->FindString("ciphertext");
-    if (!sealed_key_id || sealed_key_id->empty() || !sealed_nonce ||
-        sealed_nonce->empty() || !sealed_ciphertext ||
-        sealed_ciphertext->empty()) {
+    std::string payload_json;
+    if (!base::JSONWriter::Write(*payload, &payload_json) ||
+        !ParseRollbackPayload(payload_json)) {
       return std::nullopt;
     }
     const std::string *before = preview->FindString("before_fingerprint");
@@ -1806,7 +1743,7 @@ private:
       return std::nullopt;
     }
     return RollbackJournal{*status,
-                           {*sealed_key_id, *sealed_nonce, *sealed_ciphertext},
+                           std::move(payload_json),
                            *before,
                            *target,
                            static_cast<size_t>(*set_count),
@@ -1814,15 +1751,10 @@ private:
   }
 
   void RecoverRollback(RollbackJournal journal) {
-    std::string opened;
-    std::string open_error;
-    bool opened_ok = client_->OpenLocalPayload(
-        kRollbackPurpose, journal.sealed_payload, &opened, &open_error);
     std::optional<CookieSnapshot> rollback =
-        opened_ok ? ParseRollbackPayload(opened) : std::nullopt;
+        ParseRollbackPayload(journal.payload_json);
     if (!rollback) {
-      LOG(WARNING) << "Helium cookie rollback open failed: " << open_error;
-      Block("cookie-rollback-open-or-validation-failed");
+      Block("cookie-rollback-validation-failed");
       return;
     }
     std::optional<CookieSnapshot> live_rollback =

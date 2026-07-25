@@ -35,30 +35,6 @@ cat >"${browser_export}" <<'JSON'
 JSON
 chmod 600 "${browser_export}"
 
-cat >"${temporary}/bin/age" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-output=
-input=
-decrypt=false
-while [ "$#" -gt 0 ]; do
-    case "$1" in
-        --encrypt) shift ;;
-        --decrypt) decrypt=true; shift ;;
-        --recipients-file|--identity) [ -s "$2" ]; shift 2 ;;
-        --output) output=$2; shift 2 ;;
-        *) input=$1; shift ;;
-    esac
-done
-[ -n "${output}" ]
-if [ "${decrypt}" = true ]; then
-    [ -f "${input}" ]
-    tail -n +2 "${input}" >"${output}"
-else
-    { printf 'age-encrypted-fixture\n'; cat; } >"${output}"
-fi
-EOF
-
 cat >"${temporary}/bin/ssh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -127,23 +103,16 @@ cat >"${temporary}/bin/findmnt" <<'EOF'
 set -euo pipefail
 printf '/synthetic-separate-nas\n'
 EOF
-chmod 700 "${temporary}/bin/age" "${temporary}/bin/ssh" \
+chmod 700 "${temporary}/bin/ssh" \
 	"${temporary}/bin/rsync" "${temporary}/bin/uname" "${temporary}/bin/findmnt"
-printf '%s\n' \
-    'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' \
-    'age1pppppppppppppppppppppppppppppppppppppppppppppppppppp' \
-    >"${temporary}/recipients.txt"
-printf 'AGE-SECRET-KEY-SYNTHETIC\n' >"${temporary}/identity.txt"
 printf 'SYNTHETIC-SSH-PRIVATE-KEY\n' >"${temporary}/ssh-identity"
 printf 'lm ssh-ed25519 SYNTHETIC\nd ssh-ed25519 SYNTHETIC\n' >"${temporary}/known-hosts"
-chmod 600 "${temporary}/recipients.txt" "${temporary}/identity.txt" \
-	"${temporary}/ssh-identity" "${temporary}/known-hosts"
+chmod 600 "${temporary}/ssh-identity" "${temporary}/known-hosts"
 
 config="${temporary}/tab-ops.conf"
 cat >"${config}" <<EOF
-version=3
+version=4
 source_device=da
-key_id=da-tabs-v1
 profile=default
 snapshot_store=${temporary}/snapshots
 state_root=${temporary}/state
@@ -154,8 +123,6 @@ browser_export_max_age_seconds=420
 browser_version=fixture
 chromium_version=fixture
 interval_seconds=60
-age_recipients=${temporary}/recipients.txt
-age_identity=${temporary}/identity.txt
 ssh_user=d
 ssh_identity=${temporary}/ssh-identity
 ssh_known_hosts=${temporary}/known-hosts
@@ -202,7 +169,6 @@ generation=$(awk -F= '$1 == "generation" { print $2; exit }' <<<"${cycle_output}
 scheduler_status=$("${repo_root}/scripts/tabs/tab-snapshot-scheduler.sh" status "${config}")
 grep -q '^state=healthy$' <<<"${scheduler_status}"
 grep -q '^health_proof=verified$' <<<"${scheduler_status}"
-grep -q '^key_id=da-tabs-v1$' <<<"${scheduler_status}"
 
 changed_config="${temporary}/changed.conf"
 sed 's/interval_seconds=60/interval_seconds=61/' "${config}" >"${changed_config}"
@@ -225,7 +191,7 @@ fi
 
 grep -q '^status=healthy$' <<<"${cycle_output}"
 for destination_root in "${temporary}/destination-lm" "${temporary}/destination-two"; do
-	test -f "${destination_root}/da/default/generations/${generation}.tar.age"
+	test -f "${destination_root}/da/default/generations/${generation}.tar"
 	test -f "${destination_root}/da/default/generations/${generation}.backup.env"
 done
 
@@ -234,12 +200,12 @@ cycle_output=$("${repo_root}/scripts/tabs/tab-snapshot-scheduler.sh" cycle "${co
 generation=$(awk -F= '$1 == "generation" { print $2; exit }' <<<"${cycle_output}")
 [ "${generation}" != "${first_generation}" ]
 test ! -e "${temporary}/snapshots/generations/${first_generation}"
-test ! -e "${temporary}/state/da/default/encrypted/${first_generation}.tar.age"
+test ! -e "${temporary}/state/da/default/archives/${first_generation}.tar"
 for destination_root in "${temporary}/destination-lm" "${temporary}/destination-two"; do
-	test ! -e "${destination_root}/da/default/generations/${first_generation}.tar.age"
+	test ! -e "${destination_root}/da/default/generations/${first_generation}.tar"
 	find "${destination_root}/da/default/quarantine" \
-        -name "*-${first_generation}-retention.tar.age" -print -quit | grep -q .
-	test -f "${destination_root}/da/default/generations/${generation}.tar.age"
+        -name "*-${first_generation}-retention.tar" -print -quit | grep -q .
+	test -f "${destination_root}/da/default/generations/${generation}.tar"
 done
 
 restore_directory="${temporary}/disposable-restore"
@@ -257,7 +223,7 @@ grep -Fxq 'source_device=da' "${source_receipt}"
 grep -Fxq 'profile=default' "${source_receipt}"
 grep -Fxq "generation=${generation}" "${source_receipt}"
 grep -Fxq 'source_destination=d-copy' "${source_receipt}"
-grep -Eq '^cipher_sha256=[a-f0-9]{64}$' "${source_receipt}"
+grep -Eq '^archive_sha256=[a-f0-9]{64}$' "${source_receipt}"
 grep -Eq '^backup_manifest_sha256=[a-f0-9]{64}$' "${source_receipt}"
 grep -Fxq "restore_session_sha256=$(jq -r '.session.sha256' \
 	"${restore_directory}/restore-manifest.json")" "${source_receipt}"
@@ -270,9 +236,9 @@ nas_restore_directory="${temporary}/disposable-restore-nas"
 cmp "${restore_directory}/session.json" "${nas_restore_directory}/session.json"
 nas_source_receipt="${nas_restore_directory}.helium-tab-offdevice-source.env"
 grep -Fxq 'source_destination=nas-on-lm' "${nas_source_receipt}"
-cmp <(grep -E '^(generation|cipher_sha256|restore_session_sha256)=' \
+cmp <(grep -E '^(generation|archive_sha256|restore_session_sha256)=' \
 	"${source_receipt}") \
-	<(grep -E '^(generation|cipher_sha256|restore_session_sha256)=' \
+	<(grep -E '^(generation|archive_sha256|restore_session_sha256)=' \
 	"${nas_source_receipt}")
 
 disposable_root="${temporary}/disposable-browser-root"
@@ -303,7 +269,7 @@ if grep -Eq 'exited_cleanly|exit_type' "${browser_profile}/Default/Preferences";
 	exit 1
 fi
 
-printf 'corrupt\n' >"${temporary}/destination-two/da/default/generations/${generation}.tar.age"
+printf 'corrupt\n' >"${temporary}/destination-two/da/default/generations/${generation}.tar"
 if "${repo_root}/scripts/tabs/tab-backup.sh" status "${config}" "${generation}" >/dev/null 2>&1; then
     echo "corrupt destination unexpectedly reported healthy" >&2
     exit 1
@@ -314,23 +280,12 @@ fi
 backup_status=$("${repo_root}/scripts/tabs/tab-backup.sh" status "${config}" "${generation}")
 grep -q '^status=healthy$' <<<"${backup_status}"
 find "${temporary}/destination-two/da/default/quarantine" \
-    -name "*-${generation}-synthetic-corruption.tar.age" -print -quit | grep -q .
+    -name "*-${generation}-synthetic-corruption.tar" -print -quit | grep -q .
 
 plan="${temporary}/retention.plan"
 "${repo_root}/scripts/tabs/tab-backup.sh" retention-plan "${config}" "${plan}" >/dev/null
 grep -q '^schema_version=1$' "${plan}"
 grep -q '^source_device=da$' "${plan}"
-
-single_recipients="${temporary}/single-recipient.txt"
-head -n 1 "${temporary}/recipients.txt" >"${single_recipients}"
-single_config="${temporary}/single-recipient.conf"
-sed "s#age_recipients=${temporary}/recipients.txt#age_recipients=${single_recipients}#" \
-    "${config}" >"${single_config}"
-chmod 600 "${single_config}"
-if "${repo_root}/scripts/tabs/tab-backup.sh" preflight "${single_config}" >/dev/null 2>&1; then
-    echo "single recovery recipient was not rejected" >&2
-    exit 1
-fi
 
 bad_config="${temporary}/bad.conf"
 sed 's/destination=d-copy|device|ssh|d|d|/destination=oneplus-copy|device|ssh|oneplus|oneplus|/' \
@@ -343,7 +298,6 @@ fi
 
 wrong_host_config="${temporary}/wrong-host.conf"
 sed -e 's/source_device=da/source_device=d/' \
-	-e 's/key_id=da-tabs-v1/key_id=d-tabs-v1/' \
 	-e 's/destination=d-copy|device|ssh|d|d|/destination=da-copy|device|ssh|da|da|/' \
 	"${config}" >"${wrong_host_config}"
 chmod 600 "${wrong_host_config}"
@@ -352,22 +306,11 @@ if "${repo_root}/scripts/tabs/tab-backup.sh" preflight "${wrong_host_config}" >/
 	exit 1
 fi
 
-printf '%s\n' \
-	'age1rrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr' \
-	'age1ssssssssssssssssssssssssssssssssssssssssssssssssssssss' \
-	>"${temporary}/d.recipients"
-printf '%s\n' \
-	'age1tttttttttttttttttttttttttttttttttttttttttttttttttttt' \
-	'age1uuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuuu' \
-	>"${temporary}/oneplus.recipients"
-chmod 600 "${temporary}/d.recipients" "${temporary}/oneplus.recipients"
-
 make_fleet_config() {
-	local source_device=$1 peer=$2 recipients=$3 output=$4
+	local source_device=$1 peer=$2 output=$3
 	cat >"${output}" <<EOF
-version=3
+version=4
 source_device=${source_device}
-key_id=${source_device}-tabs-v1
 profile=default
 snapshot_store=${temporary}/snapshots-${source_device}
 state_root=${temporary}/state-${source_device}
@@ -378,8 +321,6 @@ browser_export_max_age_seconds=420
 browser_version=fixture
 chromium_version=fixture
 interval_seconds=60
-age_recipients=${recipients}
-age_identity=${temporary}/${source_device}.identity
 ssh_user=d
 ssh_identity=${temporary}/ssh-identity
 ssh_known_hosts=${temporary}/known-hosts
@@ -392,36 +333,11 @@ EOF
 
 d_config="${temporary}/d.conf"
 oneplus_config="${temporary}/oneplus.conf"
-make_fleet_config d da "${temporary}/d.recipients" "${d_config}"
-make_fleet_config oneplus da "${temporary}/oneplus.recipients" "${oneplus_config}"
+make_fleet_config d da "${d_config}"
+make_fleet_config oneplus da "${oneplus_config}"
 fleet_output=$("${repo_root}/scripts/tabs/tab-fleet-audit.sh" \
 	"${d_config}" "${config}" "${oneplus_config}")
 grep -q '^fleet_configuration=verified$' <<<"${fleet_output}"
-
-reused_key_config="${temporary}/oneplus-reused-key.conf"
-sed "s#age_recipients=${temporary}/oneplus.recipients#age_recipients=${temporary}/recipients.txt#" \
-	"${oneplus_config}" >"${reused_key_config}"
-chmod 600 "${reused_key_config}"
-if "${repo_root}/scripts/tabs/tab-fleet-audit.sh" \
-	"${d_config}" "${config}" "${reused_key_config}" >/dev/null 2>&1; then
-	echo "fleet audit accepted a reused recovery recipient set" >&2
-	exit 1
-fi
-
-partially_reused_key_config="${temporary}/oneplus-partially-reused-key.conf"
-{
-	head -n 1 "${temporary}/recipients.txt"
-	tail -n 1 "${temporary}/oneplus.recipients"
-} >"${temporary}/oneplus-partially-reused.recipients"
-chmod 600 "${temporary}/oneplus-partially-reused.recipients"
-sed "s#age_recipients=${temporary}/oneplus.recipients#age_recipients=${temporary}/oneplus-partially-reused.recipients#" \
-	"${oneplus_config}" >"${partially_reused_key_config}"
-chmod 600 "${partially_reused_key_config}"
-if "${repo_root}/scripts/tabs/tab-fleet-audit.sh" \
-	"${d_config}" "${config}" "${partially_reused_key_config}" >/dev/null 2>&1; then
-	echo "fleet audit accepted one recovery recipient shared across devices" >&2
-	exit 1
-fi
 
 cat >"${temporary}/bin/systemctl" <<'EOF'
 #!/usr/bin/env bash

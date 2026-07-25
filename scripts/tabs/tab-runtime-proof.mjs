@@ -638,7 +638,7 @@ async function runNeutral(common, heliumTabs, sourceReceiptPath) {
     "profile",
     "generation",
     "source_destination",
-    "cipher_sha256",
+    "archive_sha256",
     "backup_manifest_sha256",
     "restore_session_sha256",
     "restored_at",
@@ -655,8 +655,8 @@ async function runNeutral(common, heliumTabs, sourceReceiptPath) {
   }
   validSlug(sourceReceipt.get("source_destination"),
     "neutral source destination");
-  validSHA256(sourceReceipt.get("cipher_sha256"),
-    "neutral ciphertext SHA-256");
+  validSHA256(sourceReceipt.get("archive_sha256"),
+    "neutral archive SHA-256");
   validSHA256(sourceReceipt.get("backup_manifest_sha256"),
     "neutral backup manifest SHA-256");
   let active;
@@ -700,7 +700,7 @@ async function runNeutral(common, heliumTabs, sourceReceiptPath) {
         source_generation: manifest.source_generation,
         source_session_sha256: manifest.source_session.sha256,
         source_destination: sourceReceipt.get("source_destination"),
-        cipher_sha256: sourceReceipt.get("cipher_sha256"),
+        archive_sha256: sourceReceipt.get("archive_sha256"),
         backup_manifest_sha256:
           sourceReceipt.get("backup_manifest_sha256"),
         source_receipt_sha256: await sha256File(sourceReceiptPath),
@@ -735,18 +735,18 @@ async function runFullProfile(common, expectedEvidenceDirectory, signingKey) {
     "generation",
     "source_device",
     "profile_id",
-    "cipher_sha256",
+    "archive_sha256",
     "source_destination",
     "restored_at",
   ]), "full-profile restore receipt");
-  if (fields.get("schema_version") !== "2" ||
+  if (fields.get("schema_version") !== "3" ||
       fields.get("source_device") !== common.device ||
       fields.get("profile_id") !== common.profile ||
       Number.isNaN(Date.parse(fields.get("restored_at")))) {
     fail("full-profile restore receipt namespace is invalid");
   }
-  validSHA256(fields.get("cipher_sha256"),
-    "full-profile receipt ciphertext SHA-256");
+  validSHA256(fields.get("archive_sha256"),
+    "full-profile receipt archive SHA-256");
   validSlug(fields.get("source_destination"),
     "full-profile source destination");
   const expected = expectedEvidence.value.expected_topology;
@@ -774,7 +774,7 @@ async function runFullProfile(common, expectedEvidenceDirectory, signingKey) {
       sourceBinding: {
         generation: fields.get("generation"),
         source_destination: fields.get("source_destination"),
-        cipher_sha256: fields.get("cipher_sha256"),
+        archive_sha256: fields.get("archive_sha256"),
         restore_receipt_sha256: await sha256File(receiptPath),
         expected_evidence_sha256: expectedEvidence.sha256,
       },

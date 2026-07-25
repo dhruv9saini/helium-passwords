@@ -63,7 +63,6 @@ private:
     int64_t remote_seq = 0;
     int64_t revision = 0;
     bool deleted = false;
-    std::string key_id;
     std::optional<PendingPublication> pending_publication;
     std::optional<QueuedMutation> queued_mutation;
   };
@@ -101,7 +100,6 @@ private:
   void PublishQueuedMutation(const password_manager::LoginsResult &credentials);
   void MaybeStartPublication();
   bool ResolvePendingPublications();
-  bool MigrateLegacyIdentity(const password_manager::LoginsResult &credentials);
   void OnPushComplete(bool ok, RecordsResult result, std::string error);
   void OnPullComplete(bool ok, RecordsResult result, std::string error);
   void OnRemoteRecordComplete();
@@ -128,7 +126,6 @@ private:
   std::set<std::string> known_keys_;
   std::set<std::string> blocked_remote_keys_;
   std::map<std::string, CredentialState> credential_state_;
-  std::map<std::string, CredentialState> legacy_credential_state_;
   std::vector<RemotePasswordRecord> pending_remote_records_;
   std::map<std::string, RemotePasswordRecord> pending_verification_;
   int initial_empty_read_retries_ = 0;

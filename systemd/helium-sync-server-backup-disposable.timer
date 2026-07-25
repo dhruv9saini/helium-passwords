@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily synthetic disposable Helium Sync opaque-state backup
+Description=Daily synthetic disposable Helium Sync readable-state backup
 
 [Timer]
 OnCalendar=daily

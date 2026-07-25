@@ -11,7 +11,7 @@ usage: configure-android-chromium-sync.sh install ENROLLMENT-DIR PROFILE-BACKUP-
 
 Install one already-created oneplus enrollment into the native Chromium
 profile at <dataDir>/app_chrome/Default/helium-sync.  The app is force-stopped,
-the exact full app_chrome profile must already have two verified encrypted
+the exact full app_chrome profile must already have two verified private
 backup copies, and the prior enrollment is retained as a rollback generation.
 EOF
 }
@@ -40,14 +40,17 @@ done
 [[ "$(stat -c %a "$enrollment/token")" =~ ^(400|600)$ ]] || { echo "token must have mode 0400 or 0600" >&2; exit 1; }
 [[ "$(stat -c %a "$enrollment/client.json")" =~ ^(400|600)$ ]] || { echo "client.json must have mode 0400 or 0600" >&2; exit 1; }
 base_url=$(tr -d '\r\n' <"$enrollment/base_url")
-[[ "$base_url" =~ ^https://[^/@[:space:]]+(:[0-9]+)?/?$ && "$base_url" != *'@'* ]] || {
-  echo "base_url must be one direct HTTPS origin without credentials" >&2
+[[ "$base_url" =~ ^http://100\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3}):44719/?$ &&
+    ${BASH_REMATCH[1]} -ge 64 && ${BASH_REMATCH[1]} -le 127 &&
+    ${BASH_REMATCH[2]} -le 255 && ${BASH_REMATCH[3]} -le 255 ]] || {
+  echo "base_url must be lm's direct Tailnet HTTP endpoint" >&2
   exit 1
 }
 jq -e --arg package "$package" '
-  .device_id == "oneplus" and .role == "join" and
+  .version == 2 and .device_id == "oneplus" and .role == "join" and
   (.phase == "pending" or .phase == "active") and
-  (.keys | type == "object") and (.local_seal_key | type == "string")
+  (.revisions | type == "object") and
+  (.sequence | type == "string" and test("^(0|[1-9][0-9]*)$"))
 ' "$enrollment/client.json" >/dev/null || {
   echo "client.json is not a oneplus join enrollment" >&2
   exit 1

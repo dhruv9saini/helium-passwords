@@ -17,35 +17,6 @@ chmod 700 "$test_root/restore-root"
 printf 'synthetic-session-state\n' >"$test_root/profile/Default/Sessions/Tabs_fixture"
 printf 'synthetic-preferences\n' >"$test_root/profile/Default/Preferences"
 
-cat >"$test_root/bin/age" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-mode= input=
-while [[ $# -gt 0 ]]; do
-  case "$1" in
-    --encrypt) mode=encrypt; shift ;;
-    --decrypt) mode=decrypt; shift ;;
-    --recipients-file|--identity) [[ -s "$2" ]]; shift 2 ;;
-    *) input=$1; shift ;;
-  esac
-done
-case "$mode" in
-  encrypt)
-    openssl enc -aes-256-cbc -pbkdf2 -pass pass:synthetic-profile-test
-    ;;
-  decrypt)
-    if [[ -n "$input" ]]; then
-      openssl enc -d -aes-256-cbc -pbkdf2 \
-        -pass pass:synthetic-profile-test -in "$input"
-    else
-      openssl enc -d -aes-256-cbc -pbkdf2 \
-        -pass pass:synthetic-profile-test
-    fi
-    ;;
-  *) exit 64 ;;
-esac
-EOF
-
 cat >"$test_root/bin/findmnt" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -110,22 +81,14 @@ cat "$source_file" >"$target_file"
 chmod 600 "$target_file"
 EOF
 
-chmod 700 "$test_root/bin/age" "$test_root/bin/findmnt" \
+chmod 700 "$test_root/bin/findmnt" \
   "$test_root/bin/ssh" "$test_root/bin/rsync"
 PATH="$test_root/bin:$PATH"
 export PATH
 
-printf 'AGE-SECRET-KEY-1SYNTHETIC-A\n' >"$test_root/identity-a.txt"
-printf 'AGE-SECRET-KEY-1SYNTHETIC-B\n' >"$test_root/identity-b.txt"
-printf '%s\n' \
-  'age1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq' \
-  'age1pppppppppppppppppppppppppppppppppppppppppppppppppppp' \
-  >"$test_root/recipients.txt"
 printf 'SYNTHETIC-SSH-PRIVATE-KEY\n' >"$test_root/ssh-identity"
 printf 'fixture-peer ssh-ed25519 SYNTHETIC\n' >"$test_root/known-hosts"
-chmod 600 "$test_root/identity-a.txt" "$test_root/identity-b.txt" \
-  "$test_root/recipients.txt" "$test_root/ssh-identity" \
-  "$test_root/known-hosts"
+chmod 600 "$test_root/ssh-identity" "$test_root/known-hosts"
 export PROFILE_TEST_SSH_IDENTITY="$test_root/ssh-identity"
 export PROFILE_TEST_SSH_KNOWN_HOSTS="$test_root/known-hosts"
 export PROFILE_TEST_PEER_ROOT="$test_root/peer"
@@ -133,12 +96,10 @@ export PROFILE_TEST_PEER_ROOT="$test_root/peer"
 local_host=$(uname -n | cut -d. -f1)
 config=$test_root/profile-backup.conf
 cat >"$config" <<EOF
-version=2
+version=3
 source_device=fixture
 profile_id=default
 source_path=$test_root/profile
-age_recipients=$test_root/recipients.txt
-age_identity=$test_root/identity-a.txt
 ssh_user=d
 ssh_identity=$test_root/ssh-identity
 ssh_known_hosts=$test_root/known-hosts
@@ -183,13 +144,13 @@ receipt=$test_root/receipts/$generation1.env
 
 for root in "$test_root/nas" "$test_root/peer"; do
   generation_dir=$root/fixture/default/generations/$generation1
-  [[ -f "$generation_dir/profile.tar.zst.age" ]]
+  [[ -f "$generation_dir/profile.tar.zst" ]]
   [[ -f "$generation_dir/receipt.env" ]]
   [[ "$(find "$generation_dir" -mindepth 1 -maxdepth 1 | wc -l)" -eq 2 ]]
 done
-if find "$test_root" -type f \( -name '*.tar' -o -name '*.tar.zst' \) |
+if find "$test_root" -type f -name '*.age' |
   grep . >/dev/null; then
-  echo 'plaintext archive was staged during profile backup' >&2
+  echo 'obsolete age archive was staged during profile backup' >&2
   exit 1
 fi
 
@@ -222,12 +183,12 @@ fi
 "$tool" retention-apply "$config" |
   grep -x "retired_generation=$generation1" >/dev/null
 for root in "$test_root/nas" "$test_root/peer"; do
-  [[ -f "$root/fixture/default/retired/$generation1/profile.tar.zst.age" ]]
+  [[ -f "$root/fixture/default/retired/$generation1/profile.tar.zst" ]]
   [[ -f "$root/fixture/default/retired/$generation1/receipt.env" ]]
 done
 
-cipher=$test_root/nas/fixture/default/generations/$generation2/profile.tar.zst.age
-printf tamper >>"$cipher"
+archive=$test_root/nas/fixture/default/generations/$generation2/profile.tar.zst
+printf tamper >>"$archive"
 if "$tool" status "$config" "$generation2" >/dev/null 2>&1; then
   echo 'tampered profile backup passed status' >&2
   exit 1

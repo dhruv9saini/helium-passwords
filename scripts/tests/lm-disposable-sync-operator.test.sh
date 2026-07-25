@@ -12,7 +12,6 @@ for directive in \
   'ProtectHome=tmpfs' \
   'BindReadOnlyPaths=%h/.local/share/helium-sync-disposable/bin' \
   'BindReadOnlyPaths=%h/.local/state/helium-sync-disposable/config' \
-  'BindReadOnlyPaths=%h/.local/state/helium-sync-disposable/tls' \
   'BindPaths=%h/.local/state/helium-sync-disposable/server' \
   'NoNewPrivileges=yes' \
   'PrivateDevices=yes' \
@@ -25,9 +24,7 @@ for directive in \
   grep -Fqx "$directive" "$service"
 done
 
-grep -Fq -- '-tls-cert-file %h/.local/state/helium-sync-disposable/tls/current/server-cert.pem' "$service"
 grep -Fq -- '-listen ${HELIUM_SYNC_LISTEN}' "$service"
-grep -Fq 'ExecStartPre=/usr/bin/test ! -e %h/.local/state/helium-sync-disposable/tls/current/ca-key.pem' "$service"
 grep -Fqx 'Environment=HELIUM_SERVER_SERVICE_SCOPE=user' "$backup_service"
 grep -Fqx 'Environment=XDG_RUNTIME_DIR=%t' "$backup_service"
 grep -Fqx 'Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus' \
@@ -43,7 +40,7 @@ grep -Fq 'systemctl --user disable --now "$backup_timer" "$service"' "$installer
 grep -Fq 'service_scope=${HELIUM_SERVER_SERVICE_SCOPE:-system}' \
   "$repo_root/scripts/helium-sync-server-backup.sh"
 grep -Fq 'helium-sync-disposable.operator.lock' "$installer"
-grep -Fq -- "--noproxy '*' --tlsv1.3 --tls-max 1.3" "$installer"
+grep -Fq -- "--noproxy '*' \"http://\$sync_listen/v2/health\"" "$installer"
 
 if grep -Fq 'sudo ' "$installer"; then
   echo "disposable installer unexpectedly requires root" >&2
@@ -51,6 +48,11 @@ if grep -Fq 'sudo ' "$installer"; then
 fi
 if grep -Eq 'tailscale (serve|funnel) --bg' "$installer"; then
   echo "disposable installer attempts to configure a Tailscale proxy" >&2
+  exit 1
+fi
+if grep -Eqi 'tls|https|ciphertext|ca-cert|age1|recovery recipient' \
+  "$installer" "$service"; then
+  echo "disposable operator retained obsolete trust-policy machinery" >&2
   exit 1
 fi
 

@@ -8,9 +8,9 @@ import {
   canonicalCookieIdentity,
   EMPTY_COOKIE_FINGERPRINT,
   decideCookieReconcile,
-  migrateCookieStateToV4,
   previewCookieTransaction,
   scopeDestinationRejection,
+  validateCookieStateV5,
 } from "./cookie-whole-profile-model.mjs";
 
 const repoFile = relative => fs.readFileSync(
@@ -28,19 +28,14 @@ const service = repoFile(
 
 const baseline = {
   remoteRevision: 7,
-  keyId: "key-a",
   remotePayloadFingerprint: "payload-a",
   baselineLocalFingerprint: "cookies-a",
 };
 const remote = {
   revision: 7,
-  keyId: "key-a",
   payloadFingerprint: "payload-a",
 };
-const reconcile = input => decideCookieReconcile({
-  activeKeyId: "key-a",
-  ...input,
-});
+const reconcile = input => decideCookieReconcile(input);
 
 const firstCookie = {
   name: "session",
@@ -121,39 +116,16 @@ test("stale local state cannot overwrite a newer remote cookie revision", () => 
   }), { action: "stop", reason: "concurrent-local-and-remote-change" });
 });
 
-test("active-epoch CAS rekey advances while stale and same-revision epochs stop", () => {
-  assert.deepEqual(reconcile({
-    state: baseline,
-    remote: { ...remote, keyId: "key-b" },
-    localFingerprint: "cookies-a",
-  }), { action: "stop", reason: "same-revision-key-epoch-changed" });
+test("same-revision mutation stops while a clean baseline accepts a newer revision", () => {
   assert.deepEqual(reconcile({
     state: baseline,
     remote: {
       ...remote,
       revision: 8,
-      keyId: "key-b",
-      payloadFingerprint: "payload-rekeyed",
+      payloadFingerprint: "payload-new",
     },
     localFingerprint: "cookies-a",
-    activeKeyId: "key-b",
   }), { action: "apply" });
-  assert.deepEqual(reconcile({
-    state: baseline,
-    remote: {
-      ...remote,
-      revision: 8,
-      payloadFingerprint: "payload-stale-epoch",
-    },
-    localFingerprint: "cookies-a",
-    activeKeyId: "key-b",
-  }), { action: "stop", reason: "newer-record-uses-stale-key-epoch" });
-  assert.deepEqual(reconcile({
-    state: null,
-    remote: { revision: 1, keyId: "key-a", payloadFingerprint: "stale" },
-    localFingerprint: EMPTY_COOKIE_FINGERPRINT,
-    activeKeyId: "key-b",
-  }), { action: "stop", reason: "initial-record-uses-stale-key-epoch" });
   assert.deepEqual(reconcile({
     state: baseline,
     remote: { ...remote, payloadFingerprint: "tampered" },
@@ -164,12 +136,12 @@ test("active-epoch CAS rekey advances while stale and same-revision epochs stop"
 test("fresh profiles never merge unknown local and remote sessions", () => {
   assert.deepEqual(reconcile({
     state: null,
-    remote: { revision: 1, keyId: "key-a", payloadFingerprint: "remote" },
+    remote: { revision: 1, payloadFingerprint: "remote" },
     localFingerprint: "unknown-local",
   }), { action: "stop", reason: "uninitialized-local-and-remote-state" });
   assert.deepEqual(reconcile({
     state: null,
-    remote: { revision: 1, keyId: "key-a", payloadFingerprint: "remote" },
+    remote: { revision: 1, payloadFingerprint: "remote" },
     localFingerprint: EMPTY_COOKIE_FINGERPRINT,
   }), { action: "apply" });
 });
@@ -177,13 +149,13 @@ test("fresh profiles never merge unknown local and remote sessions", () => {
 test("pending join transactionally replaces a colliding local cookie", () => {
   assert.deepEqual(reconcile({
     state: null,
-    remote: { revision: 1, keyId: "key-a", payloadFingerprint: "seed-value" },
+    remote: { revision: 1, payloadFingerprint: "seed-value" },
     localFingerprint: "joiner-local-value",
     pendingEnrollment: true,
   }), { action: "apply" });
   assert.deepEqual(reconcile({
     state: null,
-    remote: { revision: 1, keyId: "key-a", payloadFingerprint: "seed-value" },
+    remote: { revision: 1, payloadFingerprint: "seed-value" },
     localFingerprint: "joiner-local-value",
   }), { action: "stop", reason: "uninitialized-local-and-remote-state" });
 
@@ -203,14 +175,10 @@ test("whole-profile cookie publication drains in bounded batches", () => {
   while (keys.length > 0) batches.push(keys.splice(0, 32));
   assert.deepEqual(batches.map(batch => batch.length), [32, 32, 6]);
 
-  const nonceBytes = 12;
-  const authenticationTagBytes = 16;
   const maximumPayloadBytes = 64 * 1024;
-  const base64Bytes = bytes => 4 * Math.ceil(bytes / 3);
   const conservativeRecordMetadataBytes = 1024;
   const worstBatchBytes = 128 + 32 * (
-    base64Bytes(maximumPayloadBytes + authenticationTagBytes) +
-    base64Bytes(nonceBytes) + conservativeRecordMetadataBytes
+    maximumPayloadBytes + conservativeRecordMetadataBytes
   );
   assert.ok(worstBatchBytes < 4 * 1024 * 1024);
 });
@@ -244,12 +212,12 @@ test("ambiguous and confirmed publications cannot create an echo loop", () => {
   };
   assert.deepEqual(reconcile({
     state,
-    remote: { revision: 8, keyId: "key-a", payloadFingerprint: "payload-b" },
+    remote: { revision: 8, payloadFingerprint: "payload-b" },
     localFingerprint: "cookies-b",
   }), { action: "accept-publication" });
   assert.deepEqual(reconcile({
     state,
-    remote: { revision: 8, keyId: "key-a", payloadFingerprint: "other" },
+    remote: { revision: 8, payloadFingerprint: "other" },
     localFingerprint: "cookies-b",
   }), { action: "stop", reason: "publication-cas-conflict" });
 });
@@ -379,21 +347,17 @@ test("reauthentication intent cannot guess an origin, navigate, or submit", () =
   }]), /invalid schemeful site/);
 });
 
-test("cookie state migrations remove broad exceptions and name schemeful sites exactly", () => {
-  const migrated = migrateCookieStateToV4({
-    schema_version: 2,
+test("cookie state is a single readable schema with no content-key metadata", () => {
+  const state = validateCookieStateV5({
+    schema_version: 5,
     verified_sequence: "91",
     records: {
       [canonicalCookieIdentity(firstCookie)]: {
         remote_revision: "7",
-        key_id: "key-a",
         device_id: "device-a",
         remote_payload_fingerprint: "payload-a",
         baseline_cookie_fingerprint: "cookies-a",
         remote_deleted: false,
-        non_clonable: true,
-        non_clonable_reason: "device-bound-session",
-        site: "https://fixture.invalid",
         pending_publish: {
           expected_revision: "7",
           target_revision: "8",
@@ -404,47 +368,17 @@ test("cookie state migrations remove broad exceptions and name schemeful sites e
       },
     },
   });
-  const migratedRecord = migrated.records[canonicalCookieIdentity(firstCookie)];
-  assert.equal(migrated.schema_version, 4);
-  assert.equal(migrated.verified_sequence, "91");
-  assert.equal(migratedRecord.remote_revision, "7");
-  assert.equal(migratedRecord.remote_payload_fingerprint, "payload-a");
-  assert.equal(migratedRecord.pending_publish.target_revision, "8");
-  assert.equal("non_clonable" in migratedRecord, false);
-  assert.equal("non_clonable_reason" in migratedRecord, false);
-  assert.equal("site" in migratedRecord, false);
-  const migratedV3 = migrateCookieStateToV4({
-    schema_version: 3,
-    verified_sequence: "92",
-    records: {
-      [canonicalCookieIdentity(firstCookie)]: {
-        remote_revision: "8",
-        key_id: "key-a",
-        device_id: "device-a",
-        remote_payload_fingerprint: "b".repeat(64),
-        baseline_cookie_fingerprint: "cookies-b",
-        remote_deleted: false,
-        destination_exception: {
-          remote_revision: "8",
-          remote_payload_fingerprint: "b".repeat(64),
-          reason: "destination-set-rejected",
-          site: "https://fixture.invalid",
-          observed_session_ids: [],
-        },
-      },
-    },
-  });
-  assert.equal(migratedV3.schema_version, 4);
-  const migratedV3Exception =
-    migratedV3.records[canonicalCookieIdentity(firstCookie)].destination_exception;
-  assert.equal(migratedV3Exception.schemeful_site, "https://fixture.invalid");
-  assert.equal(migratedV3Exception.unverified_local_change, false);
-  assert.equal("site" in migratedV3Exception, false);
-
-  assert.throws(() => migrateCookieStateToV4({
-    schema_version: 2,
+  const record = state.records[canonicalCookieIdentity(firstCookie)];
+  assert.equal(state.schema_version, 5);
+  assert.equal(state.verified_sequence, "91");
+  assert.equal(record.remote_revision, "7");
+  assert.equal(record.remote_payload_fingerprint, "payload-a");
+  assert.equal(record.pending_publish.target_revision, "8");
+  assert.equal("key_id" in record, false);
+  assert.throws(() => validateCookieStateV5({
+    schema_version: 4,
     records: [],
-  }), /invalid cookie state migration document/);
+  }), /invalid cookie state document/);
 });
 
 test("native source is whole-profile, partition-complete, rollback-first, and native-only", () => {
@@ -459,8 +393,8 @@ test("native source is whole-profile, partition-complete, rollback-first, and na
   assert.match(cookie, /GetAllCookies/);
   assert.match(cookie, /SetCanonicalCookie/);
   assert.match(cookie, /DeleteCanonicalCookie/);
-  assert.match(cookie, /SealLocalPayload/);
-  assert.match(cookie, /OpenLocalPayload/);
+  assert.match(cookie, /payload_json/);
+  assert.doesNotMatch(cookie, /SealLocalPayload|OpenLocalPayload/);
   assert.match(cookie, /SaveRollback/);
   assert.match(cookie, /RecoverRollback/);
   assert.match(cookie, /BeginRestore/);
@@ -477,21 +411,16 @@ test("native source is whole-profile, partition-complete, rollback-first, and na
   assert.match(cookie, /login_entry_status", "unavailable-not-observed"/);
   assert.match(cookie, /unverified_local_change/);
   assert.match(cookie, /record_state\.destination_exception/);
-  assert.match(cookie, /client_->active_key_id\(\)/);
-  assert.match(cookie, /cookie-newer-record-uses-stale-key-epoch/);
-  assert.match(cookie, /schema-v2\.bak/);
-  assert.match(cookie, /schema-v3\.bak/);
-  assert.match(cookie,
-    /return \(!migrate_schema_v2 && !migrate_schema_v3\) \|\| SaveState\(\)/);
-  assert.match(clientHeader, /active_key_id\(\) const/);
-  assert.match(client, /sync response uses an unknown content key epoch/);
-  assert.match(enrollmentCLI, /const cookieBridgeStateSchema = 4/);
-  assert.equal((enrollmentCLI.match(/cookieBridgeStateSchema/g) ?? []).length, 3);
+  assert.doesNotMatch(cookie,
+    /active_key_id|key_id|stale-key-epoch|schema-v[1234]\.bak/);
+  assert.doesNotMatch(clientHeader, /active_key_id|key_id/);
+  assert.doesNotMatch(client, /content key epoch|ciphertext|nonce|key_id/);
+  assert.match(enrollmentCLI, /const cookieBridgeStateSchema = 5/);
+  assert.equal((enrollmentCLI.match(/cookieBridgeStateSchema/g) ?? []).length, 2);
   assert.doesNotMatch(cookie, /device_bound_sites|non_clonable|auxiliary_state/);
   assert.match(cookie, /expected_revision/);
   assert.match(cookie, /kMaxCookiePushRecords = 32/);
   assert.equal((cookie.match(/mutations\.size\(\) == kMaxCookiePushRecords/g) ?? []).length, 2);
-  assert.match(cookie, /key_id/);
   assert.match(cookie, /enrollment_phase\(\) == "pending"/);
   assert.match(cookie, /verified_sequence/);
   assert.doesNotMatch(cookie, /cookie-policies|CookieCloud|DevTools|CDP/);
@@ -539,7 +468,8 @@ test("normal composition contains only the native password and cookie path", () 
 
 test("native sync has one fail-closed profile-local enrollment source", () => {
   assert.match(service, /profile->GetPath\(\)\.AppendASCII\(kConfigDir\)/);
-  assert.match(service, /SchemeIs\(url::kHttpsScheme\)/);
+  assert.match(service, /SchemeIs\(url::kHttpScheme\)/);
+  assert.match(service, /IPAddressMatchesPrefix/);
   assert.match(service, /kClientStateFile/);
   assert.match(service, /phase != "pending".*phase != "active"/s);
   assert.doesNotMatch(service, /CandidateConfigPaths|kDefaultBaseUrl|ReadDeviceName/);
@@ -552,7 +482,7 @@ test("native sync has one fail-closed profile-local enrollment source", () => {
   ]) {
     const source = repoFile(script);
     assert.match(source, /client\.json/);
-    assert.match(source, /\^https:\/\//);
+    assert.match(source, /\^http:\/\//);
     assert.doesNotMatch(source, />"\$sync_config_dir\/base_url"/);
     assert.doesNotMatch(source, />"\$sync_config_dir\/device_name"/);
   }

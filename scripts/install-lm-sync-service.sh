@@ -6,10 +6,11 @@ script_path=$(realpath -e "${BASH_SOURCE[0]}")
 action=${1:-}
 release_root=${HELIUM_SYNC_RELEASE_ROOT:-/usr/local/libexec/helium-sync-releases}
 unit_root=${HELIUM_SYNC_UNIT_ROOT:-/etc/systemd/system}
+config_root=${HELIUM_SYNC_CONFIG_ROOT:-/etc/helium-sync}
+endpoint_env=$config_root/endpoint.env
 sync_cli=${HELIUM_SYNC_CLI:-$release_root/current/helium-sync}
 backup_cli=$release_root/current/helium-sync-server-backup
-tls_root=${HELIUM_SYNC_TLS_ROOT:-/etc/helium-sync/tls}
-tls_port=44719
+sync_port=44719
 source_units=(
   helium-syncd.service
   helium-sync-server-backup.service
@@ -19,7 +20,7 @@ source_units=(
 operator_lock=${HELIUM_SYNC_OPERATOR_LOCK:-/run/helium-sync-operator.lock}
 
 case "$action" in
-  install-source|rollback-source|install-endpoint|rollback-endpoint|initialize|backup-drill|enroll-device|revoke-device|verify-endpoint|verify-live-endpoint|enable|disable|status)
+  install-source|rollback-source|install-endpoint|initialize|backup-drill|enroll-device|revoke-device|verify-source|verify-endpoint|verify-live-endpoint|enable|disable|status)
     if [[ $EUID -ne 0 ]]; then
       exec sudo "$script_path" "$@"
     fi
@@ -44,7 +45,7 @@ receipt_value() {
 verify_receipt_shape() {
   local receipt=$1
   shift
-  local -a lines=( ) keys=("$@")
+  local -a lines=() keys=("$@")
   local index value
   mapfile -t lines <"$receipt"
   [[ ${#lines[@]} -eq ${#keys[@]} ]] || {
@@ -161,188 +162,63 @@ activate_source_generation() {
 tailscale_identity() {
   local status
   status=$(tailscale status --json)
-  jq -e '
-    .BackendState == "Running" and .Self.Online == true and
-    (.Self.DNSName | type == "string" and endswith(".ts.net.")) and
-    ([.Self.TailscaleIPs[] | select(test("^[0-9]+\\."))] | length == 1)
-  ' <<<"$status" >/dev/null || {
-    echo "lm must have one online Tailscale IPv4 identity and a .ts.net name" >&2
-    return 1
-  }
-  tls_hostname=$(jq -er '.Self.DNSName | rtrimstr(".")' <<<"$status")
-  tls_ip=$(jq -er '[.Self.TailscaleIPs[] | select(test("^[0-9]+\\."))][0]' <<<"$status")
+  sync_ip=$(jq -er '
+    if .BackendState == "Running" and .Self.Online == true then
+      [.Self.TailscaleIPs[] | select(test("^100\\."))] |
+      if length == 1 then .[0] else error("expected one Tailscale IPv4") end
+    else error("Tailscale is not online")
+    end
+  ' <<<"$status")
+  sync_listen=$sync_ip:$sync_port
 }
 
-verify_no_tailscale_proxy() {
-  local serve_status funnel_status
-  serve_status=$(tailscale serve status --json)
-  funnel_status=$(tailscale funnel status --json)
-  jq -e 'type == "object" and length == 0' <<<"$serve_status" >/dev/null || {
-    echo "Tailscale Serve must remain empty for the direct TLS endpoint" >&2
-    return 1
-  }
-  jq -e 'type == "object" and length == 0' <<<"$funnel_status" >/dev/null || {
+verify_no_funnel() {
+  jq -e 'type == "object" and length == 0' \
+    <<<"$(tailscale funnel status --json)" >/dev/null || {
     echo "Tailscale Funnel must remain empty for Helium Sync" >&2
     return 1
   }
 }
 
 read_endpoint_config() {
-  local config=$1
-  [[ -f "$config" && ! -L "$config" ]] || {
-    echo "endpoint configuration is missing or not a regular file: $config" >&2
+  [[ -f "$endpoint_env" && ! -L "$endpoint_env" ]] || {
+    echo "endpoint configuration is missing or unsafe: $endpoint_env" >&2
     return 1
   }
-  mapfile -t endpoint_lines <"$config"
-  [[ ${#endpoint_lines[@]} -eq 3 ]] || {
-    echo "endpoint configuration must contain exactly three lines" >&2
+  mapfile -t endpoint_lines <"$endpoint_env"
+  [[ ${#endpoint_lines[@]} -eq 1 &&
+      "${endpoint_lines[0]}" == HELIUM_SYNC_LISTEN=* ]] || {
+    echo "endpoint configuration must contain only HELIUM_SYNC_LISTEN" >&2
     return 1
   }
   configured_listen=${endpoint_lines[0]#HELIUM_SYNC_LISTEN=}
-  configured_hostname=${endpoint_lines[1]#HELIUM_SYNC_TLS_HOSTNAME=}
-  configured_ip=${endpoint_lines[2]#HELIUM_SYNC_TLS_IP=}
-  [[ "${endpoint_lines[0]}" == "HELIUM_SYNC_LISTEN=$configured_listen" &&
-      "${endpoint_lines[1]}" == "HELIUM_SYNC_TLS_HOSTNAME=$configured_hostname" &&
-      "${endpoint_lines[2]}" == "HELIUM_SYNC_TLS_IP=$configured_ip" ]] || {
-    echo "endpoint configuration keys or order are invalid" >&2
-    return 1
-  }
-}
-
-verify_tls_generation() {
-  local generation=$1 generation_root receipt key file expected actual
-  local source_generation source_cli_hash
-  [[ "$generation" =~ ^[0-9a-f]{64}$ ]] || {
-    echo "invalid TLS generation: $generation" >&2
-    return 1
-  }
-  generation_root=$tls_root/generations/$generation
-  receipt=$generation_root/generation.env
-  [[ -d "$generation_root" && ! -L "$generation_root" &&
-      -f "$receipt" && ! -L "$receipt" ]] || {
-    echo "TLS generation or provenance receipt is missing: $generation" >&2
-    return 1
-  }
-  verify_receipt_shape "$receipt" schema_version generation hostname ip listen \
-    source_generation helium_sync_sha256 ca_cert_sha256 server_cert_sha256 \
-    server_key_sha256 endpoint_env_sha256 installed_at
-  source_generation=$(receipt_value "$receipt" source_generation)
-  [[ "$source_generation" =~ ^[0-9a-f]{64}$ ]] || {
-    echo "TLS generation source provenance is invalid" >&2
-    return 1
-  }
-  verify_source_generation "$source_generation"
-  source_cli_hash=$(sha256sum \
-    "$release_root/generations/$source_generation/helium-sync" | awk '{print $1}')
-  [[ $(receipt_value "$receipt" schema_version) == 1 &&
-      $(receipt_value "$receipt" generation) == "$generation" &&
-      $(receipt_value "$receipt" hostname) == "$tls_hostname" &&
-      $(receipt_value "$receipt" ip) == "$tls_ip" &&
-      $(receipt_value "$receipt" listen) == "$tls_ip:$tls_port" &&
-      $(receipt_value "$receipt" helium_sync_sha256) == "$source_cli_hash" ]] || {
-    echo "TLS generation provenance is invalid" >&2
-    return 1
-  }
-  while IFS='|' read -r file key; do
-    [[ -f "$generation_root/$file" && ! -L "$generation_root/$file" ]] || {
-      echo "TLS generation file is missing or unsafe: $file" >&2
-      return 1
-    }
-    expected=$(receipt_value "$receipt" "$key")
-    actual=$(sha256sum "$generation_root/$file" | awk '{print $1}')
-    [[ "$expected" =~ ^[0-9a-f]{64}$ && "$actual" == "$expected" ]] || {
-      echo "TLS generation hash mismatch: $file" >&2
-      return 1
-    }
-  done <<'EOF'
-ca-cert.pem|ca_cert_sha256
-server-cert.pem|server_cert_sha256
-server-key.pem|server_key_sha256
-endpoint.env|endpoint_env_sha256
-EOF
-  [[ ! -e "$generation_root/ca-key.pem" ]] || {
-    echo "CA private key must not be present on lm" >&2
-    return 1
-  }
-  "$release_root/generations/$source_generation/helium-sync" tls-server-verify \
-    --ca-cert "$generation_root/ca-cert.pem" \
-    --server-cert "$generation_root/server-cert.pem" \
-    --server-key "$generation_root/server-key.pem" \
-    --hostname "$tls_hostname" --ip "$tls_ip" --minimum-validity 720h
 }
 
 verify_endpoint() {
-  local current_target generation source_generation
+  verify_source >/dev/null
   tailscale_identity
-  verify_no_tailscale_proxy
-  read_endpoint_config "$tls_root/current/endpoint.env"
-  [[ "$configured_listen" == "$tls_ip:$tls_port" &&
-      "$configured_hostname" == "$tls_hostname" &&
-      "$configured_ip" == "$tls_ip" ]] || {
-    echo "installed endpoint identity does not match lm's live Tailscale identity" >&2
+  verify_no_funnel
+  read_endpoint_config
+  [[ "$configured_listen" == "$sync_listen" ]] || {
+    echo "installed endpoint does not match lm's live Tailscale IPv4" >&2
     return 1
   }
-  [[ -L "$tls_root/current" ]] || {
-    echo "current TLS generation is missing" >&2
-    return 1
-  }
-  current_target=$(readlink "$tls_root/current")
-  [[ "$current_target" =~ ^generations/[0-9a-f]{64}$ ]] || {
-    echo "current TLS generation link is invalid" >&2
-    return 1
-  }
-  generation=${current_target#generations/}
-  verify_tls_generation "$generation"
-  source_generation=$(receipt_value \
-    "$tls_root/generations/$generation/generation.env" source_generation)
-  [[ $(readlink "$release_root/current") == "generations/$source_generation" ]] || {
-    echo "active TLS generation belongs to a different source release" >&2
-    return 1
-  }
-}
-
-activate_tls_generation() {
-  local generation=$1 current_temp source_generation
-  tailscale_identity
-  verify_no_tailscale_proxy
-  read_endpoint_config "$tls_root/generations/$generation/endpoint.env"
-  [[ "$configured_listen" == "$tls_ip:$tls_port" &&
-      "$configured_hostname" == "$tls_hostname" &&
-      "$configured_ip" == "$tls_ip" ]] || {
-    echo "endpoint configuration does not match lm's live Tailscale identity" >&2
-    return 1
-  }
-  verify_tls_generation "$generation" >/dev/null
-  source_generation=$(receipt_value \
-    "$tls_root/generations/$generation/generation.env" source_generation)
-  [[ $(readlink "$release_root/current") == "generations/$source_generation" ]] || {
-    echo "refusing TLS generation from a different source release" >&2
-    return 1
-  }
-  current_temp=$tls_root/.current.$$
-  ln -s "generations/$generation" "$current_temp"
-  mv -Tf "$current_temp" "$tls_root/current"
-  sync "$tls_root"
-  verify_endpoint >/dev/null
 }
 
 verify_live_endpoint() {
   tailscale_identity
   local response
   response=$(curl --fail --silent --show-error --max-time 10 \
-    --noproxy '*' --tlsv1.3 --tls-max 1.3 \
-    --cacert "$tls_root/current/ca-cert.pem" \
-    --resolve "$tls_hostname:$tls_port:$tls_ip" \
-    "https://$tls_hostname:$tls_port/v2/health")
+    --noproxy '*' "http://$sync_listen/v2/health")
   jq -e '.ok == true and length == 1' <<<"$response" >/dev/null || {
-    echo "direct TLS health response is invalid" >&2
+    echo "private Tailnet health response is invalid" >&2
     return 1
   }
 }
 
 wait_live_endpoint() {
-  local _
-  for _ in {1..50}; do
+  local attempt
+  for attempt in {1..50}; do
     if verify_live_endpoint 2>/dev/null; then
       return 0
     fi
@@ -352,12 +228,12 @@ wait_live_endpoint() {
 }
 
 perform_backup_drill() (
-  [ -s /var/lib/helium-sync/devices.json ] || {
+  [[ -s /var/lib/helium-sync/devices.json ]] || {
     echo "server registry is not initialized" >&2
     exit 1
   }
   ! systemctl is-active --quiet helium-syncd.service || {
-    echo "backup-drill requires helium-syncd.service to be inactive; use the supervised backup unit for an active service" >&2
+    echo "backup-drill requires helium-syncd.service to be inactive" >&2
     exit 1
   }
   findmnt -M /srv/nas >/dev/null || {
@@ -373,7 +249,10 @@ perform_backup_drill() (
   target="/tmp/helium-sync-restore.$(date +%s).$$"
   cleanup_restore() {
     case "$target" in
-      /tmp/helium-sync-restore.*) [ ! -e "$target" ] || runuser -u helium-sync -- find "$target" -depth -delete ;;
+      /tmp/helium-sync-restore.*)
+        [[ ! -e "$target" ]] ||
+          runuser -u helium-sync -- find "$target" -depth -delete
+        ;;
     esac
   }
   trap cleanup_restore EXIT
@@ -383,7 +262,7 @@ perform_backup_drill() (
   receipt=/srv/nas/helium-sync-server/last-restore-drill.env
   receipt_temp=$receipt.incoming.$$
   printf 'archive=%s\narchive_sha256=%s\nverified_at=%s\n' \
-    "$archive" "$archive_sha" "$(date --iso-8601=seconds)" | \
+    "$archive" "$archive_sha" "$(date --iso-8601=seconds)" |
     runuser -u helium-sync -- tee "$receipt_temp" >/dev/null
   runuser -u helium-sync -- chmod 0600 "$receipt_temp"
   runuser -u helium-sync -- sync "$receipt_temp"
@@ -394,44 +273,34 @@ perform_backup_drill() (
 )
 
 perform_registry_update() (
-  [ -s /var/lib/helium-sync/devices.json ] || {
+  [[ -s /var/lib/helium-sync/devices.json ]] || {
     echo "server registry is not initialized" >&2
     exit 1
   }
   was_active=false
-  restart_required=false
-  restart_service() {
-    local result=$?
-    trap - EXIT INT TERM
-    if [[ "$restart_required" == true ]]; then
-      if ! systemctl start helium-syncd.service; then
-        systemctl stop helium-syncd.service >/dev/null 2>&1 || true
-        result=1
-      fi
-    fi
-    exit "$result"
-  }
-  trap restart_service EXIT
-  trap 'exit 130' INT
-  trap 'exit 143' TERM
   if systemctl is-active --quiet helium-syncd.service; then
-    restart_required=true
     systemctl stop helium-syncd.service
-    ! systemctl is-active --quiet helium-syncd.service || {
-      echo "helium-syncd remained active during registry update" >&2
-      exit 1
-    }
     was_active=true
   fi
+  restart_service() {
+    if [[ "$was_active" == true ]]; then
+      systemctl start helium-syncd.service || true
+    fi
+  }
+  trap restart_service EXIT INT TERM
   runuser -u helium-sync -- "$sync_cli" "$@"
   runuser -u helium-sync -- "$sync_cli" server-verify \
     --data-dir /var/lib/helium-sync \
     --devices-file /var/lib/helium-sync/devices.json >/dev/null
-  if [ "$was_active" = true ]; then
-    systemctl start helium-syncd.service
-    restart_required=false
-  fi
   trap - EXIT INT TERM
+  if [[ "$was_active" == true ]]; then
+    systemctl start helium-syncd.service
+    if ! wait_live_endpoint; then
+      systemctl stop helium-syncd.service
+      echo "helium-syncd stopped because the registry reload health gate failed" >&2
+      exit 1
+    fi
+  fi
 )
 
 case "$action" in
@@ -486,7 +355,8 @@ case "$action" in
     "$go_bin" version -m "$temp_dir/helium-sync" >"$temp_dir/helium-sync.buildinfo"
     "$go_bin" version -m "$temp_dir/helium-syncd" >"$temp_dir/helium-syncd.buildinfo"
     go_version=$(runuser -u "$operator_user" -- "$go_bin" version)
-    module_identity=$(sha256sum "$repo_root/go.mod" "$repo_root/go.sum" | sha256sum | awk '{print $1}')
+    module_identity=$(sha256sum "$repo_root/go.mod" "$repo_root/go.sum" |
+      sha256sum | awk '{print $1}')
     stage=$temp_dir/stage
     install -d -m0755 "$stage"
     install -m0755 "$temp_dir/helium-sync" "$stage/helium-sync"
@@ -528,24 +398,21 @@ case "$action" in
       printf 'backup_timer_sha256=%s\n' "$(sha256sum "$stage/helium-sync-server-backup.timer" | awk '{print $1}')"
     } >"$receipt"
     generation=$(sha256sum "$receipt" | awk '{print $1}')
-    verify_source_generation_incoming=$release_root/generations/.incoming-$generation.$$
+    incoming=$release_root/generations/.incoming-$generation.$$
     final_generation=$release_root/generations/$generation
     [[ ! -e "$final_generation" ]] || {
       echo "refusing to replace existing source generation: $generation" >&2
       exit 1
     }
     install -d -m0755 -o root -g root "$release_root/generations"
-    install -d -m0755 -o root -g root "$verify_source_generation_incoming"
-    cp -a "$stage/." "$verify_source_generation_incoming/"
-    chown -R root:root "$verify_source_generation_incoming"
-    chmod 0755 "$verify_source_generation_incoming"
-    sync "$verify_source_generation_incoming"
-    mv "$verify_source_generation_incoming" "$final_generation"
+    install -d -m0755 -o root -g root "$incoming"
+    cp -a "$stage/." "$incoming/"
+    chown -R root:root "$incoming"
+    chmod 0755 "$incoming"
+    sync "$incoming"
+    mv "$incoming" "$final_generation"
     verify_source_generation "$generation"
-    previous_generation=none
-    if [[ -L "$release_root/current" ]]; then
-      previous_generation=$(readlink "$release_root/current")
-    fi
+    previous_generation=$(readlink "$release_root/current" 2>/dev/null || printf none)
     activate_source_generation "$generation"
     install -Dm0644 "$final_generation/helium-sync.conf" \
       /usr/lib/sysusers.d/helium-sync.conf
@@ -574,109 +441,34 @@ case "$action" in
       "$2" "$previous_generation"
     ;;
   install-endpoint)
-    [[ $# -eq 4 ]] || {
-      echo "usage: $0 install-endpoint /path/ca-cert.pem /path/server-cert.pem /path/server-key.pem" >&2
-      exit 2
-    }
-    ca_source=$(realpath -e "$2")
-    cert_source=$(realpath -e "$3")
-    key_source=$(realpath -e "$4")
-    tailscale_identity
-    verify_no_tailscale_proxy
-    systemctl is-active --quiet helium-syncd.service && {
-      echo "refusing TLS generation install while helium-syncd is active" >&2
-      exit 1
-    }
-    source_output=$(verify_source)
-    source_generation=${source_output#source_generation=}
-    verify_output=$("$sync_cli" tls-server-verify \
-      --ca-cert "$ca_source" --server-cert "$cert_source" \
-      --server-key "$key_source" --hostname "$tls_hostname" --ip "$tls_ip" \
-      --minimum-validity 720h)
-    install -d -m0755 -o root -g root "$tls_root/generations"
-    endpoint_temp=$(mktemp /tmp/helium-sync-endpoint.XXXXXX)
-    cleanup_endpoint() {
-      rm -f "$endpoint_temp"
-      [[ -z "${incoming:-}" ]] || find "$incoming" -depth -delete 2>/dev/null || true
-    }
-    trap cleanup_endpoint EXIT
-    printf 'HELIUM_SYNC_LISTEN=%s:%s\nHELIUM_SYNC_TLS_HOSTNAME=%s\nHELIUM_SYNC_TLS_IP=%s\n' \
-      "$tls_ip" "$tls_port" "$tls_hostname" "$tls_ip" >"$endpoint_temp"
-    generation=$(
-      {
-        sha256sum "$ca_source" "$cert_source" "$key_source" | awk '{print $1}'
-        sha256sum "$endpoint_temp" | awk '{print $1}'
-        printf '%s\n' "$source_generation"
-      } | sha256sum | awk '{print $1}'
-    )
-    final_generation="$tls_root/generations/$generation"
-    [[ ! -e "$final_generation" ]] || {
-      echo "refusing to replace existing TLS generation: $final_generation" >&2
-      exit 1
-    }
-    incoming=$(mktemp -d "$tls_root/generations/.incoming.XXXXXX")
-    chown root:helium-sync "$incoming"
-    chmod 0750 "$incoming"
-    install -m0644 -o root -g root "$ca_source" "$incoming/ca-cert.pem"
-    install -m0644 -o root -g root "$cert_source" "$incoming/server-cert.pem"
-    install -m0640 -o root -g helium-sync "$key_source" "$incoming/server-key.pem"
-    install -m0644 -o root -g root "$endpoint_temp" "$incoming/endpoint.env"
-    runuser -u helium-sync -- "$sync_cli" tls-server-verify \
-      --ca-cert "$incoming/ca-cert.pem" \
-      --server-cert "$incoming/server-cert.pem" \
-      --server-key "$incoming/server-key.pem" \
-      --hostname "$tls_hostname" --ip "$tls_ip" --minimum-validity 720h >/dev/null
-    {
-      printf 'schema_version=1\n'
-      printf 'generation=%s\n' "$generation"
-      printf 'hostname=%s\n' "$tls_hostname"
-      printf 'ip=%s\n' "$tls_ip"
-      printf 'listen=%s:%s\n' "$tls_ip" "$tls_port"
-      printf 'source_generation=%s\n' "$source_generation"
-      printf 'helium_sync_sha256=%s\n' "$(sha256sum "$sync_cli" | awk '{print $1}')"
-      printf 'ca_cert_sha256=%s\n' "$(sha256sum "$incoming/ca-cert.pem" | awk '{print $1}')"
-      printf 'server_cert_sha256=%s\n' "$(sha256sum "$incoming/server-cert.pem" | awk '{print $1}')"
-      printf 'server_key_sha256=%s\n' "$(sha256sum "$incoming/server-key.pem" | awk '{print $1}')"
-      printf 'endpoint_env_sha256=%s\n' "$(sha256sum "$incoming/endpoint.env" | awk '{print $1}')"
-      printf 'installed_at=%s\n' "$(date --iso-8601=seconds)"
-    } >"$incoming/generation.env"
-    chown root:root "$incoming/generation.env"
-    chmod 0644 "$incoming/generation.env"
-    sync "$incoming"
-    mv "$incoming" "$final_generation"
-    incoming=
-    previous_generation=$(readlink "$tls_root/current" 2>/dev/null || printf none)
-    activate_tls_generation "$generation"
-    trap - EXIT
-    cleanup_endpoint
-    printf '%s\n' "$verify_output"
-    verify_endpoint >/dev/null
-    echo "endpoint_installed=inactive"
-    echo "endpoint_url=https://$tls_hostname:$tls_port"
-    echo "tls_generation=$generation"
-    echo "previous_tls=$previous_generation"
-    ;;
-  rollback-endpoint)
-    [[ $# -eq 2 ]] || {
-      echo "usage: $0 rollback-endpoint TLS_GENERATION" >&2
+    [[ $# -eq 1 ]] || {
+      echo "usage: $0 install-endpoint" >&2
       exit 2
     }
     ! systemctl is-active --quiet helium-syncd.service || {
-      echo "refusing TLS rollback while helium-syncd.service is active" >&2
+      echo "refusing endpoint install while helium-syncd.service is active" >&2
       exit 1
     }
-    previous_generation=$(readlink "$tls_root/current" 2>/dev/null || printf none)
-    activate_tls_generation "$2"
-    printf 'tls_generation=%s\nprevious_tls=%s\nstate_preserved=/var/lib/helium-sync\n' \
-      "$2" "$previous_generation"
+    verify_source >/dev/null
+    tailscale_identity
+    verify_no_funnel
+    install -d -m0750 -o root -g helium-sync "$config_root"
+    endpoint_temp=$(mktemp "$config_root/.endpoint.XXXXXX")
+    printf 'HELIUM_SYNC_LISTEN=%s\n' "$sync_listen" >"$endpoint_temp"
+    chown root:helium-sync "$endpoint_temp"
+    chmod 0640 "$endpoint_temp"
+    mv "$endpoint_temp" "$endpoint_env"
+    sync "$config_root"
+    verify_endpoint >/dev/null
+    printf 'endpoint_installed=inactive\nendpoint_url=http://%s\n' "$sync_listen"
     ;;
   initialize)
     bootstrap=${2:-}
-    [ -f "$bootstrap" ] || {
+    [[ $# -eq 2 && -f "$bootstrap" ]] || {
       echo "usage: $0 initialize /path/to/d-server-bootstrap.json" >&2
       exit 2
     }
-    [ ! -e /var/lib/helium-sync/devices.json ] || {
+    [[ ! -e /var/lib/helium-sync/devices.json ]] || {
       echo "refusing to replace an existing server registry" >&2
       exit 1
     }
@@ -691,7 +483,7 @@ case "$action" in
     perform_backup_drill
     ;;
   enroll-device)
-    [ "$#" -eq 2 ] && [ -f "$2" ] || {
+    [[ $# -eq 2 && -f "$2" ]] || {
       echo "usage: $0 enroll-device /path/to/HASHED_AUTH_REQUEST" >&2
       exit 2
     }
@@ -701,7 +493,7 @@ case "$action" in
     echo "device_enrolled=service_reloaded"
     ;;
   revoke-device)
-    [ "$#" -eq 2 ] && [ -n "$2" ] || {
+    [[ $# -eq 2 && -n "$2" ]] || {
       echo "usage: $0 revoke-device DEVICE" >&2
       exit 2
     }
@@ -715,20 +507,21 @@ case "$action" in
     ;;
   verify-endpoint)
     verify_endpoint
-    echo "direct_tls_endpoint=verified"
+    echo "tailnet_endpoint=verified"
     ;;
   verify-live-endpoint)
     verify_endpoint >/dev/null
     verify_live_endpoint
-    echo "direct_tls_endpoint=live"
+    echo "tailnet_endpoint=live"
     ;;
   enable)
-    [ -s /var/lib/helium-sync/devices.json ] || {
+    [[ -s /var/lib/helium-sync/devices.json ]] || {
       echo "server registry is not initialized" >&2
       exit 1
     }
-    ss -ltnH "( sport = :$tls_port )" | grep -q . && {
-      echo "port $tls_port already has a listener; stop the synthetic or other service first" >&2
+    tailscale_identity
+    ! ss -ltnH "( sport = :$sync_port )" | grep -q . || {
+      echo "port $sync_port already has a listener" >&2
       exit 1
     }
     verify_endpoint >/dev/null
@@ -736,7 +529,7 @@ case "$action" in
     systemctl enable --now helium-syncd.service
     if ! wait_live_endpoint; then
       systemctl disable --now helium-syncd.service
-      echo "helium-syncd was stopped because the direct TLS health gate failed" >&2
+      echo "helium-syncd stopped because its Tailnet health gate failed" >&2
       exit 1
     fi
     systemctl enable --now helium-sync-server-backup.timer
@@ -752,7 +545,7 @@ case "$action" in
     verify_live_endpoint
     ;;
   *)
-    echo "usage: $0 <install-source|rollback-source GENERATION|install-endpoint CA CERT KEY|rollback-endpoint GENERATION|initialize BOOTSTRAP|backup-drill|enroll-device AUTH_REQUEST|revoke-device DEVICE|verify-source|verify-endpoint|verify-live-endpoint|enable|disable|status>" >&2
+    echo "usage: $0 <install-source|rollback-source GENERATION|install-endpoint|initialize BOOTSTRAP|backup-drill|enroll-device AUTH_REQUEST|revoke-device DEVICE|verify-source|verify-endpoint|verify-live-endpoint|enable|disable|status>" >&2
     exit 2
     ;;
 esac

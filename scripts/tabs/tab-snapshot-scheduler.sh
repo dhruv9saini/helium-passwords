@@ -36,8 +36,8 @@ write_health_proof() {
 	proof_file="${namespace}/health-proof.env"
 	temporary="${proof_file}.tmp"
 	{
-		printf 'schema_version=1\nsource_device=%s\nprofile=%s\nkey_id=%s\n' \
-			"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${TAB_KEY_ID}"
+		printf 'schema_version=2\nsource_device=%s\nprofile=%s\n' \
+			"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}"
 		printf 'generation=%s\nconfig_sha256=%s\nbackup_status_sha256=%s\n' \
 			"${generation}" "$(sha256sum "${config_file}" | awk '{ print $1 }')" \
 			"$(printf '%s\n' "${backup_output}" | sha256sum | awk '{ print $1 }')"
@@ -56,10 +56,9 @@ verify_health_proof() {
 	proof_file="${namespace}/health-proof.env"
 	[ -f "${proof_file}" ] || { echo 'health_proof=missing'; return 1; }
 	expected_status_hash=$(printf '%s\n' "${backup_output}" | sha256sum | awk '{ print $1 }')
-	[ "$(proof_value "${proof_file}" schema_version)" = 1 ] && \
+	[ "$(proof_value "${proof_file}" schema_version)" = 2 ] && \
 		[ "$(proof_value "${proof_file}" source_device)" = "${TAB_SOURCE_DEVICE}" ] && \
 		[ "$(proof_value "${proof_file}" profile)" = "${TAB_PROFILE}" ] && \
-		[ "$(proof_value "${proof_file}" key_id)" = "${TAB_KEY_ID}" ] && \
 		[ "$(proof_value "${proof_file}" generation)" = "${generation}" ] && \
 		[ "$(proof_value "${proof_file}" config_sha256)" = \
 			"$(sha256sum "${config_file}" | awk '{ print $1 }')" ] && \

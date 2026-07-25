@@ -1,20 +1,15 @@
 [Unit]
-Description=Helium Sync synthetic disposable opaque ciphertext service
+Description=Helium Sync synthetic disposable private Tailnet service
 After=network-online.target
 Wants=network-online.target
 ConditionPathExists=%h/.local/state/helium-sync-disposable/SYNTHETIC_ONLY
 ConditionPathExists=%h/.local/state/helium-sync-disposable/server/devices.json
 ConditionPathExists=%h/.local/state/helium-sync-disposable/config/endpoint.env
-ConditionPathExists=%h/.local/state/helium-sync-disposable/tls/current/ca-cert.pem
-ConditionPathExists=%h/.local/state/helium-sync-disposable/tls/current/server-cert.pem
-ConditionPathExists=%h/.local/state/helium-sync-disposable/tls/current/server-key.pem
 
 [Service]
 Type=simple
 EnvironmentFile=%h/.local/state/helium-sync-disposable/config/endpoint.env
-ExecStartPre=/usr/bin/test ! -e %h/.local/state/helium-sync-disposable/tls/current/ca-key.pem
-ExecStartPre=%h/.local/share/helium-sync-disposable/bin/helium-sync tls-server-verify --ca-cert %h/.local/state/helium-sync-disposable/tls/current/ca-cert.pem --server-cert %h/.local/state/helium-sync-disposable/tls/current/server-cert.pem --server-key %h/.local/state/helium-sync-disposable/tls/current/server-key.pem --hostname ${HELIUM_SYNC_TLS_HOSTNAME} --ip ${HELIUM_SYNC_TLS_IP} --minimum-validity 720h
-ExecStart=%h/.local/share/helium-sync-disposable/bin/helium-syncd -listen ${HELIUM_SYNC_LISTEN} -tls-cert-file %h/.local/state/helium-sync-disposable/tls/current/server-cert.pem -tls-key-file %h/.local/state/helium-sync-disposable/tls/current/server-key.pem -data-dir %h/.local/state/helium-sync-disposable/server -devices-file %h/.local/state/helium-sync-disposable/server/devices.json
+ExecStart=%h/.local/share/helium-sync-disposable/bin/helium-syncd -listen ${HELIUM_SYNC_LISTEN} -data-dir %h/.local/state/helium-sync-disposable/server -devices-file %h/.local/state/helium-sync-disposable/server/devices.json
 Restart=on-failure
 RestartSec=5s
 UMask=0077
@@ -25,7 +20,6 @@ ProtectSystem=strict
 ProtectHome=tmpfs
 BindReadOnlyPaths=%h/.local/share/helium-sync-disposable/bin
 BindReadOnlyPaths=%h/.local/state/helium-sync-disposable/config
-BindReadOnlyPaths=%h/.local/state/helium-sync-disposable/tls
 BindPaths=%h/.local/state/helium-sync-disposable/server
 ProtectHostname=yes
 ProtectKernelTunables=yes

@@ -30,34 +30,6 @@ go build -trimpath -o "$test_root/bin/helium-syncd" "$repo_root/cmd/helium-syncd
   --state-file "$test_root/d/client.json" \
   --token-file "$test_root/d/token" \
   --bootstrap-file "$test_root/relay/bootstrap.json" >/dev/null
-"$test_root/bin/helium-sync" seed-public \
-  --state-file "$test_root/d/client.json" \
-  --output "$test_root/relay/seed-public" >/dev/null
-
-# Recovery identities and plaintext seed state stay outside the server and its
-# opaque backup. Both independent synthetic identities must restore the same
-# authenticated d trust anchor.
-"$test_root/bin/helium-sync" recovery-keygen \
-  --output-dir "$test_root/recovery-a" >/dev/null
-"$test_root/bin/helium-sync" recovery-keygen \
-  --output-dir "$test_root/recovery-b" >/dev/null
-cat "$test_root/recovery-a/recipient.txt" \
-  "$test_root/recovery-b/recipient.txt" \
-  >"$test_root/d/recovery-recipients.txt"
-"$test_root/bin/helium-sync" recovery-export \
-  --state-file "$test_root/d/client.json" \
-  --token-file "$test_root/d/token" \
-  --recipients-file "$test_root/d/recovery-recipients.txt" \
-  --output "$test_root/relay/d-recovery.age" >/dev/null
-for recovery in a b; do
-  "$test_root/bin/helium-sync" recovery-import \
-    --input "$test_root/relay/d-recovery.age" \
-    --identity-file "$test_root/recovery-$recovery/identity.txt" \
-    --expected-seed-public-file "$test_root/relay/seed-public" \
-    --output-dir "$test_root/restored-d-$recovery" >/dev/null
-  cmp "$test_root/d/token" "$test_root/restored-d-$recovery/token"
-done
-
 "$test_root/bin/helium-sync" server-init \
   --data-dir "$test_root/server" \
   --devices-file "$test_root/server/devices.json" \
@@ -111,8 +83,8 @@ start_daemon "$test_root/server"
   --payload-file "$test_root/payload.json" >/dev/null
 stop_daemon
 
-if grep -aFq restore-only-plaintext "$test_root/server/records.jsonl"; then
-  echo "server journal contains synthetic plaintext" >&2
+if ! grep -aFq restore-only-plaintext "$test_root/server/records.jsonl"; then
+  echo "server journal does not contain the readable synthetic payload" >&2
   exit 1
 fi
 
@@ -127,14 +99,14 @@ HELIUM_SERVER_DATA_DIR="$test_root/server" HELIUM_SERVER_SERVICE=none \
   restore-drill "$archive" "$restore_root" >/dev/null
 restored_server=$restore_root/server
 
-for forbidden in client.json token identity.txt recovery-recipients.txt; do
+for forbidden in client.json token; do
   if tar --zstd -tf "$archive" | grep -Eq "(^|/)$forbidden$"; then
-    echo "opaque server backup contains client recovery material: $forbidden" >&2
+    echo "server backup contains client authorization material: $forbidden" >&2
     exit 1
   fi
 done
-if grep -aFq restore-only-plaintext "$restored_server/records.jsonl"; then
-  echo "restored server journal contains synthetic plaintext" >&2
+if ! grep -aFq restore-only-plaintext "$restored_server/records.jsonl"; then
+  echo "restored server journal lost the readable synthetic payload" >&2
   exit 1
 fi
 
@@ -144,35 +116,22 @@ start_daemon "$restored_server"
   --state-file "$test_root/d/client.json" \
   --token-file "$test_root/d/token" \
   --kind passwords >"$test_root/restored-latest.json"
-jq -e '.Records | length == 1 and
-  .[0].Key == "synthetic/server-restore" and
-  .[0].Payload.proof == "restore-only-plaintext"' \
+jq -e '.records | length == 1 and
+  .[0].key == "synthetic/server-restore" and
+  .[0].payload.proof == "restore-only-plaintext"' \
   "$test_root/restored-latest.json" >/dev/null
 stop_daemon
 
-# A join receives its own credential and wrapped E2EE state. The server sees
-# only the credential hash, admits it pull-only, and revocation affects exactly
-# that identity.
-"$test_root/bin/helium-sync" join-request \
+# A join creates its own state and credential. The server sees only the
+# credential hash, admits it pull-only, and revocation affects that identity.
+"$test_root/bin/helium-sync" join-init \
   --device da \
-  --seed-public-file "$test_root/relay/seed-public" \
-  --pending-file "$test_root/da/join.pending.json" \
-  --request-file "$test_root/relay/da-join.json" \
+  --state-file "$test_root/da/client.json" \
   --auth-request-file "$test_root/relay/da-auth.json" \
   --token-file "$test_root/da/token" >/dev/null
-"$test_root/bin/helium-sync" seed-wrap \
-  --state-file "$test_root/d/client.json" \
-  --request-file "$test_root/relay/da-join.json" \
-  --wrapped-file "$test_root/relay/da-wrapped.json" >/dev/null
 "$test_root/bin/helium-sync" server-enroll \
   --devices-file "$restored_server/devices.json" \
   --auth-request-file "$test_root/relay/da-auth.json" >/dev/null
-active_key=$(jq -er .active_key_id "$test_root/relay/bootstrap.json")
-"$test_root/bin/helium-sync" join-install \
-  --state-file "$test_root/da/client.json" \
-  --pending-file "$test_root/da/join.pending.json" \
-  --wrapped-file "$test_root/relay/da-wrapped.json" \
-  --required-key-id "$active_key" >/dev/null
 
 start_daemon "$restored_server"
 "$test_root/bin/helium-sync" latest \
@@ -180,7 +139,7 @@ start_daemon "$restored_server"
   --state-file "$test_root/da/client.json" \
   --token-file "$test_root/da/token" \
   --kind passwords >"$test_root/da-latest.json"
-jq -e '.Records[0].Payload.proof == "restore-only-plaintext"' \
+jq -e '.records[0].payload.proof == "restore-only-plaintext"' \
   "$test_root/da-latest.json" >/dev/null
 journal_before=$(sha256sum "$restored_server/records.jsonl" | awk '{print $1}')
 if "$test_root/bin/helium-sync" push \

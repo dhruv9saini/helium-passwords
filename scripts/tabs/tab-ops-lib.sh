@@ -17,38 +17,6 @@ tab_ops_require_absolute() {
     }
 }
 
-tab_ops_normalized_recipients() {
-	local recipients_file=$1
-	[ -s "${recipients_file}" ] || {
-		echo "age recipient file is missing or empty" >&2
-		return 1
-	}
-	awk '
-	  /^[[:space:]]*($|#)/ { next }
-	  /^age1[023456789acdefghjklmnpqrstuvwxyz]{20,}$/ { print $1; next }
-	  /^ssh-(ed25519|rsa)[[:space:]][A-Za-z0-9+\/=]+([[:space:]].*)?$/ {
-		print $1 " " $2
-		next
-	  }
-	  { invalid = 1 }
-	  END { if (invalid) exit 1 }
-	' "${recipients_file}" | sort -u
-}
-
-tab_ops_recipients_fingerprint() {
-	local recipients_file=$1 normalized recipient_count
-	normalized=$(tab_ops_normalized_recipients "${recipients_file}") || {
-		echo "age recipient file contains an invalid recipient" >&2
-		return 1
-	}
-	recipient_count=$(wc -l <<<"${normalized}")
-	[ "${recipient_count}" -ge 2 ] || {
-		echo "at least two distinct age recipients are required" >&2
-		return 1
-	}
-	printf '%s\n' "${normalized}" | sha256sum | awk '{ print $1 }'
-}
-
 tab_ops_load_config() {
     local config_file=$1 line key value extra config_mode
     [ -f "${config_file}" ] || {
@@ -63,7 +31,6 @@ tab_ops_load_config() {
 
     TAB_CONFIG_VERSION=
     TAB_SOURCE_DEVICE=
-	TAB_KEY_ID=
     TAB_PROFILE=
     TAB_SNAPSHOT_STORE=
     TAB_STATE_ROOT=
@@ -74,8 +41,6 @@ tab_ops_load_config() {
     TAB_BROWSER_VERSION=
     TAB_CHROMIUM_VERSION=
     TAB_INTERVAL_SECONDS=900
-    TAB_AGE_RECIPIENTS=
-    TAB_AGE_IDENTITY=
 	TAB_SSH_USER=
 	TAB_SSH_IDENTITY=
 	TAB_SSH_KNOWN_HOSTS=
@@ -98,7 +63,6 @@ tab_ops_load_config() {
         case "${key}" in
             version) TAB_CONFIG_VERSION=${value} ;;
             source_device) TAB_SOURCE_DEVICE=${value} ;;
-			key_id) TAB_KEY_ID=${value} ;;
             profile) TAB_PROFILE=${value} ;;
             snapshot_store) TAB_SNAPSHOT_STORE=${value} ;;
             state_root) TAB_STATE_ROOT=${value} ;;
@@ -109,8 +73,6 @@ tab_ops_load_config() {
             browser_version) TAB_BROWSER_VERSION=${value} ;;
             chromium_version) TAB_CHROMIUM_VERSION=${value} ;;
             interval_seconds) TAB_INTERVAL_SECONDS=${value} ;;
-            age_recipients) TAB_AGE_RECIPIENTS=${value} ;;
-            age_identity) TAB_AGE_IDENTITY=${value} ;;
 			ssh_user) TAB_SSH_USER=${value} ;;
 			ssh_identity) TAB_SSH_IDENTITY=${value} ;;
 			ssh_known_hosts) TAB_SSH_KNOWN_HOSTS=${value} ;;
@@ -133,7 +95,7 @@ tab_ops_load_config() {
         esac
     done <"${config_file}"
 
-	[ "${TAB_CONFIG_VERSION}" = 3 ] || {
+	[ "${TAB_CONFIG_VERSION}" = 4 ] || {
         echo "unsupported tab operations config version" >&2
         return 1
     }
@@ -141,10 +103,6 @@ tab_ops_load_config() {
 		d|da|oneplus) ;;
 		*) echo "source_device must be d, da, or oneplus" >&2; return 1 ;;
 	esac
-	[ "${TAB_KEY_ID}" = "${TAB_SOURCE_DEVICE}-tabs-v1" ] || {
-		echo "key_id must be the device-local ${TAB_SOURCE_DEVICE}-tabs-v1 namespace" >&2
-		return 1
-	}
     tab_ops_valid_id "${TAB_PROFILE}" || { echo "invalid profile" >&2; return 1; }
     tab_ops_require_absolute snapshot_store "${TAB_SNAPSHOT_STORE}"
     tab_ops_require_absolute state_root "${TAB_STATE_ROOT}"

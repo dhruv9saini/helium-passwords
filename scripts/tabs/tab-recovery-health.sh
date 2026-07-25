@@ -60,7 +60,7 @@ status_result() {
 			key=${line%%=*}
 			value=${line#*=}
 			case "$key" in
-				version|mechanism|state|source_device|profile|completed_unix|generation|evidence|destination_a_host|destination_b_host|ciphertext_sha256_a|ciphertext_sha256_b|ciphertext_size_a|ciphertext_size_b) ;;
+				version|mechanism|state|source_device|profile|completed_unix|generation|evidence|destination_a_host|destination_b_host|archive_sha256_a|archive_sha256_b|archive_size_a|archive_size_b) ;;
 				*) reason=unknown_field; break ;;
 			esac
 			if [ -n "${fields[$key]+set}" ] || [ -z "$value" ]; then

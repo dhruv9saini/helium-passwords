@@ -10,7 +10,7 @@ usage() {
 usage: backup-android-chromium-profile.sh CONFIG [GENERATION]
 
 Force-stop Helium Sync and stream its complete app_chrome tree directly from
-Android tar through zstd and age into the CONFIG's two independent destination
+Android tar through zstd into the CONFIG's two independent private destination
 filesystems. Plaintext profile data is never written on lm.
 EOF
 }

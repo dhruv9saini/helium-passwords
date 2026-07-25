@@ -72,19 +72,11 @@ async function writeJSON(filePath, value, {exclusive = false} = {}) {
 
 export function summarizePasswordState(state) {
   exactKeys(state, [
-    "schema_version", "identity_schema", "migration_status",
-    "verified_sequence", "credentials", "legacy_credentials",
+    "schema_version", "identity_schema", "verified_sequence", "credentials",
   ], "password state");
-  if (state.schema_version !== 4 ||
+  if (state.schema_version !== 6 ||
       state.identity_schema !== "password-form-unique-key-v2") {
-    throw new Error("password state must use canonical identity schema 4");
-  }
-  if (state.migration_status !== "complete" ||
-      !state.legacy_credentials ||
-      typeof state.legacy_credentials !== "object" ||
-      Array.isArray(state.legacy_credentials) ||
-      Object.keys(state.legacy_credentials).length !== 0) {
-    throw new Error("runtime acceptance requires completed empty legacy migration state");
+    throw new Error("password state must use canonical identity schema 6");
   }
   int64String(state.verified_sequence, "verified_sequence");
   if (!state.credentials || typeof state.credentials !== "object" || Array.isArray(state.credentials)) {
@@ -92,24 +84,21 @@ export function summarizePasswordState(state) {
   }
   const credentials = Object.entries(state.credentials).sort(([left], [right]) => left.localeCompare(right));
   return {
-    schema_version: 4,
+    schema_version: 6,
     identity_schema: state.identity_schema,
     verified_sequence: state.verified_sequence,
     credentials: credentials.map(([key, entry]) => {
       if (!/^credential\/v2\/[0-9a-f]{64}$/.test(key)) {
         throw new Error("password state contains an invalid credential key");
       }
-      exactKeys(entry, ["fingerprint", "remote_seq", "revision", "deleted", "key_id"], `credential ${key}`);
+      exactKeys(entry, ["fingerprint", "remote_seq", "revision", "deleted"], `credential ${key}`);
       const revision = int64String(entry.revision, `${key} revision`);
       int64String(entry.remote_seq, `${key} remote_seq`);
-      if (typeof entry.deleted !== "boolean" || typeof entry.key_id !== "string") {
-        throw new Error(`${key} has invalid deletion or key metadata`);
+      if (typeof entry.deleted !== "boolean") {
+        throw new Error(`${key} has invalid deletion metadata`);
       }
       if (entry.deleted ? entry.fingerprint !== "" : !/^[0-9a-f]{64}$/.test(entry.fingerprint)) {
         throw new Error(`${key} has an invalid fingerprint/deletion combination`);
-      }
-      if (revision > 0n && !/^[0-9a-f]{16,64}$/.test(entry.key_id)) {
-        throw new Error(`${key} has no valid content-key id`);
       }
       return {key, ...entry};
     }),
@@ -122,8 +111,7 @@ export function summarizeJournal(raw) {
     if (!line) continue;
     const record = JSON.parse(line);
     exactKeys(record, [
-      "seq", "kind", "key", "revision", "deleted", "device_id", "key_id",
-      "nonce", "ciphertext",
+      "seq", "kind", "key", "revision", "deleted", "device_id", "payload",
     ], `journal line ${index + 1}`);
     int64String(record.seq, `journal line ${index + 1} seq`);
     int64String(record.revision, `journal line ${index + 1} revision`);
@@ -132,9 +120,8 @@ export function summarizeJournal(raw) {
     }
     if (typeof record.key !== "string" || !record.key || typeof record.deleted !== "boolean" ||
         typeof record.device_id !== "string" || !record.device_id ||
-        typeof record.key_id !== "string" || !record.key_id ||
-        typeof record.nonce !== "string" || !record.nonce ||
-        typeof record.ciphertext !== "string" || !record.ciphertext) {
+        !record.payload || typeof record.payload !== "object" ||
+        Array.isArray(record.payload)) {
       throw new Error(`journal line ${index + 1} has invalid metadata`);
     }
     if (record.kind === "passwords") {
@@ -145,7 +132,7 @@ export function summarizeJournal(raw) {
         revision: record.revision,
         deleted: record.deleted,
         device_id: record.device_id,
-        key_id: record.key_id,
+        payload_sha256: sha256(JSON.stringify(record.payload)),
       });
     }
   }
@@ -209,7 +196,7 @@ export async function captureSyncStep({runRoot, step, passwordState, journal}) {
     throw new Error(`${step} Sync metadata must be captured immediately after its public UI capture`);
   }
   const state = await readJSON(passwordState, "disposable password state");
-  const journalFile = await regularFile(journal, "disposable opaque journal");
+  const journalFile = await regularFile(journal, "disposable readable journal");
   const capture = {
     step,
     captured_at: new Date().toISOString(),
@@ -295,9 +282,9 @@ export function validateSyncAcceptance(syncRun, publicRun) {
     [saved, savedCredential], [updated, updatedCredential], [deleted, deletedCredential],
   ]) {
     const latest = latestJournalRecord(capture, credential.key);
-    if (latest.revision !== credential.revision || latest.deleted !== credential.deleted ||
-        latest.key_id !== credential.key_id) {
-      throw new Error(`${capture.step} browser state does not match the opaque journal record`);
+    if (latest.revision !== credential.revision ||
+        latest.deleted !== credential.deleted) {
+      throw new Error(`${capture.step} browser state does not match the journal record`);
     }
   }
   return {

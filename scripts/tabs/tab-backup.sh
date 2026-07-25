@@ -24,10 +24,6 @@ valid_generation() {
     [[ "$1" =~ ^[0-9]{8}T[0-9]{6}\.[0-9]{9}Z-[a-f0-9]{16}$ ]]
 }
 
-validate_recipients() {
-	tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}" >/dev/null
-}
-
 manifest_value() {
     local manifest_file=$1 manifest_key=$2
     awk -F= -v key="${manifest_key}" \
@@ -91,9 +87,9 @@ destination_namespace() {
     tab_ops_namespace "${TAB_DEST_ROOTS[index]}"
 }
 
-destination_cipher() {
+destination_archive() {
     local index=$1 generation=$2
-    printf '%s/generations/%s.tar.age\n' "$(destination_namespace "${index}")" "${generation}"
+    printf '%s/generations/%s.tar\n' "$(destination_namespace "${index}")" "${generation}"
 }
 
 destination_manifest() {
@@ -126,15 +122,14 @@ validate_snapshot() {
 }
 
 write_backup_manifest() {
-    local generation=$1 cipher=$2 snapshot_json=$3 output=$4 temporary
+    local generation=$1 archive=$2 snapshot_json=$3 output=$4 temporary
     temporary="${output}.tmp"
     {
-		printf 'schema_version=2\nsource_device=%s\nprofile=%s\nkey_id=%s\n' \
-			"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${TAB_KEY_ID}"
-		printf 'recipients_sha256=%s\n' "$(tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}")"
+		printf 'schema_version=3\nsource_device=%s\nprofile=%s\n' \
+			"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}"
         printf 'generation=%s\n' "${generation}"
-        printf 'cipher_sha256=%s\n' "$(sha256sum "${cipher}" | awk '{ print $1 }')"
-        printf 'cipher_size=%s\n' "$(stat -c %s "${cipher}")"
+        printf 'archive_sha256=%s\n' "$(sha256sum "${archive}" | awk '{ print $1 }')"
+        printf 'archive_size=%s\n' "$(stat -c %s "${archive}")"
         printf 'snapshot_manifest_sha256=%s\n' "$(sha256sum "${snapshot_json}" | awk '{ print $1 }')"
         printf 'created_at=%s\n' "$(date --iso-8601=seconds)"
     } >"${temporary}"
@@ -143,38 +138,31 @@ write_backup_manifest() {
 }
 
 verify_local_pair() {
-    local cipher=$1 backup_manifest=$2 generation=$3 expected_hash
-    [ -f "${cipher}" ] && [ -f "${backup_manifest}" ] || return 1
-	[ "$(manifest_value "${backup_manifest}" schema_version)" = 2 ] && \
+    local archive=$1 backup_manifest=$2 generation=$3 expected_hash
+    [ -f "${archive}" ] && [ -f "${backup_manifest}" ] || return 1
+	[ "$(manifest_value "${backup_manifest}" schema_version)" = 3 ] && \
         [ "$(manifest_value "${backup_manifest}" source_device)" = "${TAB_SOURCE_DEVICE}" ] && \
         [ "$(manifest_value "${backup_manifest}" profile)" = "${TAB_PROFILE}" ] && \
-		[ "$(manifest_value "${backup_manifest}" key_id)" = "${TAB_KEY_ID}" ] && \
-		[ "$(manifest_value "${backup_manifest}" recipients_sha256)" = \
-			"$(tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}")" ] && \
         [ "$(manifest_value "${backup_manifest}" generation)" = "${generation}" ] || return 1
-    expected_hash=$(manifest_value "${backup_manifest}" cipher_sha256)
+    expected_hash=$(manifest_value "${backup_manifest}" archive_sha256)
     [[ "${expected_hash}" =~ ^[a-f0-9]{64}$ ]] && \
-        [ "$(sha256sum "${cipher}" | awk '{ print $1 }')" = "${expected_hash}" ]
+        [ "$(sha256sum "${archive}" | awk '{ print $1 }')" = "${expected_hash}" ]
 }
 
-encrypt_generation() {
-    local generation=$1 snapshot_json=$2 cipher=$3 backup_manifest=$4 temporary
-    validate_recipients
-    command -v age >/dev/null || { echo "age is required before tab backups can run" >&2; return 1; }
-    temporary="${cipher}.tmp"
-    tar -C "${TAB_SNAPSHOT_STORE}/generations" -cf - "${generation}" | \
-        age --encrypt --recipients-file "${TAB_AGE_RECIPIENTS}" --output "${temporary}"
+archive_generation() {
+    local generation=$1 snapshot_json=$2 archive=$3 backup_manifest=$4 temporary
+    temporary="${archive}.tmp"
+    tar --format=pax -C "${TAB_SNAPSHOT_STORE}/generations" \
+        -cf "${temporary}" "${generation}"
     chmod 600 "${temporary}"
-    mv "${temporary}" "${cipher}"
-    write_backup_manifest "${generation}" "${cipher}" "${snapshot_json}" "${backup_manifest}"
+    mv "${temporary}" "${archive}"
+    write_backup_manifest "${generation}" "${archive}" "${snapshot_json}" "${backup_manifest}"
 }
 
 backup_preflight() {
     [ -x "${TAB_HELIUM_TABS}" ] || { echo "helium-tabs is unavailable" >&2; return 1; }
     [ -x "${TAB_EXPORTER}" ] || { echo "browser API tab exporter is unavailable" >&2; return 1; }
-    command -v age >/dev/null || { echo "age is unavailable" >&2; return 1; }
     command -v jq >/dev/null || { echo "jq is unavailable" >&2; return 1; }
-    validate_recipients
 	"${TAB_EXPORTER}" --source "${TAB_BROWSER_EXPORT}" \
 		--max-age-seconds "${TAB_BROWSER_EXPORT_MAX_AGE_SECONDS}" --check >/dev/null
     local index
@@ -188,8 +176,8 @@ backup_preflight() {
         destination_run "${index}" test -w "${destination_probe}"
 		verify_destination_storage "${index}" "${destination_probe}"
     done
-	printf 'preflight=ok\nsource_device=%s\nprofile=%s\nkey_id=%s\n' \
-		"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${TAB_KEY_ID}"
+	printf 'preflight=ok\nsource_device=%s\nprofile=%s\n' \
+		"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}"
 }
 
 copy_file_to_destination() {
@@ -199,28 +187,28 @@ copy_file_to_destination() {
 }
 
 copy_to_destination() {
-    local index=$1 generation=$2 cipher=$3 backup_manifest=$4 namespace final_cipher final_manifest
-    local incoming_cipher incoming_manifest cipher_hash manifest_hash cipher_size available
+    local index=$1 generation=$2 archive=$3 backup_manifest=$4 namespace final_archive final_manifest
+    local incoming_archive incoming_manifest archive_hash manifest_hash archive_size available
     verify_destination_host "${index}"
     namespace=$(destination_namespace "${index}")
-    final_cipher=$(destination_cipher "${index}" "${generation}")
+    final_archive=$(destination_archive "${index}" "${generation}")
     final_manifest=$(destination_manifest "${index}" "${generation}")
-    cipher_hash=$(manifest_value "${backup_manifest}" cipher_sha256)
+    archive_hash=$(manifest_value "${backup_manifest}" archive_sha256)
     manifest_hash=$(sha256sum "${backup_manifest}" | awk '{ print $1 }')
-    cipher_size=$(manifest_value "${backup_manifest}" cipher_size)
+    archive_size=$(manifest_value "${backup_manifest}" archive_size)
     destination_run "${index}" mkdir -p \
         "${namespace}/generations" "${namespace}/incoming" "${namespace}/quarantine"
 	verify_destination_storage "${index}" "${namespace}"
     available=$(destination_run "${index}" df -PB1 "${namespace}" | awk 'NR == 2 { print $4 }')
     [[ "${available}" =~ ^[0-9]+$ ]] && \
-        [ "${available}" -ge "$((cipher_size + TAB_DESTINATION_RESERVE_BYTES))" ] || {
+        [ "${available}" -ge "$((archive_size + TAB_DESTINATION_RESERVE_BYTES))" ] || {
         echo "destination ${TAB_DEST_IDS[index]} lacks its free-space reserve" >&2
         return 1
     }
 
-    if destination_exists "${index}" "${final_cipher}" || destination_exists "${index}" "${final_manifest}"; then
-        destination_exists "${index}" "${final_cipher}" && destination_exists "${index}" "${final_manifest}" && \
-            [ "$(destination_sha256 "${index}" "${final_cipher}")" = "${cipher_hash}" ] && \
+    if destination_exists "${index}" "${final_archive}" || destination_exists "${index}" "${final_manifest}"; then
+        destination_exists "${index}" "${final_archive}" && destination_exists "${index}" "${final_manifest}" && \
+            [ "$(destination_sha256 "${index}" "${final_archive}")" = "${archive_hash}" ] && \
             [ "$(destination_sha256 "${index}" "${final_manifest}")" = "${manifest_hash}" ] || {
             echo "destination has conflicting data; quarantine it explicitly before retry" >&2
             return 1
@@ -228,11 +216,11 @@ copy_to_destination() {
         return 0
     fi
 
-    incoming_cipher="${namespace}/incoming/${generation}.tar.age.$$"
+    incoming_archive="${namespace}/incoming/${generation}.tar.$$"
     incoming_manifest="${namespace}/incoming/${generation}.backup.env.$$"
-    copy_file_to_destination "${index}" "${cipher}" "${incoming_cipher}"
-    [ "$(destination_sha256 "${index}" "${incoming_cipher}")" = "${cipher_hash}" ] || {
-        echo "cipher transfer checksum mismatch" >&2
+    copy_file_to_destination "${index}" "${archive}" "${incoming_archive}"
+    [ "$(destination_sha256 "${index}" "${incoming_archive}")" = "${archive_hash}" ] || {
+        echo "archive transfer checksum mismatch" >&2
         return 1
     }
     copy_file_to_destination "${index}" "${backup_manifest}" "${incoming_manifest}"
@@ -240,24 +228,24 @@ copy_to_destination() {
         echo "manifest transfer checksum mismatch" >&2
         return 1
     }
-    destination_run "${index}" mv "${incoming_cipher}" "${final_cipher}"
+    destination_run "${index}" mv "${incoming_archive}" "${final_archive}"
     destination_run "${index}" mv "${incoming_manifest}" "${final_manifest}"
 }
 
 destination_status() {
     local index=$1 generation=$2 expected_hash=$3 expected_manifest_hash=$4
-    local cipher backup_manifest actual_hash actual_manifest_hash
+    local archive backup_manifest actual_hash actual_manifest_hash
     if ! verify_destination_host "${index}" 2>/dev/null; then
         printf 'destination=%s status=unreachable_or_wrong_host\n' "${TAB_DEST_IDS[index]}"
         return 1
     fi
-    cipher=$(destination_cipher "${index}" "${generation}")
+    archive=$(destination_archive "${index}" "${generation}")
     backup_manifest=$(destination_manifest "${index}" "${generation}")
-    if ! destination_exists "${index}" "${cipher}" || ! destination_exists "${index}" "${backup_manifest}"; then
+    if ! destination_exists "${index}" "${archive}" || ! destination_exists "${index}" "${backup_manifest}"; then
         printf 'destination=%s status=missing\n' "${TAB_DEST_IDS[index]}"
         return 1
     fi
-    actual_hash=$(destination_sha256 "${index}" "${cipher}")
+    actual_hash=$(destination_sha256 "${index}" "${archive}")
     actual_manifest_hash=$(destination_sha256 "${index}" "${backup_manifest}")
     if [ "${actual_hash}" = "${expected_hash}" ] && \
         [ "${actual_manifest_hash}" = "${expected_manifest_hash}" ]; then
@@ -273,12 +261,12 @@ status_generation() {
     [ -n "${generation}" ] || generation=$(latest_valid_generation)
     valid_generation "${generation}" || { echo "invalid generation" >&2; return 1; }
     namespace=$(tab_ops_namespace "${TAB_STATE_ROOT}")
-    backup_manifest="${namespace}/encrypted/${generation}.backup.env"
+    backup_manifest="${namespace}/archives/${generation}.backup.env"
     [ -f "${backup_manifest}" ] || {
-        printf 'generation=%s\nstatus=not_encrypted\n' "${generation}"
+        printf 'generation=%s\nstatus=no_archive\n' "${generation}"
         return 1
     }
-    expected_hash=$(manifest_value "${backup_manifest}" cipher_sha256)
+    expected_hash=$(manifest_value "${backup_manifest}" archive_sha256)
     expected_manifest_hash=$(sha256sum "${backup_manifest}" | awk '{ print $1 }')
     [[ "${expected_hash}" =~ ^[a-f0-9]{64}$ ]] || return 1
     printf 'generation=%s\n' "${generation}"
@@ -290,47 +278,47 @@ status_generation() {
 }
 
 backup_generation() {
-    local generation=${1:-} namespace cipher backup_manifest snapshot_json index
+    local generation=${1:-} namespace archive backup_manifest snapshot_json index
     [ -x "${TAB_HELIUM_TABS}" ] || { echo "helium-tabs is unavailable" >&2; return 1; }
     [ -n "${generation}" ] || generation=$(latest_valid_generation)
     valid_generation "${generation}" || { echo "invalid generation" >&2; return 1; }
     namespace=$(tab_ops_namespace "${TAB_STATE_ROOT}")
-    mkdir -p "${namespace}/encrypted" "${namespace}/tmp" "${namespace}/quarantine"
-    chmod 700 "${namespace}" "${namespace}/encrypted" "${namespace}/tmp" "${namespace}/quarantine"
+    mkdir -p "${namespace}/archives" "${namespace}/tmp" "${namespace}/quarantine"
+    chmod 700 "${namespace}" "${namespace}/archives" "${namespace}/tmp" "${namespace}/quarantine"
     exec 9>"${namespace}/backup.lock"
     flock -n 9 || { echo "another tab backup operation is active" >&2; return 1; }
     snapshot_json="${namespace}/tmp/${generation}.snapshot.json"
-    cipher="${namespace}/encrypted/${generation}.tar.age"
-    backup_manifest="${namespace}/encrypted/${generation}.backup.env"
+    archive="${namespace}/archives/${generation}.tar"
+    backup_manifest="${namespace}/archives/${generation}.backup.env"
     validate_snapshot "${generation}" "${snapshot_json}"
-    if ! verify_local_pair "${cipher}" "${backup_manifest}" "${generation}"; then
-        [ ! -e "${cipher}" ] && [ ! -e "${backup_manifest}" ] || {
-            echo "local encrypted generation is incomplete or corrupt; quarantine it explicitly" >&2
+    if ! verify_local_pair "${archive}" "${backup_manifest}" "${generation}"; then
+        [ ! -e "${archive}" ] && [ ! -e "${backup_manifest}" ] || {
+            echo "local archive generation is incomplete or corrupt; quarantine it explicitly" >&2
             return 1
         }
-        encrypt_generation "${generation}" "${snapshot_json}" "${cipher}" "${backup_manifest}"
+        archive_generation "${generation}" "${snapshot_json}" "${archive}" "${backup_manifest}"
     fi
     find "${snapshot_json}" -delete
     for index in 0 1; do
-        copy_to_destination "${index}" "${generation}" "${cipher}" "${backup_manifest}"
+        copy_to_destination "${index}" "${generation}" "${archive}" "${backup_manifest}"
     done
     status_generation "${generation}"
 }
 
 quarantine_destination() {
-    local destination_id=$1 generation=$2 reason=$3 index cipher backup_manifest namespace stamp
+    local destination_id=$1 generation=$2 reason=$3 index archive backup_manifest namespace stamp
     valid_generation "${generation}" || { echo "invalid generation" >&2; return 1; }
     tab_ops_valid_id "${reason}" || { echo "reason must be a short slug" >&2; return 1; }
     index=$(destination_index "${destination_id}")
     verify_destination_host "${index}"
-    cipher=$(destination_cipher "${index}" "${generation}")
+    archive=$(destination_archive "${index}" "${generation}")
     backup_manifest=$(destination_manifest "${index}" "${generation}")
     namespace=$(destination_namespace "${index}")
     stamp=$(date -u +%Y%m%dT%H%M%SZ)
     destination_run "${index}" mkdir -p "${namespace}/quarantine"
-    if destination_exists "${index}" "${cipher}"; then
-        destination_run "${index}" mv "${cipher}" \
-            "${namespace}/quarantine/${stamp}-${generation}-${reason}.tar.age"
+    if destination_exists "${index}" "${archive}"; then
+        destination_run "${index}" mv "${archive}" \
+            "${namespace}/quarantine/${stamp}-${generation}-${reason}.tar"
     fi
     if destination_exists "${index}" "${backup_manifest}"; then
         destination_run "${index}" mv "${backup_manifest}" \
@@ -341,23 +329,23 @@ quarantine_destination() {
 }
 
 quarantine_local_spool() {
-    local generation=$1 reason=$2 namespace cipher backup_manifest stamp moved=false
+    local generation=$1 reason=$2 namespace archive backup_manifest stamp moved=false
     valid_generation "${generation}" || { echo "invalid generation" >&2; return 1; }
     tab_ops_valid_id "${reason}" || { echo "reason must be a short slug" >&2; return 1; }
     namespace=$(tab_ops_namespace "${TAB_STATE_ROOT}")
-    cipher="${namespace}/encrypted/${generation}.tar.age"
-    backup_manifest="${namespace}/encrypted/${generation}.backup.env"
+    archive="${namespace}/archives/${generation}.tar"
+    backup_manifest="${namespace}/archives/${generation}.backup.env"
     mkdir -p "${namespace}/quarantine"
     stamp=$(date -u +%Y%m%dT%H%M%SZ)
-    if [ -e "${cipher}" ]; then
-        mv "${cipher}" "${namespace}/quarantine/${stamp}-${generation}-${reason}.tar.age"
+    if [ -e "${archive}" ]; then
+        mv "${archive}" "${namespace}/quarantine/${stamp}-${generation}-${reason}.tar"
         moved=true
     fi
     if [ -e "${backup_manifest}" ]; then
         mv "${backup_manifest}" "${namespace}/quarantine/${stamp}-${generation}-${reason}.backup.env"
         moved=true
     fi
-    [ "${moved}" = true ] || { echo "local encrypted generation is missing" >&2; return 1; }
+    [ "${moved}" = true ] || { echo "local archive generation is missing" >&2; return 1; }
     printf 'quarantined_destination=local-spool\ngeneration=%s\nreason=%s\n' \
         "${generation}" "${reason}"
 }
@@ -379,9 +367,9 @@ retention_plan() {
             "${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${plan_sha}" \
             "${store_delete_count}" "$(date --iso-8601=seconds)"
         while IFS= read -r generation; do
-            backup_manifest="${namespace}/encrypted/${generation}.backup.env"
+            backup_manifest="${namespace}/archives/${generation}.backup.env"
             [ -f "${backup_manifest}" ] || continue
-            expected_hash=$(manifest_value "${backup_manifest}" cipher_sha256)
+            expected_hash=$(manifest_value "${backup_manifest}" archive_sha256)
             expected_manifest_hash=$(sha256sum "${backup_manifest}" | awk '{ print $1 }')
             healthy=true
             for index in 0 1; do
@@ -429,8 +417,8 @@ retention_apply() {
         for index in 0 1; do
             quarantine_destination "${TAB_DEST_IDS[index]}" "${generation}" retention >/dev/null
         done
-        find "${namespace}/encrypted/${generation}.tar.age" \
-            "${namespace}/encrypted/${generation}.backup.env" -maxdepth 0 -type f -delete
+        find "${namespace}/archives/${generation}.tar" \
+            "${namespace}/archives/${generation}.backup.env" -maxdepth 0 -type f -delete
         printf 'off_device_quarantine=%s\n' "${generation}"
     done < <(awk -F= '$1 == "generation" { print $2 }' "${plan_file}")
     "${TAB_HELIUM_TABS}" retention-apply --store "${TAB_SNAPSHOT_STORE}" >/dev/null
@@ -445,18 +433,11 @@ fetch_destination_file() {
 
 restore_disposable() {
     local destination_id=$1 generation=$2 restore_destination=$3 index temporary expected_hash archive listing temp_store
-    local identity_mode restored_manifest source_receipt source_receipt_temporary
+    local restored_manifest source_receipt source_receipt_temporary
     local backup_manifest_hash restored_session_hash
     valid_generation "${generation}" || { echo "invalid generation" >&2; return 1; }
     tab_ops_require_absolute restore_destination "${restore_destination}"
     [ ! -e "${restore_destination}" ] || { echo "restore destination already exists" >&2; return 1; }
-    [ -f "${TAB_AGE_IDENTITY}" ] || { echo "age identity file is unavailable" >&2; return 1; }
-    identity_mode=$(stat -c %a "${TAB_AGE_IDENTITY}")
-    (( (8#${identity_mode} & 8#077) == 0 )) || {
-        echo "age identity file must not be accessible by group or world" >&2
-        return 1
-    }
-    command -v age >/dev/null || { echo "age is required before restore" >&2; return 1; }
     index=$(destination_index "${destination_id}")
     verify_destination_host "${index}"
     temporary=$(mktemp -d /tmp/helium-tab-restore.XXXXXX)
@@ -468,28 +449,23 @@ restore_disposable() {
         return "${result}"
     }
     trap cleanup_restore EXIT
-    fetch_destination_file "${index}" "$(destination_cipher "${index}" "${generation}")" \
-        "${temporary}/generation.tar.age"
+    fetch_destination_file "${index}" "$(destination_archive "${index}" "${generation}")" \
+        "${temporary}/generation.tar"
     fetch_destination_file "${index}" "$(destination_manifest "${index}" "${generation}")" \
         "${temporary}/generation.backup.env"
-	[ "$(manifest_value "${temporary}/generation.backup.env" schema_version)" = 2 ] && \
+	[ "$(manifest_value "${temporary}/generation.backup.env" schema_version)" = 3 ] && \
         [ "$(manifest_value "${temporary}/generation.backup.env" source_device)" = "${TAB_SOURCE_DEVICE}" ] && \
         [ "$(manifest_value "${temporary}/generation.backup.env" profile)" = "${TAB_PROFILE}" ] && \
-		[ "$(manifest_value "${temporary}/generation.backup.env" key_id)" = "${TAB_KEY_ID}" ] && \
-		[ "$(manifest_value "${temporary}/generation.backup.env" recipients_sha256)" = \
-			"$(tab_ops_recipients_fingerprint "${TAB_AGE_RECIPIENTS}")" ] && \
         [ "$(manifest_value "${temporary}/generation.backup.env" generation)" = "${generation}" ] || {
         echo "backup manifest namespace mismatch" >&2
         return 1
     }
-    expected_hash=$(manifest_value "${temporary}/generation.backup.env" cipher_sha256)
-    [ "$(sha256sum "${temporary}/generation.tar.age" | awk '{ print $1 }')" = "${expected_hash}" ] || {
-        echo "encrypted backup hash mismatch" >&2
+    expected_hash=$(manifest_value "${temporary}/generation.backup.env" archive_sha256)
+    [ "$(sha256sum "${temporary}/generation.tar" | awk '{ print $1 }')" = "${expected_hash}" ] || {
+        echo "archive backup hash mismatch" >&2
         return 1
     }
     archive="${temporary}/generation.tar"
-    age --decrypt --identity "${TAB_AGE_IDENTITY}" --output "${archive}" \
-        "${temporary}/generation.tar.age"
     listing="${temporary}/archive.list"
     tar -tf "${archive}" >"${listing}"
     awk -v generation="${generation}" '
@@ -509,7 +485,7 @@ restore_disposable() {
     "${TAB_HELIUM_TABS}" validate --store "${temp_store}" --generation "${generation}" >"${restored_manifest}"
     [ "$(jq -r '.device' "${restored_manifest}")" = "${TAB_SOURCE_DEVICE}" ] && \
         [ "$(jq -r '.profile' "${restored_manifest}")" = "${TAB_PROFILE}" ] || {
-        echo "decrypted snapshot namespace mismatch" >&2
+        echo "restored snapshot namespace mismatch" >&2
         return 1
     }
     "${TAB_HELIUM_TABS}" restore --store "${temp_store}" --generation "${generation}" \
@@ -539,7 +515,7 @@ restore_disposable() {
 		printf 'schema_version=1\nmechanism=neutral-topology\n'
 		printf 'source_device=%s\nprofile=%s\ngeneration=%s\n' \
 			"${TAB_SOURCE_DEVICE}" "${TAB_PROFILE}" "${generation}"
-		printf 'source_destination=%s\ncipher_sha256=%s\n' \
+		printf 'source_destination=%s\narchive_sha256=%s\n' \
 			"${destination_id}" "${expected_hash}"
 		printf 'backup_manifest_sha256=%s\nrestore_session_sha256=%s\n' \
 			"${backup_manifest_hash}" "${restored_session_hash}"
@@ -564,8 +540,6 @@ tab_ops_load_config "${config_file}"
 tab_ops_validate_destinations
 tab_ops_require_source_host
 tab_ops_require_ssh_material
-tab_ops_require_absolute age_recipients "${TAB_AGE_RECIPIENTS}"
-tab_ops_require_absolute age_identity "${TAB_AGE_IDENTITY}"
 
 case "${command_name}" in
     preflight) [ "$#" -eq 0 ] || exit 2; backup_preflight ;;

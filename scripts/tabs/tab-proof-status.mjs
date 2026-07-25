@@ -169,17 +169,17 @@ function emit(options) {
     if (mechanism === "neutral-topology") {
       const sessions = new Set(evidences.map(evidence =>
         evidence.value.source_binding.source_session_sha256));
-      const ciphers = new Set(evidences.map(evidence =>
-        evidence.value.source_binding.cipher_sha256));
-      if (sessions.size !== 1 || ciphers.size !== 1) {
+      const archives = new Set(evidences.map(evidence =>
+        evidence.value.source_binding.archive_sha256));
+      if (sessions.size !== 1 || archives.size !== 1) {
         fail("neutral evidence does not bind one replicated source generation");
       }
     } else {
-      const ciphers = new Set(evidences.map(evidence =>
-        evidence.value.source_binding.cipher_sha256));
+      const archives = new Set(evidences.map(evidence =>
+        evidence.value.source_binding.archive_sha256));
       const expected = new Set(evidences.map(evidence =>
         evidence.value.source_binding.expected_evidence_sha256));
-      if (ciphers.size !== 1 || expected.size !== 1) {
+      if (archives.size !== 1 || expected.size !== 1) {
         fail("full-profile replicas do not bind one source generation");
       }
     }

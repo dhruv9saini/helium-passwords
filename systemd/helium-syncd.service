@@ -1,5 +1,5 @@
 [Unit]
-Description=Helium Sync opaque ciphertext service
+Description=Helium Sync private Tailnet service
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
@@ -7,11 +7,9 @@ Wants=network-online.target
 Type=simple
 User=helium-sync
 Group=helium-sync
-EnvironmentFile=/etc/helium-sync/tls/current/endpoint.env
+EnvironmentFile=/etc/helium-sync/endpoint.env
 ExecStartPre=/usr/bin/test -s /var/lib/helium-sync/devices.json
-ExecStartPre=/usr/bin/test ! -e /etc/helium-sync/tls/current/ca-key.pem
-ExecStartPre=/usr/local/libexec/helium-sync-releases/current/helium-sync tls-server-verify --ca-cert /etc/helium-sync/tls/current/ca-cert.pem --server-cert /etc/helium-sync/tls/current/server-cert.pem --server-key /etc/helium-sync/tls/current/server-key.pem --hostname ${HELIUM_SYNC_TLS_HOSTNAME} --ip ${HELIUM_SYNC_TLS_IP} --minimum-validity 720h
-ExecStart=/usr/local/libexec/helium-sync-releases/current/helium-syncd -listen ${HELIUM_SYNC_LISTEN} -tls-cert-file /etc/helium-sync/tls/current/server-cert.pem -tls-key-file /etc/helium-sync/tls/current/server-key.pem -data-dir /var/lib/helium-sync -devices-file /var/lib/helium-sync/devices.json
+ExecStart=/usr/local/libexec/helium-sync-releases/current/helium-syncd -listen ${HELIUM_SYNC_LISTEN} -data-dir /var/lib/helium-sync -devices-file /var/lib/helium-sync/devices.json
 ExecStartPost=/usr/local/libexec/helium-sync-releases/current/helium-sync-endpoint-health
 TimeoutStartSec=30s
 Restart=on-failure
@@ -45,7 +43,7 @@ SystemCallFilter=@system-service
 StateDirectory=helium-sync
 StateDirectoryMode=0700
 ReadWritePaths=/var/lib/helium-sync
-ReadOnlyPaths=/etc/helium-sync
+ReadOnlyPaths=/etc/helium-sync/endpoint.env
 MemoryMax=256M
 MemorySwapMax=0
 TasksMax=64

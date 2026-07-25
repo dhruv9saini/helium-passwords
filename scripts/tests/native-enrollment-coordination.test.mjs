@@ -91,9 +91,7 @@ test("activation reloads immutable client identity before either bridge resumes"
     client.indexOf("bool HeliumSyncClient::ReloadEnrollmentState"),
     client.indexOf("void HeliumSyncClient::CompleteEnrollment"),
   );
-  for (const invariant of [
-    "device_id", "role", "active_key_id", "keys", "local_seal_key",
-  ]) {
+  for (const invariant of ["device_id", "role"]) {
     assert.match(reload, new RegExp(`state_\\.${invariant} != previous\\.${invariant}`));
   }
   assert.match(reload, /state_\.sequence < previous\.sequence/);

@@ -365,8 +365,8 @@ test("three runtime mechanisms emit health only from authenticated drills",
         "--reason", "runtime-proof",
       ]));
       const neutralEvidences = [];
-      const neutralCipherHash = crypto.createHash("sha256")
-        .update("one encrypted neutral generation").digest("hex");
+      const neutralArchiveHash = crypto.createHash("sha256")
+        .update("one archived neutral generation").digest("hex");
       const neutralManifestHash = crypto.createHash("sha256")
         .update("one neutral backup manifest").digest("hex");
       for (const [index, destination] of
@@ -395,7 +395,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
           "profile=default",
           `generation=${captured.generation}`,
           `source_destination=${destination}`,
-          `cipher_sha256=${neutralCipherHash}`,
+          `archive_sha256=${neutralArchiveHash}`,
           `backup_manifest_sha256=${neutralManifestHash}`,
           `restore_session_sha256=${captured.files["session.json"].sha256}`,
           "restored_at=2026-07-23T00:00:00Z",
@@ -421,8 +421,8 @@ test("three runtime mechanisms emit health only from authenticated drills",
         "--evidence-dir", neutralEvidences[1]]);
 
       const fullEvidences = [];
-      const cipherHash = crypto.createHash("sha256")
-        .update("one encrypted full-profile generation").digest("hex");
+      const archiveHash = crypto.createHash("sha256")
+        .update("one archived full-profile generation").digest("hex");
       for (const [index, destination] of
         ["nas-on-lm", "da-copy"].entries()) {
         const root = path.join(temporary, `full-root-${index}`);
@@ -434,11 +434,11 @@ test("three runtime mechanisms emit health only from authenticated drills",
         fs.chmodSync(restored, 0o700);
         writePrivate(path.join(restored,
           ".helium-profile-restore-receipt.env"), [
-          "schema_version=2",
+          "schema_version=3",
           "generation=full-profile-fixture-v1",
           "source_device=d",
           "profile_id=default",
-          `cipher_sha256=${cipherHash}`,
+          `archive_sha256=${archiveHash}`,
           `source_destination=${destination}`,
           "restored_at=2026-07-23T00:00:00Z",
           "",

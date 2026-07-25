@@ -5,9 +5,7 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <vector>
 
-#include "base/base64.h"
 #include "base/files/file_path.h"
 #include "base/files/file_util.h"
 #include "base/functional/bind.h"
@@ -23,6 +21,7 @@
 #include "components/helium_sync/helium_password_sync_bridge.h"
 #include "components/helium_sync/helium_sync_client.h"
 #include "components/keyed_service/core/service_access_type.h"
+#include "net/base/ip_address.h"
 #include "services/network/public/cpp/shared_url_loader_factory.h"
 #include "url/gurl.h"
 #include "url/url_constants.h"
@@ -85,34 +84,49 @@ ReadClientEnrollment(const base::FilePath &client_state_path) {
   std::optional<base::Value> parsed =
       base::JSONReader::Read(raw, base::JSON_PARSE_RFC);
   if (!parsed || !parsed->is_dict() ||
-      parsed->GetDict().FindInt("version").value_or(0) != 1) {
+      parsed->GetDict().FindInt("version").value_or(0) != 2) {
     return std::nullopt;
   }
   const base::DictValue &state = parsed->GetDict();
   const std::string *device_id = state.FindString("device_id");
   const std::string *role = state.FindString("role");
   const std::string *phase = state.FindString("phase");
-  const std::string *active_key_id = state.FindString("active_key_id");
-  const base::DictValue *keys = state.FindDict("keys");
+  const base::DictValue *revisions = state.FindDict("revisions");
+  const std::string *sequence = state.FindString("sequence");
+  int64_t parsed_sequence = -1;
   if (!device_id || device_id->empty() || !role ||
       (*role != "seed" && *role != "join") || !phase ||
-      (*phase != "pending" && *phase != "active") || !active_key_id ||
-      active_key_id->empty() || !keys || keys->empty() ||
-      !keys->Find(*active_key_id) || (*role == "seed" && *device_id != "d") ||
+      (*phase != "pending" && *phase != "active") || !revisions || !sequence ||
+      !base::StringToInt64(*sequence, &parsed_sequence) ||
+      parsed_sequence < 0 || (*role == "seed" && *device_id != "d") ||
       (*role == "join" && *device_id == "d")) {
     return std::nullopt;
   }
-  for (const auto [key_id, encoded] : *keys) {
-    if (key_id.empty() || !encoded.is_string()) {
-      return std::nullopt;
-    }
-    std::optional<std::vector<uint8_t>> decoded =
-        base::Base64Decode(encoded.GetString());
-    if (!decoded || decoded->size() != 32) {
+  for (const auto [identity, revision] : *revisions) {
+    int64_t parsed_revision = -1;
+    if (identity.empty() || !revision.is_string() ||
+        !base::StringToInt64(revision.GetString(), &parsed_revision) ||
+        parsed_revision < 0) {
       return std::nullopt;
     }
   }
   return ClientEnrollment{*device_id, *phase};
+}
+
+bool IsPrivateSyncEndpoint(const GURL &endpoint) {
+  if (!endpoint.is_valid() || !endpoint.SchemeIs(url::kHttpScheme) ||
+      endpoint.host().empty() || endpoint.has_username() ||
+      endpoint.has_password() || endpoint.has_query() || endpoint.has_ref() ||
+      endpoint.path_piece() != "/") {
+    return false;
+  }
+  net::IPAddress address;
+  if (!address.AssignFromIPLiteral(endpoint.host())) {
+    return false;
+  }
+  return address.IsLoopback() ||
+         (address.IsIPv4() && net::IPAddressMatchesPrefix(
+                                  address, net::IPAddress(100, 64, 0, 0), 10));
 }
 
 } // namespace
@@ -153,9 +167,7 @@ HeliumSyncService::HeliumSyncService(Profile *profile) {
   std::optional<ClientEnrollment> enrollment =
       ReadClientEnrollment(client_state_path);
   GURL base_url(base_url_value.value_or(""));
-  if (!token || !enrollment || !base_url.is_valid() ||
-      !base_url.SchemeIs(url::kHttpsScheme) || base_url.host().empty() ||
-      base_url.has_username() || base_url.has_password()) {
+  if (!token || !enrollment || !IsPrivateSyncEndpoint(base_url)) {
     LOG(WARNING) << "Helium sync inactive: profile-local enrollment config is "
                     "missing or invalid";
     AndroidStatusLog("inactive: profile-local enrollment config invalid");

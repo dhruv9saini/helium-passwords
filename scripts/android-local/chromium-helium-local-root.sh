@@ -25,11 +25,17 @@ mkdir -p "$profile"
 cleanup_stale_chromium_singletons
 if [ ! -s "$sync_config_dir/token" ] ||
   [ ! -s "$sync_config_dir/client.json" ] ||
-  [ ! -s "$sync_config_dir/base_url" ] ||
-  ! grep -Eq '^https://[^[:space:]]+$' "$sync_config_dir/base_url"; then
+  [ ! -s "$sync_config_dir/base_url" ]; then
   echo "Helium enrollment is missing or invalid in $sync_config_dir" >&2
   exit 1
 fi
+base_url=$(tr -d '\r\n' <"$sync_config_dir/base_url")
+[[ "$base_url" =~ ^http://100\.([0-9]{1,3})\.([0-9]{1,3})\.([0-9]{1,3}):44719/?$ &&
+    ${BASH_REMATCH[1]} -ge 64 && ${BASH_REMATCH[1]} -le 127 &&
+    ${BASH_REMATCH[2]} -le 255 && ${BASH_REMATCH[3]} -le 255 ]] || {
+  echo "Helium base_url must be lm's direct Tailnet HTTP endpoint" >&2
+  exit 1
+}
 
 mkdir -p /dev/shm
 chmod 1777 /dev/shm 2>/dev/null || true

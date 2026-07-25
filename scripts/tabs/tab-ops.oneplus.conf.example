@@ -1,8 +1,7 @@
 # Source-only template. The installer names it tab-ops.conf.template; review it
-# and provision public recipients/routes before creating an active config.
-version=3
+# and provision its private SSH routes before creating an active config.
+version=4
 source_device=oneplus
-key_id=oneplus-tabs-v1
 profile=default
 snapshot_store=/root/.local/share/helium-sync/tab-snapshots/oneplus-default
 state_root=/root/.local/state/helium-tab-ops
@@ -13,8 +12,6 @@ browser_export_max_age_seconds=420
 browser_version=0.14.8
 chromium_version=150.0.7871.181
 interval_seconds=900
-age_recipients=/root/.config/helium-sync/tab-backup-oneplus.recipients
-age_identity=/run/helium-offline-recovery/tab-backup-oneplus.identity
 ssh_user=d
 ssh_identity=/root/.ssh/helium_tabs_backup_ed25519
 ssh_known_hosts=/root/.ssh/helium_tabs_known_hosts

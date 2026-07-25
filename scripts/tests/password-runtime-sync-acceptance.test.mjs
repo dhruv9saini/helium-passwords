@@ -21,7 +21,6 @@ import {
 } from "../password-runtime/sync-acceptance.mjs";
 
 const credentialKey = `credential/v2/${"c".repeat(64)}`;
-const keyID = "a1b2c3d4e5f60708";
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
@@ -71,10 +70,8 @@ async function writeLinuxArtifactReceipt(root, artifact) {
 
 function state(revision, fingerprint, deleted, sequence = revision) {
   return {
-    schema_version: 4,
+    schema_version: 6,
     identity_schema: "password-form-unique-key-v2",
-    migration_status: "complete",
-    legacy_credentials: {},
     verified_sequence: String(sequence),
     credentials: {
       [credentialKey]: {
@@ -82,7 +79,6 @@ function state(revision, fingerprint, deleted, sequence = revision) {
         remote_seq: String(sequence),
         revision: String(revision),
         deleted,
-        key_id: keyID,
       },
     },
   };
@@ -96,9 +92,10 @@ function record(seq, revision, deleted) {
     revision: String(revision),
     deleted,
     device_id: "d-test",
-    key_id: keyID,
-    nonce: `nonce-${seq}`,
-    ciphertext: `ciphertext-${seq}`,
+    payload: deleted ? {} : {
+      format: "chromium-password-specifics-v1",
+      password_specifics_data_b64: `synthetic-${seq}`,
+    },
   });
 }
 
@@ -251,10 +248,8 @@ test("Sync metadata must be captured at its matching public UI step", async () =
 
 test("private metadata parsers reject plaintext-shaped or unexpected fields", async () => {
   assert.throws(() => summarizePasswordState({
-    schema_version: 4,
+    schema_version: 6,
     identity_schema: "password-form-unique-key-v2",
-    migration_status: "complete",
-    legacy_credentials: {},
     verified_sequence: "1",
     credentials: {"https://secret.example/user": {}},
   }), /invalid credential key|field inventory/);
@@ -265,9 +260,10 @@ test("private metadata parsers reject plaintext-shaped or unexpected fields", as
     revision: "1",
     deleted: false,
     device_id: "d",
-    key_id: keyID,
-    nonce: "nonce",
-    ciphertext: "ciphertext",
+    payload: {
+      format: "chromium-password-specifics-v1",
+      password_specifics_data_b64: "synthetic",
+    },
     password: "forbidden",
   })}\n`), /unexpected field inventory/);
   const source = await fsp.readFile(new URL("../password-runtime/sync-acceptance.mjs", import.meta.url), "utf8");

@@ -1,5 +1,5 @@
 [Unit]
-Description=Daily opaque Helium Sync server backup
+Description=Daily readable Helium Sync server backup
 
 [Timer]
 OnCalendar=daily

@@ -1,7 +1,6 @@
-# Paths only. Keep the private age identity outside the repository.
-version=3
+# Paths only. Transport is private SSH over the Tailnet.
+version=4
 source_device=da
-key_id=da-tabs-v1
 profile=default
 snapshot_store=/home/d/.local/share/helium-sync/tab-snapshots/da-default
 state_root=/home/d/.local/state/helium-tab-ops
@@ -12,13 +11,11 @@ browser_export_max_age_seconds=420
 browser_version=0.14.8
 chromium_version=150.0.7871.181
 interval_seconds=900
-age_recipients=/home/d/.config/helium-sync/tab-backup-da.recipients
-age_identity=/run/helium-offline-recovery/tab-backup-da.identity
 ssh_user=d
 ssh_identity=/home/d/.ssh/helium_tabs_backup_ed25519
 ssh_known_hosts=/home/d/.ssh/helium_tabs_known_hosts
 destination_reserve_bytes=1073741824
 
-# The topology is fixed: da writes ciphertext to the NAS on lm and to d.
+# The topology is fixed: da writes a checksum-bound archive to the NAS on lm and to d.
 destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-tab-backups
 destination=d-copy|device|ssh|d|d|/home/d/.local/share/helium-tab-backups

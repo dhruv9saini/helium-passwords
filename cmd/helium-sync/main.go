@@ -792,22 +792,14 @@ func validateCanonicalPasswordState(path string) error {
 	if err := json.Unmarshal(raw, &root); err != nil {
 		return err
 	}
-	var identitySchema, migrationStatus string
+	if len(root) != 4 {
+		return errors.New("password state has an unexpected field inventory")
+	}
+	var identitySchema string
 	if err := json.Unmarshal(
 		root["identity_schema"], &identitySchema); err != nil ||
 		identitySchema != "password-form-unique-key-v2" {
 		return errors.New("password identity schema is not canonical v2")
-	}
-	if err := json.Unmarshal(
-		root["migration_status"], &migrationStatus); err != nil ||
-		migrationStatus != "complete" {
-		return errors.New("password identity migration is incomplete")
-	}
-	var legacy map[string]json.RawMessage
-	if err := json.Unmarshal(
-		root["legacy_credentials"], &legacy); err != nil ||
-		len(legacy) != 0 {
-		return errors.New("password state retains legacy credentials")
 	}
 	var credentials map[string]json.RawMessage
 	if err := json.Unmarshal(
@@ -847,7 +839,7 @@ func readPasswordVerifiedSequence(path string) (int64, error) {
 	if err := validateCanonicalPasswordState(path); err != nil {
 		return 0, err
 	}
-	return readVerifiedSequence(path, 4)
+	return readVerifiedSequence(path, 6)
 }
 
 func readPasswordRevisions(
@@ -855,7 +847,7 @@ func readPasswordRevisions(
 	if err := validateCanonicalPasswordState(path); err != nil {
 		return 0, nil, err
 	}
-	return readBrowserRevisions(path, 4, "credentials", "revision")
+	return readBrowserRevisions(path, 6, "credentials", "revision")
 }
 
 func readBrowserRevisions(path string, expectedSchema int,

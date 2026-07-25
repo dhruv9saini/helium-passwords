@@ -20,11 +20,9 @@ go build -trimpath -o "$test_root/helium-sync" "$repo_root/cmd/helium-sync"
   --devices-file "$test_root/server/devices.json" \
   --bootstrap-file "$test_root/bootstrap.json" >/dev/null
 
-# Recovery recipients belong with d, never in the opaque server backup. This
-# decoy proves the backup allowlist does not silently absorb misplaced recovery
-# material from the server directory.
-printf 'age1syntheticrecipientmuststayoutsidebackup\n' \
-  >"$test_root/server/recovery-recipients.txt"
+# Client authorization material never belongs in the server backup. This decoy
+# proves the backup allowlist does not absorb a misplaced client token.
+printf 'synthetic-client-token\n' >"$test_root/server/token"
 before=$(find "$test_root/server" -type f -print0 | sort -z | \
   xargs -0 sha256sum | sha256sum | awk '{print $1}')
 
@@ -42,8 +40,8 @@ manifest=${archive%.tar.zst}.env
 after=$(find "$test_root/server" -type f -print0 | sort -z | \
   xargs -0 sha256sum | sha256sum | awk '{print $1}')
 [[ "$after" == "$before" ]]
-if tar --zstd -tf "$archive" | grep -Fq recovery-recipients.txt; then
-  echo "opaque backup included recovery-recipient material" >&2
+if tar --zstd -tf "$archive" | grep -Eq '(^|/)token$'; then
+  echo "server backup included client authorization material" >&2
   exit 1
 fi
 HELIUM_SERVER_DATA_DIR="$test_root/server" HELIUM_SERVER_SERVICE=none \

@@ -451,7 +451,7 @@ export function validateEvidence(value) {
       "source_generation",
       "source_session_sha256",
       "source_destination",
-      "cipher_sha256",
+      "archive_sha256",
       "backup_manifest_sha256",
       "source_receipt_sha256",
       "native_receipt_sha256",
@@ -464,8 +464,8 @@ export function validateEvidence(value) {
       "neutral session SHA-256");
     validSlug(value.source_binding.source_destination,
       "neutral source destination");
-    validSHA256(value.source_binding.cipher_sha256,
-      "neutral ciphertext SHA-256");
+    validSHA256(value.source_binding.archive_sha256,
+      "neutral archive SHA-256");
     validSHA256(value.source_binding.backup_manifest_sha256,
       "neutral backup manifest SHA-256");
     validSHA256(value.source_binding.source_receipt_sha256,
@@ -480,7 +480,7 @@ export function validateEvidence(value) {
     exactKeys(value.source_binding, [
       "generation",
       "source_destination",
-      "cipher_sha256",
+      "archive_sha256",
       "restore_receipt_sha256",
       "expected_evidence_sha256",
     ], "full-profile source binding");
@@ -489,8 +489,8 @@ export function validateEvidence(value) {
     }
     validSlug(value.source_binding.source_destination,
       "full-profile source destination");
-    validSHA256(value.source_binding.cipher_sha256,
-      "full-profile ciphertext SHA-256");
+    validSHA256(value.source_binding.archive_sha256,
+      "full-profile archive SHA-256");
     validSHA256(value.source_binding.restore_receipt_sha256,
       "full-profile receipt SHA-256");
     validSHA256(value.source_binding.expected_evidence_sha256,

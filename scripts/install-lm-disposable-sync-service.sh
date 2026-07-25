@@ -17,14 +17,13 @@ binary_root=$user_home/.local/share/helium-sync-disposable/bin
 state_root=$user_home/.local/state/helium-sync-disposable
 server_root=$state_root/server
 config_root=$state_root/config
-tls_root=$state_root/tls
 endpoint_env=$config_root/endpoint.env
 unit_root=$user_home/.config/systemd/user
 backup_root=/srv/nas/helium-sync-server-disposable
 sync_cli=$binary_root/helium-sync
 service=helium-syncd-disposable.service
 backup_timer=helium-sync-server-backup-disposable.timer
-tls_port=44719
+sync_port=44719
 
 case "$action" in
   install-source|install-endpoint|initialize|backup-drill|enroll-device|revoke-device|enable|disable)
@@ -60,29 +59,14 @@ verify_user_manager() {
 tailscale_identity() {
   local status
   status=$(tailscale status --json)
-  jq -e '
-    .BackendState == "Running" and .Self.Online == true and
-    (.Self.DNSName | type == "string" and endswith(".ts.net.")) and
-    ([.Self.TailscaleIPs[] | select(test("^[0-9]+\\."))] | length == 1)
-  ' <<<"$status" >/dev/null || {
-    echo "lm must have one online Tailscale IPv4 identity and a .ts.net name" >&2
-    return 1
-  }
-  tls_hostname=$(jq -er '.Self.DNSName | rtrimstr(".")' <<<"$status")
-  tls_ip=$(jq -er '[.Self.TailscaleIPs[] | select(test("^[0-9]+\\."))][0]' <<<"$status")
-}
-
-verify_no_tailscale_proxy() {
-  jq -e 'type == "object" and length == 0' \
-    <<<"$(tailscale serve status --json)" >/dev/null || {
-    echo "Tailscale Serve must remain empty for direct TLS" >&2
-    return 1
-  }
-  jq -e 'type == "object" and length == 0' \
-    <<<"$(tailscale funnel status --json)" >/dev/null || {
-    echo "Tailscale Funnel must remain empty for Helium Sync" >&2
-    return 1
-  }
+  sync_ip=$(jq -er '
+    if .BackendState == "Running" and .Self.Online == true then
+      [.Self.TailscaleIPs[] | select(test("^100\\."))] |
+      if length == 1 then .[0] else error("expected one Tailscale IPv4") end
+    else error("Tailscale is not online")
+    end
+  ' <<<"$status")
+  sync_listen=$sync_ip:$sync_port
 }
 
 read_endpoint_config() {
@@ -91,63 +75,32 @@ read_endpoint_config() {
     return 1
   }
   mapfile -t endpoint_lines <"$endpoint_env"
-  [[ ${#endpoint_lines[@]} -eq 3 ]] || {
-    echo "endpoint configuration must contain exactly three lines" >&2
+  [[ ${#endpoint_lines[@]} -eq 1 &&
+      "${endpoint_lines[0]}" == HELIUM_SYNC_LISTEN=* ]] || {
+    echo "endpoint configuration must contain only HELIUM_SYNC_LISTEN" >&2
     return 1
   }
   configured_listen=${endpoint_lines[0]#HELIUM_SYNC_LISTEN=}
-  configured_hostname=${endpoint_lines[1]#HELIUM_SYNC_TLS_HOSTNAME=}
-  configured_ip=${endpoint_lines[2]#HELIUM_SYNC_TLS_IP=}
-  [[ "${endpoint_lines[0]}" == "HELIUM_SYNC_LISTEN=$configured_listen" &&
-      "${endpoint_lines[1]}" == "HELIUM_SYNC_TLS_HOSTNAME=$configured_hostname" &&
-      "${endpoint_lines[2]}" == "HELIUM_SYNC_TLS_IP=$configured_ip" ]] || {
-    echo "endpoint configuration keys or order are invalid" >&2
-    return 1
-  }
 }
 
 verify_endpoint() {
   require_synthetic_marker
   verify_user_manager
   tailscale_identity
-  verify_no_tailscale_proxy
   read_endpoint_config
-  [[ "$configured_listen" == "$tls_ip:$tls_port" &&
-      "$configured_hostname" == "$tls_hostname" &&
-      "$configured_ip" == "$tls_ip" ]] || {
-    echo "installed endpoint identity does not match lm's live Tailscale identity" >&2
+  [[ "$configured_listen" == "$sync_listen" ]] || {
+    echo "installed endpoint does not match lm's live Tailscale IPv4" >&2
     return 1
   }
-  [[ -L "$tls_root/current" ]] || {
-    echo "current disposable TLS generation is missing" >&2
-    return 1
-  }
-  current_target=$(readlink "$tls_root/current")
-  [[ "$current_target" =~ ^generations/[0-9a-f]{64}$ ]] || {
-    echo "current disposable TLS generation link is invalid" >&2
-    return 1
-  }
-  [[ ! -e "$tls_root/current/ca-key.pem" ]] || {
-    echo "CA private key must not be present on lm" >&2
-    return 1
-  }
-  "$sync_cli" tls-server-verify \
-    --ca-cert "$tls_root/current/ca-cert.pem" \
-    --server-cert "$tls_root/current/server-cert.pem" \
-    --server-key "$tls_root/current/server-key.pem" \
-    --hostname "$tls_hostname" --ip "$tls_ip" --minimum-validity 720h
 }
 
 verify_live_endpoint() {
   tailscale_identity
   local response
   response=$(curl --fail --silent --show-error --max-time 10 \
-    --noproxy '*' --tlsv1.3 --tls-max 1.3 \
-    --cacert "$tls_root/current/ca-cert.pem" \
-    --resolve "$tls_hostname:$tls_port:$tls_ip" \
-    "https://$tls_hostname:$tls_port/v2/health")
+    --noproxy '*' "http://$sync_listen/v2/health")
   jq -e '.ok == true and length == 1' <<<"$response" >/dev/null || {
-    echo "direct TLS health response is invalid" >&2
+    echo "private Tailnet health response is invalid" >&2
     return 1
   }
 }
@@ -183,7 +136,9 @@ perform_backup_drill() (
   target="/tmp/helium-sync-restore.disposable.$(date +%s).$$"
   cleanup_restore() {
     case "$target" in
-      /tmp/helium-sync-restore.disposable.*) [ ! -e "$target" ] || find "$target" -depth -delete ;;
+      /tmp/helium-sync-restore.disposable.*)
+        [[ ! -e "$target" ]] || find "$target" -depth -delete
+        ;;
     esac
   }
   trap cleanup_restore EXIT
@@ -235,8 +190,9 @@ perform_registry_update() (
 
 case "$action" in
   install-source)
+    [[ $# -eq 1 ]] || exit 2
     verify_user_manager
-    systemctl --user is-active --quiet "$service" && {
+    ! systemctl --user is-active --quiet "$service" || {
       echo "refusing source install while $service is active" >&2
       exit 1
     }
@@ -245,8 +201,7 @@ case "$action" in
     trap cleanup_install EXIT
     go build -trimpath -o "$temp_dir/helium-syncd" "$repo_root/cmd/helium-syncd"
     go build -trimpath -o "$temp_dir/helium-sync" "$repo_root/cmd/helium-sync"
-    install -d -m0700 "$binary_root" "$state_root" "$config_root" \
-      "$tls_root/generations" "$unit_root"
+    install -d -m0700 "$binary_root" "$state_root" "$config_root" "$unit_root"
     marker_temp=$state_root/.SYNTHETIC_ONLY.incoming
     (umask 077; printf 'synthetic-only-v1\n' >"$marker_temp")
     mv "$marker_temp" "$state_root/SYNTHETIC_ONLY"
@@ -266,62 +221,29 @@ case "$action" in
     echo "disposable_source_installed=inactive"
     ;;
   install-endpoint)
-    [[ $# -eq 4 ]] || {
-      echo "usage: $0 install-endpoint CA_CERT SERVER_CERT SERVER_KEY" >&2
+    [[ $# -eq 1 ]] || {
+      echo "usage: $0 install-endpoint" >&2
       exit 2
     }
     require_synthetic_marker
-    ca_source=$(realpath -e "$2")
-    cert_source=$(realpath -e "$3")
-    key_source=$(realpath -e "$4")
     tailscale_identity
-    verify_no_tailscale_proxy
-    systemctl --user is-active --quiet "$service" && {
+    ! systemctl --user is-active --quiet "$service" || {
       echo "refusing endpoint install while $service is active" >&2
       exit 1
     }
-    "$sync_cli" tls-server-verify --ca-cert "$ca_source" \
-      --server-cert "$cert_source" --server-key "$key_source" \
-      --hostname "$tls_hostname" --ip "$tls_ip" --minimum-validity 720h >/dev/null
-    generation=$(sha256sum "$cert_source" | awk '{print $1}')
-    [[ "$generation" =~ ^[0-9a-f]{64}$ ]]
-    final_generation=$tls_root/generations/$generation
-    [[ ! -e "$final_generation" ]] || {
-      echo "refusing to replace disposable TLS generation: $final_generation" >&2
-      exit 1
-    }
-    incoming=$(mktemp -d "$tls_root/generations/.incoming.XXXXXX")
+    install -d -m0700 "$config_root"
     endpoint_temp=$(mktemp "$config_root/.endpoint.XXXXXX")
-    cleanup_endpoint() {
-      [[ ! -e "$endpoint_temp" ]] || find "$endpoint_temp" -delete
-      [[ -z "${incoming:-}" || ! -e "$incoming" ]] || find "$incoming" -depth -delete
-    }
-    trap cleanup_endpoint EXIT
-    chmod 0700 "$incoming"
-    install -m0644 "$ca_source" "$incoming/ca-cert.pem"
-    install -m0644 "$cert_source" "$incoming/server-cert.pem"
-    install -m0600 "$key_source" "$incoming/server-key.pem"
-    "$sync_cli" tls-server-verify --ca-cert "$incoming/ca-cert.pem" \
-      --server-cert "$incoming/server-cert.pem" --server-key "$incoming/server-key.pem" \
-      --hostname "$tls_hostname" --ip "$tls_ip" --minimum-validity 720h >/dev/null
-    sync "$incoming/ca-cert.pem" "$incoming/server-cert.pem" "$incoming/server-key.pem"
-    mv "$incoming" "$final_generation"
-    incoming=
-    printf 'HELIUM_SYNC_LISTEN=%s:%s\nHELIUM_SYNC_TLS_HOSTNAME=%s\nHELIUM_SYNC_TLS_IP=%s\n' \
-      "$tls_ip" "$tls_port" "$tls_hostname" "$tls_ip" >"$endpoint_temp"
+    printf 'HELIUM_SYNC_LISTEN=%s\n' "$sync_listen" >"$endpoint_temp"
     chmod 0600 "$endpoint_temp"
     mv "$endpoint_temp" "$endpoint_env"
-    current_incoming=$tls_root/.current.$$
-    ln -s "generations/$generation" "$current_incoming"
-    mv -Tf "$current_incoming" "$tls_root/current"
-    sync "$tls_root" "$config_root"
-    trap - EXIT
+    sync "$config_root"
     verify_endpoint >/dev/null
-    echo "disposable_endpoint_installed=inactive"
+    printf 'disposable_endpoint_installed=inactive\nendpoint_url=http://%s\n' \
+      "$sync_listen"
     ;;
   initialize)
     bootstrap=${2:-}
-    [[ -f "$bootstrap" ]] || {
+    [[ $# -eq 2 && -f "$bootstrap" ]] || {
       echo "usage: $0 initialize SYNTHETIC_BOOTSTRAP" >&2
       exit 2
     }
@@ -360,12 +282,12 @@ case "$action" in
     ;;
   verify-endpoint)
     verify_endpoint
-    echo "disposable_direct_tls_endpoint=verified"
+    echo "disposable_tailnet_endpoint=verified"
     ;;
   verify-live-endpoint)
     verify_endpoint >/dev/null
     verify_live_endpoint
-    echo "disposable_direct_tls_endpoint=live"
+    echo "disposable_tailnet_endpoint=live"
     ;;
   enable)
     require_synthetic_marker
@@ -373,12 +295,13 @@ case "$action" in
       echo "synthetic server registry is not initialized" >&2
       exit 1
     }
-    systemctl is-active --quiet helium-syncd.service && {
+    ! systemctl is-active --quiet helium-syncd.service || {
       echo "root-owned helium-syncd.service is already active" >&2
       exit 1
     }
-    ss -ltnH "( sport = :$tls_port )" | grep -q . && {
-      echo "port $tls_port already has a listener" >&2
+    tailscale_identity
+    ! ss -ltnH "( sport = :$sync_port )" | grep -q . || {
+      echo "port $sync_port already has a listener" >&2
       exit 1
     }
     verify_endpoint >/dev/null
@@ -386,7 +309,7 @@ case "$action" in
     systemctl --user enable --now "$service"
     if ! wait_live_endpoint; then
       systemctl --user disable --now "$service"
-      echo "disposable service stopped because its TLS health gate failed" >&2
+      echo "disposable service stopped because its Tailnet health gate failed" >&2
       exit 1
     fi
     systemctl --user enable --now "$backup_timer"
@@ -403,7 +326,7 @@ case "$action" in
     verify_live_endpoint
     ;;
   *)
-    echo "usage: $0 <install-source|install-endpoint CA CERT KEY|initialize BOOTSTRAP|backup-drill|enroll-device AUTH_REQUEST|revoke-device DEVICE|verify-endpoint|verify-live-endpoint|enable|disable|status>" >&2
+    echo "usage: $0 <install-source|install-endpoint|initialize BOOTSTRAP|backup-drill|enroll-device AUTH_REQUEST|revoke-device DEVICE|verify-endpoint|verify-live-endpoint|enable|disable|status>" >&2
     exit 2
     ;;
 esac
