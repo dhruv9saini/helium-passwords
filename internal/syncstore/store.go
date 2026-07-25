@@ -15,14 +15,14 @@ import (
 
 const recordsFile = "records.jsonl"
 
-const maxOpaqueMutationBytes = 1024 * 1024
+const maxMutationBytes = 1024 * 1024
 
 type Store struct {
 	mu           sync.Mutex
 	dataDir      string
 	recordsPath  string
 	snapshotDir  string
-	records      []OpaqueRecord
+	records      []Record
 	nextSeq      Counter
 	seqExhausted bool
 }
@@ -52,7 +52,7 @@ func OpenStore(dataDir string) (*Store, error) {
 	return store, nil
 }
 
-// VerifyStore validates an existing opaque journal without creating files,
+// VerifyStore validates an existing journal without creating files,
 // recovering from snapshots, or writing a new checkpoint. Operator backup and
 // restore gates use this path so verification cannot mutate the state being
 // admitted or archived.
@@ -105,7 +105,7 @@ func (store *Store) loadRecords() error {
 		if text == "" {
 			continue
 		}
-		var record OpaqueRecord
+		var record Record
 		if err := strictDecode([]byte(text), &record); err != nil {
 			return fmt.Errorf("parse records line %d: %w", line, err)
 		}
@@ -139,7 +139,8 @@ func (store *Store) loadRecords() error {
 // Put applies a batch atomically after checking every expected revision. The
 // authenticated server principal supplies deviceID; it is never read from the
 // request body.
-func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mutations []OpaqueMutation) (PushResponse, error) {
+func (store *Store) Put(
+	deviceID string, mutations []Mutation) (PushResponse, error) {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 
@@ -147,7 +148,7 @@ func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mut
 		return PushResponse{}, errors.New("authenticated device id is required")
 	}
 	if len(mutations) == 0 {
-		return PushResponse{Records: []OpaqueRecord{}, NextSeq: store.cursorLocked()}, nil
+		return PushResponse{Records: []Record{}, NextSeq: store.cursorLocked()}, nil
 	}
 	if !hasSequenceCapacity(store.nextSeq, store.seqExhausted, len(mutations)) {
 		return PushResponse{}, errors.New("sequence space exhausted")
@@ -165,11 +166,9 @@ func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mut
 		if err != nil {
 			return PushResponse{}, err
 		}
-		if len(raw) > maxOpaqueMutationBytes {
-			return PushResponse{}, fmt.Errorf("opaque mutation exceeds %d-byte limit", maxOpaqueMutationBytes)
-		}
-		if _, accepted := acceptedKeyIDs[mutation.KeyID]; !accepted {
-			return PushResponse{}, fmt.Errorf("key_id %q is not write-active", mutation.KeyID)
+		if len(raw) > maxMutationBytes {
+			return PushResponse{}, fmt.Errorf(
+				"mutation exceeds %d-byte limit", maxMutationBytes)
 		}
 		identity := recordIdentity(mutation.Kind, mutation.Key)
 		if _, duplicate := seen[identity]; duplicate {
@@ -188,14 +187,14 @@ func (store *Store) Put(deviceID string, acceptedKeyIDs map[string]struct{}, mut
 		}
 	}
 
-	pending := make([]OpaqueRecord, 0, len(mutations))
+	pending := make([]Record, 0, len(mutations))
 	var encoded []byte
 	for _, mutation := range mutations {
-		record := OpaqueRecord{
+		record := Record{
 			Seq: store.nextSeq + Counter(len(pending)), Kind: mutation.Kind,
 			Key: mutation.Key, Revision: mutation.ExpectedRevision + 1,
-			Deleted: mutation.Deleted, DeviceID: deviceID, KeyID: mutation.KeyID,
-			Nonce: mutation.Nonce, Ciphertext: mutation.Ciphertext,
+			Deleted: mutation.Deleted, DeviceID: deviceID,
+			Payload: append(json.RawMessage(nil), mutation.Payload...),
 		}
 		raw, err := json.Marshal(record)
 		if err != nil {

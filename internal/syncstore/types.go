@@ -2,7 +2,6 @@ package syncstore
 
 import (
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,8 +11,7 @@ import (
 )
 
 // Counter is encoded as a decimal JSON string. Chromium's base::Value only
-// represents JSON integers up to 32 bits, so using a number would silently lose
-// precision before the int64 sequence space is exhausted.
+// represents JSON integers exactly up to 32 bits.
 type Counter int64
 
 func (counter Counter) MarshalJSON() ([]byte, error) {
@@ -68,8 +66,6 @@ func ParseKinds(values []string) (map[Kind]struct{}, error) {
 	return kinds, nil
 }
 
-// PlainMutation and PlainRecord exist only on an authenticated client. They
-// must never be accepted or returned by the server HTTP API.
 type PlainMutation struct {
 	Kind    Kind
 	Key     string
@@ -78,72 +74,68 @@ type PlainMutation struct {
 }
 
 type PlainRecord struct {
-	Seq      Counter
-	Kind     Kind
-	Key      string
-	Revision Counter
-	Deleted  bool
-	DeviceID string
-	KeyID    string
-	Payload  json.RawMessage
+	Seq      Counter         `json:"seq"`
+	Kind     Kind            `json:"kind"`
+	Key      string          `json:"key"`
+	Revision Counter         `json:"revision"`
+	Deleted  bool            `json:"deleted"`
+	DeviceID string          `json:"device_id"`
+	Payload  json.RawMessage `json:"payload"`
 }
 
 type PlainPullResponse struct {
-	Records []PlainRecord
-	NextSeq Counter
+	Records []PlainRecord `json:"records"`
+	NextSeq Counter       `json:"next_seq"`
 }
 
-// OpaqueMutation is the complete server write surface. Ciphertext is an
-// AES-256-GCM payload authenticated against all of the visible metadata.
-type OpaqueMutation struct {
-	Kind             Kind    `json:"kind"`
-	Key              string  `json:"key"`
-	ExpectedRevision Counter `json:"expected_revision"`
-	Deleted          bool    `json:"deleted"`
-	KeyID            string  `json:"key_id"`
-	Nonce            string  `json:"nonce"`
-	Ciphertext       string  `json:"ciphertext"`
+// Mutation and Record are the complete authenticated Tailnet wire format.
+// Payload remains readable on the privately permissioned server.
+type Mutation struct {
+	Kind             Kind            `json:"kind"`
+	Key              string          `json:"key"`
+	ExpectedRevision Counter         `json:"expected_revision"`
+	Deleted          bool            `json:"deleted"`
+	Payload          json.RawMessage `json:"payload"`
 }
 
-type OpaqueRecord struct {
-	Seq        Counter `json:"seq"`
-	Kind       Kind    `json:"kind"`
-	Key        string  `json:"key"`
-	Revision   Counter `json:"revision"`
-	Deleted    bool    `json:"deleted"`
-	DeviceID   string  `json:"device_id"`
-	KeyID      string  `json:"key_id"`
-	Nonce      string  `json:"nonce"`
-	Ciphertext string  `json:"ciphertext"`
+type Record struct {
+	Seq      Counter         `json:"seq"`
+	Kind     Kind            `json:"kind"`
+	Key      string          `json:"key"`
+	Revision Counter         `json:"revision"`
+	Deleted  bool            `json:"deleted"`
+	DeviceID string          `json:"device_id"`
+	Payload  json.RawMessage `json:"payload"`
 }
 
 type PushRequest struct {
-	Mutations []OpaqueMutation `json:"mutations"`
+	Mutations []Mutation `json:"mutations"`
 }
 
 type PushResponse struct {
-	Records []OpaqueRecord `json:"records"`
-	NextSeq Counter        `json:"next_seq"`
+	Records []Record `json:"records"`
+	NextSeq Counter  `json:"next_seq"`
 }
 
 type PullResponse struct {
-	PageVersion int            `json:"page_version"`
-	PageCursor  string         `json:"page_cursor"`
-	Records     []OpaqueRecord `json:"records"`
-	NextSeq     Counter        `json:"next_seq"`
+	PageVersion int      `json:"page_version"`
+	PageCursor  string   `json:"page_cursor"`
+	Records     []Record `json:"records"`
+	NextSeq     Counter  `json:"next_seq"`
 }
 
 func (response *PullResponse) UnmarshalJSON(raw []byte) error {
 	var wire struct {
-		PageVersion *int            `json:"page_version"`
-		PageCursor  *string         `json:"page_cursor"`
-		Records     *[]OpaqueRecord `json:"records"`
-		NextSeq     *Counter        `json:"next_seq"`
+		PageVersion *int      `json:"page_version"`
+		PageCursor  *string   `json:"page_cursor"`
+		Records     *[]Record `json:"records"`
+		NextSeq     *Counter  `json:"next_seq"`
 	}
 	if err := strictDecode(raw, &wire); err != nil {
 		return err
 	}
-	if wire.PageVersion == nil || wire.PageCursor == nil || wire.Records == nil || wire.NextSeq == nil {
+	if wire.PageVersion == nil || wire.PageCursor == nil ||
+		wire.Records == nil || wire.NextSeq == nil {
 		return errors.New("page response is missing a required field")
 	}
 	response.PageVersion = *wire.PageVersion
@@ -151,27 +143,6 @@ func (response *PullResponse) UnmarshalJSON(raw []byte) error {
 	response.Records = *wire.Records
 	response.NextSeq = *wire.NextSeq
 	return nil
-}
-
-type KeyTransitionRequest struct {
-	ExpectedKeyID string `json:"expected_key_id"`
-	NewKeyID      string `json:"new_key_id"`
-}
-
-type KeyTransitionResponse struct {
-	ActiveKeyID   string `json:"active_key_id"`
-	StagedKeyID   string `json:"staged_key_id"`
-	RetiringKeyID string `json:"retiring_key_id"`
-}
-
-type KeyAcknowledgementRequest struct {
-	KeyID           string  `json:"key_id"`
-	AcknowledgedSeq Counter `json:"acknowledged_seq"`
-}
-
-type KeyRetirementRequest struct {
-	ActiveKeyID   string `json:"active_key_id"`
-	RetiringKeyID string `json:"retiring_key_id"`
 }
 
 type CredentialStageRequest struct {
@@ -198,23 +169,23 @@ func (err *ConflictError) Error() string {
 		err.Kind, err.Key, err.Expected, err.CurrentRevision)
 }
 
-func (mutation OpaqueMutation) validate() error {
+func (mutation Mutation) validate() error {
 	if _, ok := allKinds[mutation.Kind]; !ok {
 		return fmt.Errorf("unknown record kind %q", mutation.Kind)
 	}
 	if strings.TrimSpace(mutation.Key) == "" {
 		return errors.New("record key is required")
 	}
-	if strings.TrimSpace(mutation.KeyID) == "" {
-		return errors.New("key_id is required")
+	if mutation.ExpectedRevision < 0 {
+		return errors.New("expected revision must be non-negative")
 	}
-	if err := validateEncodedCiphertext(mutation.Nonce, mutation.Ciphertext); err != nil {
-		return err
+	if !json.Valid(mutation.Payload) {
+		return errors.New("payload must be valid JSON")
 	}
 	return nil
 }
 
-func (record OpaqueRecord) validate() error {
+func (record Record) validate() error {
 	if record.Seq <= 0 {
 		return errors.New("seq must be positive")
 	}
@@ -224,25 +195,13 @@ func (record OpaqueRecord) validate() error {
 	if strings.TrimSpace(record.DeviceID) == "" {
 		return errors.New("device_id is required")
 	}
-	return OpaqueMutation{
-		Kind: record.Kind, Key: record.Key, KeyID: record.KeyID,
-		Nonce: record.Nonce, Ciphertext: record.Ciphertext,
+	return Mutation{
+		Kind: record.Kind, Key: record.Key, Deleted: record.Deleted,
+		Payload: record.Payload,
 	}.validate()
 }
 
-func validateEncodedCiphertext(encodedNonce, encodedCiphertext string) error {
-	nonce, err := base64.StdEncoding.DecodeString(encodedNonce)
-	if err != nil || len(nonce) != clientNonceLength {
-		return fmt.Errorf("nonce must be raw-base64 encoded %d bytes", clientNonceLength)
-	}
-	ciphertext, err := base64.StdEncoding.DecodeString(encodedCiphertext)
-	if err != nil || len(ciphertext) < 16 {
-		return errors.New("ciphertext must be raw-base64 encoded authenticated data")
-	}
-	return nil
-}
-
-func (record OpaqueRecord) matches(kinds map[Kind]struct{}) bool {
+func (record Record) matches(kinds map[Kind]struct{}) bool {
 	if len(kinds) == 0 {
 		return true
 	}

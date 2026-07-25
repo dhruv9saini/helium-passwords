@@ -27,9 +27,9 @@ func TestVerifyResponseMatchesAuthenticatedMetadataAndPayloadHash(t *testing.T) 
 	}}}
 	response := syncstore.PlainPullResponse{NextSeq: 4, Records: []syncstore.PlainRecord{{
 		Seq: 4, Kind: syncstore.KindCookie, Key: "fixture-key", Revision: 2,
-		DeviceID: "da-fixture", KeyID: "key-fixture", Payload: payload,
+		DeviceID: "da-fixture", Payload: payload,
 	}}}
-	receipt, err := verifyResponse(response, expected, "key-fixture")
+	receipt, err := verifyResponse(response, expected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,12 +39,12 @@ func TestVerifyResponseMatchesAuthenticatedMetadataAndPayloadHash(t *testing.T) 
 	}
 
 	response.Records[0].Payload = json.RawMessage(`{"cookies":[]}`)
-	if _, err := verifyResponse(response, expected, "key-fixture"); err == nil {
+	if _, err := verifyResponse(response, expected); err == nil {
 		t.Fatal("payload substitution passed synthetic readback")
 	}
 	response.Records[0].Payload = payload
 	response.Records[0].DeviceID = "oneplus-fixture"
-	if _, err := verifyResponse(response, expected, "key-fixture"); err == nil {
+	if _, err := verifyResponse(response, expected); err == nil {
 		t.Fatal("source substitution passed synthetic readback")
 	}
 }
@@ -75,7 +75,7 @@ func TestExpectedInventoryAcceptsBothKindsAndRejectsUnknownAndDuplicateRecords(t
 func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testing.T) {
 	root := t.TempDir()
 	seedPath := filepath.Join(root, "d.json")
-	seed, err := syncstore.CreateSeedState(seedPath)
+	_, err := syncstore.CreateSeedState(seedPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testin
 		t.Fatal(err)
 	}
 	registry, err := syncstore.CreateDeviceRegistry(
-		filepath.Join(root, "server", "devices.json"), testSeedToken, seed.ActiveKeyID)
+		filepath.Join(root, "server", "devices.json"), testSeedToken)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,18 +126,8 @@ func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testin
 
 	join := func(device, token string) string {
 		t.Helper()
-		pendingPath := filepath.Join(root, device+".pending.json")
-		request, err := syncstore.CreateJoinRequest(pendingPath, device, seed.SeedSigningPublicKey())
-		if err != nil {
-			t.Fatal(err)
-		}
-		wrapped, err := seed.WrapEnrollment(request)
-		if err != nil {
-			t.Fatal(err)
-		}
 		statePath := filepath.Join(root, device+".json")
-		if _, err := syncstore.CompleteJoinState(
-			statePath, pendingPath, wrapped, []string{seed.ActiveKeyID}); err != nil {
+		if _, err := syncstore.CreateJoinState(statePath, device); err != nil {
 			t.Fatal(err)
 		}
 		if err := registry.EnrollPullOnly(device, token); err != nil {

@@ -7,8 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -23,6 +23,8 @@ const (
 	maxClientPullRecords   = clientPageRecords * maxClientPullPages
 	maxClientPullBytes     = 128 * 1024 * 1024
 )
+
+var tailnetIPv4 = netip.MustParsePrefix("100.64.0.0/10")
 
 type Client struct {
 	mu      sync.Mutex
@@ -43,17 +45,26 @@ type ProtocolError struct {
 
 func (err *ProtocolError) Error() string {
 	if err.Code == "revision_conflict" {
-		return fmt.Sprintf("%s: %s (current revision %d)", http.StatusText(err.StatusCode), err.Message, err.CurrentRevision)
+		return fmt.Sprintf("%s: %s (current revision %d)",
+			http.StatusText(err.StatusCode), err.Message, err.CurrentRevision)
 	}
 	return fmt.Sprintf("%s: %s", http.StatusText(err.StatusCode), err.Message)
 }
 
 func NewClient(baseURL, token, statePath string) (*Client, error) {
 	parsedURL, err := url.Parse(baseURL)
-	if err != nil || parsedURL.Host == "" || parsedURL.User != nil ||
-		(parsedURL.Scheme != "https" &&
-			!(parsedURL.Scheme == "http" && isLoopbackHost(parsedURL.Hostname()))) {
-		return nil, errors.New("base URL must be HTTPS or loopback HTTP without user info")
+	if err != nil || parsedURL.Scheme != "http" || parsedURL.Host == "" ||
+		parsedURL.User != nil || parsedURL.RawQuery != "" ||
+		parsedURL.Fragment != "" ||
+		(parsedURL.Path != "" && parsedURL.Path != "/") {
+		return nil, errors.New(
+			"base URL must be an HTTP origin without credentials, query, or path")
+	}
+	address, err := netip.ParseAddr(parsedURL.Hostname())
+	if err != nil || !(address.IsLoopback() ||
+		(address.Is4() && tailnetIPv4.Contains(address))) {
+		return nil, errors.New(
+			"base URL must use an exact loopback or Tailscale IPv4 address")
 	}
 	if err := validateToken(token); err != nil {
 		return nil, err
@@ -68,96 +79,95 @@ func NewClient(baseURL, token, statePath string) (*Client, error) {
 	}, nil
 }
 
-func isLoopbackHost(host string) bool {
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	address := net.ParseIP(host)
-	return address != nil && address.IsLoopback()
-}
-
-// Push encrypts local mutations and accepts only server-returned, authenticated
-// mutation results. An empty mutation set is a local no-op and performs no HTTP.
-func (client *Client) Push(ctx context.Context, mutations []PlainMutation) (PlainPullResponse, error) {
+func (client *Client) Push(
+	ctx context.Context, mutations []PlainMutation) (PlainPullResponse, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	return client.pushLocked(ctx, mutations)
-}
-
-func (client *Client) pushLocked(ctx context.Context, mutations []PlainMutation) (PlainPullResponse, error) {
 	if len(mutations) == 0 {
-		return PlainPullResponse{Records: []PlainRecord{}, NextSeq: client.state.Sequence}, nil
+		return PlainPullResponse{
+			Records: []PlainRecord{}, NextSeq: client.state.Sequence,
+		}, nil
 	}
 	if client.state.Phase != PhaseActive {
-		return PlainPullResponse{}, errors.New("pending join device cannot publish before verified enrollment")
+		return PlainPullResponse{}, errors.New(
+			"pending join device cannot publish before verified enrollment")
 	}
-	activeKey, err := client.state.decodedKey(client.state.ActiveKeyID)
-	if err != nil {
-		return PlainPullResponse{}, err
-	}
-	opaque := make([]OpaqueMutation, 0, len(mutations))
+	wire := make([]Mutation, 0, len(mutations))
 	seen := make(map[string]struct{}, len(mutations))
 	for _, mutation := range mutations {
 		identity := recordIdentity(mutation.Kind, mutation.Key)
 		if _, duplicate := seen[identity]; duplicate {
-			return PlainPullResponse{}, fmt.Errorf("duplicate mutation for %s/%s", mutation.Kind, mutation.Key)
+			return PlainPullResponse{}, fmt.Errorf(
+				"duplicate mutation for %s/%s", mutation.Kind, mutation.Key)
 		}
 		seen[identity] = struct{}{}
-		revision := client.state.revision(mutation.Kind, mutation.Key) + 1
-		encrypted, err := encryptClientPayload(activeKey, client.state.DeviceID, client.state.ActiveKeyID, mutation, revision)
-		if err != nil {
+		item := Mutation{
+			Kind: mutation.Kind, Key: mutation.Key,
+			ExpectedRevision: client.state.revision(
+				mutation.Kind, mutation.Key),
+			Deleted: mutation.Deleted,
+			Payload: append(json.RawMessage(nil), mutation.Payload...),
+		}
+		if err := item.validate(); err != nil {
 			return PlainPullResponse{}, err
 		}
-		opaque = append(opaque, encrypted)
+		wire = append(wire, item)
 	}
 	var response PushResponse
-	if err := client.doJSON(ctx, http.MethodPost, "/v2/records/push", PushRequest{Mutations: opaque}, &response); err != nil {
+	if err := client.doJSON(ctx, http.MethodPost, "/v2/records/push",
+		PushRequest{Mutations: wire}, &response); err != nil {
 		return PlainPullResponse{}, err
 	}
 	if len(response.Records) != len(mutations) {
-		return PlainPullResponse{}, errors.New("server returned an incomplete mutation result")
+		return PlainPullResponse{}, errors.New(
+			"server returned an incomplete mutation result")
 	}
 	plain := make([]PlainRecord, 0, len(response.Records))
 	for index, record := range response.Records {
+		if err := record.validate(); err != nil {
+			return PlainPullResponse{}, fmt.Errorf(
+				"server returned an invalid record: %w", err)
+		}
 		mutation := mutations[index]
-		expectedRevision := opaque[index].ExpectedRevision + 1
+		expectedRevision := wire[index].ExpectedRevision + 1
 		if record.Kind != mutation.Kind || record.Key != mutation.Key ||
-			record.Revision != expectedRevision || record.Deleted != mutation.Deleted ||
-			record.DeviceID != client.state.DeviceID || record.KeyID != client.state.ActiveKeyID {
-			return PlainPullResponse{}, errors.New("server mutation result metadata does not match the request")
+			record.Revision != expectedRevision ||
+			record.Deleted != mutation.Deleted ||
+			record.DeviceID != client.state.DeviceID ||
+			!bytes.Equal(record.Payload, mutation.Payload) {
+			return PlainPullResponse{}, errors.New(
+				"server mutation result does not match the request")
 		}
-		payload, err := decryptClientPayload(activeKey, record)
-		if err != nil {
-			return PlainPullResponse{}, err
-		}
-		if !bytes.Equal(payload, mutation.Payload) {
-			return PlainPullResponse{}, errors.New("server mutation result payload does not match the request")
-		}
-		plain = append(plain, plainRecord(record, payload))
-	}
-	for _, record := range response.Records {
+		plain = append(plain, plainRecord(record))
 		client.state.Revisions[recordIdentity(record.Kind, record.Key)] = record.Revision
 	}
 	if err := client.state.Save(); err != nil {
-		return PlainPullResponse{}, fmt.Errorf("persist accepted revisions: %w", err)
+		return PlainPullResponse{}, fmt.Errorf(
+			"persist accepted revisions: %w", err)
 	}
-	return PlainPullResponse{Records: plain, NextSeq: response.NextSeq}, nil
+	return PlainPullResponse{
+		Records: plain, NextSeq: response.NextSeq,
+	}, nil
 }
 
-func (client *Client) Pull(ctx context.Context, kinds []string) (PlainPullResponse, error) {
+func (client *Client) Pull(
+	ctx context.Context, kinds []string) (PlainPullResponse, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	return client.pullAt(ctx, "/v2/records/pull", client.state.Sequence, kinds)
+	return client.pullAt(
+		ctx, "/v2/records/pull", client.state.Sequence, kinds)
 }
 
-func (client *Client) Latest(ctx context.Context, kinds []string) (PlainPullResponse, error) {
+func (client *Client) Latest(
+	ctx context.Context, kinds []string) (PlainPullResponse, error) {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	return client.pullAt(ctx, "/v2/records/latest", 0, kinds)
 }
 
-func (client *Client) pullAt(ctx context.Context, path string, since Counter, kinds []string) (PlainPullResponse, error) {
-	var opaque []OpaqueRecord
+func (client *Client) pullAt(ctx context.Context, path string,
+	since Counter, kinds []string) (PlainPullResponse, error) {
+	var records []Record
 	var snapshot Counter
 	var previousSeq Counter
 	totalBytes := 0
@@ -170,67 +180,75 @@ func (client *Client) pullAt(ctx context.Context, path string, since Counter, ki
 			requestSince = since
 		}
 		if err := client.doJSON(ctx, http.MethodGet,
-			recordsPath(path, requestSince, cursor, kinds), nil, &response); err != nil {
+			recordsPath(path, requestSince, cursor, kinds),
+			nil, &response); err != nil {
 			return PlainPullResponse{}, err
 		}
 		if response.PageVersion != pageProtocolVersion {
-			return PlainPullResponse{}, fmt.Errorf("unsupported page version %d", response.PageVersion)
+			return PlainPullResponse{}, fmt.Errorf(
+				"unsupported page version %d", response.PageVersion)
 		}
 		if len(response.Records) > clientPageRecords {
-			return PlainPullResponse{}, errors.New("server exceeded the requested page record budget")
+			return PlainPullResponse{}, errors.New(
+				"server exceeded the requested page record budget")
 		}
-		totalBytes += encodedPageSize(response.Records, response.PageCursor, response.NextSeq)
+		totalBytes += encodedPageSize(
+			response.Records, response.PageCursor, response.NextSeq)
 		if totalBytes > maxClientPullBytes {
-			return PlainPullResponse{}, errors.New("pull exceeds the aggregate byte budget")
+			return PlainPullResponse{}, errors.New(
+				"pull exceeds the aggregate byte budget")
 		}
 		if page == 0 {
 			snapshot = response.NextSeq
 			if snapshot < since {
-				return PlainPullResponse{}, errors.New("server page snapshot precedes the requested sequence")
+				return PlainPullResponse{}, errors.New(
+					"server page snapshot precedes the requested sequence")
 			}
 		} else if response.NextSeq != snapshot {
-			return PlainPullResponse{}, errors.New("server changed the page snapshot during a pull")
+			return PlainPullResponse{}, errors.New(
+				"server changed the page snapshot during a pull")
 		}
 		for _, record := range response.Records {
-			if record.Seq <= previousSeq || record.Seq > snapshot || (path == "/v2/records/pull" && record.Seq <= since) {
-				return PlainPullResponse{}, errors.New("server returned records outside strict page sequence order")
+			if err := record.validate(); err != nil {
+				return PlainPullResponse{}, fmt.Errorf(
+					"server returned an invalid record: %w", err)
+			}
+			if record.Seq <= previousSeq || record.Seq > snapshot ||
+				(path == "/v2/records/pull" && record.Seq <= since) {
+				return PlainPullResponse{}, errors.New(
+					"server returned records outside strict page sequence order")
 			}
 			previousSeq = record.Seq
-			opaque = append(opaque, record)
-			if len(opaque) > maxClientPullRecords {
-				return PlainPullResponse{}, errors.New("pull exceeds the aggregate record budget")
+			records = append(records, record)
+			if len(records) > maxClientPullRecords {
+				return PlainPullResponse{}, errors.New(
+					"pull exceeds the aggregate record budget")
 			}
 		}
 		if response.PageCursor == "" {
 			break
 		}
 		if _, duplicate := seenCursors[response.PageCursor]; duplicate {
-			return PlainPullResponse{}, errors.New("server repeated a page cursor")
+			return PlainPullResponse{}, errors.New(
+				"server repeated a page cursor")
 		}
 		seenCursors[response.PageCursor] = struct{}{}
 		cursor = response.PageCursor
 		if page == maxClientPullPages-1 {
-			return PlainPullResponse{}, errors.New("pull exceeds the page-count budget")
+			return PlainPullResponse{}, errors.New(
+				"pull exceeds the page-count budget")
 		}
 	}
 
-	plain := make([]PlainRecord, 0, len(opaque))
-	for _, record := range opaque {
-		key, err := client.state.decodedKey(record.KeyID)
-		if err != nil {
-			return PlainPullResponse{}, err
-		}
-		payload, err := decryptClientPayload(key, record)
-		if err != nil {
-			return PlainPullResponse{}, err
-		}
-		plain = append(plain, plainRecord(record, payload))
+	plain := make([]PlainRecord, 0, len(records))
+	for _, record := range records {
+		plain = append(plain, plainRecord(record))
 	}
 	return PlainPullResponse{Records: plain, NextSeq: snapshot}, nil
 }
 
-// AcknowledgeApplied advances durable client state only after the browser bridge
-// has written every returned record and read it back from the browser store.
+// AcknowledgeApplied advances durable client state only after the browser has
+// applied and read back every returned record.
 func (client *Client) AcknowledgeApplied(response PlainPullResponse) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -244,7 +262,9 @@ func (client *Client) AcknowledgeApplied(response PlainPullResponse) error {
 		identity := recordIdentity(record.Kind, record.Key)
 		current := client.state.Revisions[identity]
 		if record.Revision < current {
-			return fmt.Errorf("remote revision regressed for %s/%s", record.Kind, record.Key)
+			return fmt.Errorf(
+				"remote revision regressed for %s/%s",
+				record.Kind, record.Key)
 		}
 		client.state.Revisions[identity] = record.Revision
 	}
@@ -252,170 +272,8 @@ func (client *Client) AcknowledgeApplied(response PlainPullResponse) error {
 	return client.state.Save()
 }
 
-// StageContentKey persists new key material before contacting the server. A
-// failed request or crash is resumable and leaves the old epoch write-active.
-func (client *Client) StageContentKey(ctx context.Context) (string, error) {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.state.Role != RoleSeed || client.state.DeviceID != "d" {
-		return "", errors.New("only d may stage content keys")
-	}
-	if client.state.StagedKeyID == "" {
-		newKeyID, encodedKey, err := client.state.prepareKeyRotation()
-		if err != nil {
-			return "", err
-		}
-		if err := client.state.stageKey(newKeyID, encodedKey); err != nil {
-			return "", err
-		}
-	}
-	var response KeyTransitionResponse
-	if err := client.doJSON(ctx, http.MethodPost, "/v2/keys/stage", KeyTransitionRequest{
-		ExpectedKeyID: client.state.ActiveKeyID, NewKeyID: client.state.StagedKeyID,
-	}, &response); err != nil {
-		return "", err
-	}
-	if response.ActiveKeyID != client.state.ActiveKeyID || response.StagedKeyID != client.state.StagedKeyID {
-		return "", errors.New("server returned the wrong staged key status")
-	}
-	return client.state.StagedKeyID, nil
-}
-
-func (client *Client) AcknowledgeStagedKey(ctx context.Context) error {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.state.StagedKeyID == "" || client.state.Keys[client.state.StagedKeyID] == "" {
-		return errors.New("client has no staged content key")
-	}
-	return client.doJSON(ctx, http.MethodPost, "/v2/keys/ack-install", KeyAcknowledgementRequest{KeyID: client.state.StagedKeyID}, nil)
-}
-
-func (client *Client) ActivateStagedKey(ctx context.Context) error {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.state.Role != RoleSeed || client.state.StagedKeyID == "" {
-		return errors.New("only d with a staged key may activate")
-	}
-	var response KeyTransitionResponse
-	if err := client.doJSON(ctx, http.MethodPost, "/v2/keys/activate", KeyTransitionRequest{
-		ExpectedKeyID: client.state.ActiveKeyID, NewKeyID: client.state.StagedKeyID,
-	}, &response); err != nil {
-		return err
-	}
-	if response.ActiveKeyID != client.state.StagedKeyID || response.RetiringKeyID != client.state.ActiveKeyID {
-		return errors.New("server returned the wrong activated key status")
-	}
-	return client.state.activateStagedKey()
-}
-
-// AdoptServerKeyStatus lets an active join atomically switch only after d has
-// activated a key it already installed. The server keeps the retiring epoch
-// readable but rejects writes under it, so a failed local save is recovered by
-// rerunning this adoption before browser publication resumes.
-func (client *Client) AdoptServerKeyStatus(ctx context.Context) error {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	var response KeyTransitionResponse
-	if err := client.doJSON(ctx, http.MethodGet, "/v2/keys/status", nil, &response); err != nil {
-		return err
-	}
-	if response.ActiveKeyID == client.state.ActiveKeyID {
-		if client.state.RetiringKeyID != "" && response.RetiringKeyID == "" {
-			return client.state.retireOldKey()
-		}
-		return nil
-	}
-	if response.ActiveKeyID != client.state.StagedKeyID || response.RetiringKeyID != client.state.ActiveKeyID {
-		return errors.New("server key status cannot be safely adopted")
-	}
-	return client.state.activateStagedKey()
-}
-
-// RekeyAllLatest CAS-rewrites every live record and tombstone under the active
-// epoch. It requires a previously browser-acknowledged latest baseline and
-// retains the old key until every active device acknowledges and d retires it.
-func (client *Client) RekeyAllLatest(ctx context.Context) error {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.state.Role != RoleSeed || client.state.DeviceID != "d" || client.state.Phase != PhaseActive {
-		return errors.New("only active d may run the content rekey pass")
-	}
-	latest, err := client.pullAt(ctx, "/v2/records/latest", 0, nil)
-	if err != nil {
-		return err
-	}
-	mutations := make([]PlainMutation, 0, len(latest.Records))
-	for _, record := range latest.Records {
-		if client.state.revision(record.Kind, record.Key) != record.Revision {
-			return fmt.Errorf("%s/%s is not at a browser-verified baseline; pull and acknowledge it before rekey", record.Kind, record.Key)
-		}
-		if record.KeyID != client.state.ActiveKeyID {
-			mutations = append(mutations, PlainMutation{
-				Kind: record.Kind, Key: record.Key, Deleted: record.Deleted, Payload: record.Payload,
-			})
-		}
-	}
-	if _, err := client.pushLocked(ctx, mutations); err != nil {
-		return err
-	}
-	verified, err := client.pullAt(ctx, "/v2/records/latest", 0, nil)
-	if err != nil {
-		return err
-	}
-	for _, record := range verified.Records {
-		if record.KeyID != client.state.ActiveKeyID {
-			return fmt.Errorf("post-rekey inventory retains old key id %q", record.KeyID)
-		}
-		client.state.Revisions[recordIdentity(record.Kind, record.Key)] = record.Revision
-	}
-	client.state.Sequence = verified.NextSeq
-	if err := client.state.Save(); err != nil {
-		return err
-	}
-	return client.doJSON(ctx, http.MethodPost, "/v2/keys/ack-rekey", KeyAcknowledgementRequest{
-		KeyID: client.state.ActiveKeyID, AcknowledgedSeq: verified.NextSeq,
-	}, nil)
-}
-
-// AcknowledgeActiveRekey is used by da/oneplus after pulling the CAS rekey,
-// applying it, and verifying their browser contents at the returned cursor.
-func (client *Client) AcknowledgeActiveRekey(ctx context.Context) error {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	latest, err := client.pullAt(ctx, "/v2/records/latest", 0, nil)
-	if err != nil {
-		return err
-	}
-	for _, record := range latest.Records {
-		if record.KeyID != client.state.ActiveKeyID {
-			return errors.New("latest inventory still uses a retiring key")
-		}
-	}
-	if client.state.Sequence != latest.NextSeq {
-		return errors.New("browser-verified cursor is not at latest rekey inventory")
-	}
-	return client.doJSON(ctx, http.MethodPost, "/v2/keys/ack-rekey", KeyAcknowledgementRequest{KeyID: client.state.ActiveKeyID, AcknowledgedSeq: latest.NextSeq}, nil)
-}
-
-func (client *Client) RetireContentKey(ctx context.Context) error {
-	client.mu.Lock()
-	defer client.mu.Unlock()
-	if client.state.Role != RoleSeed || client.state.RetiringKeyID == "" {
-		return errors.New("only d may retire the old key")
-	}
-	var response KeyTransitionResponse
-	if err := client.doJSON(ctx, http.MethodPost, "/v2/keys/retire", KeyRetirementRequest{ActiveKeyID: client.state.ActiveKeyID, RetiringKeyID: client.state.RetiringKeyID}, &response); err != nil {
-		return err
-	}
-	if response.ActiveKeyID != client.state.ActiveKeyID || response.RetiringKeyID != "" {
-		return errors.New("server did not retire old key")
-	}
-	return client.state.retireOldKey()
-}
-
-// StageCredential sends only a client-computed SHA-256 hash. The new plaintext
-// credential remains on the device and overlaps with the old credential.
-func (client *Client) StageCredential(ctx context.Context, newToken string) error {
+func (client *Client) StageCredential(
+	ctx context.Context, newToken string) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
 	if err := validateToken(newToken); err != nil {
@@ -425,22 +283,20 @@ func (client *Client) StageCredential(ctx context.Context, newToken string) erro
 		CredentialStageRequest{NewTokenSHA256: hashToken(newToken)}, nil)
 }
 
-// ConfirmCredential is invoked by a client authenticated with the staged new
-// credential. Only then may RetireOldCredential remove the overlap.
 func (client *Client) ConfirmCredential(ctx context.Context) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	return client.doJSON(ctx, http.MethodPost, "/v2/credentials/confirm", struct{}{}, nil)
+	return client.doJSON(
+		ctx, http.MethodPost, "/v2/credentials/confirm", struct{}{}, nil)
 }
 
 func (client *Client) RetireOldCredential(ctx context.Context) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
-	return client.doJSON(ctx, http.MethodPost, "/v2/credentials/retire", struct{}{}, nil)
+	return client.doJSON(
+		ctx, http.MethodPost, "/v2/credentials/retire", struct{}{}, nil)
 }
 
-// CompleteEnrollment is called only after AcknowledgeApplied has durably
-// recorded a browser-verified initial inventory at the current server cursor.
 func (client *Client) CompleteEnrollment(ctx context.Context) error {
 	client.mu.Lock()
 	defer client.mu.Unlock()
@@ -451,8 +307,11 @@ func (client *Client) CompleteEnrollment(ctx context.Context) error {
 		return nil
 	}
 	var response EnrollmentCompleteResponse
-	if err := client.doJSON(ctx, http.MethodPost, "/v2/enrollment/complete",
-		EnrollmentCompleteRequest{AcknowledgedSeq: client.state.Sequence}, &response); err != nil {
+	if err := client.doJSON(
+		ctx, http.MethodPost, "/v2/enrollment/complete",
+		EnrollmentCompleteRequest{
+			AcknowledgedSeq: client.state.Sequence,
+		}, &response); err != nil {
 		return err
 	}
 	if response.Phase != PhaseActive {
@@ -462,15 +321,17 @@ func (client *Client) CompleteEnrollment(ctx context.Context) error {
 	return client.state.Save()
 }
 
-func plainRecord(record OpaqueRecord, payload json.RawMessage) PlainRecord {
+func plainRecord(record Record) PlainRecord {
 	return PlainRecord{
 		Seq: record.Seq, Kind: record.Kind, Key: record.Key,
 		Revision: record.Revision, Deleted: record.Deleted,
-		DeviceID: record.DeviceID, KeyID: record.KeyID, Payload: payload,
+		DeviceID: record.DeviceID,
+		Payload:  append(json.RawMessage(nil), record.Payload...),
 	}
 }
 
-func recordsPath(path string, since Counter, cursor string, kinds []string) string {
+func recordsPath(
+	path string, since Counter, cursor string, kinds []string) string {
 	query := url.Values{}
 	query.Set("limit", strconv.Itoa(clientPageRecords))
 	if cursor != "" {
@@ -487,7 +348,8 @@ func recordsPath(path string, since Counter, cursor string, kinds []string) stri
 	return path + "?" + query.Encode()
 }
 
-func (client *Client) doJSON(ctx context.Context, method, path string, body any, out any) error {
+func (client *Client) doJSON(
+	ctx context.Context, method, path string, body, out any) error {
 	var requestBody *bytes.Reader
 	if body == nil {
 		requestBody = bytes.NewReader(nil)
@@ -498,7 +360,8 @@ func (client *Client) doJSON(ctx context.Context, method, path string, body any,
 		}
 		requestBody = bytes.NewReader(raw)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, client.baseURL+path, requestBody)
+	request, err := http.NewRequestWithContext(
+		ctx, method, client.baseURL+path, requestBody)
 	if err != nil {
 		return err
 	}
@@ -511,7 +374,8 @@ func (client *Client) doJSON(ctx context.Context, method, path string, body any,
 		return err
 	}
 	defer response.Body.Close()
-	raw, readErr := io.ReadAll(io.LimitReader(response.Body, maxClientResponseBytes+1))
+	raw, readErr := io.ReadAll(
+		io.LimitReader(response.Body, maxClientResponseBytes+1))
 	if readErr != nil {
 		return readErr
 	}
@@ -527,11 +391,14 @@ func (client *Client) doJSON(ctx context.Context, method, path string, body any,
 			CurrentRevision Counter `json:"current_revision"`
 		}
 		if err := strictDecode(raw, &wire); err != nil {
-			return &ProtocolError{StatusCode: response.StatusCode, Message: response.Status}
+			return &ProtocolError{
+				StatusCode: response.StatusCode, Message: response.Status,
+			}
 		}
 		return &ProtocolError{
-			StatusCode: response.StatusCode, Code: wire.Code, Message: wire.Error,
-			Kind: wire.Kind, Key: wire.Key, CurrentRevision: wire.CurrentRevision,
+			StatusCode: response.StatusCode, Code: wire.Code,
+			Message: wire.Error, Kind: wire.Kind, Key: wire.Key,
+			CurrentRevision: wire.CurrentRevision,
 		}
 	}
 	if out == nil {

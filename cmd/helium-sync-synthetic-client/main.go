@@ -64,7 +64,7 @@ func main() {
 func run(args []string) error {
 	flags := flag.NewFlagSet("helium-sync-synthetic-client", flag.ContinueOnError)
 	markerPath := flags.String("synthetic-only-marker", "", "mode-0600 synthetic-only marker")
-	baseURL := flags.String("url", "", "HTTPS disposable daemon URL")
+	baseURL := flags.String("url", "", "HTTP disposable daemon URL on the Tailnet")
 	tokenPath := flags.String("token-file", "", "synthetic per-device credential")
 	statePath := flags.String("state-file", "", "synthetic client state")
 	expectedPath := flags.String("expected-file", "", "metadata and payload-hash inventory")
@@ -112,7 +112,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
-	records, err := verifyResponse(response, expected, stateBefore.ActiveKeyID)
+	records, err := verifyResponse(response, expected)
 	if err != nil {
 		return err
 	}
@@ -219,8 +219,8 @@ func (expected expectedInventory) validate() error {
 	return nil
 }
 
-func verifyResponse(response syncstore.PlainPullResponse, expected expectedInventory,
-	activeKeyID string) ([]receiptRecord, error) {
+func verifyResponse(response syncstore.PlainPullResponse,
+	expected expectedInventory) ([]receiptRecord, error) {
 	if len(response.Records) != len(expected.Records) {
 		return nil, fmt.Errorf("record count mismatch: got %d want %d",
 			len(response.Records), len(expected.Records))
@@ -238,7 +238,7 @@ func verifyResponse(response syncstore.PlainPullResponse, expected expectedInven
 		}
 		payloadHash := sha256.Sum256(record.Payload)
 		if record.Revision != expectedRecord.Revision || record.Deleted != expectedRecord.Deleted ||
-			record.DeviceID != expectedRecord.DeviceID || record.KeyID != activeKeyID ||
+			record.DeviceID != expectedRecord.DeviceID ||
 			!bytes.Equal([]byte(hex.EncodeToString(payloadHash[:])), []byte(expectedRecord.PayloadSHA256)) {
 			return nil, errors.New("response record metadata or payload hash does not match")
 		}

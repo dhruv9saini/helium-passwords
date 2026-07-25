@@ -73,7 +73,7 @@ func (store *Store) page(mode pageMode, since Counter, encodedCursor string, lim
 		}
 	}
 
-	records := make([]OpaqueRecord, 0, limit)
+	records := make([]Record, 0, limit)
 	for _, record := range store.records {
 		if record.Seq <= scan {
 			continue
@@ -129,7 +129,7 @@ func (store *Store) page(mode pageMode, since Counter, encodedCursor string, lim
 	return response, nil
 }
 
-func encodedPageSize(records []OpaqueRecord, cursor string, snapshot Counter) int {
+func encodedPageSize(records []Record, cursor string, snapshot Counter) int {
 	raw, err := json.Marshal(PullResponse{
 		PageVersion: pageProtocolVersion, PageCursor: cursor,
 		Records: records, NextSeq: snapshot,

@@ -220,7 +220,7 @@ func (store *Store) validateJournalBytes(raw []byte) (int, int64, error) {
 		if text == "" {
 			continue
 		}
-		var record OpaqueRecord
+		var record Record
 		if err := json.Unmarshal([]byte(text), &record); err != nil {
 			return 0, 0, err
 		}
