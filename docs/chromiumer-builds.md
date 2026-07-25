@@ -345,17 +345,21 @@ scripts/chromiumer-job.sh resume "$parent" "$job" \
     env \
       HELIUM_SYNC_REPO=. \
       GITHUB_WORKSPACE=.build \
-      CHROMIUM_ANDROID_PHASE=all \
+      CHROMIUM_ANDROID_PHASE=build \
       bash scripts/chromium/build-android-ci.sh
 ```
 
 The command after `--` is mandatory and normally must byte-for-byte reproduce
-the parent policy's shell-escaped argument vector. The only admitted resource
-adjustment is changing one exact `AUTONINJA_JOBS=2` argument to
-`AUTONINJA_JOBS=1`. This lets a retained build serialize a linker/compiler
-pair that reached the unchanged cgroup memory-high boundary; increasing
-parallelism or changing any other token fails admission. The child records
-both commands and `command_mode=reduced-parallelism`.
+the parent policy's shell-escaped argument vector. A retained Android
+continuation may change one exact `CHROMIUM_ANDROID_PHASE=all` argument to
+`CHROMIUM_ANDROID_PHASE=build`: source preparation intentionally leaves a
+composed Chromium worktree, so rerunning `gclient` would reject the expected
+changes before Ninja could reuse its state. The other admitted adjustment is
+changing one exact `AUTONINJA_JOBS=2` argument to `AUTONINJA_JOBS=1`. This
+lets a retained build serialize a linker/compiler pair that reached the
+unchanged cgroup memory-high boundary. Any other token change fails admission.
+The child records both commands and either `command_mode=retained-build` or
+`command_mode=reduced-parallelism`.
 
 This keeps the executable build plan explicit while letting Ninja reuse its
 dependency log and completed objects. The continuation is not a longer unit:
@@ -401,6 +405,14 @@ continuation made the exact two-to-one Autoninja change, and it exited no more
 than five seconds after watchdog readiness. This narrowly recovers the
 orchestration-policy transition without admitting a retry after any compiler,
 linker, packaging, watchdog, disk, cancellation, or wall-time failure.
+
+An older exact continuation may instead fail when its `all` phase re-enters
+`gclient` against the intentionally composed retained Chromium tree. The
+worker admits one `all`-to-`build` recovery only when that continuation came
+directly from a timeout, kept the one-job source policy, and exited no more
+than 30 seconds after watchdog readiness. The build phase regenerates and
+verifies GN and provenance before resuming Ninja, while source acquisition and
+composition remain bound to the retained workspace.
 
 Only one child can claim a terminal segment.
 The control client creates that durable claim first, registers the new job

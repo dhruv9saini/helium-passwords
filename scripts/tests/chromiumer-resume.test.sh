@@ -302,6 +302,75 @@ grep -Fqx 'build_jobs=1' \
 grep -Fqx 'source_build_jobs=2' \
     "${state_root}/${retry_child}/policy.env"
 
+# A retained Android timeout changes only the execution phase from all to
+# build. This skips source acquisition against the intentionally composed
+# Chromium tree while preserving GN/provenance regeneration and Ninja reuse.
+phase_all_command=(env CHROMIUM_ANDROID_PHASE=all AUTONINJA_JOBS=1 \
+    sh -c 'printf "Android phase fixture\n"')
+phase_build_command=(env CHROMIUM_ANDROID_PHASE=build AUTONINJA_JOBS=1 \
+    sh -c 'printf "Android phase fixture\n"')
+phase_timeout_parent=resume-phase-timeout-parent
+phase_timeout_child=resume-phase-timeout-child
+write_parent "${phase_timeout_parent}" \
+    "$(command_text "${phase_all_command[@]}")"
+resume_init "${phase_timeout_parent}" "${phase_timeout_child}" -- \
+    "${phase_build_command[@]}" >"${test_root}/phase-timeout-child.out"
+exec 9>&-
+grep -Fqx 'command_mode=retained-build' \
+    "${state_root}/${phase_timeout_child}/resume.env"
+grep -Fqx 'parent_terminal_mode=timeout' \
+    "${state_root}/${phase_timeout_child}/resume.env"
+
+# Older exact continuations re-entered source preparation and failed at the
+# expected dirty-worktree gate. Admit the same all-to-build transition only
+# when that exact child came directly from a timeout and failed within thirty
+# seconds of watchdog readiness.
+phase_retry_root=resume-phase-retry-root
+phase_retry_failed=resume-phase-retry-failed
+phase_retry_child=resume-phase-retry-child
+write_parent "${phase_retry_root}" \
+    "$(command_text "${phase_all_command[@]}")"
+resume_init "${phase_retry_root}" "${phase_retry_failed}" -- \
+    "${phase_all_command[@]}" >"${test_root}/phase-retry-failed-init.out"
+exec 9>&-
+resume_start "${phase_retry_failed}" -- "${phase_all_command[@]}" \
+    >"${test_root}/phase-retry-failed-start.out"
+exec 9>&-
+cat >"${state_root}/${phase_retry_failed}/watchdog-ready.env" <<'EOF'
+watchdog_ready_at=2026-07-23T08:00:00+00:00
+EOF
+cat >"${state_root}/${phase_retry_failed}/terminal.env" <<'EOF'
+state=terminal
+result=failure
+exit_code=1
+started_at_epoch=1784793590
+finished_at_epoch=1784793610
+duration_seconds=20
+reason=build command exited non-zero
+EOF
+cat >"${state_root}/${phase_retry_failed}/result.env" <<'EOF'
+exit_code=1
+finished_at=2026-07-23T08:00:10+00:00
+EOF
+resume_init "${phase_retry_failed}" "${phase_retry_child}" -- \
+    "${phase_build_command[@]}" >"${test_root}/phase-retry-child.out"
+exec 9>&-
+grep -Fqx 'command_mode=retained-build' \
+    "${state_root}/${phase_retry_child}/resume.env"
+grep -Fqx 'parent_terminal_mode=retained-build-retry' \
+    "${state_root}/${phase_retry_child}/resume.env"
+grep -Fqx 'source_build_jobs=1' \
+    "${state_root}/${phase_retry_child}/resume.env"
+resume_start "${phase_retry_child}" -- "${phase_build_command[@]}" \
+    >"${test_root}/phase-retry-child-start.out"
+exec 9>&-
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq 'CHROMIUM_ANDROID_PHASE=build'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--setenv=HELIUM_BUILD_JOBS=1'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--setenv=AUTONINJA_JOBS=1'
+
 # Readiness is a proof gate: even an otherwise runnable command cannot begin
 # until the independent watcher publishes its initial healthy scan.
 readiness_state="${test_root}/readiness-state"

@@ -143,11 +143,22 @@ continuation_command_mode() {
 
     local marker='AUTONINJA_JOBS=2 '
     local suffix=${parent_command#*"${marker}"}
+    if [ "${suffix}" != "${parent_command}" ] && \
+        [[ "${suffix}" != *"${marker}"* ]] && \
+        [ "${requested_command}" = \
+            "${parent_command/"${marker}"/AUTONINJA_JOBS=1 }" ]; then
+        printf 'reduced-parallelism\n'
+        return
+    fi
+
+    marker='CHROMIUM_ANDROID_PHASE=all '
+    suffix=${parent_command#*"${marker}"}
     [ "${suffix}" != "${parent_command}" ] && \
         [[ "${suffix}" != *"${marker}"* ]] && \
         [ "${requested_command}" = \
-            "${parent_command/"${marker}"/AUTONINJA_JOBS=1 }" ] || return 1
-    printf 'reduced-parallelism\n'
+            "${parent_command/"${marker}"/CHROMIUM_ANDROID_PHASE=build }" ] ||
+        return 1
+    printf 'retained-build\n'
 }
 
 workspace_owner() {
@@ -484,41 +495,66 @@ validate_resume_parent() {
         echo "only production jobs can be continued" >&2
         return 1
     }
+
+    local expected_command requested_command command_mode
+    expected_command=$(exact_value "${policy}" command)
+    requested_command=$(command_text "$@")
+    command_mode=$(continuation_command_mode \
+        "${expected_command}" "${requested_command}") || {
+        echo "continuation command must match its parent, only reduce AUTONINJA_JOBS from 2 to 1, or change CHROMIUM_ANDROID_PHASE from all to build" >&2
+        return 1
+    }
+
     local terminal_mode=timeout
     if ! [ "$(exact_value "${terminal}" state)" = terminal ] || \
         ! [ "$(exact_value "${terminal}" result)" = timeout ] || \
         ! [ "$(exact_value "${terminal}" exit_code)" = 124 ] || \
         ! [ "$(exact_value "${terminal}" reason)" = \
             "systemd stopped the job at its wall-time limit" ]; then
-        terminal_mode=source-policy-retry
-        local finished_at ready_at ready_epoch current_jobs source_jobs
         [ "$(exact_value "${terminal}" state)" = terminal ] && \
             [ "$(exact_value "${terminal}" result)" = failure ] && \
             [ "$(exact_value "${terminal}" exit_code)" = 1 ] && \
             [ "$(exact_value "${terminal}" reason)" = \
                 "build command exited non-zero" ] && \
-            [ -f "${parent_state}/resume.env" ] && \
-            [ "$(exact_value "${parent_state}/resume.env" command_mode)" = \
-                reduced-parallelism ] || {
-            echo "continuation parent is neither an exact timeout nor a reduced-parallelism source-policy failure" >&2
+            [ -f "${parent_state}/resume.env" ] || {
+            echo "continuation parent is neither an exact timeout nor an admitted entry-gate failure" >&2
             return 1
         }
+
+        local finished_at ready_at ready_epoch current_jobs source_jobs
+        local parent_command_mode parent_terminal_mode elapsed
         current_jobs=$(exact_value "${policy}" build_jobs) || return 1
         source_jobs=$(source_build_jobs "${parent}") || return 1
-        [ "${current_jobs}" = 1 ] && [ "${source_jobs}" = 2 ] || {
-            echo "failed continuation did not cross the measured two-to-one source policy boundary" >&2
-            return 1
-        }
+        parent_command_mode=$(exact_value \
+            "${parent_state}/resume.env" command_mode) || return 1
+        parent_terminal_mode=$(exact_value \
+            "${parent_state}/resume.env" parent_terminal_mode) || return 1
         finished_at=$(exact_value "${terminal}" finished_at_epoch) || return 1
         ready_at=$(exact_value "${parent_state}/watchdog-ready.env" \
             watchdog_ready_at) || return 1
         [[ "${finished_at}" =~ ^[0-9]+$ ]] || return 1
         ready_epoch=$(date --date="${ready_at}" +%s) || return 1
-        [ "${finished_at}" -ge "${ready_epoch}" ] && \
-            [ $((finished_at - ready_epoch)) -le 5 ] || {
-            echo "failed continuation advanced beyond the source-policy entry gate" >&2
-            return 1
-        }
+        [ "${finished_at}" -ge "${ready_epoch}" ] || return 1
+        elapsed=$((finished_at - ready_epoch))
+
+        if [ "${command_mode}" = retained-build ] && \
+            [ "${parent_command_mode}" = exact ] && \
+            [ "${parent_terminal_mode}" = timeout ] && \
+            [ "${current_jobs}" = 1 ] && [ "${source_jobs}" = 1 ] && \
+            [ "${elapsed}" -le 30 ]; then
+            terminal_mode=retained-build-retry
+        else
+            terminal_mode=source-policy-retry
+            [ "${parent_command_mode}" = reduced-parallelism ] && \
+                [ "${current_jobs}" = 1 ] && [ "${source_jobs}" = 2 ] || {
+                echo "failed continuation is not an admitted source-policy or retained-build entry-gate failure" >&2
+                return 1
+            }
+            [ "${elapsed}" -le 5 ] || {
+                echo "failed continuation advanced beyond the source-policy entry gate" >&2
+                return 1
+            }
+        fi
     fi
     local staged_budget_gib staged_budget_bytes policy_budget_bytes
     staged_budget_gib=$(exact_value "${stage}" disk_budget_gib)
@@ -528,15 +564,6 @@ validate_resume_parent() {
         [ "${staged_budget_bytes}" = "$(gib "${staged_budget_gib}")" ] && \
         [ "${policy_budget_bytes}" = "${staged_budget_bytes}" ] || {
         echo "continuation parent has inconsistent disk-budget provenance" >&2
-        return 1
-    }
-
-    local expected_command requested_command command_mode
-    expected_command=$(exact_value "${policy}" command)
-    requested_command=$(command_text "$@")
-    command_mode=$(continuation_command_mode \
-        "${expected_command}" "${requested_command}") || {
-        echo "continuation command must match its parent or only reduce AUTONINJA_JOBS from 2 to 1" >&2
         return 1
     }
 
