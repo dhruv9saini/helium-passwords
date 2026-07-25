@@ -12,10 +12,9 @@ synthetic exports.
 ## Source-local scheduler
 
 Copy `scripts/tabs/tab-ops.conf.example` outside the repository, make it mode
-`0600`, and set one source device/profile namespace. Configuration version 3
-accepts only `d`, `da`, or `oneplus`; `key_id` must be the corresponding
-`DEVICE-tabs-v1`. One configuration owns one store. The store and operation
-state must remain outside the browser profile.
+`0600`, and set one source device/profile namespace. Configuration version 4
+accepts only `d`, `da`, or `oneplus`. One configuration owns one store. The
+store and operation state must remain outside the browser profile.
 
 Set `browser_export` to a dedicated path outside the profile, and put the same
 absolute path in the profile-local `helium-sync/tab_snapshot_export_path`
@@ -43,12 +42,12 @@ scripts/tabs/tab-snapshot-scheduler.sh cycle "$config"
 `run-once` takes a nonblocking namespace lock, gives the adapter a new mode
 `0600` temporary file, commits through `helium-tabs`, validates the committed
 generation, discards exporter output, and atomically records a status without
-URLs. `cycle` continues through encryption, both off-device transfers, health,
+URLs. `cycle` continues through archive creation, both off-device transfers, health,
 and safe retention. `schedule` repeats the full cycle at `interval_seconds`.
 `status` fails unless the snapshot is fresh and both copies of its generation
-match the local ciphertext and manifest hashes. A successful full cycle also
+match the local archive and manifest hashes. A successful full cycle also
 atomically writes `health-proof.env`. The proof binds the generation, source,
-profile, key namespace, exact destination topology, configuration hash, and
+profile, exact destination topology, configuration hash, and
 the verified backup-status hash. `status` rechecks the remote copies and fails
 if this proof is missing, stale, or no longer matches configuration.
 
@@ -76,7 +75,7 @@ HOME=/root scripts/tabs/install-oneplus-tab-scheduler.sh install \
   scripts/tabs/tab-ops.oneplus.conf.example
 ```
 
-It does not install `helium-tabs`, `age`, keys, recipients, an active
+It does not install `helium-tabs`, credentials, an active
 `tab-ops.conf`, an Android `service.d` file, or an enable marker. Re-running it
 against any existing target fails instead of overwriting device work.
 
@@ -102,17 +101,17 @@ invalid post-mount identity fails closed without entering the chroot. The broade
 desktop `android-bind-mounts.sh` helper also mounts `/proc`, `/sys`, and
 `devpts`, so the headless runner intentionally does not invoke it or depend on
 a desktop session having run. The nested backup preflight still requires
-`age`, `jq`, `helium-tabs`, a fresh native export, and both authenticated
+`jq`, `helium-tabs`, a fresh native export, and both authenticated
 outbound SSH destinations. A future operator must run this preflight
 successfully before separately installing the runner into `service.d` and
 creating the enable marker. No installer or service was deployed or enabled by
 this repository change. Do not create a second profile reader to work around
 the exporter.
 
-## Two encrypted off-device copies
+## Two private off-device copies
 
-The backup command makes one age ciphertext for the validated generation and
-copies that exact file to exactly two distinct destination hosts. The topology
+The backup command makes one checksum-bound tar archive for the validated
+generation and copies that exact file to exactly two distinct destination hosts. The topology
 is code-enforced, not merely documented:
 
 | Source | Copy 1 | Copy 2 |
@@ -140,41 +139,34 @@ device. Give the public half of this key a `restrict` authorization on each
 destination. This makes the unattended route explicit without reusing a
 general-purpose login key or trusting a first connection.
 
-Each device has its own `key_id` and age-recipient file. The normalized
-recipient-set fingerprint is bound into every backup manifest. At least two
-distinct recovery recipients are required so losing one recovery identity does
-not make every snapshot unreadable. No individual recipient may appear in two
-source-device configs; merely using three different recipient-set fingerprints
-is insufficient because partially overlapping sets still share a key authority.
-Private identities are needed only for an explicit restore: keep them on
-separate recovery media, not persistently on the source, either destination, or
-in the repository. Temporarily attach the matching source-device identity only
-for a restore drill, then remove it. Destination devices hold ciphertext only
-and cannot open or merge another device's tabs.
+Each device has its own config and dedicated source-local SSH transport key.
+Tailscale plus SSH is the confidentiality boundary. Destination permissions
+must remain private, and destination devices must not import or merge another
+device's tabs.
 
-Before installation, stage the three public-recipient configs on lm and prove
-exact topology and distinct key material without contacting a browser:
+Before installation, stage the three configs on lm and prove the exact fixed
+topology without contacting a browser:
 
 ```sh
 scripts/tabs/tab-fleet-audit.sh d.conf da.conf oneplus.conf
 ```
 
-The audit outputs only device IDs, key IDs, recipient fingerprints, and
-destination IDs; it never prints keys or tab content. Its terminal result is
+The audit outputs only device IDs and destination IDs; it never prints
+credentials or tab content. Its terminal result is
 `fleet_configuration=verified`: this proves configuration only, not live
-routes, fresh browser exports, healthy ciphertext copies, or a restore drill.
+routes, fresh browser exports, healthy archive copies, or a restore drill.
 Those remain source-local runtime gates.
 
 Destination data is namespaced as:
 
 ```text
-DESTINATION_ROOT/SOURCE_DEVICE/PROFILE/generations/GENERATION.tar.age
+DESTINATION_ROOT/SOURCE_DEVICE/PROFILE/generations/GENERATION.tar
 DESTINATION_ROOT/SOURCE_DEVICE/PROFILE/generations/GENERATION.backup.env
 ```
 
-The clear manifest contains only source/profile/key IDs, the normalized public
-recipient fingerprint, generation, ciphertext hash/size, snapshot-manifest
-hash, and time. URLs and tab titles exist only in the age ciphertext. Each
+The manifest contains only source/profile identity, generation, archive
+hash/size, snapshot-manifest hash, and time. The archive is readable to the
+private destination hosts; it is not published outside the Tailnet. Each
 transfer keeps a configurable free-space reserve,
 lands in `incoming`, verifies SHA-256, and then renames into place. Existing
 bytes are never overwritten. A collision or mismatch fails until it is moved
@@ -204,12 +196,12 @@ scripts/tabs/tab-backup.sh retention-apply "$config" /new/path/retention.plan
 ```
 
 Apply moves both independently verified destination copies into namespaced
-quarantine, then removes the now-redundant source-local ciphertext and applies
+quarantine, then removes the now-redundant source-local archive and applies
 the exact revalidated local snapshot retention plan (newest plus 24 hourly,
 14 daily, and 12 weekly buckets, protected snapshots, and invalid snapshots).
 It refuses the entire
 operation unless every local deletion candidate has two healthy copies. This
-bounds the source device's snapshot store and encryption spool while keeping
+bounds the source device's snapshot store and archive spool while keeping
 two off-device quarantine copies. There is intentionally no automatic
 off-device quarantine purge.
 
@@ -224,8 +216,8 @@ scripts/tabs/tab-backup.sh restore-to-disposable "$config" \
 
 Run both commands for each source-device drill and require their restored
 session files to agree. This proves that neither off-device copy is merely a
-write-only claim. Each command fetches one copy, verifies the ciphertext,
-decrypts to a temporary directory, rejects any unexpected tar member,
+write-only claim. Each command fetches one copy, verifies the archive,
+extracts to a temporary directory, rejects any unexpected tar member,
 revalidates the snapshot through `helium-tabs`, and uses its atomic disposable
 restore. It then invokes the standalone `validate-restore` gate and verifies
 that the receipt names the requested source generation, device, and profile.
@@ -235,7 +227,7 @@ result into another device's browser.
 
 The command also atomically publishes a mode-0600 sibling source receipt at
 `RESTORE.helium-tab-offdevice-source.env`. It binds the requested destination,
-ciphertext and backup-manifest hashes, source namespace, generation, and
+archive and backup-manifest hashes, source namespace, generation, and
 restored session hash. The runtime proof consumes this receipt so two copies
 of one restored directory cannot be relabeled as two destination drills. See
 [tab-runtime-proof.md](tab-runtime-proof.md).
@@ -276,15 +268,14 @@ directory. It never deletes bytes and it never happens automatically.
   BatchMode identities; da's new backup identity is likewise not authorized on
   d. Therefore da's required d replica is not deployable and da must not be
   enabled.
-- da has about 208 GiB free, a running systemd user manager, `jq`, `rsync`, the
-  standard integrity tools, and age 1.3.1. Its source tools, commit-provenance
+- da has about 208 GiB free, a running systemd user manager, `jq`, `rsync`, and
+  the standard integrity tools. Its source tools, commit-provenance
   `helium-tabs`, config, service, and user timer are staged. The timer is both
-  disabled and inactive. Preflight fails closed because the independent public
-  recovery-recipient file has not been provisioned; the native export and d
-  route also remain unsatisfied.
+  disabled and inactive. Preflight fails closed while the native export and d
+  route remain unsatisfied.
 - oneplus is online and reachable through authorized ADB, with roughly 410 GiB
   free under `/data`. Its Android shell is not the backup runtime. The Arch
-  chroot has `jq`, `rsync`, the integrity tools, and age 1.3.1, but no running
+  chroot has `jq`, `rsync`, and the integrity tools, but no running
   systemd manager. Source tools, the ARM64 `helium-tabs` binary, config template,
   and disabled Magisk runner template are staged. There is no active config,
   installed Magisk service, or enable marker.
@@ -301,15 +292,14 @@ directory. It never deletes bytes and it never happens automatically.
   entry. This invariant is synthetic-tested but has not mounted the live chroot
   in this audit. A live disposable route drill also requires an authorized
   noninteractive Magisk root session; an ADB `su` request currently exits 255
-  while the device is locked. The source remains disabled until that access,
-  offline public recovery recipients, and the native browser export exist.
+  while the device is locked. The source remains disabled until that access
+  and the native browser export exist.
 - da's dedicated public-key fingerprint is
   `SHA256:AxzKZUs3u5vVOxzhrHKRXMShn5amwgQxE/zemOtVPV4`; oneplus's is
   `SHA256:HyHqmUFOnyo5rNWP+OYTq6QM36Sbr+pYc2dd1n7nhCM`. Destinations authorize
   these dedicated backup keys with OpenSSH `restrict`. The pinned lm and da
   host-key fingerprints match the servers' own ED25519 public keys. Private
-  keys remain only on their source devices; no age recovery identity was
-  created or copied.
+  keys remain only on their source devices.
 - The source adapter, schema-2 topology model, migration/validation, unopened
   disposable preparation, native five-minute refresh contract, explicit
   marked-profile importer, live topology readback and post-launch receipt
@@ -317,8 +307,8 @@ directory. It never deletes bytes and it never happens automatically.
   exporter/importer bridges still require a chromiumer compile. First/second
   disposable browser runs remain open before any scheduler is enabled or
   source is promoted beyond disabled staging. Chromium native recovery and
-  stopped encrypted full-profile generations are the other two mechanisms
+  stopped compressed full-profile generations are the other two mechanisms
   specified in [tab-recovery-defense.md](tab-recovery-defense.md).
 
 These are deployment gates, not reasons to weaken destination independence or
-copy unencrypted tab data through an intermediary.
+copy tab data outside the fixed private topology.

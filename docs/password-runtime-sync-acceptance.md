@@ -3,13 +3,14 @@
 Run the shared browser-generic protocol in
 [`password-runtime-acceptance.md`](password-runtime-acceptance.md) first. This
 private extension adds only the Helium Sync bridge assertions: exact revisions,
-opaque journal agreement, a deletion tombstone, and byte-identical no-op
+readable journal agreement, a deletion tombstone, and byte-identical no-op
 restart state. Keeping these checks here leaves the public Passwords harness
 independent of the private record schema.
 
-The extension accepts only secret-free `password-state.json` and metadata from
-an isolated opaque journal. It rejects unknown fields and plaintext-shaped
-credential keys, and never retains nonce or ciphertext values. Never point it
+The extension accepts only secret-free metadata from `password-state.json` and
+the isolated readable server journal. It hashes any observed synthetic payload
+for the receipt, rejects unknown fields and plaintext-shaped credential keys,
+and never retains payload values. Never point it
 at a personal profile, production Android app data, or a production server
 journal.
 
@@ -27,7 +28,7 @@ the disposable Sync metadata:
 
 | Public step | Required private assertion |
 | --- | --- |
-| `saved_store` | The first verified browser write exists in bridge state and the opaque journal. |
+| `saved_store` | The first verified browser write exists in bridge state and the readable journal. |
 | `saved_restart_autofill` | State and complete journal hash equal `saved_store`. |
 | `updated_store` | The same credential has one changed revision and fingerprint. |
 | `updated_restart_autofill` | State and complete journal hash equal `updated_store`. |

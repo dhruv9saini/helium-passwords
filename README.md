@@ -4,7 +4,7 @@ Helium Sync is the private personal-browser layer on top of the public
 [Helium Passwords](https://github.com/dhruv9saini/helium-passwords) backbone.
 The two repositories share normal Git ancestry, patch tooling, the pinned
 Chromium environment, and the chromiumer build workflow. This repository adds
-native end-to-end encrypted password and login-session convergence plus
+native password and login-session convergence across the private Tailnet plus
 device-local tab durability for d, da, and oneplus.
 
 The product contract and current implementation boundary are
@@ -23,11 +23,11 @@ its private Sync evidence extension is
 - Passwords use Chromium's native password store. Cookies use Chromium's native
   `CookieManager`. Normal installs and launches do not use CDP writers,
   CookieCloud, a phone-local server, or copied profile databases.
-- The lm server stores opaque authenticated ciphertext and hashed device
-  credentials. Content and recovery keys never belong on lm, its server data,
-  the NAS server backup, chromiumer, or Git.
+- The Tailnet is the confidentiality boundary. The lm server stores readable
+  authenticated JSON records and only hashed device bearer credentials. Do not
+  add content encryption, a private inner TLS CA, or public Serve/Funnel routes.
 - Tabs never enter sync. They remain device-local and are protected by local
-  recovery, atomic versioned snapshots, and two encrypted off-source copies.
+  recovery, atomic versioned snapshots, and two private off-source copies.
 - No personal profile is touched until all compiled disposable gates pass and
   that profile has a verified recoverable backup.
 - Chromium is never built on lm. Every large build uses the isolated
@@ -39,28 +39,26 @@ its private Sync evidence extension is
 - `chromium/overlay/`: native password, cookie, enrollment, and local tab
   snapshot integration.
 - `chromium/patches/`: generated overlay plus desktop/Android wiring.
-- `internal/syncstore/`: opaque server, client-side E2EE protocol, enrollment,
-  scoped credentials, rotations, CAS conflicts, tombstones, and encrypted d
-  recovery export/import.
+- `internal/syncstore/`: readable record server, hash-only bearer enrollment,
+  scoped credentials, CAS conflicts, tombstones, and atomic journal recovery.
 - `internal/tabsnapshot/` and `scripts/tabs/`: device-local generations,
-  validation, retention, encrypted two-destination backup, quarantine, and
+  validation, retention, private two-destination backup, quarantine, and
   disposable restore.
 - `scripts/chromium/`: pinned Android composition, codec/streaming provenance,
   and remote compile entry points.
 - `scripts/password-runtime/`: shared artifact-bound native password fixture
   and UI receipt plus the private Sync state/journal receipt extension.
-- `systemd/helium-syncd.service`: least-privilege direct TLS service bound only
-  to lm's Tailscale IPv4 address.
+- `systemd/helium-syncd.service`: least-privilege HTTP service bound only to
+  lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
   it keeps Tailscale Serve/Funnel empty and does not enable the service unless
-  an offline-CA-signed, endpoint-constrained TLS generation matches lm's live
-  tailnet identity and the opaque restore drill passed. State-changing
+  the endpoint matches lm's live Tailscale IPv4 and the server restore drill
+  passed. State-changing
   operator actions are serialized, and activation refuses any existing
   listener on the canonical service port.
 - `scripts/helium-sync-server-backup.sh`: read-only validation and versioned
-  backup of only the hashed registry, opaque journal, journal snapshots, and
-  optional opaque quarantine. It never archives d client state, content keys,
-  recovery identities, or recovery-recipient configuration.
+  backup of only the hashed registry, readable journal, journal snapshots, and
+  optional quarantine. It never archives client bearer tokens.
 - `docs/deployment.md`: exact seed, join, rotation, backup, and rollback
   sequence.
 

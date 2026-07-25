@@ -2,7 +2,7 @@
 
 The Android app and the Arch chroot browser use the same product architecture
 as desktop: Chromium's native password store, Chromium's native CookieManager,
-profile-local E2EE state, and the HTTPS service on lm. There is no phone-local
+profile-local bearer state, and the private-Tailnet HTTP service on lm. There is no phone-local
 sync daemon and no shared server state inside the chroot.
 
 Normal installation does not fetch, install, or launch CookieCloud; expose a
@@ -23,12 +23,10 @@ only in:
 ```
 
 The directory contains the oneplus-specific token, oneplus `client.json`, and
-the lm direct-TLS tailnet URL. Before any of those are installed, Android must
-explicitly enroll the independently authenticated, endpoint-constrained Helium
-Sync CA as a user VPN/apps root and its DER SHA-256 must match d/da. The CA
-private key and lm leaf key never go to oneplus. da or d credentials/state must
-never be copied there. The app must be force-stopped and its full app profile
-backed up before this directory or APK is changed.
+the exact lm private-Tailnet HTTP URL. No Helium CA or endpoint certificate is
+installed. da or d credentials/state must never be copied there. The app must
+be force-stopped and its full app profile backed up before this directory or
+APK is changed.
 
 A pending oneplus profile starts the native bridges, pulls passwords and
 cookies, applies and verifies them, but cannot publish. Promotion is performed
@@ -40,14 +38,14 @@ The next start reloads active scope.
 The chroot browser has its own profile and therefore its own device identity if
 it is ever enrolled. It must not reuse the Android app's oneplus credential or
 client state. `scripts/android-local/chromium-helium-local-root.sh` requires
-an existing HTTPS enrollment directory and the built Helium Sync binary at
+an existing private-Tailnet HTTP enrollment directory and the built Helium Sync binary at
 `/opt/helium-sync/helium` through `/usr/local/bin/helium`. It fails instead of
 falling back to stock Chromium.
 
 `scripts/android-local/install-phone-sync.sh` installs the enrollment CLI,
 local tab tool, launcher, and unrelated desktop helpers. It does not install a
 server, CookieCloud, or CDP writers. The launcher requires the profile's native
-HTTPS enrollment and starts Helium directly; there is no sidecar or secondary
+private-Tailnet HTTP enrollment and starts Helium directly; there is no sidecar or secondary
 writer to enable as a fallback. Normal launch does not load Browserpass or
 unreviewed extension-directory globs, rewrite Chromium clean-exit state, or
 delete recovered pages through CDP.
@@ -56,12 +54,12 @@ delete recovered pages through CDP.
 
 The native bridge transports every valid live cookie returned by CookieManager,
 including session, persistent, Secure, HttpOnly, SameSite, host-only, domain,
-and partitioned cookies. A destination snapshot and sealed rollback precede
+and partitioned cookies. A destination snapshot and readable rollback precede
 every apply. A destination rejection is scoped to the exact canonical cookie
 record and remote revision, restores the last local session, and requests
 password reauthentication. Chromium's same-site DBSC session keys are recorded
 only as local evidence; they do not classify every cookie on the site or prove
-destination authentication. A later active-epoch revision or a verified local
+destination authentication. A later revision or a verified local
 cookie change after reauthentication may proceed through normal CAS.
 
 Authentication state in localStorage, IndexedDB, service-worker storage, or
@@ -146,6 +144,7 @@ commands.
 ## Tabs
 
 Android tabs remain local. The native tab bridge exports a neutral snapshot for
-the oneplus-local repository; the backup job age-encrypts that generation to
-lm NAS and da. No backup is imported into d or da as browser state, and no copy
+the oneplus-local repository; the backup job copies a checksum-bound archive
+to lm NAS and da over private Tailscale/SSH routes. No backup is imported into
+d or da as browser state, and no copy
 auto-opens. See `tab-backup-operations.md`.

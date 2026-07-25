@@ -14,8 +14,8 @@ go test ./...
 It currently proves the HS-001 reconcile state machine, cookie partition and
 source/replica semantics, independent tab generation/retention/restore
 invariants, bounded immutable multi-page record snapshots, authenticated
-sync-store journal recovery, constrained TLS
-issuance, wrong-identity rejection, and a TLS 1.3 handshake. It does not
+sync-store journal recovery, exact private-Tailnet endpoint admission, and
+hash-only bearer authentication. It does not
 replace the browser gates below.
 
 ## Gate 0: Provenance and Source Preparation
@@ -59,19 +59,12 @@ replace the browser gates below.
   provenance requires the locked Helium core plus core/Passwords/Sync
   composition layers; the control requires a clean Chromium tree and the sole
   `upstream-control` marker, and rejects any patched-composition provenance.
-- Tailscale Serve and Funnel are empty on lm. The installed TLS generation
-  verifies against lm's current `.ts.net` name and `100.64.0.0/10` IPv4
-  address, has at least 30 days remaining, and the offline CA private key is
-  absent from lm, NAS backups, source, and build hosts.
-- Each disposable client independently authenticates and enrolls the exact CA
-  DER SHA-256 before receiving its URL or bearer token. The path-zero root has
-  only the exact critical DNS constraint profile accepted by Android
-  BoringSSL; IP, URI, email, and unknown critical GeneralSubtrees are absent.
-  The leaf still has the exact current Tailscale IPv4 SAN. The correct root
-  reaches `https://lm.<tailnet>.ts.net:44719/v2/health` with TLS 1.3; missing,
-  substituted, DNS-unconstrained, expired, wrong-host, and wrong-IP leaves fail
-  before an Authorization header is sent. Port 44719 is unreachable outside the
-  tailnet and no cleartext response exists on that address.
+- Tailscale Serve and Funnel are empty on lm. The installed endpoint contains
+  only lm's exact current Tailscale IPv4 address and port 44719.
+- Each disposable client accepts only
+  `http://<literal-100.64.0.0/10-address>:44719`. DNS names, HTTPS, userinfo,
+  query/fragment components, wildcard addresses, and any non-Tailnet route fail
+  before an Authorization header is sent.
 
 ## Gate 1: Helium Passwords
 
@@ -98,7 +91,7 @@ loopback fixture attestation; a checklist alone cannot pass this gate.
 Use three disposable profiles named `oneplus-test`, `d-test`, and `da-test`.
 For the native lifecycle, run the private extension in
 [`password-runtime-sync-acceptance.md`](password-runtime-sync-acceptance.md).
-Its receipt binds secret-free bridge state and opaque-journal metadata to the
+Its receipt binds secret-free bridge state and readable-journal metadata to the
 public screenshots and enforces save/update/tombstone revisions plus three
 byte-identical no-op restart snapshots.
 
@@ -110,8 +103,8 @@ byte-identical no-op restart snapshots.
   completion command proves the equivalent stopped-profile gate.
 - Restarting an unchanged profile publishes zero password records.
 - Two password forms that differ only in username element or password element
-  remain distinct. A schema-3 state with both forms fails migration without
-  dropping its preserved legacy state or merging the two forms.
+  remain distinct. Password state accepts only schema 6 and has no legacy
+  migration map.
 - Rapid update/update/delete observer events publish one record at a time; the
   next mutation uses the pulled accepted revision rather than reusing the first
   mutation's expected revision.
@@ -132,12 +125,12 @@ byte-identical no-op restart snapshots.
   rejected on every client. The stopped-profile cutover preserves a mode-0600
   rollback token and atomically installs only a server-confirmed new token.
 - No plaintext password or bearer token appears in daemon/browser logs.
-- Enrollment promotion and content-key rekey reject schema-3, legacy-preserved,
-  queued, or pending password state.
+- Enrollment promotion rejects unknown schemas and queued or pending password
+  publication state.
 
 ## Gate 3: Cookies and Login State
 
-The fixture server issues controlled cookies and rotating opaque tokens.
+The fixture server issues controlled cookies and rotating synthetic tokens.
 Before the networked three-client cases, the Android Sync test package must
 pass its browser-native CookieManager fixture. Prepare only a stopped,
 hash-admitted `computer.helium.sync.test` package with the artifact-carried
@@ -178,10 +171,8 @@ destination is authenticated or that any site session is portable.
 - One authenticated device rotates a token twice; destinations receive each
   revision and never ping-pong the previous token. A concurrent local edit and
   newer remote revision stops without discarding the last good local session.
-- After a stopped-browser content-key cutover, a higher CAS revision
-  re-encrypted under the active epoch applies and advances the cookie record's
-  epoch. Same-revision epoch substitution, higher revisions under a stale
-  epoch, and unknown epochs all fail closed.
+- A higher CAS revision applies and advances the cookie record. Same-revision
+  payload substitution and stale expected revisions fail closed.
 - Expired cookies are not recreated. A verified local deletion creates a
   revisioned tombstone.
 - A device-bound-session fixture or known DBSC test site never classifies all
@@ -189,19 +180,17 @@ destination is authenticated or that any site session is portable.
   canonical cookie key, remote revision and payload fingerprint plus exact
   same-site session keys observed locally, without claiming a session-to-cookie
   binding or successful destination authentication.
-- Synthetic schema-2 and schema-3 cookie states migrate to schema 4 after
-  writing an atomic mode-0600 `schema-v2.bak` or `schema-v3.bak`; the active
-  state rewrite is also atomic. Revisions, fingerprints, deletion state,
-  pending CAS state, and exact schema-3 exceptions survive; old schema-2
-  site-wide `non_clonable` fields do not.
-- Every apply records a destination preview and sealed rollback first. A
+- Cookie state accepts only schema 5. Revisions, fingerprints, deletion state,
+  pending CAS state, and exact destination exceptions are atomic; legacy
+  schemas and content-key fields fail closed.
+- Every apply records a destination preview and private readable rollback first. A
   rejected set or verification mismatch restores the destination snapshot.
 - A pending join with a different local cookie at the same canonical identity
   transactionally applies d's authoritative value under that rollback; its
   unrelated local cookies remain unpublished during initial enrollment.
 - More than 32 local cookie changes drain over multiple deterministic
   publication batches, and no serialized native request exceeds 4 MiB.
-- The same rejected revision is not retried every cycle. A higher active-epoch
+- The same rejected revision is not retried every cycle. A higher
   remote revision retries transactionally. A local cookie change while the
   exception remains is marked unverified, held locally, and never published as
   proof of reauthentication. Successful readback clears the prior exception
@@ -234,7 +223,7 @@ destination is authenticated or that any site session is portable.
 - No server request, record, schema, credential, or normal launch path contains
   tabs. A backup from one device is never displayed or auto-opened on another.
 - Prove all three mechanisms independently: Chromium clean/crash session
-  recovery, neutral topology generations, and stopped encrypted full-profile
+  recovery, neutral topology generations, and stopped compressed full-profile
   generations. Two replicas of one generation still count as one mechanism.
 - Each source runs its own capture/backup schedule. d and oneplus each copy to
   lm NAS and da; da copies to lm NAS and d. Destination namespaces never merge.
@@ -261,9 +250,9 @@ destination is authenticated or that any site session is portable.
   Normal launch never consumes a backup, rewrites clean-exit state, or broadly
   deletes pages through CDP.
 - A stopped full-profile generation uses a separate producer, configuration,
-  recipient set, format, retention state, and restore command from the neutral
-  snapshots. It streams directly to both off-device destinations, leaves no
-  plaintext archive or lm-local ciphertext spool, and restores only below a
+  format, retention state, and restore command from the neutral snapshots. It
+  streams directly to both private off-device destinations, leaves no
+  source-local archive, and restores only below a
   marked mode-0700 disposable root.
 - `tab-recovery-health.sh` always emits exactly three distinct mechanism
   statuses. A missing, stale, wrong-device, future, symlinked, group-readable,
@@ -408,14 +397,15 @@ and every expected failure is explicit.
 
 - Before any install, stop the disposable or personal browser and create a
   checksum manifest plus two recoverable copies of its complete profile.
-- Prove opaque server backup restore before registering the first join device.
-- Prove both independently held recovery identities can decrypt their own
-  off-source copy into new disposable directories and recover the authenticated
-  d signing public key; a single recipient or existing restore target fails.
+- Prove readable private server backup restore before registering the first
+  join device.
+- Prove both fixed private profile-backup destinations restore their
+  checksum-identical archive into separate new disposable directories; an
+  existing restore target fails.
 - Install only a hash-verified artifact returned by chromiumer. Keep the prior
   application and untouched profile backup until all gates pass.
 - Enroll d first, da second, and oneplus third. After each join, prove zero
   initial publication and zero unchanged-restart publication before proceeding.
-- Verify the server survives stop/start and restored opaque state; verify each
+- Verify the server survives stop/start and restored readable state; verify each
   device's tab backup freshness, both off-source hashes, corruption quarantine,
   and disposable restore.

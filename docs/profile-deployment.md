@@ -46,12 +46,10 @@ only on d, a da config only on da, and a oneplus app-profile stream only on lm.
 Destination roots must already exist.
 
 ```text
-version=2
+version=3
 source_device=d
 profile_id=default
 source_path=/home/d/.config/net.imput.helium
-age_recipients=/secure/d-profile-recovery.recipients
-age_identity=/MOUNTED/OFFLINE/d-profile-recovery-a.identity
 ssh_user=d
 ssh_identity=/home/d/.ssh/helium_profile_backup_ed25519
 ssh_known_hosts=/home/d/.ssh/helium_profile_backup_known_hosts
@@ -61,14 +59,12 @@ destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-profile-backups
 destination=da-copy|device|ssh|da|da|/home/d/.local/share/helium-profile-backups
 ```
 
-Use at least two distinct age recipients whose private identities are held in
-separate failure domains. The backup host needs only the recipient file. An
-identity is needed for a restore drill and must not be placed in Git, lm server
-state, the NAS server backup, or a Chromium artifact. The SSH identity and
-pinned known-hosts file must be source-user-owned, nonempty, regular,
-non-symlink mode-0600 files. The transport ignores user SSH configuration,
-uses BatchMode and `-F none`, offers only that key, pins the destination host
-key, and disables forwarding and TTY allocation.
+The SSH identity and pinned known-hosts file must be source-user-owned,
+nonempty, regular, non-symlink mode-0600 files. The transport ignores user SSH
+configuration, uses BatchMode and `-F none`, offers only that key, pins the
+destination host key, and disables forwarding and TTY allocation. Tailscale
+and SSH are the confidentiality boundary; the backup format does not add an
+inner encryption layer.
 
 The enforced topology is the same as tab disaster recovery:
 
@@ -96,28 +92,27 @@ Preflight refuses an open profile, insufficient destination capacity, a
 destination on the source device, a wrong authenticated host, a system-disk
 directory masquerading as lm's NAS, or any topology other than the fixed NAS
 plus peer. Backup records a deterministic content fingerprint immediately
-before and after the encrypted stream; any concurrent change aborts the
+before and after the compressed stream; any concurrent change aborts the
 generation. Admission later refuses a running or byte-changed local profile,
 so an old but otherwise healthy copy cannot authorize installation after the
 profile changes.
 
-The producer compresses and encrypts once, then fans the ciphertext through
-pipes directly into private per-destination incoming directories. Neither a
-plaintext tar nor a local ciphertext spool is created. Both incoming
-ciphertexts must match the producer's stream hash and size before the same
-schema-2 receipt is copied with rsync. The receipt binds the source path and
-source fingerprint, its explicit `normalized-tree-v1` or `tar-stream-v1`
-method, generation, ciphertext hash and size, recovery-recipient fingerprint,
-and exact destination topology. The method distinction is required because an
+The producer compresses once, then fans the archive through pipes directly
+into private per-destination incoming directories. No source-local archive is
+created. Both incoming archives must match the producer's stream hash and size
+before the same schema-3 receipt is copied with rsync. The receipt binds the
+source path and source fingerprint, its explicit `normalized-tree-v1` or
+`tar-stream-v1` method, generation, archive hash and size, and exact
+destination topology. The method distinction is required because an
 Android `adb exec-out` producer admits the exact root tar stream, while a local
 desktop producer can fingerprint the stopped filesystem tree directly. Each
 destination atomically renames its complete incoming directory into
 `generations/GENERATION`; `status` downloads only the small receipts, rehashes
-both remote ciphertexts in place, and requires the copies to agree. A damaged
+both remote archives in place, and requires the copies to agree. A damaged
 destination generation is preserved outside the active set:
 
 ```text
-DESTINATION_ROOT/SOURCE_DEVICE/PROFILE_ID/generations/GENERATION/profile.tar.zst.age
+DESTINATION_ROOT/SOURCE_DEVICE/PROFILE_ID/generations/GENERATION/profile.tar.zst
 DESTINATION_ROOT/SOURCE_DEVICE/PROFILE_ID/generations/GENERATION/receipt.env
 ```
 
@@ -145,8 +140,8 @@ scripts/profile-backup/helium-profile-backup.sh restore-to-disposable \
 ```
 
 Restore first verifies both independent copies, then streams the selected
-authenticated destination ciphertext through age and zstd without staging a
-plaintext archive. Extraction is confined to a new child of the marked
+authenticated destination archive through zstd without staging a source-local
+archive. Extraction is confined to a new child of the marked
 disposable root. A local backup's restored normalized tree, or an Android
 backup's decrypted tar stream, must equal the corresponding admitted
 fingerprint before the atomic publish and secret-free restore receipt. The
@@ -159,7 +154,7 @@ After restoring the same synthetic generation independently from both
 destinations, use the authenticated first/second-start gate in
 [tab-runtime-proof.md](tab-runtime-proof.md). It consumes each restore's
 source-bound receipt and requires the two evidence records to name distinct
-destinations with the same ciphertext before `full-profile.status` can be
+destinations with the same archive before `full-profile.status` can be
 emitted.
 
 ## Transactional desktop and chroot install
@@ -209,16 +204,16 @@ scripts/android-local/backup-android-chromium-profile.sh \
 
 The config's `source_path` must exactly match the installed package's resolved
 `<dataDir>/app_chrome`. The producer force-stops the app, streams root tar over
-`adb exec-out`, fingerprints one preflight stream, and accepts the encrypted
+`adb exec-out`, fingerprints one preflight stream, and accepts the compressed
 stream only when its SHA-256 is identical. The plaintext tar is never written
-on lm; it flows directly through zstd and age and fans out to the local NAS
+on lm; it flows directly through zstd and fans out to the local NAS
 incoming directory and authenticated da SSH incoming directory. Both copies
-must match the local encrypted-stream hash before either generation becomes
+must match the local archive-stream hash before either generation becomes
 active.
 
 `configure-android-chromium-sync.sh` accepts one explicit oneplus join
 directory containing exactly `base_url`, `client.json`, and `token`. It
-requires direct HTTPS, a pending or active oneplus join state, a path-bound
+  requires direct private-Tailnet HTTP, a pending or active oneplus join state, a path-bound
 receipt, and two valid backup copies. It
 force-stops the app, installs only
 `<dataDir>/app_chrome/Default/helium-sync`, and preserves the old enrollment
@@ -229,6 +224,5 @@ Immediately before changing enrollment, the configurator streams and hashes
 the stopped `app_chrome` tree again and requires it to match the admitted
 backup. A stale or path-only receipt therefore cannot authorize a mutation.
 The source and synthetic gates are complete; personal OnePlus use remains
-blocked until this exact producer, two real off-device destinations, age
-identities held outside lm, and restore into a disposable Android test profile
-pass on the actual device.
+blocked until this exact producer, two real private off-device destinations,
+and restore into a disposable Android test profile pass on the actual device.

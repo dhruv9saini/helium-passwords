@@ -88,7 +88,7 @@ This boundary was checked against locked Chromium commit
 
 After a destination rejects a cookie, the bridge therefore restores and
 readback-verifies the complete last-good local cookie snapshot, persists the
-exception for exactly that record, revision, and encrypted-payload
+exception for exactly that record, revision, and payload
 fingerprint, and writes `cookie-reauth-required.json`. The signal deliberately
 contains `schemeful_site`, `origin_status=unavailable-not-observed`,
 `login_entry_status=unavailable-not-observed`,

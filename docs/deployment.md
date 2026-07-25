@@ -2,7 +2,7 @@
 
 Do not use this runbook on a personal profile until every disposable gate in
 `acceptance.md` is recorded against the exact returned artifact. Commands are
-shown with placeholders and never print a token, content key, cookie, password,
+shown with placeholders and never print a token, cookie, password,
 or tab URL.
 
 ## 1. Build and return artifacts
@@ -388,563 +388,168 @@ source locks.
 
 A copied backup never opens a browser.
 
-## 3. Prepare lm without activating it
+## 3. Prepare lm without activating personal sync
 
-### Synthetic rootless endpoint while lm sudo is unavailable
+Helium Sync uses Tailscale as its confidentiality and peer-authentication
+boundary. The server endpoint is exactly:
 
-The production service below remains the required personal-data design because
-its dedicated `helium-sync` account separates the leaf key and opaque state
-from other processes owned by d. For disposable protocol and browser tests
-only, lm can run the separately named lingering user service without sudo:
+```text
+http://LM_TAILSCALE_IPV4:44719
+```
+
+`LM_TAILSCALE_IPV4` must be the single current `100.64.0.0/10` address reported
+for lm. The installers reject DNS names, HTTPS, wildcard/listen-all addresses,
+wrong ports, public Serve/Funnel state, and endpoints that do not match the live
+Tailnet identity. There is no Helium TLS CA or content-encryption key.
+
+First deploy the source generation while production remains inactive:
+
+```sh
+sudo scripts/install-lm-sync-service.sh install-source
+sudo scripts/install-lm-sync-service.sh install-endpoint
+sudo scripts/install-lm-sync-service.sh verify-source
+sudo scripts/install-lm-sync-service.sh verify-endpoint
+sudo scripts/install-lm-sync-service.sh status
+```
+
+The source installer requires a clean pushed commit, builds outside tmpfs,
+records checksums and build information in an immutable generation, points the
+systemd units at that generation, and does not initialize or enable the
+service. `endpoint.env` contains only `HELIUM_SYNC_LISTEN=IP:44719`.
+
+The production service runs as the dedicated `helium-sync` account, writes only
+`/var/lib/helium-sync`, and is restricted to Tailnet IPv4 peers. Its server
+backup contains the hash-only registry, readable journal, snapshots, and
+optional quarantine. It never contains client bearer tokens. Before production
+activation:
+
+```sh
+sudo scripts/install-lm-sync-service.sh backup-drill
+sudo scripts/install-lm-sync-service.sh enable
+```
+
+`enable` is intentionally a separate action. It refuses another port-44719
+listener and requires a fresh restore drill. Do not run either command for
+personal service state until disposable native browser gates and personal
+profile backups pass.
+
+### Synthetic rootless service
+
+The user service is the only service that may be exercised now. It is
+marker-gated synthetic state and must never receive personal credentials or
+browser content:
 
 ```sh
 scripts/install-lm-disposable-sync-service.sh install-source
-scripts/install-lm-disposable-sync-service.sh install-endpoint \
-  /secure/incoming/ca-cert.pem \
-  /secure/incoming/server-cert.pem \
-  /secure/incoming/server-key.pem
-scripts/install-lm-disposable-sync-service.sh initialize \
-  /secure/incoming/lm-bootstrap.json
+scripts/install-lm-disposable-sync-service.sh install-endpoint
+scripts/install-lm-disposable-sync-service.sh initialize BOOTSTRAP_JSON
 scripts/install-lm-disposable-sync-service.sh backup-drill
 scripts/install-lm-disposable-sync-service.sh enable
 scripts/install-lm-disposable-sync-service.sh status
 ```
 
-Every state-changing disposable action holds
-`$XDG_RUNTIME_DIR/helium-sync-disposable.operator.lock`; concurrent
-installation, registry, backup-drill, enable, or disable operations fail
-instead of racing. The live verifier bypasses environment proxies, resolves
-the authenticated `.ts.net` name directly to lm's current Tailscale IPv4, and
-requires exactly TLS 1.3. The unit refuses to start if a CA private key appears
-in the installed TLS generation.
+Initialization accepts the hash-only `server-bootstrap.json` emitted by a
+temporary `helium-sync seed-init`. The matching client directory is disposable
+test state. The independent user backup timer writes private readable server
+archives to `/srv/nas/helium-sync-server-disposable` and proves restore before
+activation. `disable` stops and disables the service and timer but preserves
+all generations.
 
-The fixed state root is
-`/home/d/.local/state/helium-sync-disposable`; binaries are under
-`/home/d/.local/share/helium-sync-disposable/bin`; backups are namespaced under
-`/srv/nas/helium-sync-server-disposable`. The installer refuses an absent or
-changed `SYNTHETIC_ONLY` marker, a configured Tailscale Serve/Funnel, a stale
-endpoint identity, an existing listener, an active production service, a
-missing linger manager, a weak/incorrect certificate, or activation without a
-fresh backup/restore drill. It waits up to ten seconds for the supervised TLS
-listener instead of treating process creation as readiness.
+Only one production or disposable process may own port 44719.
 
-The user unit masks all of d's home with `ProtectHome=tmpfs`, then exposes only
-its executable and read-only endpoint/TLS directories plus its writable opaque
-server directory. It also enforces an empty capability set, private tmp and
-devices, process hiding, syscall/address-family restrictions, tailnet-only IP
-BPF policy, 256 MiB memory, no swap, and 64 tasks. The backup unit is
-network-denied, can read only that server directory, and can write only its NAS
-namespace. It stops and restarts the endpoint around each generation.
+## 4. Seed and join model
 
-`helium-sync-synthetic-client` is the protocol-only replacement for browser
-readback in remote fixture tests. It always requests the unfiltered password
-and cookie inventory, requires a private file containing exactly
-`synthetic-only-v1`, verifies every expected record through authenticated kind,
-metadata, and payload hashes, emits no payload, then acknowledges that
-synthetic readback. An enrollment receipt uses schema 2 and binds each hashed
-key to its record kind. The helper may promote a pending fixture client only
-when explicitly requested; filtering either kind is intentionally unsupported
-because a filtered page still carries the server's full snapshot cursor. Never
-stage its marker beside a personal client state or use its receipt as native
-PasswordStore or CookieManager evidence.
-
-Rollback is one nondestructive command:
-
-```sh
-scripts/install-lm-disposable-sync-service.sh disable
-```
-
-It disables both user units and leaves TLS, opaque state, and all NAS
-generations intact. Run it before enabling the production service. User-scope
-sandboxing cannot stop another process already running as d from reading
-d-owned files, so never enroll personal devices or put personal records into
-this synthetic endpoint.
-
-### Dedicated-account production endpoint
-
-First prove there is at most one endpoint owner. These commands inspect only
-service and socket metadata:
-
-```sh
-systemctl is-active helium-syncd.service || true
-XDG_RUNTIME_DIR=/run/user/$(id -u) \
-  DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus \
-  systemctl --user is-active helium-syncd-disposable.service || true
-ss -ltnp '( sport = :44719 )'
-```
-
-The production `enable` action refuses any existing listener on port 44719.
-If the synthetic service owns it, explicitly preserve and stop that endpoint
-first with `scripts/install-lm-disposable-sync-service.sh disable`; production
-activation never silently replaces another service.
-
-```sh
-scripts/install-lm-sync-service.sh install-source
-```
-
-Run that command from a clean private worktree as the ordinary lm operator; it
-crosses one sudo boundary and performs both Go builds as that invoking user.
-It refuses dirty or untracked source. The immutable release below
-`/usr/local/libexec/helium-sync-releases/generations/` contains both binaries,
-their Go build metadata, the health and backup helpers, every production unit,
-and an exact-field `source.env`. The SHA-256 of that canonical receipt is the
-generation ID. The receipt binds the private commit and tree, its merged public
-backbone commit, Go/module identity, build command and target, and every
-installed byte. One `current` symlink selects the complete generation; stable
-systemd unit symlinks also resolve through it. The command does not initialize,
-enable, or start the service.
-
-Source rollback is an inactive, state-preserving symlink transaction:
-
-```sh
-scripts/install-lm-sync-service.sh rollback-source SOURCE_GENERATION
-scripts/install-lm-sync-service.sh verify-source
-```
-
-The rollback refuses while the daemon or either backup service is active,
-revalidates the complete target generation before switching, reloads systemd,
-and never removes another generation or `/var/lib/helium-sync`.
-Production has no cleartext listener and does not use Tailscale Serve.
-Record lm's current identity without changing Tailscale state:
-
-```sh
-tailscale status --json \
-  | jq -r '.Self.DNSName, (.Self.TailscaleIPs[] | select(test("^[0-9]+\\.")))'
-```
-
-The current expected values are `lm.tail0168aa.ts.net.` and
-`100.100.105.47`; re-read them before issuance rather than assuming they have
-not changed. On an independently held offline recovery device, create the
-dedicated endpoint-constrained CA once and issue lm's one-year leaf:
-
-```sh
-umask 077
-helium-sync tls-ca-init \
-  --hostname lm.tail0168aa.ts.net \
-  --output-dir /MOUNTED/OFFLINE/helium-sync-tls-ca
-
-helium-sync tls-server-issue \
-  --ca-cert /MOUNTED/OFFLINE/helium-sync-tls-ca/ca-cert.pem \
-  --ca-key /MOUNTED/OFFLINE/helium-sync-tls-ca/ca-key.pem \
-  --hostname lm.tail0168aa.ts.net \
-  --ip 100.100.105.47 \
-  --output-dir /secure/export/lm-tls-GENERATION
-```
-
-The root is ECDSA P-256, path length zero, and has critical DNS-only name
-constraints for exactly that `.ts.net` name: the permitted exact name plus an
-excluded subdomain subtree. `tls-ca-init` deliberately has no IP argument.
-Adding an IP, URI, email, or unknown critical GeneralSubtree makes the root
-fail source and install verification because Android's BoringSSL X.509 path
-rejects the previously used IP-constrained profile. The server-auth-only leaf
-still covers the exact DNS/IP pair and lasts 365 days. Issuance, installation,
-every daemon start, and live health independently require that leaf's IPv4 SAN
-and the bound address to equal lm's one current `100.64.0.0/10` identity.
-Keep `ca-key.pem` offline. Transfer only `ca-cert.pem`, `server-cert.pem`, and
-`server-key.pem` to lm through an authenticated route, then install while the
-service is inactive:
-
-```sh
-scripts/install-lm-sync-service.sh install-endpoint \
-  /secure/incoming/ca-cert.pem \
-  /secure/incoming/server-cert.pem \
-  /secure/incoming/server-key.pem
-scripts/install-lm-sync-service.sh verify-endpoint
-```
-
-Installation verifies the exact live Tailscale identity, CA constraints,
-signature, certificate/key match, SANs, purpose, permissions, and at least 30
-days of remaining lifetime. It writes a new immutable generation below
-`/etc/helium-sync/tls/generations/`, atomically switches `current`, and keeps
-older generations for rollback. The same generation contains `endpoint.env`,
-the public CA, leaf, root-owned service-group-readable private key, and a strict
-provenance receipt bound to the active source release. Thus endpoint identity
-and TLS material cannot be mixed by a crash between two renames. The service
-account can read but cannot modify the private key. Installation neither starts
-the service nor changes Tailscale. Verification requires both Tailscale Serve
-and Funnel to remain empty. The hardened unit re-verifies the generation at
-every start, binds only `100.100.105.47:44719`, permits only tailnet IPv4 peers,
-and requires TLS 1.3. `systemctl start` does not succeed until an unprivileged
-authenticated `/v2/health` request succeeds. No `:443` capability is needed. A
-CA private key in the installed generation is a hard start failure. Live
-verification bypasses proxy environment variables, resolves the authenticated
-name to the exact current tailnet IPv4, and permits only TLS 1.3.
-
-Before a client receives a URL or credential, authenticate the printed
-`ca_sha256` through a route independent of lm and explicitly enroll that exact
-`ca-cert.pem` in its platform trust store. On Arch Linux d/da:
-
-```sh
-openssl x509 -in /secure/incoming/ca-cert.pem -outform DER \
-  | sha256sum
-sudo trust anchor --store /secure/incoming/ca-cert.pem
-sudo update-ca-trust extract
-```
-
-On oneplus, copy the public certificate to a disposable location, verify the
-same DER SHA-256, and import it as a user VPN/apps CA through Android's
-credential installer. Chromium's Android verifier reads user-added roots; do
-not install the CA private key or the server leaf key. Record the user-root
-fingerprint and remove only the disposable public-file copy after enrollment.
-The base URL is `https://lm.tail0168aa.ts.net:44719`. A disposable client must
-show a valid chain to this private root; a missing, substituted, DNS-
-unconstrained, expired, wrong-host, or wrong-IP leaf must fail before any
-bearer credential is sent. A root containing an IP GeneralSubtree is obsolete
-and must fail `tls-server-verify` rather than being installed or enrolled.
-
-Issue a replacement leaf from the same offline CA before 30 days remain. Use a
-new output directory, authenticate its printed fingerprints, and transfer only
-the new server certificate/key plus the unchanged public root. Then:
-
-```sh
-sudo systemctl stop helium-syncd.service
-scripts/install-lm-sync-service.sh install-endpoint \
-  /secure/incoming/ca-cert.pem \
-  /secure/incoming/server-cert.pem \
-  /secure/incoming/server-key.pem
-sudo systemctl start helium-syncd.service
-scripts/install-lm-sync-service.sh verify-live-endpoint
-```
-
-The installer retains every prior immutable generation. Do not remove the
-previous generation until all three disposable clients have completed a new
-TLS connection and the prior leaf has expired. Leaf renewal does not change the
-enrolled root; a changed root is a separate, explicitly coordinated client
-trust rotation.
-
-If a newly selected endpoint must be reverted before activation, keep the
-daemon inactive and run:
-
-```sh
-scripts/install-lm-sync-service.sh rollback-endpoint TLS_GENERATION
-scripts/install-lm-sync-service.sh verify-endpoint
-```
-
-This revalidates the selected bundle and its source-release provenance, moves
-only `/etc/helium-sync/tls/current`, preserves every TLS generation and server
-record, and refuses a target issued for another source release.
-
-## 4. Create d seed and recovery material
-
-Run on d, not lm:
+Do not create personal state without explicit approval. For a disposable seed:
 
 ```sh
 umask 077
 helium-sync seed-init \
-  --state-file /secure/device/helium-sync/client.json \
-  --token-file /secure/device/helium-sync/token \
-  --bootstrap-file /secure/export/lm-bootstrap.json
-helium-sync seed-public \
-  --state-file /secure/device/helium-sync/client.json \
-  --output /secure/export/d-seed-signing-public
+  --device-id d \
+  --output-dir /secure/disposable/helium-sync-d \
+  --server-bootstrap /secure/disposable/server-bootstrap.json
 ```
 
-The bootstrap contains only d, the active key ID, and a token hash. Transfer
-that bootstrap to lm. Do not transfer `client.json` or the token to lm.
+`client.json` schema 2 and `token` stay together in the client directory.
+`server-bootstrap.json` contains the device ID, role, scopes, and only the
+SHA-256 credential hash. Initialize the inactive server from that bootstrap;
+never copy a client token into server state.
 
-Before initializing lm, create two dedicated recovery identities directly on
-two independently held recovery media. Run each command on its recovery holder,
-not on d, lm, the NAS, or chromiumer:
+A joining disposable client starts pending and pull-only:
 
 ```sh
-helium-sync recovery-keygen --output-dir /MOUNTED/RECOVERY-A/helium-sync-d
-helium-sync recovery-keygen --output-dir /MOUNTED/RECOVERY-B/helium-sync-d
+helium-sync join-init \
+  --device-id da \
+  --output-dir /secure/disposable/helium-sync-da \
+  --server-request /secure/disposable/da-server-request.json
+sudo scripts/install-lm-sync-service.sh enroll-device \
+  /secure/disposable/da-server-request.json
 ```
 
-Transfer only each `recipient.txt` to d through authenticated routes. On d,
-create one recipient set and export a new encrypted generation:
+The native password and cookie bridges must both pull, apply, read back, and
+durably acknowledge the same global cursor before promotion. Pending clients
+cannot publish. There is no key wrapping, recovery-recipient exchange, or
+content-key rotation.
 
-```sh
-umask 077
-cat /secure/incoming/recovery-A-recipient.txt \
-    /secure/incoming/recovery-B-recipient.txt \
-  > /secure/device/helium-sync/recovery-recipients.txt
-helium-sync recovery-export \
-  --state-file /secure/device/helium-sync/client.json \
-  --token-file /secure/device/helium-sync/token \
-  --recipients-file /secure/device/helium-sync/recovery-recipients.txt \
-  --output /secure/export/d-recovery-GENERATION.age
-sha256sum /secure/export/d-recovery-GENERATION.age
+Install one enrollment directory per stopped disposable profile:
+
+```text
+PROFILE/Default/helium-sync/
+  base_url
+  client.json
+  token
 ```
 
-The export refuses fewer than two distinct native age recipients and never
-writes a plaintext archive. Copy the exact encrypted generation to two
-off-d destinations and verify the printed SHA-256 independently at each.
-Neither destination may contain an identity file.
-
-Restore each destination copy with a different identity into a nonexistent
-disposable directory. The authenticated seed-public file must arrive through a
-route independent of the ciphertext:
-
-```sh
-helium-sync recovery-import \
-  --input /OFFSOURCE-A/d-recovery-GENERATION.age \
-  --identity-file /MOUNTED/RECOVERY-A/helium-sync-d/identity.txt \
-  --expected-seed-public-file /secure/incoming/d-seed-signing-public \
-  --output-dir /secure/disposable/d-recovery-drill-A
-helium-sync seed-public \
-  --state-file /secure/disposable/d-recovery-drill-A/client.json \
-  --output /secure/disposable/d-recovery-drill-A/seed-public
-cmp /secure/incoming/d-seed-signing-public \
-  /secure/disposable/d-recovery-drill-A/seed-public
-```
-
-Repeat from off-source copy B with recovery identity B. Import authenticates
-the age ciphertext, validates the complete d keypair/keyring/token, binds it to
-the expected public trust anchor, and refuses an existing output directory.
-Record the two hashes and restore receipts, then securely dispose of only the
-disposable plaintext drill directories. This proof is not satisfied by a copy
-inside d, lm's server directory, or Git.
-
-On lm:
-
-```sh
-scripts/install-lm-sync-service.sh initialize /secure/incoming/lm-bootstrap.json
-scripts/install-lm-sync-service.sh backup-drill
-scripts/install-lm-sync-service.sh enable
-scripts/install-lm-sync-service.sh status
-```
-
-Source installation, endpoint installation, initialization, backup-drill,
-registry, activation, and disable actions automatically cross one sudo
-boundary, then hold `/run/helium-sync-operator.lock` for the complete action.
-Enrollment and revocation stop the in-memory registry owner, perform the
-CLI's fsync-and-rename registry transaction, validate the new registry and
-opaque journal without modifying either, restart only if the service was
-previously active, and require direct-TLS health. A concurrent operator action
-fails immediately. Do not invoke low-level `server-enroll` or `server-revoke`
-against the production registry.
-
-The timer starts a narrow root coordinator, not the archive helper. The
-coordinator cannot see `/var/lib/helium-sync` or `/srv/nas`; it can only use
-systemd over `AF_UNIX` to quiesce the daemon and supervise the separately
-bounded `helium-sync-server-backup-archive.service`. A root-owned mode-0600
-restart marker survives a controller failure. Recovery always stops and waits
-for the archive worker before restarting the daemon, and removes that marker
-only after the daemon's authenticated health gate succeeds. A failed restart
-leaves both the daemon stopped and marker present for explicit `resume`.
-
-The archive worker runs as `helium-sync`, has a read-only server-state view,
-one writable NAS namespace, no network or capabilities, and bounded wall time,
-CPU, memory, swap, and tasks. It validates source state without snapshot
-creation or automatic journal recovery and archives only `devices.json`,
-`records.jsonl`, `snapshots/`, and optional opaque `quarantine/`. Before an
-archive and its exact-field manifest become a generation, the worker checks
-member types and inventory, checksum and byte count, extracts into disposable
-state, and runs `server-verify`. All backup directories, archives, manifests,
-receipts, and locks are private. d's age recipients and both recovery identities
-remain a separate client-side flow and are never members of the lm/NAS opaque
-archive. `backup-drill` is intentionally allowed only while the daemon is
-inactive; use `systemctl start helium-sync-server-backup.service` for a
-supervised backup of an active service.
-
-The nondestructive production stop is:
-
-```sh
-scripts/install-lm-sync-service.sh disable
-```
-
-It disables the service and backup timer while preserving
-`/var/lib/helium-sync`, TLS generations, and every NAS generation.
-
-Activation refuses unless the direct TLS generation matches lm's live
-Tailscale identity and Serve and Funnel are empty. `enable` does not trust the
-presence of an older receipt: immediately before activation it creates a fresh
-backup generation from the current `/var/lib/helium-sync`, restores that exact
-generation into disposable state, validates the restored registry and opaque
-store, and atomically records the receipt. After start it makes an
-authenticated health request through the tailnet address; a failure stops and
-disables the service. Delete neither the bootstrap nor any recovery copy until
-the recorded restore drill passes; move them to their documented secure
-locations.
-
-## 5. Join da, then oneplus
-
-Run the following on one joining device at a time. The trust-anchor file must
-arrive through an authenticated route distinct from lm's untrusted relay.
-
-On the join device:
-
-```sh
-helium-sync join-request \
-  --device da \
-  --seed-public-file /secure/incoming/d-seed-signing-public \
-  --pending-file /secure/device/helium-sync/join.pending.json \
-  --request-file /secure/export/da-join-request.json \
-  --auth-request-file /secure/export/da-auth-request.json \
-  --token-file /secure/device/helium-sync/token
-```
-
-On d, after verifying the device ID and request fingerprint:
-
-```sh
-helium-sync seed-wrap \
-  --state-file /secure/device/helium-sync/client.json \
-  --request-file /secure/incoming/da-join-request.json \
-  --wrapped-file /secure/export/da-wrapped-enrollment.json
-```
-
-On lm, register only the hash request through the supervised operator:
-
-```sh
-scripts/install-lm-sync-service.sh enroll-device \
-  /secure/incoming/da-auth-request.json
-```
-
-The operator stops the daemon if it is active, changes and validates the
-registry, restarts the daemon, and waits for direct-TLS health. This boundary
-is required: `helium-syncd` holds the validated registry in memory, so running
-the low-level `server-enroll` command against its file while it is active does
-not authorize the device until a restart and can race a server-side registry
-write. Use the corresponding disposable installer action only for the
-synthetic rootless endpoint.
-
-The complete temporary-state service proof is executable without a browser,
-personal credential, production service, or live profile:
-
-```sh
-bash scripts/tests/central-service-readiness.test.sh
-```
-
-It creates an E2EE d seed, two independent age recovery identities, restores
-both encrypted seed copies, writes one encrypted record through a supervised
-loopback daemon, creates and validates an allowlisted opaque server archive,
-starts a new daemon from the disposable restore, and proves d can decrypt the
-record while the restored server journal cannot. It then proves a separately
-wrapped da join is pull-only, cannot publish before promotion, is independently
-revocable, and that revocation does not affect d. This is source/protocol
-evidence; it does not replace production TLS installation or native browser
-acceptance.
-
-On the join device, use the active key ID recorded in the server bootstrap:
-
-```sh
-helium-sync join-install \
-  --state-file PROFILE/Default/helium-sync/client.json \
-  --pending-file /secure/device/helium-sync/join.pending.json \
-  --wrapped-file /secure/incoming/da-wrapped-enrollment.json \
-  --required-key-id ACTIVE_KEY_ID
-install -m0600 /secure/device/helium-sync/token \
-  PROFILE/Default/helium-sync/token
-printf '%s\n' 'https://lm.TAILNET.ts.net:44719' \
-  > PROFILE/Default/helium-sync/base_url
-```
-
-Start the disposable browser. It remains pull-only until both native bridges
-have applied, read back, and durably acknowledged the same current cursor. The
-profile coordinator then completes that one joint cursor and reloads both
-bridge clients before resuming. Verify `client.json` became `active`, verify
-the applied passwords and cookies, restart, and prove zero unchanged writes.
-
-If a disposable join remains pending after both bridge states are present,
-stop the browser and use the offline equivalent below. It is intentionally the
-same joint schema/cursor/server gate, not a bypass:
+`base_url` is exact private-Tailnet HTTP on port 44719. The native bridges add
+their own state files after the first successful run. An offline diagnostic
+promotion can use:
 
 ```sh
 helium-sync enrollment-complete \
-  --url https://lm.TAILNET.ts.net:44719 \
-  --profile-dir /ABSOLUTE/PROFILE \
-  --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
-  --password-state /ABSOLUTE/PROFILE/Default/helium-sync/password-state.json \
-  --cookie-state /ABSOLUTE/PROFILE/Default/helium-sync/cookie-state.json \
-  --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token
+  --url http://LM_TAILSCALE_IPV4:44719 \
+  --profile-dir /ABSOLUTE/DISPOSABLE-PROFILE \
+  --state-file /ABSOLUTE/DISPOSABLE-PROFILE/Default/helium-sync/client.json \
+  --token-file /ABSOLUTE/DISPOSABLE-PROFILE/Default/helium-sync/token
 ```
 
-The command rejects a profile lock, wrong schema, unequal cursor, stale server
-cursor, bad token, or non-join state. Restart and prove zero unchanged writes.
-Only then repeat the sequence for oneplus.
+Never copy one profile's enrollment directory into another profile.
 
-## 6. Rotation and revocation
+## 5. Bearer rotation and revocation
 
-Content-key rotation order is fixed. Every remote command also receives
-`--url https://lm.TAILNET.ts.net:44719`, its device's `--state-file`, and its current
-`--token-file`.
-
-1. On d, run `key-stage` and record `staged_key_id`. Then run
-   `key-ack-install` on d; d is an active device and its acknowledgement is
-   required too.
-2. On each join, run `key-update-request --pending-file NEW_PENDING
-   --request-file NEW_REQUEST`. On d, wrap each request with `seed-wrap`. Back
-   on that join, run `key-update-install --pending-file NEW_PENDING
-   --wrapped-file WRAPPED --required-key-id OLD --required-key-id STAGED`, then
-   run `key-ack-install`.
-3. Let every native bridge reach one current verified cursor, then stop every
-   enrolled browser; changing `client.json` does not alter a keyring already in
-   browser memory. On d, run `key-activate`, then immediately run `key-adopt` on
-   every join while the browsers remain stopped. The server keeps both epochs
-   readable during this interval, but accepts writes only under the new active
-   epoch so a retiring-key write cannot land after the rekey inventory.
-4. With browser publication still stopped, on d run:
-
-   ```sh
-   helium-sync key-rekey \
-     --url https://lm.TAILNET.ts.net:44719 \
-     --state-file /ABSOLUTE/D-PROFILE/Default/helium-sync/client.json \
-     --password-state /ABSOLUTE/D-PROFILE/Default/helium-sync/password-state.json \
-     --cookie-state /ABSOLUTE/D-PROFILE/Default/helium-sync/cookie-state.json \
-     --token-file /ABSOLUTE/D-PROFILE/Default/helium-sync/token
-   ```
-
-   This refuses unless both native revision inventories use the expected
-   schemas and their verified cursors equal `client.json`; only then does it
-   CAS-rekey every latest record and tombstone and acknowledge d's rekey.
-5. Restart every enrolled browser so it loads the new active key, then let every
-   join pull/apply/read back the rekey and run `key-ack-rekey` on each join.
-   Stop the browsers again, run `key-retire` on d, and run `key-adopt` on every
-   join so each durable keyring removes the retired key before the final
-   restart. Retirement fails until every live active device has acknowledged.
-
-Never retire while a device is offline or before every acknowledgement.
-
-Credential rotation is per-device and crash-resumable. `NEW` and `OLD_BACKUP`
-must be absolute paths on that device:
+Every remote command uses the exact HTTP Tailnet URL, the device's schema-2
+`client.json`, and its current `token` file:
 
 ```sh
 helium-sync credential-stage \
-  --url https://lm.TAILNET.ts.net:44719 \
+  --url http://LM_TAILSCALE_IPV4:44719 \
   --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
-  --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token \
-  --new-token-file /secure/device/helium-sync/token.new
-# Stop the browser before the cutover.
-helium-sync credential-activate \
-  --url https://lm.TAILNET.ts.net:44719 \
-  --profile-dir /ABSOLUTE/PROFILE \
-  --state-file /ABSOLUTE/PROFILE/Default/helium-sync/client.json \
-  --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token \
-  --new-token-file /secure/device/helium-sync/token.new \
-  --old-token-file /secure/device/helium-sync/token.rollback
+  --token-file /ABSOLUTE/PROFILE/Default/helium-sync/token
 ```
 
-`credential-activate` first preserves or verifies the mode-0600 rollback copy,
-authenticates and confirms with the staged new credential, and only then
-atomically replaces the stopped profile's token. If confirmation or the local
-rename fails, the old server credential remains valid. Restart and verify sync,
-then run `credential-retire` with the newly installed token. Preserve the old
-rollback file until the old credential is proven rejected and the new one has
-survived a restart.
+Stop the disposable browser before activating a staged credential, then
+confirm it and retire the old credential according to the CLI help. The
+registry keeps only credential hashes. Registry mutations go through
+`install-lm-sync-service.sh enroll-device` or `revoke-device`, which stop an
+active daemon, validate the complete registry, and restore the prior active
+state only after health succeeds.
 
-Revoke a lost join on lm through the same stop/change/validate/restart gate:
+## 6. Private two-copy profile gate
 
-```sh
-scripts/install-lm-sync-service.sh revoke-device DEVICE
-```
+Before any future personal install, stop the exact profile and use
+`scripts/profile-backup/helium-profile-backup.sh` with config schema 3. The
+fixed topology is one NAS copy on lm plus one authenticated peer copy. The
+producer streams one zstd archive directly to both private destinations,
+records the same SHA-256 and size, and stages no source-local archive.
 
-Rekey content after revocation so the revoked device cannot decrypt future
-records.
+Run `preflight`, `backup`, `status`, `receipt-export`, and an independent
+`restore-to-disposable` from each destination. A restore can create only a new
+`drill-*` child of a mode-0700 marked root and never launches a browser. See
+[profile-deployment.md](profile-deployment.md).
 
-## 7. Personal rollout
+## 7. Personal rollout remains gated
 
-For each existing personal profile, stop the browser and make a checksum-
-verified encrypted full-profile backup to two off-device destinations before
-installing anything. Keep the prior browser artifact and untouched backup.
-
-Roll out in this order only:
-
-1. d: install exact artifact, verify backup, enroll as seed.
-2. da: install exact artifact, join pending, verify, explicitly promote.
-3. oneplus: back up app data, install exact APK, join pending, verify, promote.
-
-At every stage, rollback means stopping the new browser, preserving its failed
-state for diagnosis, restoring the untouched profile backup to a new path,
-and reinstalling the prior artifact. Never apply a tab backup to a personal
-profile and never copy a backup to another device as active state.
+No personal profile, device enrollment, service credential, or sync activation
+is authorized by this source repair. After a returned Chromium artifact passes
+the disposable password, cookie, enrollment, tab, media, and backup gates, the
+later explicitly approved order is d seed first, then da, then oneplus. Each
+step must preserve the previous browser artifact, enrollment, and profile
+generation for rollback.

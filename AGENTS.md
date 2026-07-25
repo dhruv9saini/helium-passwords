@@ -21,7 +21,7 @@ restores Chromium's native password manager.
 - Keep this repo based on `helium-passwords`; do not turn it back into a plain
   Chromium-only repo.
 - Password sync must use Chromium's native password-manager APIs and the
-  supervised HTTPS service on lm. Do not add a password-manager browser
+  supervised private-Tailnet HTTP service on lm. Do not add a password-manager browser
   extension, a DevTools writer, or raw profile-database copying. Native
   deletions publish durable tombstones and use expected revisions so stale
   devices cannot resurrect a credential.
@@ -29,12 +29,11 @@ restores Chromium's native password manager.
   CookieCloud extension/API, DevTools cookie writer, phone-local sync daemon,
   domain-policy fallback, or raw profile-database copying.
 - Cookie records use the complete canonical identity. A newer authoritative
-  revision is accepted across a content-key change only when it uses the
-  client's active epoch; same-revision key changes and newer stale/unknown
-  epochs fail closed. DBSC inventory is evidence only: never label every cookie
+  revision is accepted only after the existing revision and payload checks
+  pass. DBSC inventory is evidence only: never label every cookie
   at a site device-bound. A destination exception belongs to one canonical
   record key, remote revision, and payload; rollback preserves the last local
-  state. A later active-epoch revision may retry. A local cookie mutation while
+  state. A later revision may retry. A local cookie mutation while
   the exception remains is unverified and must stay local until an exact-origin
   native password flow is independently evidenced; never infer successful
   reauthentication from rotation alone.
@@ -79,21 +78,18 @@ restores Chromium's native password manager.
   Chromium command-line files and debug-app selection on every exit. Never add
   normal package identities, caller-supplied flags, package clearing, or
   uninstall behavior to it.
-- `cmd/helium-syncd` runs the encrypted record daemon. Production binds only
-  lm's exact Tailscale IPv4 address and terminates TLS 1.3 itself with a leaf
-  signed by the offline Helium Sync CA. The path-zero root has an
-  Android-compatible critical DNS-only constraint for lm's exact `.ts.net`
-  name; the leaf and every install/start gate separately require the exact
-  current Tailscale IPv4 SAN and bind address. Do not add IP, URI, or email
-  GeneralSubtrees to the root: Android's BoringSSL X.509 verifier rejects that
-  critical constraint profile. The CA private key never belongs on lm;
-  clients explicitly enroll only `ca-cert.pem`.
-- `cmd/helium-sync` initializes local secrets and provides test/push/pull
+- `cmd/helium-syncd` runs the readable record daemon. Production binds only
+  lm's exact Tailscale IPv4 address on port 44719 over HTTP. Tailscale is the
+  authenticated, encrypted confidentiality boundary; do not add an inner TLS
+  CA, server certificate, content-encryption layer, or public Serve/Funnel
+  route.
+- `cmd/helium-sync` initializes per-device bearer credentials and provides test/push/pull
   commands.
-- `internal/syncstore` stores append-only encrypted records.
+- `internal/syncstore` stores append-only readable JSON records and a registry
+  containing only hashed bearer credentials.
 - `scripts/laptop` installs laptop-local sync binaries and a
   `helium-sync-browser` launcher. The launcher uses the current laptop Helium
-  profile and requires its one HTTPS enrollment directory; it starts no helper
+  profile and requires its one private-Tailnet enrollment directory; it starts no helper
   daemon and exposes no debugging port for synchronization.
 - `scripts/android-local` installs and configures the phone/chroot native sync
   pieces. `configure-android-chromium-sync.sh` places only one profile-local
@@ -102,10 +98,9 @@ restores Chromium's native password manager.
   copies credentials from the chroot. It requires a verified full-profile
   backup receipt, stops the app, and preserves the replaced enrollment. The
   `backup-android-chromium-profile.sh` producer force-stops the app and streams
-  `app_chrome` from root tar through age directly into the lm NAS and the
-  authenticated da peer destination; no plaintext archive or local ciphertext
-  spool is staged on lm. The producer requires its preflight stream and
-  encrypted stream to have the same SHA-256, and the configurator recomputes
+  `app_chrome` from root tar through zstd directly into the lm NAS and the
+  authenticated da peer destination; no source-local archive is staged. The
+  producer requires both copies to have the same SHA-256, and the configurator recomputes
   that fingerprint before changing enrollment. A mismatch is a hard stop.
   chroot launcher requires `/usr/local/bin/helium` backed by the installed
   `/opt/helium-sync/helium`; it must never fall back to stock Chromium. Use
@@ -114,7 +109,7 @@ restores Chromium's native password manager.
   install an immutable generation and atomically switch `/usr/local/bin/helium`
   in the phone chroot. Old generations are rollback data and are not deleted. The
   launcher defaults to `$HOME/.config/helium-passwords`, requires that
-  profile's native HTTPS enrollment, and starts no password/cookie sidecar. It
+  profile's native private-Tailnet HTTP enrollment, and starts no password/cookie sidecar. It
   removes stale Chromium singleton files only when their recorded PID is no
   longer running. The installer places the Google AI Overview blocker under
   both `/root/.local/share` and `/home/dhruv/.local/share`; the launcher loads
@@ -161,12 +156,12 @@ restores Chromium's native password manager.
   disposable-only native importer, full topology readback, and second-restart
   runtime proof remain acceptance work.
 - Tab durability has exactly three mechanisms: Chromium native clean/crash
-  recovery, neutral `helium-tabs` topology generations, and stopped encrypted
+  recovery, neutral `helium-tabs` topology generations, and stopped compressed
   full-profile generations. Off-device destinations are replicas inside the
   neutral or full-profile mechanism. Do not add a tab sync kind, raw native
   session copier, event journal, alternate normal-launch bridge, or additional
-  mechanism count. Keep neutral and full-profile producers, configs, recovery
-  recipients, retention, restore commands, and health proofs independent.
+  mechanism count. Keep neutral and full-profile producers, configs, retention,
+  restore commands, and health proofs independent.
   Runtime status must come from `scripts/tabs/tab-runtime-proof.mjs` evidence
   authenticated by `scripts/tabs/tab-proof-status.mjs`; never hand-write a
   healthy status. Neutral and full-profile status requires two source-bound
@@ -414,14 +409,14 @@ restores Chromium's native password manager.
 - `scripts/chromium` contains Chromium/Android build helpers and direct patch
   application helpers.
 - `scripts/profile-backup/helium-profile-backup.sh` is the full-profile
-  pre-install gate. Config schema 2 enforces the same direct topology as tabs:
+  pre-install gate. Config schema 3 enforces the same direct topology as tabs:
   d and oneplus use lm's separately mounted NAS plus da, and da uses that NAS
   plus d. Remote destinations require a dedicated mode-0600 identity and pinned
   known-hosts file with `ssh -F none`/BatchMode; the NAS mount and peer hostname
-  are verified before use. One compressed age ciphertext streams concurrently
-  into both private incoming directories without a plaintext archive or local
-  ciphertext spool. A schema-2 receipt binds the deterministic source-tree
-  fingerprint, ciphertext, recovery recipients, and exact topology. Status
+  are verified before use. One compressed archive streams concurrently into
+  both private incoming directories without a source-local archive. A schema-3
+  receipt binds the deterministic source-tree fingerprint, archive hash and
+  size, and exact topology. Status
   validates both copies, quarantine and retention preserve generations, and
   restore streams one verified copy only below a marked mode-0700 `drill-*`
   root. Export the small receipt with `receipt-export` before giving it to an

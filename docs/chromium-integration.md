@@ -41,14 +41,12 @@ length(signon_realm) || signon_realm
 
 The material has a versioned domain prefix and becomes
 `credential/v2/<sha256>`. Length framing prevents delimiter ambiguity and raw
-UTF-16 code units prevent replacement-character collisions. The encrypted
+UTF-16 code units prevent replacement-character collisions. The readable
 payload is Chromium's complete serialized `PasswordSpecificsData`, reconstructed
 through `PasswordStoreInterface::AddLogin`, `UpdateLogin`, or `RemoveLogin`.
 
-`password-state.json` schema 4 stores only fingerprints, revisions, deletion
-state, key IDs, and publication intent. A schema-3 file is atomically rewritten
-with all old entries preserved under `legacy_credentials`; only an unambiguous
-local form/fingerprint match can seed a canonical record. One
+`password-state.json` schema 6 stores only fingerprints, revisions, deletion
+state, and publication intent. Legacy schemas fail closed. One
 `pending_publication` is durable before one push, and later observer intent is
 kept separately. HTTP responses are not authoritative: a new latest-record pull
 must verify the target revision and fingerprint, including after restart.
@@ -65,8 +63,7 @@ The length-framed identity is hashed for the record key. The v3 payload mirrors
 the `net::CanonicalCookie` fields needed by
 `network::mojom::CookieManager::SetCanonicalCookie`; DBSC site/session
 inventory is local rejection evidence and is never put in the cookie payload.
-A higher remote revision may change key epoch only to the client's active
-epoch. Destination rejection is persisted for exactly that record/revision and
+Destination rejection is persisted for exactly that record/revision and
 cleared by a later verified authoritative apply. The bridge restores the
 complete last-good local snapshot and suppresses the rejected revision. A
 later local cookie mutation is held locally as unverified rather than

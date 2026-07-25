@@ -26,7 +26,7 @@ node scripts/tabs/tab-proof-status.mjs init-status-root \
 ```
 
 The 32-byte local key authenticates successful evidence. Keep it on the source
-device, outside repositories and backup ciphertext stores, with mode 0600.
+device, outside repositories and backup archives, with mode 0600.
 The runner never logs it. Evidence directories are immutable `proof-*`
 children containing only an exact marker, `evidence.json`, and
 `evidence.hmac`.
@@ -97,7 +97,7 @@ Restore the same generation independently from both configured off-device
 destinations. `tab-backup.sh restore-to-disposable` now publishes a private
 sibling receipt named
 `RESTORE.helium-tab-offdevice-source.env`. It binds the destination ID,
-ciphertext hash, backup-manifest hash, generation, namespace, and restored
+archive hash, backup-manifest hash, generation, namespace, and restored
 session hash. The runtime refuses an operator-supplied destination label.
 
 For each destination, prepare a different marked `drill-*` browser profile:
@@ -152,7 +152,7 @@ browser, starts the same profile without the import switch, and compares the
 CDP window/URL topology again.
 
 One restore cannot emit health. Both evidence files must authenticate, name
-different destinations, and bind the same session and ciphertext:
+different destinations, and bind the same session and archive:
 
 ```sh
 node scripts/tabs/tab-proof-status.mjs emit \
@@ -163,9 +163,9 @@ node scripts/tabs/tab-proof-status.mjs emit \
   --evidence-dir /secure/helium-tab-proof/evidence/proof-d-neutral-da
 ```
 
-## 3. Encrypted full-profile restore
+## 3. Compressed full-profile restore
 
-Restore the same stopped encrypted generation from each destination into two
+Restore the same stopped compressed generation from each destination into two
 different new `drill-*` children of a marked full-profile restore root. Each
 restored directory already carries the source-authenticated
 `.helium-profile-restore-receipt.env`.
@@ -197,7 +197,7 @@ node scripts/tabs/tab-runtime-proof.mjs full-profile \
 
 Both first and second starts must restore the exact CDP window/URL topology.
 The status adapter additionally requires different source destinations and
-the same ciphertext generation:
+the same archive generation:
 
 ```sh
 node scripts/tabs/tab-proof-status.mjs emit \
