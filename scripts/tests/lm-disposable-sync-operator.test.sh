@@ -29,6 +29,9 @@ grep -Fq -- '-tls-cert-file %h/.local/state/helium-sync-disposable/tls/current/s
 grep -Fq -- '-listen ${HELIUM_SYNC_LISTEN}' "$service"
 grep -Fq 'ExecStartPre=/usr/bin/test ! -e %h/.local/state/helium-sync-disposable/tls/current/ca-key.pem' "$service"
 grep -Fqx 'Environment=HELIUM_SERVER_SERVICE_SCOPE=user' "$backup_service"
+grep -Fqx 'Environment=XDG_RUNTIME_DIR=%t' "$backup_service"
+grep -Fqx 'Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus' \
+  "$backup_service"
 grep -Fqx 'BindPaths=/srv/nas/helium-sync-server-disposable' "$backup_service"
 grep -Fq 'synthetic-only-v1' "$installer"
 grep -Fq 'wait_live_endpoint' "$installer"

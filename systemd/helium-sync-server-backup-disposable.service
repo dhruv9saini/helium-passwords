@@ -9,6 +9,8 @@ Type=oneshot
 Environment=HELIUM_SERVER_DATA_DIR=%h/.local/state/helium-sync-disposable/server
 Environment=HELIUM_SERVER_SERVICE=helium-syncd-disposable.service
 Environment=HELIUM_SERVER_SERVICE_SCOPE=user
+Environment=XDG_RUNTIME_DIR=%t
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
 Environment=HELIUM_SYNC_CLI=%h/.local/share/helium-sync-disposable/bin/helium-sync
 ExecStart=%h/.local/share/helium-sync-disposable/bin/helium-sync-server-backup backup /srv/nas/helium-sync-server-disposable
 UMask=0077
