@@ -342,11 +342,12 @@ job=hs-android-150-sync-test-01b
 scripts/chromiumer-job.sh resume "$parent" "$job" \
     --summary "Continuation of the pinned Android compile and package gate" \
     --next "Fetch and verify the exact-source Android artifact." -- \
-    env \
-      HELIUM_SYNC_REPO=. \
-      GITHUB_WORKSPACE=.build \
-      CHROMIUM_ANDROID_PHASE=build \
-      bash scripts/chromium/build-android-ci.sh
+    scripts/chromiumer-nix.sh run -- \
+      env \
+        HELIUM_SYNC_REPO=. \
+        GITHUB_WORKSPACE=.build \
+        CHROMIUM_ANDROID_PHASE=build \
+        bash scripts/chromium/build-android-ci.sh
 ```
 
 The command after `--` is mandatory and normally must byte-for-byte reproduce
@@ -629,11 +630,12 @@ must equal the same full commit:
 scripts/chromiumer-job.sh start "$job" \
     --summary "OnePlus arm64 APK for streaming, video, password, tab, and cookie validation" \
     --next "Fetch the APK and execute the documented disposable OnePlus acceptance sequence." -- \
-    env \
-      HELIUM_SYNC_REPO=. \
-      GITHUB_WORKSPACE=.build \
-      CHROMIUM_ANDROID_PHASE=all \
-      bash scripts/chromium/build-android-ci.sh
+    scripts/chromiumer-nix.sh run -- \
+      env \
+        HELIUM_SYNC_REPO=. \
+        GITHUB_WORKSPACE=.build \
+        CHROMIUM_ANDROID_PHASE=all \
+        bash scripts/chromium/build-android-ci.sh
 ```
 
 Linux/Android jobs additionally need a reproducible chromiumer build

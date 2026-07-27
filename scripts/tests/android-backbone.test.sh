@@ -111,6 +111,17 @@ if GITHUB_WORKSPACE="$test_root" HELIUM_SYNC_REPO="$repo_root" CHROMIUM_REF=main
 fi
 grep -q 'CHROMIUM_REF must be the immutable commit' "$test_root/moving.out"
 
+if GITHUB_WORKSPACE="$test_root" HELIUM_SYNC_REPO="$repo_root" \
+  HELIUM_BUILD_JOBS=1 \
+  CHROMIUM_REF="$HELIUM_ANDROID_CHROMIUM_COMMIT" \
+  "$repo_root/scripts/chromium/build-android-ci.sh" \
+  >"$test_root/unpinned-environment.out" 2>&1; then
+  echo 'Android build unexpectedly ran outside the pinned Nix environment' >&2
+  exit 1
+fi
+grep -q 'must run through scripts/chromiumer-nix.sh run' \
+  "$test_root/unpinned-environment.out"
+
 ! grep -q 'chromium_ref=${CHROMIUM_REF:-main}' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 ! grep -q 'default: main' "$repo_root/.github/workflows/chromium-android.yml"

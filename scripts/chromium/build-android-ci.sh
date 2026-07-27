@@ -89,6 +89,20 @@ case "$manifest_package" in
     ;;
 esac
 
+[[ "${HELIUM_BUILD_JOBS:-}" == 1 ]] || {
+  echo "Android build must inherit HELIUM_BUILD_JOBS=1" >&2
+  exit 1
+}
+[[ -n "${HELIUM_NIX_RUN_COMMAND:-}" && \
+    "$HELIUM_NIX_RUN_COMMAND" != *$'\n'* ]] || {
+  echo "Android build must run through scripts/chromiumer-nix.sh run" >&2
+  exit 1
+}
+python3 -c 'from PIL import Image' || {
+  echo "Pinned Chromiumer Nix Python is missing Pillow" >&2
+  exit 1
+}
+
 setup_ccache() {
   if [[ "$use_ccache" != true ]]; then
     return 0
