@@ -63,6 +63,9 @@ restores Chromium's native password manager.
   `ChromeActivity` hook; do not rely on Android command-line extension content
   scripts for that behavior. Keep that injected script cheap: do not use
   layout-forcing DOM reads such as `innerText` inside mutation-driven scans.
+  `chromium/patches/0011-helium-sync-android-onboarding-url-guard.patch`
+  keeps Helium's desktop-only setup host out of the Android WebUI host
+  inventory while leaving its shared constants available to common helpers.
   Android extension/uBO experiments must not be used for the daily phone APK.
   Chromium marks desktop-Android extension support as experimental and unstable;
   the Android build helper rejects `CHROMIUM_ANDROID_DESKTOP_EXTENSIONS=true`.

@@ -1,0 +1,35 @@
+diff --git a/chrome/common/webui_url_constants.cc b/chrome/common/webui_url_constants.cc
+--- a/chrome/common/webui_url_constants.cc
++++ b/chrome/common/webui_url_constants.cc
+@@ -170,8 +170,8 @@ base::span<const base::cstring_view> ChromeURLHosts() {
+       kChromeUIPrefsInternalsHost,
+       kChromeUIProfileInternalsHost,
+       content::kChromeUIQuotaInternalsHost,
+-      kHeliumSetupHost,
+ #if !BUILDFLAG(IS_ANDROID)
++      kHeliumSetupHost,
+       kChromeUIWebUIToolbarHost,
+ #endif
+       kChromeUISignInInternalsHost,
+diff --git a/chrome/common/webui_url_constants.h b/chrome/common/webui_url_constants.h
+--- a/chrome/common/webui_url_constants.h
++++ b/chrome/common/webui_url_constants.h
+@@ -528,8 +528,6 @@ inline constexpr char kChromeUIProfilePickerHost[] = "profile-picker";
+ inline constexpr char kChromeUIProfilePickerStartupQuery[] = "startup";
+ inline constexpr char kChromeUIProfilePickerGlicQuery[] = "glic";
+ inline constexpr char kChromeUIProfilePickerUrl[] = "chrome://profile-picker/";
+-inline constexpr char kHeliumSetupHost[] = "setup";
+-inline constexpr char kHeliumSetupURL[] = "chrome://setup";
+ inline constexpr char kChromeUIHistorySyncOptinHost[] = "history-sync-optin";
+ inline constexpr char kChromeUIHistorySyncOptinURL[] =
+     "chrome://history-sync-optin/";
+@@ -537,6 +535,9 @@ inline constexpr char kChromeUIUpdaterHost[] = "updater";
+ inline constexpr char kChromeUIUpdaterURL[] = "chrome://updater/";
+ #endif
+ 
++inline constexpr char kHeliumSetupHost[] = "setup";
++inline constexpr char kHeliumSetupURL[] = "chrome://setup";
++
+ #if ((BUILDFLAG(IS_LINUX) || BUILDFLAG(IS_CHROMEOS)) && \
+      defined(TOOLKIT_VIEWS)) ||                         \
+     defined(USE_AURA)

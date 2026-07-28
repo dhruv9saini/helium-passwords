@@ -46,6 +46,7 @@ grep -qx $'sync\t0007-helium-sync-android-no-safe-browsing-cycle.patch' "$plan"
 grep -qx $'sync\t0008-helium-sync-android-desktop-shortcuts-gn.patch' "$plan"
 grep -qx $'sync\t0009-helium-sync-android-helium-noise-java.patch' "$plan"
 grep -qx $'sync\t0010-helium-sync-cap-mojom-parser-workers.patch' "$plan"
+grep -qx $'sync\t0011-helium-sync-android-onboarding-url-guard.patch' "$plan"
 grep -Fq -- '-      "//chrome/browser/safe_browsing",' \
   "$repo_root/chromium/patches/0007-helium-sync-android-no-safe-browsing-cycle.patch"
 grep -Fq -- '+  if (false) {' \
@@ -58,6 +59,14 @@ grep -Fq "os.environ.get('AUTONINJA_JOBS', multiprocessing.cpu_count())" \
   "$repo_root/chromium/patches/0010-helium-sync-cap-mojom-parser-workers.patch"
 grep -Fq 'processes = min(processes, max_processes)' \
   "$repo_root/chromium/patches/0010-helium-sync-cap-mojom-parser-workers.patch"
+grep -Fq -- '-      kHeliumSetupHost,' \
+  "$repo_root/chromium/patches/0011-helium-sync-android-onboarding-url-guard.patch"
+grep -Fq -- '+      kHeliumSetupHost,' \
+  "$repo_root/chromium/patches/0011-helium-sync-android-onboarding-url-guard.patch"
+grep -Fq -- '-inline constexpr char kHeliumSetupHost[] = "setup";' \
+  "$repo_root/chromium/patches/0011-helium-sync-android-onboarding-url-guard.patch"
+grep -Fq -- '+inline constexpr char kHeliumSetupHost[] = "setup";' \
+  "$repo_root/chromium/patches/0011-helium-sync-android-onboarding-url-guard.patch"
 
 last_core=$(grep -n '^core' "$plan" | tail -1 | cut -d: -f1)
 first_password=$(grep -n '^passwords' "$plan" | head -1 | cut -d: -f1)

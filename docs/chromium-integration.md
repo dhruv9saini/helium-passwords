@@ -109,12 +109,12 @@ call and records the executing depot_tools commit plus update policy in
 packaged provenance. A returned artifact is rejected if those records differ
 from its lock.
 `apply-android-backbone.sh` applies the ordered Helium core series while
-omitting only the mandatory password-disable patch, then applies the two public
-Passwords patches, nine private Sync patches and overlay, Helium
+omitting only the mandatory password-disable patch, then applies four public
+Passwords patches, eleven private Sync patches and overlay, Helium
 transformations/resources, and shared plus Android GN args.
-The current plan contains 312 selected patches: 301 Helium core patches after
-deliberately omitting its password-disable patch, two public Passwords
-restorations, and nine private Sync patches. The single-acquisition contract is
+The current plan contains 316 selected patches: 301 Helium core patches after
+deliberately omitting its password-disable patch, four public Passwords
+patches, and eleven private Sync patches. The single-acquisition contract is
 source-tested, but the complete apply still needs a prepared checkout and
 compilation on chromiumer.
 
@@ -148,9 +148,10 @@ The Android runtime A/B uses `build-android-control-ci.sh` for the control. It
 consumes the same immutable source helper and codec arguments but requires a
 clean tracked Chromium tree after hooks, applies no Helium, Passwords, or Sync
 patch, records composition `upstream-control`, and emits the distinct
-`computer.helium.control.test` package. This is deliberately a separate entry
-point so a hidden composition flag cannot accidentally label a patched APK as
-the control.
+`computer.helium.control.test` package. It requires one Ninja and one gclient
+job, matching the production Sync build's serialized resource policy. This is
+deliberately a separate entry point so a hidden composition flag cannot
+accidentally label a patched APK as the control.
 
 GN generation uses `--fail-on-unused-args`. Media/provenance validation fails
 unless the source lock resolves exactly and GN proves Android target,

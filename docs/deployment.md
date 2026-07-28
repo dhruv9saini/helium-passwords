@@ -23,7 +23,7 @@ scripts/chromiumer-job.sh start "$job" \
     CHROMIUM_TARGET=chrome/browser/helium_sync:helium_sync \
     CHROMIUM_ANDROID_PROVENANCE_ONLY=true \
     USE_CCACHE=false CHROMIUM_ANDROID_SKIP_SYSTEM_DEPS=true \
-    CHROMIUM_ANDROID_USE_SISO=false AUTONINJA_JOBS=2 GCLIENT_JOBS=2 \
+    CHROMIUM_ANDROID_USE_SISO=false AUTONINJA_JOBS=1 GCLIENT_JOBS=1 \
     bash scripts/chromium/build-android-ci.sh
 
 scripts/chromiumer-job.sh status "$job"
@@ -161,7 +161,7 @@ scripts/chromiumer-job.sh start "$control_job" \
   --next "Fetch, verify, and run the disposable control probe before the Sync APK." -- \
   scripts/chromiumer-nix.sh run -- env \
     HELIUM_SYNC_REPO=. GITHUB_WORKSPACE=.build \
-    AUTONINJA_JOBS=2 GCLIENT_JOBS=2 \
+    AUTONINJA_JOBS=1 GCLIENT_JOBS=1 \
     bash scripts/chromium/build-android-control-ci.sh
 ```
 

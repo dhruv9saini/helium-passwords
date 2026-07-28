@@ -13,17 +13,17 @@ workspace=$(realpath -m "$workspace")
 artifact_dir=${ARTIFACT_DIR:-"$github_workspace/android-control-artifacts"}
 artifact_dir=$(realpath -m "$artifact_dir")
 out_dir=${OUT_DIR:-out/Control}
-gclient_jobs=${GCLIENT_JOBS:-}
-autoninja_jobs=${AUTONINJA_JOBS:-2}
+gclient_jobs=${GCLIENT_JOBS:-1}
+autoninja_jobs=${AUTONINJA_JOBS:-1}
 manifest_package=computer.helium.control.test
 target=chrome_public_apk
 
-[[ "$autoninja_jobs" == 2 ]] || {
-  echo 'AUTONINJA_JOBS must remain 2 for the isolated control build' >&2
+[[ "$autoninja_jobs" == 1 ]] || {
+  echo 'AUTONINJA_JOBS must remain 1 for the isolated control build' >&2
   exit 64
 }
-[[ -z "$gclient_jobs" || "$gclient_jobs" == 2 ]] || {
-  echo 'GCLIENT_JOBS must remain 2 for the isolated control build' >&2
+[[ "$gclient_jobs" == 1 ]] || {
+  echo 'GCLIENT_JOBS must remain 1 for the isolated control build' >&2
   exit 64
 }
 
