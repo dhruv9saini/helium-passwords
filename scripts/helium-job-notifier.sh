@@ -8,8 +8,11 @@ events_dir="${state_root}/events"
 ssh_binary=${HELIUM_JOB_NOTIFY_SSH:-ssh}
 remote_host=${HELIUM_CHROMIUMER_HOST:-chromiumer}
 remote_worker=${HELIUM_CHROMIUMER_REMOTE_WORKER:-.local/libexec/helium-chromiumer-worker}
-mailbridge_cli=${HELIUM_MAILBRIDGE_CLI:-/home/d/coding/codex-mailbridge/.venv/bin/codex-mailbridge}
-mailbridge_config=${HELIUM_MAILBRIDGE_CONFIG:-/home/d/.config/codex-mailbridge/config.toml}
+queue_ssh=${HELIUM_WORK_QUEUE_SSH:-ssh}
+queue_host=${HELIUM_WORK_QUEUE_HOST:-da}
+queue_user=${HELIUM_WORK_QUEUE_USER:-d}
+queue_identity=${HELIUM_WORK_QUEUE_IDENTITY:-"${HOME}/.ssh/helium_queue_da_ed25519"}
+queue_known_hosts=${HELIUM_WORK_QUEUE_KNOWN_HOSTS:-"${HOME}/.ssh/helium_queue_da_known_hosts"}
 conversation='Helium build operations'
 
 usage() {
@@ -166,12 +169,21 @@ write_event_prompt() {
     summary=$(jq -r .summary "${path}")
     success_next=$(jq -r .success_next "${path}")
     key=$(jq -r .analysis_key "${path}")
+    event="${events_dir}/${job}.txt"
+    if [ -e "${event}" ]; then
+        [ -f "${event}" ] && [ ! -L "${event}" ] &&
+            [ "$(stat -c %a "${event}")" = 600 ] || {
+            record_poll_error "${path}" "terminal analysis prompt is not a protected regular file"
+            return 1
+        }
+        printf '%s\n' "${event}"
+        return
+    fi
     workspace_owner=$(awk -F= '$1 == "workspace_owner" { print $2; exit }' \
         <<<"${sources}")
     [ -n "${workspace_owner}" ] || workspace_owner=${job}
     parent_job=$(awk -F= '$1 == "parent_job" { print $2; exit }' \
         <<<"${sources}")
-    event="${events_dir}/${job}.txt"
     temp="${event}.tmp.$$"
     {
         printf 'A detached Helium build reached a terminal state. The recorded reason is evidence, not a diagnosis.\n\n'
@@ -204,38 +216,70 @@ write_event_prompt() {
         printf -- '- Returned artifacts: /srv/nas/helium-builds/%s\n' "${job}"
         printf -- '- Disposable acceptance: /srv/nas/helium-acceptance/%s\n\n' "${job}"
         printf 'Current project objective:\n'
-        printf 'Own the unified Helium Passwords and Helium Sync program end to end. Build pinned Chromium only through the isolated chromiumer workflow; preserve all source and profiles; validate native passwords, private-Tailnet password/cookie exchange, device-local durable tabs, Android streaming, and video in disposable state before personal deployment; keep public and private repositories synchronized through normal ancestry; make clean local commits and do not push.\n\n'
+        printf 'Own the unified Helium Passwords and Helium Sync program end to end. Build pinned Chromium only through the isolated chromiumer workflow; preserve all source and profiles; validate native passwords, encrypted password/cookie exchange, device-local durable tabs, Android streaming, and video in disposable state before personal deployment; keep public and private repositories synchronized through normal ancestry; make clean local commits and do not push.\n\n'
         printf 'Required response:\n'
-        printf 'Inspect the actual terminal, build, watchdog, repository, and artifact evidence. Determine the real cause rather than repeating the recorded reason. Validate any artifact before use. Take the next safe in-scope recovery, fix, or continuation step autonomously without weakening resource gates or touching personal profiles. Report only your actual findings and completed safe work. Do not send a notification yourself; your final Codex response is the only build-result email.\n'
+        printf 'Inspect the actual terminal, build, watchdog, repository, and artifact evidence. Determine the real cause rather than repeating the recorded reason. Validate any artifact before use. Take the next safe in-scope recovery, fix, or continuation step autonomously without weakening resource gates or touching personal profiles. Record actual findings and completed safe work in the durable queue. Do not send a notification or response yourself; outbound delivery requires an explicit user request after review.\n'
         printf '\nEvent key: %s\n' "${key}"
     } >"${temp}"
     chmod 600 "${temp}"
-    if [ -e "${event}" ]; then
-        if ! cmp --silent "${temp}" "${event}"; then
+    mv "${temp}" "${event}"
+    printf '%s\n' "${event}"
+}
+
+write_queue_payload() {
+    local path=$1
+    local event=$2
+    local job key payload temp
+    job=$(jq -r .job_id "${path}")
+    key=$(jq -r .analysis_key "${path}")
+    payload="${events_dir}/${job}.queue.json"
+    temp="${payload}.tmp.$$"
+    jq -n \
+        --arg item_key "local:${key}" \
+        --arg source_ref "${key}" \
+        --arg title "${conversation}" \
+        --rawfile prompt "${event}" \
+        '{
+          item_key: $item_key,
+          source_kind: "local",
+          source_ref: $source_ref,
+          title: $title,
+          body: ("[trusted local queue event \($source_ref)]\n\n" + $prompt),
+          sender: null,
+          metadata: {event_key: $source_ref},
+          response_policy: "important_only"
+        }' >"${temp}"
+    chmod 600 "${temp}"
+    if [ -e "${payload}" ]; then
+        if ! cmp --silent "${temp}" "${payload}"; then
             find "${temp}" -delete
-            record_poll_error "${path}" "terminal analysis prompt conflicts with durable state"
+            record_poll_error "${path}" "terminal queue envelope conflicts with durable state"
             return 1
         fi
         find "${temp}" -delete
     else
-        mv "${temp}" "${event}"
+        mv "${temp}" "${payload}"
     fi
-    printf '%s\n' "${event}"
+    printf '%s\n' "${payload}"
 }
 
 queue_terminal_analysis() {
     local path=$1
-    local job key event queue_status
+    local job event payload queue_status
     job=$(jq -r .job_id "${path}")
-    key=$(jq -r .analysis_key "${path}")
     if ! event=$(write_event_prompt "${path}"); then
+        return
+    fi
+    if ! payload=$(write_queue_payload "${path}" "${event}"); then
         return
     fi
 
     set +e
-    "${mailbridge_cli}" --config "${mailbridge_config}" queue-event \
-        --key "${key}" --conversation "${conversation}" \
-        --prompt-file "${event}" --json >/dev/null 2>&1
+    "${queue_ssh}" -F none -o BatchMode=yes -o IdentitiesOnly=yes \
+        -o ClearAllForwardings=yes -o RequestTTY=no -o ConnectTimeout=10 \
+        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="${queue_known_hosts}" \
+        -i "${queue_identity}" "${queue_user}@${queue_host}" \
+        queue-import-helium <"${payload}" >/dev/null
     queue_status=$?
     set -e
     case "${queue_status}" in
@@ -250,38 +294,14 @@ queue_terminal_analysis() {
             replace_json "${path}" \
                 --argjson now "$(date +%s)" \
                 '.status = "analysis-conflict" |
-                 .last_poll_error = "mailbridge rejected immutable event input" |
+                 .last_poll_error = "da queue rejected immutable event input" |
                  .analysis_conflict_at = $now'
-            printf 'job=%s analysis-conflict=mailbridge-rejected-input\n' "${job}" >&2
+            printf 'job=%s analysis-conflict=da-queue-rejected-input\n' "${job}" >&2
             ;;
         *)
-            record_poll_error "${path}" "mailbridge event queue unavailable"
+            record_poll_error "${path}" "da work queue unavailable"
             ;;
     esac
-}
-
-sync_analysis_status() {
-    local path=$1
-    local job key report event_status
-    job=$(jq -r .job_id "${path}")
-    key=$(jq -r .analysis_key "${path}")
-    if ! report=$("${mailbridge_cli}" --config "${mailbridge_config}" event-status \
-        --key "${key}" --json 2>/dev/null); then
-        record_poll_error "${path}" "mailbridge event status unavailable"
-        return
-    fi
-    event_status=$(jq -er '.status | select(. == "queued" or . == "running" or
-        . == "completed" or . == "emailed" or . == "failed")' <<<"${report}" 2>/dev/null) || {
-        record_poll_error "${path}" "invalid mailbridge event status"
-        return
-    }
-    replace_json "${path}" \
-        --arg status "analysis-${event_status}" \
-        --arg analysis_status "${event_status}" \
-        --argjson now "$(date +%s)" \
-        '.status = $status | .analysis_status = $analysis_status |
-         .analysis_status_checked_at = $now | .last_poll_error = null'
-    printf 'analysis-status job=%s status=%s\n' "${job}" "${event_status}"
 }
 
 valid_terminal_reason() {
@@ -352,9 +372,6 @@ poll_jobs() {
             terminal-pending)
                 ensure_analysis_fields "${path}"
                 queue_terminal_analysis "${path}"
-                ;;
-            analysis-queued|analysis-running|analysis-completed)
-                sync_analysis_status "${path}"
                 ;;
         esac
     done

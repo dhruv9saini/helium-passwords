@@ -1,6 +1,6 @@
 [Unit]
-Description=Queue terminal Helium jobs for Codex analysis through Mailbridge
-After=network-online.target codex-mailbridge.service
+Description=Import terminal Helium jobs into the da live Codex queue
+After=network-online.target
 Wants=network-online.target
 
 [Service]
