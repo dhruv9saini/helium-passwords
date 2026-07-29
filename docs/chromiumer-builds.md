@@ -432,7 +432,9 @@ its own shell scope so an early local failure can still use the admitted
 parent, child, registration, and scratch paths during its `EXIT` cleanup. It
 aborts the unstarted claim and unregisters local management before returning
 the original error; a cleanup error must never replace that failure with an
-unbound-variable diagnostic.
+unbound-variable diagnostic. Start and resume notification scratch lives in
+the invoking user's `/run/user/<uid>` runtime directory, so unrelated bulk
+work in `/tmp` cannot strand a successfully admitted remote continuation.
 
 Use the continuation job ID with the normal `status`, `terminal`, `limits`,
 `logs`, `cancel`, and `fetch` commands. `source-info` and artifact lookup

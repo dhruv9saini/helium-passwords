@@ -19,6 +19,7 @@ cat >"${test_root}/bin/mktemp" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 if [[ "$*" == *helium-notification.XXXXXX* ]]; then
+    printf '%s\n' "$*" >>"${WRAPPER_RESUME_TEST_ROOT}/mktemp.log"
     attempt=0
     if [[ -f "${WRAPPER_RESUME_TEST_ROOT}/mktemp-attempt" ]]; then
         attempt=$(<"${WRAPPER_RESUME_TEST_ROOT}/mktemp-attempt")
@@ -126,6 +127,8 @@ first_status=$?
 set -e
 [[ "${first_status}" -ne 0 ]]
 grep -Fq 'Permission denied' "${test_root}/first.err"
+grep -Fqx -- "-d /run/user/$(id -u)/helium-notification.XXXXXX" \
+    "${test_root}/mktemp.log"
 if grep -Fq 'unbound variable' "${test_root}/first.err"; then
     echo "resume cleanup lost its function-local state" >&2
     exit 1
@@ -140,6 +143,7 @@ grep -Fqx 'notification=armed' "${test_root}/retry.out"
 grep -Fq ' resume-start ' "${test_root}/remote.log"
 grep -Fq 'register resume-child Helium Sync Synthetic continuation' \
     "${test_root}/notifier.log"
+[[ "$(wc -l <"${test_root}/mktemp.log")" -eq 2 ]]
 [[ -z "$(find "${test_root}" -maxdepth 1 \
     -type d -name 'notification.*' -print -quit)" ]]
 

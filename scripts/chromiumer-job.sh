@@ -10,6 +10,7 @@ remote_work=helium-builds/work
 default_artifact_root=${HELIUM_ARTIFACT_ROOT:-/srv/nas/helium-builds}
 local_notifier=${HELIUM_JOB_NOTIFIER:-/home/d/.local/libexec/helium-job-notifier}
 local_management=${HELIUM_CHROMIUMER_MANAGEMENT:-/home/d/.local/libexec/helium-chromiumer-management}
+notification_runtime_dir="/run/user/$(id -u)"
 
 usage() {
     cat >&2 <<'EOF'
@@ -204,7 +205,8 @@ start() {
     local management_registered=false
     local remote_start_attempted=false
     local temp_dir source_file source_info repository product registration existing output
-    temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
+    temp_dir=$(mktemp -d \
+        "${notification_runtime_dir}/helium-notification.XXXXXX")
     source_file="${temp_dir}/source.env"
     cleanup_start() {
         local result=$?
@@ -292,7 +294,8 @@ resume() (
     local registered=false
     local management_registered=false
     local temp_dir source_file source_info repository product output
-    temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
+    temp_dir=$(mktemp -d \
+        "${notification_runtime_dir}/helium-notification.XXXXXX")
     source_file="${temp_dir}/source.env"
     # shellcheck disable=SC2329 # Invoked by the EXIT trap below.
     cleanup_resume() {
