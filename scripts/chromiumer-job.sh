@@ -247,7 +247,7 @@ start() {
     trap - EXIT
 }
 
-resume() {
+resume() (
     local parent=$1
     local job=$2
     shift 2
@@ -294,6 +294,7 @@ resume() {
     local temp_dir source_file source_info repository product output
     temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
     source_file="${temp_dir}/source.env"
+    # shellcheck disable=SC2329 # Invoked by the EXIT trap below.
     cleanup_resume() {
         local result=$?
         if [ "${initialized}" = true ] && [ "${registered}" = false ]; then
@@ -342,7 +343,7 @@ resume() {
     printf '%s\nnotification=armed\n' "${output}"
     find "${temp_dir}" -depth -delete
     trap - EXIT
-}
+)
 
 status() {
     install_worker

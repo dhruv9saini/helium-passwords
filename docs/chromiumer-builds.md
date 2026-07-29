@@ -427,7 +427,12 @@ The control client creates that durable claim first, registers the new job
 with the lm notifier, and only then starts the unit. If notification
 registration fails, the still-unstarted claim is removed. If start delivery is
 uncertain, retrying the same parent, child, and command is idempotent; a
-different value is rejected.
+different value is rejected. The control client's resume transaction runs in
+its own shell scope so an early local failure can still use the admitted
+parent, child, registration, and scratch paths during its `EXIT` cleanup. It
+aborts the unstarted claim and unregisters local management before returning
+the original error; a cleanup error must never replace that failure with an
+unbound-variable diagnostic.
 
 Use the continuation job ID with the normal `status`, `terminal`, `limits`,
 `logs`, `cancel`, and `fetch` commands. `source-info` and artifact lookup
