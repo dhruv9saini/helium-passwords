@@ -166,6 +166,7 @@ provenance() {
         "${expected_chromium_commit}" "${expected_nixpkgs_commit}" "$(nix --version)"
     printf 'environment_source_sha256=%s\n' "${environment_source_sha256}"
     printf 'nix_derivation=%s\n' "${expected_derivation}"
+    printf 'grit_disable_multiprocessing=1\n'
     [ ! -f "${realise_state}" ] || cat "${realise_state}"
 }
 
@@ -186,6 +187,9 @@ run_environment() {
     realised=$(readlink -f "${environment_root}")
     printf -v command_text '%q ' "$@"
     export HELIUM_NIX_RUN_COMMAND="${command_text}"
+    # GRIT otherwise forks up to one worker per CPU inside a single Ninja edge,
+    # bypassing the production one-job policy and thrashing at memory.high.
+    export GRIT_DISABLE_MULTIPROCESSING=1
     exec "${realised}/bin/helium-chromium-150-env"
 }
 

@@ -24,6 +24,8 @@ grep -q 'helium-chromium-150-env' "${script}"
 grep -q 'environment_source_sha256=' "${script}"
 grep -q 'chromium-150-${environment_source_sha256:0:16}' "${script}"
 grep -q 'nix-store --query --outputs' "${script}"
+grep -Fqx '    export GRIT_DISABLE_MULTIPROCESSING=1' "${script}"
+grep -Fqx "    printf 'grit_disable_multiprocessing=1\\n'" "${script}"
 grep -q 'nodejs_22' "${expression}"
 grep -q 'ninja' "${expression}"
 if grep -q 'helium-chromium-148-env' "${script}"; then

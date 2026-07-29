@@ -456,6 +456,10 @@ restores Chromium's native password manager.
   default to `ffmpeg_branding = "Chrome"` and `proprietary_codecs = true` so
   regular non-DRM H.264/AAC/MP4 playback works in the Android APK. Keep this
   unless intentionally testing the codec-stripped Chromium path.
+  The pinned Chromiumer environment must export
+  `GRIT_DISABLE_MULTIPROCESSING=1`; GRIT otherwise forks around the one-job
+  policy inside a single Ninja edge and thrashes at the 4 GiB memory-high
+  boundary.
 
 ## Patch Flow
 

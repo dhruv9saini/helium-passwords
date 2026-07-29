@@ -151,7 +151,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 
 | Resource | Production bound |
 | --- | --- |
-| Compiler/build/source-sync jobs | exactly `1`; exported as `HELIUM_BUILD_JOBS`, `AUTONINJA_JOBS`, `NINJA_JOBS`, and `GCLIENT_JOBS`, with consumers rejecting every other value |
+| Compiler/build/source-sync jobs | exactly `1`; exported as `HELIUM_BUILD_JOBS`, `AUTONINJA_JOBS`, `NINJA_JOBS`, and `GCLIENT_JOBS`, with consumers rejecting every other value; GRIT multiprocessing is disabled inside the pinned environment so one Ninja edge cannot fork around the limit |
 | CPU | hard `200%` quota, weight `10`, nice `15` |
 | Memory | `4G` high, `5G` hard max, `0` swap inside the unit |
 | I/O | weight `10`, Linux idle I/O scheduling class |
@@ -176,7 +176,14 @@ reject missing or different values instead of choosing their own defaults.
 Chromium's Mojom parser normally creates its own process pool independently of
 Ninja. The Sync patch series caps that pool with the existing
 `AUTONINJA_JOBS` value, so a serialized Android continuation cannot silently
-start four memory-heavy parser workers inside its one Ninja edge.
+start four memory-heavy parser workers inside its one Ninja edge. Chromium's
+GRIT tool can likewise fork up to one worker per CPU. Job
+`hs-android-150-current-synthetic-23` exposed eight 642 MiB workers inside one
+nominally serialized edge, sustained roughly 87% full cgroup memory pressure,
+and accumulated more than 57 million `memory.high` events without completing
+the edge for over two hours. The pinned Chromiumer environment therefore
+forces GRIT's upstream `GRIT_DISABLE_MULTIPROCESSING=1` switch for both Sync
+and control builds.
 
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.

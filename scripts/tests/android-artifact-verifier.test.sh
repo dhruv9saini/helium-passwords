@@ -47,6 +47,7 @@ nixpkgs_commit=$HELIUM_ANDROID_NIXPKGS_COMMIT
 nix_version=nix (Nix) 2.33.0
 environment_source_sha256=$nix_source_sha256
 nix_derivation=/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-helium-chromium-150-env.drv
+grit_disable_multiprocessing=1
 root_start_available_bytes=139586437120
 root_end_available_bytes=118111600640
 realise_consumed_bytes=21474836480

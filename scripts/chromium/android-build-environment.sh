@@ -44,7 +44,8 @@ verify_environment() {
   local expected_keys actual_keys
   expected_keys=$(printf '%s\n' \
     chromium_commit closure_bytes closure_sha256 environment_source_sha256 \
-    nix_derivation nix_environment nix_version nixpkgs_commit \
+    grit_disable_multiprocessing nix_derivation nix_environment nix_version \
+    nixpkgs_commit \
     post_realise_floor_bytes realise_budget_bytes realise_consumed_bytes \
     realise_start_gate_bytes root_end_available_bytes \
     root_start_available_bytes | sort)
@@ -57,7 +58,7 @@ verify_environment() {
   local nix_environment closure_sha256 closure_bytes chromium_commit
   local nixpkgs_commit nix_version start_available end_available consumed
   local budget post_floor start_gate environment_source_sha256 nix_derivation
-  local expected_environment_source_sha256
+  local expected_environment_source_sha256 grit_disable_multiprocessing
   nix_environment=$(metadata nix_environment "$nix_file")
   closure_sha256=$(metadata closure_sha256 "$nix_file")
   closure_bytes=$(metadata closure_bytes "$nix_file")
@@ -66,6 +67,9 @@ verify_environment() {
   nix_version=$(metadata nix_version "$nix_file")
   environment_source_sha256=$(metadata environment_source_sha256 "$nix_file")
   nix_derivation=$(metadata nix_derivation "$nix_file")
+  grit_disable_multiprocessing=$(
+    metadata grit_disable_multiprocessing "$nix_file"
+  )
   start_available=$(metadata root_start_available_bytes "$nix_file")
   end_available=$(metadata root_end_available_bytes "$nix_file")
   consumed=$(metadata realise_consumed_bytes "$nix_file")
@@ -94,6 +98,10 @@ verify_environment() {
   }
   [[ "$chromium_commit" == "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]]
   [[ "$nixpkgs_commit" == "$HELIUM_ANDROID_NIXPKGS_COMMIT" ]]
+  [[ "$grit_disable_multiprocessing" == 1 ]] || {
+    echo "Chromiumer GRIT serialization provenance is invalid" >&2
+    exit 1
+  }
   [[ "$nix_version" == nix\ \(Nix\)\ * && "$nix_version" != *$'\n'* ]]
   for value in "$closure_bytes" "$start_available" "$end_available" \
     "$consumed" "$budget" "$post_floor" "$start_gate"; do
@@ -110,6 +118,10 @@ verify_environment() {
 record_environment() {
   [[ "${HELIUM_BUILD_JOBS:-}" == 1 ]] || {
     echo "Android build must inherit HELIUM_BUILD_JOBS=1" >&2
+    exit 1
+  }
+  [[ "${GRIT_DISABLE_MULTIPROCESSING:-}" == 1 ]] || {
+    echo "Android build must disable GRIT multiprocessing" >&2
     exit 1
   }
   [[ -n "${HELIUM_NIX_RUN_COMMAND:-}" && \

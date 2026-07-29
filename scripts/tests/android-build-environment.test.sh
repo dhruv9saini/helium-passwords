@@ -26,6 +26,7 @@ nixpkgs_commit=$HELIUM_ANDROID_NIXPKGS_COMMIT
 nix_version=nix (Nix) 2.33.0
 environment_source_sha256=$nix_source_sha256
 nix_derivation=/nix/store/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb-helium-chromium-150-env.drv
+grit_disable_multiprocessing=1
 root_start_available_bytes=139586437120
 root_end_available_bytes=118111600640
 realise_consumed_bytes=21474836480
@@ -46,6 +47,17 @@ if "$repo_root/scripts/chromium/android-build-environment.sh" verify "$test_root
 fi
 grep -q 'capacity arithmetic' "$test_root/rejected.out"
 sed -i 's/realise_start_gate_bytes=128849018879/realise_start_gate_bytes=128849018880/' \
+  "$test_root/chromiumer-nix.env"
+
+sed -i 's/grit_disable_multiprocessing=1/grit_disable_multiprocessing=0/' \
+  "$test_root/chromiumer-nix.env"
+if "$repo_root/scripts/chromium/android-build-environment.sh" verify "$test_root" \
+  > "$test_root/rejected-grit.out" 2>&1; then
+  echo "parallel GRIT provenance unexpectedly passed" >&2
+  exit 1
+fi
+grep -q 'GRIT serialization provenance' "$test_root/rejected-grit.out"
+sed -i 's/grit_disable_multiprocessing=0/grit_disable_multiprocessing=1/' \
   "$test_root/chromiumer-nix.env"
 
 sed -i "s/environment_source_sha256=$nix_source_sha256/environment_source_sha256=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/" \
