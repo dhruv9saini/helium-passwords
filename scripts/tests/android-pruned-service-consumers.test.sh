@@ -21,6 +21,7 @@ declare -A fixtures=(
   [chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/fullscreen_signin/FullscreenSigninMediator.java]=$'class FullscreenSigninMediator {\n    private boolean isSigninSupported(Profile profile) {\n        return false;\n    }\n}\n'
   [chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/FullscreenSigninPromoLauncher.java]=$'class FullscreenSigninPromoLauncher {\n    public static boolean launchPromoIfNeeded(Context context) {\n        return false;\n    }\n    public static boolean launchPromoIfForced(Context context) {\n        return false;\n    }\n}\n'
   [chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/history_sync/HistorySyncHelper.java]=$'class HistorySyncHelper {\n    public boolean shouldDisplayHistorySync() {\n        return false;\n    }\n    public boolean isDeclinedOften() {\n        return false;\n    }\n    public void recordHistorySyncDeclinedPrefs() {}\n    public void clearHistorySyncDeclinedPrefs() {}\n    public void setHistoryAndTabsSync(boolean turnTypesOn) {\n        mSyncService.setSelectedType(UserSelectableType.HISTORY, false);\n        mSyncService.setSelectedType(UserSelectableType.TABS, false);\n    }\n}\n'
+  [components/enterprise/connectors/core/cloud_content_scanning/cloud_binary_upload_service_base.cc]=$'void CloudBinaryUploadServiceBase::LogResponseDebugInfo(\n    const std::string& upload_info,\n    ScanRequestUploadResult result,\n    BinaryUploadRequest* request,\n    const ContentAnalysisResponse& response) {\n}\n'
 )
 
 for relative_file in "${!fixtures[@]}"; do
@@ -30,7 +31,7 @@ done
 
 validator="$repo_root/scripts/chromium/validate-android-pruned-service-consumers.sh"
 "$validator" "$test_root" | \
-  grep -qx 'android_pruned_service_consumers=verified files=12'
+  grep -qx 'android_pruned_service_consumers=verified files=13'
 
 history="$test_root/chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/history_sync/HistorySyncHelper.java"
 sed -i 's/UserSelectableType.TABS, false/UserSelectableType.TABS, true/' "$history"
@@ -57,5 +58,16 @@ if "$validator" "$test_root" > "$test_root/pref.out" 2>&1; then
   exit 1
 fi
 grep -q 'reads an unregistered preference' "$test_root/pref.out"
+sed -i '/private String stale = Pref.SIGNIN_ALLOWED;/d' "$signin"
+
+cloud_upload="$test_root/components/enterprise/connectors/core/cloud_content_scanning/cloud_binary_upload_service_base.cc"
+sed -i '/^}/i\\  safe_browsing::WebUIContentInfoSingleton::GetInstance()->AddToDeepScanRequests();' \
+  "$cloud_upload"
+if "$validator" "$test_root" > "$test_root/deep-scan.out" 2>&1; then
+  echo 'enterprise deep-scan WebUI call unexpectedly passed' >&2
+  exit 1
+fi
+grep -q 'retains an enterprise deep-scan WebUI call' \
+  "$test_root/deep-scan.out"
 
 echo 'Android pruned-service source validator passed'

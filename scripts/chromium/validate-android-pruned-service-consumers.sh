@@ -21,6 +21,7 @@ relative_files=(
   chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/fullscreen_signin/FullscreenSigninMediator.java
   chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/FullscreenSigninPromoLauncher.java
   chrome/browser/ui/android/signin/java/src/org/chromium/chrome/browser/ui/signin/history_sync/HistorySyncHelper.java
+  components/enterprise/connectors/core/cloud_content_scanning/cloud_binary_upload_service_base.cc
 )
 
 source_files=()
@@ -120,4 +121,16 @@ if rg -n 'setSelectedType\(UserSelectableType\.TABS, (true|turnTypesOn)\)' "$his
 fi
 grep -Fqx '        mSyncService.setSelectedType(UserSelectableType.TABS, false);' "$history"
 
-echo 'android_pruned_service_consumers=verified files=12'
+cloud_upload="$chromium_src/components/enterprise/connectors/core/cloud_content_scanning/cloud_binary_upload_service_base.cc"
+cloud_debug_block=$(sed -n \
+  '/^void CloudBinaryUploadServiceBase::LogResponseDebugInfo(/,/^}/p' \
+  "$cloud_upload")
+grep -Fq 'void CloudBinaryUploadServiceBase::LogResponseDebugInfo(' \
+  <<<"$cloud_debug_block"
+if rg -n 'WebUIContentInfoSingleton|AddToDeepScan(Requests|Responses)' \
+  <<<"$cloud_debug_block" >&2; then
+  echo 'disabled Safe Browsing retains an enterprise deep-scan WebUI call' >&2
+  exit 1
+fi
+
+echo 'android_pruned_service_consumers=verified files=13'
