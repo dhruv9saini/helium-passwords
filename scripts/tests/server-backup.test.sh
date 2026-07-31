@@ -2,7 +2,8 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
-test_root=$(mktemp -d /tmp/helium-server-backup-test.XXXXXX)
+test_tmp_root=${TMPDIR:-/tmp}
+test_root=$(mktemp -d "$test_tmp_root/helium-server-backup-test.XXXXXX")
 restore_target="/tmp/helium-sync-restore.test-$$"
 cleanup() {
   [ ! -e "$restore_target" ] || find "$restore_target" -depth -delete

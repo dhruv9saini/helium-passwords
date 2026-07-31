@@ -3,7 +3,8 @@ set -euo pipefail
 umask 077
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
-test_root=$(mktemp -d /tmp/helium-central-service.XXXXXX)
+test_tmp_root=${TMPDIR:-/tmp}
+test_root=$(mktemp -d "$test_tmp_root/helium-central-service.XXXXXX")
 restore_root=/tmp/helium-sync-restore.central-$$
 daemon_pid=
 

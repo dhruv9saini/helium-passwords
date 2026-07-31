@@ -228,8 +228,15 @@ if tar -C "$test_root" -cf - profile |
   exit 1
 fi
 
-( exec 9<"$test_root/profile/Default/Preferences"; sleep 30 ) &
+( exec 9<"$test_root/profile/Default/Preferences"; sleep 600 ) &
 holder_pid=$!
+for _ in {1..50}; do
+  [[ $(readlink -f "/proc/$holder_pid/fd/9" 2>/dev/null || true) == \
+    "$test_root/profile/Default/Preferences" ]] && break
+  sleep 0.1
+done
+[[ $(readlink -f "/proc/$holder_pid/fd/9" 2>/dev/null || true) == \
+  "$test_root/profile/Default/Preferences" ]]
 if "$tool" preflight "$config" >/dev/null 2>&1; then
   echo 'open source profile passed preflight' >&2
   exit 1
