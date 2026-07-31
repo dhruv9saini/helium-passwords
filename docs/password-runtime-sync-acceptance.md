@@ -14,11 +14,13 @@ and never retains payload values. Never point it
 at a personal profile, production Android app data, or a production server
 journal.
 
-The captured state must be schema 4 with identity
-`password-form-unique-key-v2`, `migration_status` equal to `complete`, an empty
-`legacy_credentials` map, and `credential/v2/<sha256>` keys. Stable acceptance
-captures reject `pending_publication` and `queued_mutation`; those states must
-first resolve through a remote pull.
+The captured state must be schema 6 with exactly `schema_version`,
+`identity_schema`, `verified_sequence`, and `credentials`. Identity is
+`password-form-unique-key-v2`; every credential key is
+`credential/v2/<sha256>` and carries only its fingerprint, remote sequence,
+revision, and deletion flag. Stable acceptance captures contain no pending or
+queued publication fields; those states must first resolve through a remote
+pull and a durable verified-state rewrite.
 
 ## Capture
 
