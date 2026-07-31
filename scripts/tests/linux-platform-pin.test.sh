@@ -53,6 +53,8 @@ grep -Fq "'git', 'fetch', '--depth=1', 'origin', '\${expected_depot_tools_commit
   "$prepare"
 grep -Fq 'sed -i.bak' "$prepare"
 grep -Fq 'rm -f -- "${clone_helper}.bak"' "$prepare"
+grep -Fq 'helium-passwords/android-search-engine-api-compat.patch' "$prepare"
+grep -Fq 'helium-passwords/disable-android-safe-browsing-bridges.patch' "$prepare"
 grep -Fq 'platform_commit=${actual_platform_commit}' "$prepare"
 grep -Fq 'helium_core_commit=${actual_core_commit}' "$prepare"
 grep -Fq 'depot_tools_commit=${expected_depot_tools_commit}' "$prepare"

@@ -71,8 +71,11 @@ instead of relying on one six-hour job.
 ## Patch Flow
 
 `patches/series` is the canonical overlay list. During platform preparation,
-each listed patch is copied into the platform repo as `patches/helium/passwords/`
-and appended to that platform's `patches/series`.
+the two password-restoration patches are copied into the platform repo as
+`patches/helium/passwords/` and appended to that platform's `patches/series`.
+The direct Android source path also consumes the two Android compatibility
+patches in the canonical list; desktop preparation excludes those exact files,
+and the target gate proves they are absent from every desktop platform tree.
 
 The wrapper also removes `helium/hop/disable-password-manager.patch` from the
 cloned `helium-chromium` submodule before the platform build applies patches.

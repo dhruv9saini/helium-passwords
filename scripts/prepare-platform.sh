@@ -499,6 +499,10 @@ while IFS= read -r patch_path; do
     patch_path="${patch_path%$'\r'}"
     case "${patch_path}" in
         ""|\#*) continue ;;
+        helium-passwords/android-search-engine-api-compat.patch|\
+        helium-passwords/disable-android-safe-browsing-bridges.patch)
+            continue
+            ;;
     esac
 
     source_patch="${root_dir}/patches/${patch_path}"
