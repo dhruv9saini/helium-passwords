@@ -46,6 +46,9 @@ func TestOpenRejectsFilesystemRootAndStoreSymlink(t *testing.T) {
 	if err := os.Mkdir(target, 0755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(target, 0755); err != nil {
+		t.Fatal(err)
+	}
 	link := filepath.Join(parent, "store-link")
 	if err := os.Symlink(target, link); err != nil {
 		t.Fatal(err)
