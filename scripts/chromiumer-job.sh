@@ -10,6 +10,8 @@ remote_work=helium-builds/work
 default_artifact_root=${HELIUM_ARTIFACT_ROOT:-/srv/nas/helium-builds}
 local_notifier=${HELIUM_JOB_NOTIFIER:-/home/d/.local/libexec/helium-job-notifier}
 local_management=${HELIUM_CHROMIUMER_MANAGEMENT:-/home/d/.local/libexec/helium-chromiumer-management}
+notification_runtime_dir="/run/user/$(id -u)"
+local_source_staging=/home/d/.local/state/helium-builds/source-staging
 
 usage() {
     cat >&2 <<'EOF'
@@ -108,7 +110,18 @@ stage() {
 
     local archive checkout manifest archive_sha helium_submodule
     local repository_commit repository_origin core_origin
-    temp_dir=$(mktemp -d /tmp/helium-source.XXXXXX)
+    [ ! -L "${local_source_staging}" ] || {
+        echo "local source staging root must not be a symlink: ${local_source_staging}" >&2
+        exit 1
+    }
+    mkdir -p "${local_source_staging}"
+    [ -d "${local_source_staging}" ] && [ ! -L "${local_source_staging}" ] || {
+        echo "invalid local source staging root: ${local_source_staging}" >&2
+        exit 1
+    }
+    chmod 700 "${local_source_staging}"
+    temp_dir=$(mktemp -d \
+        "${local_source_staging}/helium-source.XXXXXX")
     archive="${temp_dir}/source.tar"
     checkout="${temp_dir}/source"
     manifest="${temp_dir}/source.manifest.incoming"
@@ -204,7 +217,8 @@ start() {
     local management_registered=false
     local remote_start_attempted=false
     local temp_dir source_file source_info repository product registration existing output
-    temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
+    temp_dir=$(mktemp -d \
+        "${notification_runtime_dir}/helium-notification.XXXXXX")
     source_file="${temp_dir}/source.env"
     cleanup_start() {
         local result=$?
@@ -292,7 +306,8 @@ resume() {
     local registered=false
     local management_registered=false
     local temp_dir source_file source_info repository product output
-    temp_dir=$(mktemp -d /tmp/helium-notification.XXXXXX)
+    temp_dir=$(mktemp -d \
+        "${notification_runtime_dir}/helium-notification.XXXXXX")
     source_file="${temp_dir}/source.env"
     cleanup_resume() {
         local result=$?

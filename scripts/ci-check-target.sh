@@ -37,9 +37,10 @@ case "${arch}" in
 esac
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-checkout_root="$(mktemp -d /tmp/helium-platform-check.XXXXXX)"
+temp_root=${TMPDIR:-/tmp}
+checkout_root="$(mktemp -d "${temp_root}/helium-platform-check.XXXXXX")"
 case "${checkout_root}" in
-    /tmp/helium-platform-check.*) ;;
+    "${temp_root}"/helium-platform-check.*) ;;
     *) echo "unexpected temporary checkout path: ${checkout_root}" >&2; exit 1 ;;
 esac
 cleanup() {

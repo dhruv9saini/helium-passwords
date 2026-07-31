@@ -19,9 +19,10 @@ chromium_commit="${HELIUM_ANDROID_CHROMIUM_COMMIT}"
     echo "Helium core lock does not match the committed submodule" >&2
     exit 1
 }
-fixture="$(mktemp -d /tmp/helium-password-source.XXXXXX)"
+temp_root=${TMPDIR:-/tmp}
+fixture="$(mktemp -d "${temp_root}/helium-password-source.XXXXXX")"
 case "${fixture}" in
-    /tmp/helium-password-source.*) ;;
+    "${temp_root}"/helium-password-source.*) ;;
     *) echo "unexpected fixture path: ${fixture}" >&2; exit 1 ;;
 esac
 cleanup() {
