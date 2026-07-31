@@ -134,6 +134,7 @@ manifest_keys=(
     arch
     chromium_commit
     chromium_version
+    depot_tools_commit
     gn_args_sha256
     helium_core_commit
     helium_passwords_commit
@@ -165,7 +166,7 @@ build_config="${root_dir}/helium-passwords.conf"
 # shellcheck source=/dev/null
 . "${build_config}"
 expected_nix_source=$(sha256sum "${root_dir}/chromium/nix/chromiumer-shell.nix" | awk '{ print $1 }')
-[ "$(value schema_version)" = 2 ] && \
+[ "$(value schema_version)" = 3 ] && \
     [ "$(value product)" = "${product}" ] && \
     [ "$(value platform)" = linux ] && \
     [ "$(value arch)" = "${arch}" ] && \
@@ -179,7 +180,9 @@ expected_nix_source=$(sha256sum "${root_dir}/chromium/nix/chromiumer-shell.nix" 
     [ "$(value chromium_commit)" = "${expected_chromium}" ] && \
     [ "$(value build_job_id)" = "$(admission_value build_job_id)" ] && \
     [ "$(value platform_repository)" = "${HELIUM_LINUX_REPO}" ] && \
-    [ "$(value platform_commit)" = "${HELIUM_LINUX_PLATFORM_COMMIT}" ] || {
+    [ "$(value platform_commit)" = "${HELIUM_LINUX_PLATFORM_COMMIT}" ] && \
+    [ "$(value depot_tools_commit)" = \
+        "${HELIUM_LINUX_DEPOT_TOOLS_COMMIT}" ] || {
     echo "artifact manifest does not match this audited source train" >&2
     exit 1
 }

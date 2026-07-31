@@ -85,6 +85,19 @@ platform_commit=$(git -C "${checkout}" rev-parse HEAD)
     echo "prepared Linux checkout uses the wrong platform commit" >&2
     exit 1
 }
+platform_value() {
+    awk -F= -v key="$1" \
+        '$1 == key { print substr($0, length(key) + 2); exit }' \
+        "${checkout}/.helium-platform-source.env"
+}
+[ "$(platform_value platform_source_schema_version)" = 2 ] && \
+    [ "$(platform_value platform_commit)" = "${platform_commit}" ] && \
+    [ "$(platform_value helium_core_commit)" = "${core_commit}" ] && \
+    [ "$(platform_value depot_tools_commit)" = \
+        "${HELIUM_LINUX_DEPOT_TOOLS_COMMIT}" ] || {
+    echo "prepared Linux checkout has invalid source-toolchain provenance" >&2
+    exit 1
+}
 [ "$(git -C "${source_dir}" rev-parse HEAD)" = "${chromium_commit}" ] || {
     echo "built Chromium source does not match the locked commit" >&2
     exit 1
@@ -160,7 +173,7 @@ nix_provenance_sha256=$(sha256sum "${provenance}/chromiumer-nix.env" | awk '{ pr
 patch_inventory_sha256=$(sha256sum "${provenance}/patches.sha256" | awk '{ print $1 }')
 runtime_inventory_sha256=$(sha256sum "${provenance}/runtime.sha256" | awk '{ print $1 }')
 cat >"${provenance}/manifest.env" <<EOF
-schema_version=2
+schema_version=3
 product=${product}
 platform=linux
 arch=${arch}
@@ -175,6 +188,7 @@ chromium_commit=${chromium_commit}
 build_job_id=${build_job_id}
 platform_repository=${HELIUM_LINUX_REPO}
 platform_commit=${platform_commit}
+depot_tools_commit=${HELIUM_LINUX_DEPOT_TOOLS_COMMIT}
 gn_args_sha256=${gn_args_sha256}
 nix_provenance_sha256=${nix_provenance_sha256}
 patch_inventory_sha256=${patch_inventory_sha256}
