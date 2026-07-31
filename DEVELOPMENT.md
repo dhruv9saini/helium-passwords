@@ -34,7 +34,7 @@ diverged experiment rather than an update branch.
 
 ## Current Evidence
 
-The state observed on 2026-07-22 is intentionally recorded here so that a smoke
+The state observed on 2026-07-31 is intentionally recorded here so that a smoke
 test is not mistaken for product validation:
 
 - The checked-in `helium-chromium` submodule is exact Helium `0.14.8` commit
@@ -46,6 +46,19 @@ test is not mistaken for product validation:
   Helium core. The commit identifies itself as the `0.14.8.1` update; no release
   tag existed when it was selected, so preparation fetches the immutable commit
   directly rather than following moving `main`.
+- Windows is pinned to official `0.14.8.1` platform commit
+  `0b3809883205dd55d29f5f062afaee8490d0dea2`, whose gitlink resolves to the
+  same Helium core. macOS is pinned to official `0.14.8.1` platform commit
+  `cea3455bbc70c8c4641110779f600e9ffea8e994`; that release uses Helium core
+  `2c97e8c5d180d5703ef0e54ed4f9768d60b952e3`, the canonical core plus one
+  upstream depot-tools-patch refresh. All three platforms remain on Chromium
+  `150.0.7871.181`.
+- Platform preparation pins the compatible official `depot_tools` revision as
+  well as the platform and core. Linux and Windows use
+  `980d6af16e06ff993a52029019dc0628c0a0e1f0`; macOS uses release-time
+  revision `a6626e7885df3617f2c921d5bde0a9a79599bf53`. The prepared source
+  receipt records both exact commits so a moving toolchain cannot alter the
+  build or invalidate the core patch silently.
 - Upstream still applies four direct password/autofill removals, plus several UI
   cleanup patches that remove password-manager entry points.
 - The current public patches were refreshed for Chromium 150. A focused
@@ -53,10 +66,15 @@ test is not mistaken for product validation:
   at `150.0.7871.181`; they have not yet been compiled or exercised in a browser.
 - The six fast CI matrix jobs only prove that wrapper injection produced the
   expected patch filenames. They do not apply the patches to Chromium.
-- The last dispatched full build, from 2026-06-05 through 2026-06-07, packaged
-  Linux x86_64 and arm64 and collected macOS arm64. Windows failed in a later
-  stage and macOS x86_64 failed late. No automated password lifecycle test ran
-  against those artifacts.
+- Diagnostic full build run `30663066233` proved why the previously green
+  overlay-only matrix was insufficient: moving macOS/Windows platform refs had
+  advanced to Chromium 151, while a moving depot-tools checkout no longer
+  accepted the Chromium-150 core patch used by Linux and Windows. The run
+  produced no admissible artifact and was stopped after the failures were
+  captured. Every target check now materializes the locked core and proves its
+  patch against the locked official depot-tools commit before a full build can
+  start. No automated password lifecycle test has yet run against a current
+  compiled artifact.
 
 Therefore `main` is an auditable patch overlay, not a currently validated
 browser release.

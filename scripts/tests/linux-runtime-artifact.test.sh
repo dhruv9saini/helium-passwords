@@ -87,7 +87,7 @@ EOF
             xargs -0 sha256sum >provenance/runtime.sha256
     )
     cat >"${provenance}/manifest.env" <<EOF
-schema_version=2
+schema_version=3
 product=${product}
 platform=linux
 arch=${arch}
@@ -102,6 +102,7 @@ chromium_commit=${chromium_commit}
 build_job_id=${job}
 platform_repository=https://github.com/imputnet/helium-linux.git
 platform_commit=9fbdff55283c9275f285c49dc054a1ff38dcdc96
+depot_tools_commit=980d6af16e06ff993a52029019dc0628c0a0e1f0
 gn_args_sha256=$(sha256sum "${provenance}/gn-args.txt" | awk '{ print $1 }')
 nix_provenance_sha256=$(sha256sum "${provenance}/chromiumer-nix.env" | awk '{ print $1 }')
 patch_inventory_sha256=$(sha256sum "${provenance}/patches.sha256" | awk '{ print $1 }')

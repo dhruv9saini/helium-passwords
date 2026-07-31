@@ -52,16 +52,22 @@ case "${platform}" in
         repo_url="${HELIUM_LINUX_REPO}"
         platform_ref="${HELIUM_PLATFORM_REF:-${HELIUM_LINUX_PLATFORM_REF}}"
         expected_platform_commit="${HELIUM_LINUX_PLATFORM_COMMIT}"
+        expected_core_commit="${HELIUM_LINUX_CORE_COMMIT}"
+        expected_depot_tools_commit="${HELIUM_LINUX_DEPOT_TOOLS_COMMIT}"
         ;;
     macos)
         repo_url="${HELIUM_MACOS_REPO}"
-        platform_ref="${HELIUM_PLATFORM_REF:-main}"
-        expected_platform_commit=
+        platform_ref="${HELIUM_PLATFORM_REF:-${HELIUM_MACOS_PLATFORM_REF}}"
+        expected_platform_commit="${HELIUM_MACOS_PLATFORM_COMMIT}"
+        expected_core_commit="${HELIUM_MACOS_CORE_COMMIT}"
+        expected_depot_tools_commit="${HELIUM_MACOS_DEPOT_TOOLS_COMMIT}"
         ;;
     windows)
         repo_url="${HELIUM_WINDOWS_REPO}"
-        platform_ref="${HELIUM_PLATFORM_REF:-main}"
-        expected_platform_commit=
+        platform_ref="${HELIUM_PLATFORM_REF:-${HELIUM_WINDOWS_PLATFORM_REF}}"
+        expected_platform_commit="${HELIUM_WINDOWS_PLATFORM_COMMIT}"
+        expected_core_commit="${HELIUM_WINDOWS_CORE_COMMIT}"
+        expected_depot_tools_commit="${HELIUM_WINDOWS_DEPOT_TOOLS_COMMIT}"
         ;;
     *)
         echo "unknown platform: ${platform}" >&2
@@ -70,11 +76,13 @@ case "${platform}" in
         ;;
 esac
 
-if [ -n "${expected_platform_commit}" ] && \
-    ! [[ "${expected_platform_commit}" =~ ^[0-9a-f]{40}$ ]]; then
-    echo "expected platform commit is not an immutable SHA-1" >&2
-    exit 1
-fi
+for lock in "${expected_platform_commit}" "${expected_core_commit}" \
+    "${expected_depot_tools_commit}"; do
+    if ! [[ "${lock}" =~ ^[0-9a-f]{40}$ ]]; then
+        echo "platform, core, and depot_tools commits must be immutable SHA-1s" >&2
+        exit 1
+    fi
+done
 
 destination="${1:-${root_dir}/${HELIUM_WORK_DIR}/${platform}}"
 mkdir -p "$(dirname "${destination}")"
@@ -93,21 +101,47 @@ else
 fi
 
 actual_platform_commit=$(git -C "${destination}" rev-parse HEAD)
-if [ -n "${expected_platform_commit}" ] && \
-    [ "${actual_platform_commit}" != "${expected_platform_commit}" ]; then
+if [ "${actual_platform_commit}" != "${expected_platform_commit}" ]; then
     echo "${platform} platform checkout does not match its immutable commit lock" >&2
+    exit 1
+fi
+actual_core_commit=$(git -C "${destination}" ls-tree HEAD helium-chromium | awk '{ print $3 }')
+if [ "${actual_core_commit}" != "${expected_core_commit}" ]; then
+    echo "${platform} platform checkout does not contain its locked Helium core" >&2
     exit 1
 fi
 
 cat >"${destination}/.helium-platform-source.env" <<EOF
-platform_source_schema_version=1
+platform_source_schema_version=2
 platform_repository=${repo_url}
 platform_requested_ref=${platform_ref}
 platform_commit=${actual_platform_commit}
+helium_core_commit=${actual_core_commit}
+depot_tools_commit=${expected_depot_tools_commit}
 EOF
 
 if [ "${skip_submodules}" != true ]; then
     git -C "${destination}" submodule update --init --recursive helium-chromium >&2
+
+    clone_helper="${destination}/helium-chromium/utils/clone.py"
+    grep -Fq "get_logger().info('Cloning latest depot_tools')" "${clone_helper}" || {
+        echo "${platform} Helium core no longer has the expected depot_tools clone path" >&2
+        exit 1
+    }
+    grep -Fq "'git', 'fetch', '--depth=1', 'origin', 'HEAD'" "${clone_helper}" || {
+        echo "${platform} Helium core no longer fetches depot_tools through the expected command" >&2
+        exit 1
+    }
+    sed -i \
+        "s/get_logger().info('Cloning latest depot_tools')/get_logger().info('Cloning pinned depot_tools: ${expected_depot_tools_commit}')/" \
+        "${clone_helper}"
+    sed -i \
+        "s/'git', 'fetch', '--depth=1', 'origin', 'HEAD'/'git', 'fetch', '--depth=1', 'origin', '${expected_depot_tools_commit}'/" \
+        "${clone_helper}"
+    grep -Fq "Cloning pinned depot_tools: ${expected_depot_tools_commit}" \
+        "${clone_helper}"
+    grep -Fq "'git', 'fetch', '--depth=1', 'origin', '${expected_depot_tools_commit}'" \
+        "${clone_helper}"
 fi
 
 core_series="${destination}/helium-chromium/patches/series"

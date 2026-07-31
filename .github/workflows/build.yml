@@ -26,7 +26,7 @@ on:
           - x86_64
           - arm64
       platform-ref:
-        description: Optional platform ref; Linux must still resolve to its locked full commit
+        description: Optional platform ref; every platform must still resolve to its locked full commit
         required: false
         type: string
         default: ""

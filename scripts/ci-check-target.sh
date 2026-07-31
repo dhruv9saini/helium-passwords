@@ -5,8 +5,8 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/ci-check-target.sh <linux|macos|windows> <x86_64|arm64>
 
-Prepare one platform checkout and verify that the password overlay is injected
-for the requested target.
+Prepare one platform checkout and verify that its locked core and toolchain are
+compatible and that the password overlay is injected for the requested target.
 EOF
 }
 
@@ -48,7 +48,24 @@ cleanup() {
 }
 trap cleanup EXIT
 checkout="$("${root_dir}/scripts/prepare-platform.sh" \
-    --skip-submodules "${platform}" "${checkout_root}/${platform}")"
+    "${platform}" "${checkout_root}/${platform}")"
+
+depot_tools_commit=$(awk -F= \
+    '$1 == "depot_tools_commit" { print substr($0, 20); exit }' \
+    "${checkout}/.helium-platform-source.env")
+[[ "${depot_tools_commit}" =~ ^[0-9a-f]{40}$ ]] || {
+    echo "prepared platform has no immutable depot_tools commit" >&2
+    exit 1
+}
+depot_tools_checkout="${checkout_root}/depot_tools"
+git init --quiet "${depot_tools_checkout}"
+git -C "${depot_tools_checkout}" remote add origin \
+    https://chromium.googlesource.com/chromium/tools/depot_tools
+git -C "${depot_tools_checkout}" fetch --quiet --depth=1 origin \
+    "${depot_tools_commit}"
+git -C "${depot_tools_checkout}" checkout --quiet --detach FETCH_HEAD
+git -C "${depot_tools_checkout}" apply --check --ignore-whitespace \
+    "${checkout}/helium-chromium/utils/depot_tools.patch"
 
 while IFS= read -r patch_path || [ -n "${patch_path}" ]; do
     patch_path="${patch_path%$'\r'}"
