@@ -10,8 +10,10 @@ lock_file="$repo_root/chromium/android-build.lock"
 . "$lock_file"
 
 temporary_resource_tree=
+temporary_resource_root=${TMPDIR:-/tmp}
 cleanup() {
-  if [[ -n "$temporary_resource_tree" && "$temporary_resource_tree" == /tmp/helium-android-resources.* ]]; then
+  if [[ -n "$temporary_resource_tree" &&
+    "$temporary_resource_tree" == "$temporary_resource_root"/helium-android-resources.* ]]; then
     find "$temporary_resource_tree" -depth -delete
   fi
 }
@@ -92,7 +94,8 @@ apply_series() {
 
 apply_transforms() {
   local source_tree=$1
-  temporary_resource_tree=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-resources.XXXXXX")
+  temporary_resource_tree=$(mktemp -d \
+    "$temporary_resource_root/helium-android-resources.XXXXXX")
 
   "$core_root/utils/domain_substitution.py" apply \
     -r "$core_root/domain_regex.list" \

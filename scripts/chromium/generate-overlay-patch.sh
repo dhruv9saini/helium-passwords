@@ -14,9 +14,10 @@ case "$mode" in
     ;;
 esac
 
-patch_work=$(mktemp -d "${TMPDIR:-/tmp}/helium-overlay-patch.XXXXXX")
+temp_root=${TMPDIR:-/tmp}
+patch_work=$(mktemp -d "${temp_root}/helium-overlay-patch.XXXXXX")
 case "$patch_work" in
-  /tmp/helium-overlay-patch.*) ;;
+  "${temp_root}"/helium-overlay-patch.*) ;;
   *) exit 1 ;;
 esac
 cleanup() {

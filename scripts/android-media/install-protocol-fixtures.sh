@@ -295,11 +295,12 @@ wait_live() {
 verify_live() {
   verify_source
   verify_tls
-  local temp h2_version h3_warm_version h3_version
-  temp=$(mktemp -d "${TMPDIR:-/tmp}/helium-media-protocol-verify.XXXXXX")
+  local temp temp_root h2_version h3_warm_version h3_version
+  temp_root=${TMPDIR:-/tmp}
+  temp=$(mktemp -d "$temp_root/helium-media-protocol-verify.XXXXXX")
   cleanup_verify() {
     case "$temp" in
-      /tmp/helium-media-protocol-verify.*) find "$temp" -depth -delete ;;
+      "$temp_root"/helium-media-protocol-verify.*) find "$temp" -depth -delete ;;
     esac
   }
   trap cleanup_verify RETURN
