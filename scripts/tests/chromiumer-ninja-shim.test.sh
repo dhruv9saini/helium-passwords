@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)"
 shim="${repo_root}/scripts/chromiumer-bin/ninja"
-temporary=$(mktemp -d /tmp/helium-ninja-shim.XXXXXX)
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/helium-ninja-shim.XXXXXX")
 cleanup() {
     find "${temporary}" -depth -delete
 }

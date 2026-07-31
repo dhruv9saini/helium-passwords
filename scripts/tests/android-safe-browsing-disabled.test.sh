@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 patch_file="$repo_root/patches/helium-passwords/disable-android-safe-browsing-bridges.patch"
-test_root=$(mktemp -d /tmp/helium-android-safe-browsing.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-safe-browsing.XXXXXX")
 cleanup() {
   find "$test_root" -depth -delete
 }

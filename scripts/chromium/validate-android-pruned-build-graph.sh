@@ -29,7 +29,7 @@ command -v ninja >/dev/null || {
 "$script_root/restore-android-pruned-build-inputs.sh" validate \
   "$source_root" "$expected_commit" "$pruning_list" >/dev/null
 
-temporary_root=$(mktemp -d /tmp/helium-android-pruned-graph.XXXXXX)
+temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-pruned-graph.XXXXXX")
 cleanup() {
   find "$temporary_root" -depth -delete
 }

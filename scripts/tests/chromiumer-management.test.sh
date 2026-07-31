@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
-test_root=$(mktemp -d /tmp/helium-management.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-management.XXXXXX")
 trap 'find "${test_root}" -depth -delete' EXIT
 mkdir -p "${test_root}/bin" "${test_root}/signals"
 touch "${test_root}/identity"
