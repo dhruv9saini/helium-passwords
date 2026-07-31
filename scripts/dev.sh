@@ -70,6 +70,15 @@ check_backbone() {
 
     local passwords_head
     passwords_head="$(git -C "${passwords_repo}" rev-parse main)"
+    # The private artifact receipt must identify the current public base, not
+    # merely any older ancestor that happens to remain in this history.
+    # shellcheck source=../linux-product.conf
+    # shellcheck disable=SC1091
+    . "${root_dir}/linux-product.conf"
+    [ "${HELIUM_LINUX_PASSWORDS_REF}" = "${passwords_head}" ] || {
+        echo "Linux artifact Passwords pin is not current: ${HELIUM_LINUX_PASSWORDS_REF}" >&2
+        return 1
+    }
     git -C "${root_dir}" merge-base --is-ancestor "${passwords_head}" HEAD || {
         echo "Helium Sync does not contain Helium Passwords main ${passwords_head}" >&2
         return 1
