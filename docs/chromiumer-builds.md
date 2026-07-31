@@ -307,6 +307,11 @@ scripts/chromiumer-job.sh preflight 80
 scripts/chromiumer-job.sh stage "$job" 80
 ```
 
+The wrapper creates its source checkout and archive under the mode-0700
+`/home/d/.local/state/helium-builds/source-staging` root. Start and resume use
+the invoking user's `/run/user/<uid>` directory for their small notification
+records. Neither path consumes lm's quota-bound bulk `/tmp` tmpfs.
+
 For the private repository, invoke the same inherited wrapper from Sync:
 
 ```sh
