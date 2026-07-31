@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 test_root=$(mktemp -d "$repo_root/.deployment-foundations.XXXXXX")
-tmp_destination=$(mktemp -d /tmp/helium-deploy-backup-a.XXXXXX)
+tmp_destination=$(mktemp -d "${TMPDIR:-/tmp}/helium-deploy-backup-a.XXXXXX")
 shm_destination=$(mktemp -d /dev/shm/helium-deploy-backup-b.XXXXXX)
 cleanup() { find "$test_root" "$tmp_destination" "$shm_destination" -depth -delete; }
 trap cleanup EXIT

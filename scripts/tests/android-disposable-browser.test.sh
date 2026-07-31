@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 boundary=$repo_root/scripts/android-media/disposable-browser.sh
-test_root=$(mktemp -d /tmp/helium-disposable-browser-test.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-disposable-browser-test.XXXXXX")
 cleanup() { find "$test_root" -depth -delete; }
 trap cleanup EXIT
 mkdir -p "$test_root/bin"

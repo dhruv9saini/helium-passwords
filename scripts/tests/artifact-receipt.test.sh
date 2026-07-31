@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-test_root=$(mktemp -d /tmp/helium-artifact-receipt.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-artifact-receipt.XXXXXX")
 trap 'find "$test_root" -depth -delete' EXIT
 
 artifact=$test_root/helium.tar.xz

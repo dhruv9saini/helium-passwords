@@ -53,7 +53,7 @@ find_test_ports() {
 }
 find_test_ports
 
-proof_dir=$(mktemp -d /tmp/helium-media-source-proof.XXXXXX)
+proof_dir=$(mktemp -d "${TMPDIR:-/tmp}/helium-media-source-proof.XXXXXX")
 backend_pid=
 caddy_pid=
 cleanup() {

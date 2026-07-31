@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
-fixture_dir=$(mktemp -d /tmp/helium-android-media-generation.XXXXXX)
+fixture_dir=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-media-generation.XXXXXX")
 cleanup() { find "$fixture_dir" -depth -delete; }
 trap cleanup EXIT
 

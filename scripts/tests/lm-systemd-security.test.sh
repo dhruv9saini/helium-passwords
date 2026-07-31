@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
-test_root=$(mktemp -d /tmp/helium-systemd-root.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-systemd-root.XXXXXX")
 cleanup() { find "$test_root" -depth -delete; }
 trap cleanup EXIT
 

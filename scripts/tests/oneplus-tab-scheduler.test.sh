@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)"
-temporary=$(mktemp -d /tmp/helium-oneplus-tab-test.XXXXXX)
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/helium-oneplus-tab-test.XXXXXX")
 cleanup() {
     local result=$?
     find "${temporary}" -depth -delete 2>/dev/null || true

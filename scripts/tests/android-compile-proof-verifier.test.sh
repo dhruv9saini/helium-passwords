@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
-test_root=$(mktemp -d /tmp/helium-android-compile-verifier.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-compile-verifier.XXXXXX")
 cleanup() { find "$test_root" -depth -delete; }
 trap cleanup EXIT
 

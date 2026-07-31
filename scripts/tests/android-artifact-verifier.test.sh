@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
-test_root=$(mktemp -d /tmp/helium-android-artifact-test.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-artifact-test.XXXXXX")
 cleanup() { find "$test_root" -depth -delete; }
 trap cleanup EXIT
 nix_source_sha256=$(sha256sum "$repo_root/chromium/nix/chromiumer-shell.nix" | awk '{ print $1 }')
