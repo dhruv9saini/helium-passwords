@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
 worker="${repo_root}/scripts/chromiumer-worker.sh"
 wrapper="${repo_root}/scripts/chromiumer-job.sh"
-test_root=$(mktemp -d /tmp/helium-resume.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-resume.XXXXXX")
 trap 'find "${test_root}" -depth -delete' EXIT
 
 # shellcheck source=../chromiumer-worker.sh

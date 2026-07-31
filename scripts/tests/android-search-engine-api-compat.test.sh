@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 patch_file="$repo_root/patches/helium-passwords/android-search-engine-api-compat.patch"
-test_root=$(mktemp -d /tmp/helium-android-search-api.XXXXXX)
+test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-search-api.XXXXXX")
 cleanup() {
   find "$test_root" -depth -delete
 }
