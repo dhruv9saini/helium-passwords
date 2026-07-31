@@ -132,12 +132,11 @@ if [ "${skip_submodules}" != true ]; then
         echo "${platform} Helium core no longer fetches depot_tools through the expected command" >&2
         exit 1
     }
-    sed -i \
-        "s/get_logger().info('Cloning latest depot_tools')/get_logger().info('Cloning pinned depot_tools: ${expected_depot_tools_commit}')/" \
+    sed -i.bak \
+        -e "s/get_logger().info('Cloning latest depot_tools')/get_logger().info('Cloning pinned depot_tools: ${expected_depot_tools_commit}')/" \
+        -e "s/'git', 'fetch', '--depth=1', 'origin', 'HEAD'/'git', 'fetch', '--depth=1', 'origin', '${expected_depot_tools_commit}'/" \
         "${clone_helper}"
-    sed -i \
-        "s/'git', 'fetch', '--depth=1', 'origin', 'HEAD'/'git', 'fetch', '--depth=1', 'origin', '${expected_depot_tools_commit}'/" \
-        "${clone_helper}"
+    rm -f -- "${clone_helper}.bak"
     grep -Fq "Cloning pinned depot_tools: ${expected_depot_tools_commit}" \
         "${clone_helper}"
     grep -Fq "'git', 'fetch', '--depth=1', 'origin', '${expected_depot_tools_commit}'" \
