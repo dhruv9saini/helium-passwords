@@ -86,10 +86,10 @@ check_all() {
     "${root_dir}/helium-chromium/devutils/lint.py" -t "${root_dir}"
     "${root_dir}/scripts/chromium/generate-overlay-patch.sh" --check
 
-    if find "${root_dir}/scripts" -type f -name '*.mjs' -print -quit | grep -q .; then
+    if [ -n "$(find "${root_dir}/scripts" -type f -name '*.mjs' -print -quit)" ]; then
         check_javascript
     fi
-    if find "${root_dir}/scripts" -type f -name '*.py' -print -quit | grep -q .; then
+    if [ -n "$(find "${root_dir}/scripts" -type f -name '*.py' -print -quit)" ]; then
         check_python
     fi
 
