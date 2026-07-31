@@ -72,6 +72,14 @@ while IFS= read -r patch_path || [ -n "${patch_path}" ]; do
     patch_path="${patch_path%$'\r'}"
     case "${patch_path}" in
         ""|\#*) continue ;;
+        helium-passwords/android-search-engine-api-compat.patch|\
+        helium-passwords/disable-android-safe-browsing-bridges.patch)
+            patch_name="$(basename "${patch_path}")"
+            ! grep -qx "helium/passwords/${patch_name}" \
+                "${checkout}/patches/series"
+            [ ! -e "${checkout}/patches/helium/passwords/${patch_name}" ]
+            continue
+            ;;
     esac
     patch_name="$(basename "${patch_path}")"
     grep -qx "helium/passwords/${patch_name}" "${checkout}/patches/series"

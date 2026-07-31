@@ -59,6 +59,11 @@ test is not mistaken for product validation:
   revision `a6626e7885df3617f2c921d5bde0a9a79599bf53`. The prepared source
   receipt records both exact commits so a moving toolchain cannot alter the
   build or invalidate the core patch silently.
+- Desktop platform preparation appends only
+  `restore-password-autofill.patch` and `restore-password-ui.patch`. The
+  Android search-engine and safe-browsing compatibility patches remain on the
+  direct Android source path and are rejected from Linux, macOS, and Windows
+  platform series.
 - Upstream still applies four direct password/autofill removals, plus several UI
   cleanup patches that remove password-manager entry points.
 - The current public patches were refreshed for Chromium 150. A focused

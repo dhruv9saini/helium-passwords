@@ -104,6 +104,17 @@ root floor, and eight hours. Builds are detached, watched, journaled, and
 reported exactly once through lm Mailbridge to `dhruv.codex@gmail.com`.
 Returned artifacts are checksum-verified before a workspace can be cleaned.
 
+## Desktop patch flow
+
+`patches/series` is the canonical direct-build overlay list. Desktop platform
+preparation copies only the two password-restoration patches into
+`patches/helium/passwords/` and appends them to the platform series. The two
+Android compatibility patches remain on the direct Android source path; the
+desktop target gate proves they are absent from Linux, macOS, and Windows.
+Desktop preparation also removes
+`helium/hop/disable-password-manager.patch` from the cloned Helium core before
+the platform applies its series.
+
 ## Installation boundary
 
 `scripts/laptop/install-laptop-sync.sh` installs only the native browser
