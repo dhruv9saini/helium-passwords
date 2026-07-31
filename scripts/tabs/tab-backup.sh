@@ -440,7 +440,7 @@ restore_disposable() {
     [ ! -e "${restore_destination}" ] || { echo "restore destination already exists" >&2; return 1; }
     index=$(destination_index "${destination_id}")
     verify_destination_host "${index}"
-    temporary=$(mktemp -d /tmp/helium-tab-restore.XXXXXX)
+    temporary=$(mktemp -d "${TMPDIR:-/tmp}/helium-tab-restore.XXXXXX")
     cleanup_restore() {
         local result=$?
 		[ -z "${source_receipt_temporary:-}" ] ||

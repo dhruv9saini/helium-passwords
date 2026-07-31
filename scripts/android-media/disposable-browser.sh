@@ -300,7 +300,7 @@ wait_for_debugger=$(
   exit 1
 }
 
-temporary=$(mktemp -d /tmp/helium-disposable-browser.XXXXXX)
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/helium-disposable-browser.XXXXXX")
 command_line_paths=(
   /data/local/tmp/chrome-command-line
   /data/local/chrome-command-line

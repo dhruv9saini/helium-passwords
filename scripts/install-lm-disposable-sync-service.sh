@@ -196,7 +196,7 @@ case "$action" in
       echo "refusing source install while $service is active" >&2
       exit 1
     }
-    temp_dir=$(mktemp -d /tmp/helium-sync-disposable-install.XXXXXX)
+    temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/helium-sync-disposable-install.XXXXXX")
     cleanup_install() { find "$temp_dir" -depth -delete; }
     trap cleanup_install EXIT
     go build -trimpath -o "$temp_dir/helium-syncd" "$repo_root/cmd/helium-syncd"

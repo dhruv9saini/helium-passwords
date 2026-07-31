@@ -28,7 +28,7 @@ esac
 }
 command -v "$aapt2" >/dev/null
 
-temporary=$(mktemp -d /tmp/helium-android-artifact.XXXXXX)
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-artifact.XXXXXX")
 cleanup() { find "$temporary" -depth -delete; }
 trap cleanup EXIT
 

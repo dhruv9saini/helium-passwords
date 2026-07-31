@@ -18,7 +18,7 @@ expected_sync_commit=$3
   exit 64
 }
 
-temporary=$(mktemp -d /tmp/helium-android-compile-proof.XXXXXX)
+temporary=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-compile-proof.XXXXXX")
 cleanup() { find "$temporary" -depth -delete; }
 trap cleanup EXIT
 

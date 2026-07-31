@@ -296,7 +296,7 @@ verify_live() {
   verify_source
   verify_tls
   local temp h2_version h3_warm_version h3_version
-  temp=$(mktemp -d /tmp/helium-media-protocol-verify.XXXXXX)
+  temp=$(mktemp -d "${TMPDIR:-/tmp}/helium-media-protocol-verify.XXXXXX")
   cleanup_verify() {
     case "$temp" in
       /tmp/helium-media-protocol-verify.*) find "$temp" -depth -delete ;;

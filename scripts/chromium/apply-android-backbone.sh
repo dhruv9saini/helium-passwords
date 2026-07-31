@@ -92,7 +92,7 @@ apply_series() {
 
 apply_transforms() {
   local source_tree=$1
-  temporary_resource_tree=$(mktemp -d /tmp/helium-android-resources.XXXXXX)
+  temporary_resource_tree=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-resources.XXXXXX")
 
   "$core_root/utils/domain_substitution.py" apply \
     -r "$core_root/domain_regex.list" \
