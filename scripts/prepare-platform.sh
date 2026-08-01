@@ -218,6 +218,12 @@ EOF
         sed -i 's/ninja -C out\/Default chrome chromedriver/ninja -j "${HELIUM_BUILD_JOBS:-$(nproc)}" -C out\/Default chrome chromedriver/' \
             "${linux_shared_build}"
     fi
+    if [ -f "${linux_shared_build}" ] && \
+        ! grep -Fq -- '--use-custom-libcxx' "${linux_shared_build}"; then
+        perl -0pi -e 's|(CXX="\$clang_bin/clang\+\+" \./tools/gn/bootstrap/bootstrap\.py \\\n)|$1        --use-custom-libcxx \\\n|' \
+            "${linux_shared_build}"
+        grep -Fq '        --use-custom-libcxx \' "${linux_shared_build}"
+    fi
 
     linux_package_sh="${destination}/scripts/package.sh"
     if [ -f "${linux_package_sh}" ] && \

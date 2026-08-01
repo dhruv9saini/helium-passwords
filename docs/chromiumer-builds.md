@@ -186,6 +186,12 @@ the edge for over two hours. The pinned Chromiumer environment therefore
 forces GRIT's upstream `GRIT_DISABLE_MULTIPROCESSING=1` switch for both Sync
 and control builds.
 
+The prepared Linux platform also passes GN bootstrap's built-in
+`--use-custom-libcxx` option. The platform deliberately selects Chromium's
+downloaded Clang for that bootstrap, so its matching in-tree libc++ and
+libc++abi headers must be selected explicitly rather than depending on host
+C++ headers.
+
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.
 The budget covers its source, output, temporary files, and redirected caches.

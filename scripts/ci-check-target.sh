@@ -154,6 +154,8 @@ if [ "${platform}" = "linux" ]; then
     grep -q 'HELIUM_BUILD_JOBS' "${checkout}/scripts/docker-build.sh"
     grep -Fq 'ninja -j "${HELIUM_BUILD_JOBS:-$(nproc)}"' \
         "${checkout}/scripts/shared.sh"
+    grep -Fq '        --use-custom-libcxx \' \
+        "${checkout}/scripts/shared.sh"
 fi
 
 if [ "${platform}" = "macos" ]; then
