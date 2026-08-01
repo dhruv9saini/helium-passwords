@@ -6,6 +6,8 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import {fileURLToPath, pathToFileURL} from "node:url";
 
+import {summarizePasswordState} from "../password-runtime/sync-acceptance.mjs";
+
 const RUN_NONCE = /^[0-9a-f]{64}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 const COOKIE_KEY = /^[0-9a-f]{64}$/;
@@ -27,6 +29,9 @@ const SCREENSHOTS = Object.freeze([
   "04-d-updated.png",
   "05-d-deleted.png",
   "06-da-deleted.png",
+  "07-da-password-initial-suggestion.png",
+  "08-da-password-updated-suggestion.png",
+  "09-da-password-deleted-empty.png",
 ]);
 
 function fail(message) {
@@ -117,6 +122,16 @@ function parseCounter(value, label) {
     fail(`${label} is not a nonnegative integer`);
   }
   return BigInt(text);
+}
+
+function equalJSON(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function syncCapture(run, step) {
+  const capture = run.captures.find(item => item.step === step);
+  if (!capture?.password_state) fail(`private Sync run is missing ${step}`);
+  return capture.password_state;
 }
 
 function validateCookieState(state, label) {
@@ -259,9 +274,10 @@ function parseArgs(argv) {
 
 async function verify(args) {
   const names = [
-    "sync-receipt", "da-admission-run", "artifact", "artifact-receipt",
-    "fixture-evidence", "d-cookie-state", "da-cookie-state", "journal",
-    "screenshot-dir", "output",
+    "sync-receipt", "sync-run", "da-admission-run", "artifact",
+    "artifact-receipt", "fixture-evidence", "d-cookie-state",
+    "da-cookie-state", "da-password-initial", "da-password-updated",
+    "da-password-deleted", "journal", "screenshot-dir", "output",
   ];
   if (JSON.stringify(Object.keys(args).sort()) !== JSON.stringify(names.sort())) {
     fail(`expected arguments: ${names.join(", ")}`);
@@ -270,6 +286,13 @@ async function verify(args) {
   if (sync.value.schema_version !== 2 || sync.value.result !== "passed" ||
       !RUN_NONCE.test(sync.value.run_nonce) || !SHA256.test(sync.value.artifact_sha256)) {
     fail("private password receipt is not a passed schema-2 receipt");
+  }
+  const syncRun = await readJSON(args["sync-run"], "private password Sync run");
+  if (syncRun.value.schema_version !== 2 ||
+      syncRun.value.run_nonce !== sync.value.run_nonce ||
+      syncRun.value.artifact_sha256 !== sync.value.artifact_sha256 ||
+      !Array.isArray(syncRun.value.captures) || syncRun.value.captures.length !== 6) {
+    fail("private password Sync run does not match its passed receipt");
   }
   const daAdmission = await readJSON(args["da-admission-run"],
     "da browser admission run");
@@ -308,10 +331,36 @@ async function verify(args) {
     fail("d and da terminal cookie cursors disagree");
   }
 
+  const daInitialPassword = await readJSON(args["da-password-initial"],
+    "da initial password bridge state");
+  const daUpdatedPassword = await readJSON(args["da-password-updated"],
+    "da updated password bridge state");
+  const daDeletedPassword = await readJSON(args["da-password-deleted"],
+    "da deleted password bridge state");
+  const daPasswordSummaries = {
+    initial: summarizePasswordState(daInitialPassword.value),
+    updated: summarizePasswordState(daUpdatedPassword.value),
+    deleted: summarizePasswordState(daDeletedPassword.value),
+  };
+  if (!equalJSON(daPasswordSummaries.initial,
+        syncCapture(syncRun.value, "saved_store")) ||
+      !equalJSON(daPasswordSummaries.updated,
+        syncCapture(syncRun.value, "updated_store")) ||
+      !equalJSON(daPasswordSummaries.deleted,
+        syncCapture(syncRun.value, "deleted_store")) ||
+      !equalJSON(daPasswordSummaries.deleted,
+        syncCapture(syncRun.value, "deleted_restart_empty"))) {
+    fail("da did not converge through the three d password revisions");
+  }
+
   const journal = await regularFile(args.journal, "readable server journal");
   const journalResult = validateJournal(journal.raw, fixture.value, dTerminal.key);
   if (dTerminal.verifiedSequence !== journalResult.maxSequence) {
     fail("cookie bridge cursors do not acknowledge the complete server journal");
+  }
+  if (parseCounter(daPasswordSummaries.deleted.verified_sequence,
+        "da terminal password cursor") !== journalResult.maxSequence) {
+    fail("da password bridge does not acknowledge the complete server journal");
   }
 
   const screenshotDir = args["screenshot-dir"];
@@ -345,9 +394,15 @@ async function verify(args) {
     artifact_sha256: sync.value.artifact_sha256,
     artifact_receipt_sha256: sha256(artifactReceipt.raw),
     private_password_receipt_sha256: sha256(sync.raw),
+    private_password_sync_run_sha256: sha256(syncRun.raw),
     da_admission_run_sha256: sha256(daAdmission.raw),
     fixture_evidence_sha256: sha256(fixture.raw),
     cookie_state_sha256: sha256(dState.raw),
+    da_password_state_sha256: {
+      initial: sha256(daInitialPassword.raw),
+      updated: sha256(daUpdatedPassword.raw),
+      deleted: sha256(daDeletedPassword.raw),
+    },
     journal_sha256: sha256(journal.raw),
     journal_size: journal.stat.size,
     journal_record_count: journalResult.count,
@@ -371,7 +426,7 @@ async function verify(args) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     if (process.argv[2] !== "verify") {
-      fail("usage: acceptance.mjs verify --sync-receipt FILE --da-admission-run FILE --artifact FILE --artifact-receipt FILE --fixture-evidence FILE --d-cookie-state FILE --da-cookie-state FILE --journal FILE --screenshot-dir DIR --output NEWFILE");
+      fail("usage: acceptance.mjs verify --sync-receipt FILE --sync-run FILE --da-admission-run FILE --artifact FILE --artifact-receipt FILE --fixture-evidence FILE --d-cookie-state FILE --da-cookie-state FILE --da-password-initial FILE --da-password-updated FILE --da-password-deleted FILE --journal FILE --screenshot-dir DIR --output NEWFILE");
     }
     const receipt = await verify(parseArgs(process.argv.slice(3)));
     process.stdout.write(`${JSON.stringify({event: "passed", receipt})}\n`);
