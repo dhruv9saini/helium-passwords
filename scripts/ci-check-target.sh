@@ -107,6 +107,14 @@ if [ "${platform}" = "linux" ]; then
     grep -q 'HELIUM_BUILD_JOBS' "${checkout}/scripts/docker-build.sh"
     grep -Fq 'ninja -j "${HELIUM_BUILD_JOBS:-$(nproc)}"' \
         "${checkout}/scripts/shared.sh"
+    grep -Fq 'local bootstrap_sysroot_arch' \
+        "${checkout}/scripts/shared.sh"
+    grep -Fq 'debian_bullseye_${bootstrap_sysroot_arch}-sysroot' \
+        "${checkout}/scripts/shared.sh"
+    grep -Fq 'CFLAGS="${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
+        "${checkout}/scripts/shared.sh"
+    grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
+        "${checkout}/scripts/shared.sh"
     grep -Fq '        --use-custom-libcxx \' \
         "${checkout}/scripts/shared.sh"
 fi

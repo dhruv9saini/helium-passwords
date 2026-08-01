@@ -178,7 +178,11 @@ The prepared Linux platform also passes GN bootstrap's built-in
 `--use-custom-libcxx` option. The platform deliberately selects Chromium's
 downloaded Clang for that bootstrap, so its matching in-tree libc++ and
 libc++abi headers must be selected explicitly rather than depending on host
-C++ headers.
+C++ headers. The same scoped invocation passes Chromium's installed Debian
+host sysroot through `CFLAGS` and `LDFLAGS`. Downloaded Clang otherwise has no
+platform C headers inside the pinned Nix environment: libc++ is found, but its
+`mbstate_t` and wide-character declarations cannot resolve. A missing sysroot
+or an unsupported GN host architecture fails before bootstrap.
 
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.
