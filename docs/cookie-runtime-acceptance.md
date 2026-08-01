@@ -6,9 +6,12 @@ This is the executable desktop transport gate for the native Chromium
 `sync-receipt.json`. It never uses CDP, an extension, a cookie writer, a raw
 profile database, or a personal profile.
 
-Use the same two new disposable private-artifact profiles as the password
-gate. `d-test` is the active seed; `da-test` starts pending and uses only its
-own enrollment directory. The fixture binds to `127.0.0.1` on d. A temporary
+Use the passed private-password profile on d and initialize a second fresh
+Linux admission run on da with the same verified runtime. `d-test` is the
+active seed; `da-test` starts pending and uses only its own enrollment
+directory. The final cookie receipt binds da's untouched zero-capture
+`run.json`, proving that its profile was created only after the da runtime and
+complete receipt inventory were rehashed. The fixture binds to `127.0.0.1` on d. A temporary
 strict Tailnet SSH local-forward on da exposes the same loopback host and port,
 so Chromium sees one exact origin on both machines without making the fixture
 public. Stop that forward during cleanup.
@@ -74,6 +77,7 @@ Run:
 ```sh
 node scripts/cookie-runtime/acceptance.mjs verify \
   --sync-receipt "$run/sync-receipt.json" \
+  --da-admission-run "$run/da-admission-run.json" \
   --artifact "$verified/helium-sync-linux-x86_64/runtime/helium-wrapper" \
   --artifact-receipt "$verified/artifact-receipt.env" \
   --fixture-evidence "$run/cookie-fixture-evidence.json" \

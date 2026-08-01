@@ -259,8 +259,9 @@ function parseArgs(argv) {
 
 async function verify(args) {
   const names = [
-    "sync-receipt", "artifact", "artifact-receipt", "fixture-evidence",
-    "d-cookie-state", "da-cookie-state", "journal", "screenshot-dir", "output",
+    "sync-receipt", "da-admission-run", "artifact", "artifact-receipt",
+    "fixture-evidence", "d-cookie-state", "da-cookie-state", "journal",
+    "screenshot-dir", "output",
   ];
   if (JSON.stringify(Object.keys(args).sort()) !== JSON.stringify(names.sort())) {
     fail(`expected arguments: ${names.join(", ")}`);
@@ -270,12 +271,30 @@ async function verify(args) {
       !RUN_NONCE.test(sync.value.run_nonce) || !SHA256.test(sync.value.artifact_sha256)) {
     fail("private password receipt is not a passed schema-2 receipt");
   }
+  const daAdmission = await readJSON(args["da-admission-run"],
+    "da browser admission run");
+  if (daAdmission.value.schema_version !== 2 ||
+      daAdmission.value.platform !== "linux" || daAdmission.value.package !== "" ||
+      daAdmission.value.artifact_sha256 !== sync.value.artifact_sha256 ||
+      !SHA256.test(daAdmission.value.artifact_receipt_sha256) ||
+      typeof daAdmission.value.run_root !== "string" ||
+      !path.isAbsolute(daAdmission.value.run_root) ||
+      typeof daAdmission.value.profile_path !== "string" ||
+      !path.isAbsolute(daAdmission.value.profile_path) ||
+      daAdmission.value.profile_path !== path.join(daAdmission.value.run_root, "profile") ||
+      !Array.isArray(daAdmission.value.captures) || daAdmission.value.captures.length !== 0) {
+    fail("da browser admission is not a fresh matching Linux run");
+  }
   const artifact = await regularFile(args.artifact, "admitted browser", {privateFile: false});
   if (sha256(artifact.raw) !== sync.value.artifact_sha256) {
     fail("admitted browser changed after private password acceptance");
   }
   const artifactReceipt = await regularFile(args["artifact-receipt"],
     "artifact provenance receipt");
+  if (daAdmission.value.artifact_path !== args.artifact ||
+      daAdmission.value.artifact_receipt_sha256 !== sha256(artifactReceipt.raw)) {
+    fail("da browser admission is not bound to the supplied runtime receipt");
+  }
   const fixture = await readJSON(args["fixture-evidence"], "cookie fixture evidence");
   validateFixture(fixture.value, sync.value.run_nonce);
 
@@ -326,6 +345,7 @@ async function verify(args) {
     artifact_sha256: sync.value.artifact_sha256,
     artifact_receipt_sha256: sha256(artifactReceipt.raw),
     private_password_receipt_sha256: sha256(sync.raw),
+    da_admission_run_sha256: sha256(daAdmission.raw),
     fixture_evidence_sha256: sha256(fixture.raw),
     cookie_state_sha256: sha256(dState.raw),
     journal_sha256: sha256(journal.raw),
@@ -351,7 +371,7 @@ async function verify(args) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   try {
     if (process.argv[2] !== "verify") {
-      fail("usage: acceptance.mjs verify --sync-receipt FILE --artifact FILE --artifact-receipt FILE --fixture-evidence FILE --d-cookie-state FILE --da-cookie-state FILE --journal FILE --screenshot-dir DIR --output NEWFILE");
+      fail("usage: acceptance.mjs verify --sync-receipt FILE --da-admission-run FILE --artifact FILE --artifact-receipt FILE --fixture-evidence FILE --d-cookie-state FILE --da-cookie-state FILE --journal FILE --screenshot-dir DIR --output NEWFILE");
     }
     const receipt = await verify(parseArgs(process.argv.slice(3)));
     process.stdout.write(`${JSON.stringify({event: "passed", receipt})}\n`);
