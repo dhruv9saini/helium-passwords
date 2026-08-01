@@ -170,9 +170,11 @@ if [ "${platform}" = "linux" ]; then
         "${checkout}/scripts/shared.sh"
     ! grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
         "${checkout}/scripts/shared.sh"
+    grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }-fuse-ld=lld -rtlib=compiler-rt" \' \
+        "${checkout}/scripts/shared.sh"
     grep -Fq '[ -x "$clang_bin/ld.lld" ]' \
         "${checkout}/scripts/shared.sh"
-    grep -Fq -- '-fuse-ld=lld' \
+    grep -Fq 'command = $cxx -fuse-ld=lld -rtlib=compiler-rt -shared' \
         "${checkout}/scripts/shared.sh"
     [ "$(grep -Fc '        --build-path out/Default \' \
         "${checkout}/scripts/shared.sh")" -eq 1 ]

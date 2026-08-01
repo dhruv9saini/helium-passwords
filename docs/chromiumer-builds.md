@@ -201,12 +201,14 @@ GN host architecture fails before bootstrap. The pinned FHS deliberately does
 not provide a generic `ld`, while Chromium's downloaded Clang otherwise asks
 for bare `ld` when linking the custom host library. The prepared bootstrap
 therefore requires the downloaded toolchain's adjacent `ld.lld` and selects it
-only for that handwritten libc++ link rule with `-fuse-ld=lld`. The invocation
-also uses the bootstrap's supported `--build-path out/Default` option. Custom
-libc++ is a shared host library with an origin-relative rpath; leaving the
-bootstrap at its default `out/Release` build directory while requesting only
-the GN executable under `out/Default` strands `libc++.gn.so` in the former
-directory. One build
+for both the handwritten libc++ link and the generated GN host link with
+`-fuse-ld=lld`. Both host links also select Clang's matching compiler runtime
+with `-rtlib=compiler-rt`; neither flag introduces the compile sysroot into
+`LDFLAGS`. The invocation also uses the bootstrap's supported
+`--build-path out/Default` option. Custom libc++ is a shared host library with
+an origin-relative rpath; leaving the bootstrap at its default `out/Release`
+build directory while requesting only the GN executable under `out/Default`
+strands `libc++.gn.so` in the former directory. One build
 path keeps the executable and its runtime library together without a loader
 override or a second copy. Chromium 150's
 libc++ also consumes shared LLVM libc headers, while the best-effort GN
