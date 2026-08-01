@@ -137,7 +137,9 @@ stage() {
     }
 
     git init --quiet "${checkout}"
-    git -C "${checkout}" fetch --quiet --depth=1 \
+    # Product provenance verifies a committed public-base ancestor, so retain
+    # the staged commit's complete root-repository history.
+    git -C "${checkout}" fetch --quiet \
         "file://${repository}" "${repository_commit}"
     git -C "${checkout}" checkout --quiet --detach FETCH_HEAD
     git -C "${checkout}" -c protocol.file.allow=always \
