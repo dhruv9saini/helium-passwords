@@ -1,0 +1,22 @@
+diff --git a/third_party/devtools-frontend/src/scripts/build/build_ai_skills.mjs b/third_party/devtools-frontend/src/scripts/build/build_ai_skills.mjs
+index 5cbc69112..febfac9d2 100644
+--- a/third_party/devtools-frontend/src/scripts/build/build_ai_skills.mjs
++++ b/third_party/devtools-frontend/src/scripts/build/build_ai_skills.mjs
+@@ -7,0 +8 @@ import * as path from 'node:path';
++import {pathToFileURL} from 'node:url';
+@@ -64 +65,2 @@ export const skill = ${JSON.stringify(skill, null, 2)};
+-if (import.meta.main) {
++if (process.argv[1] &&
++    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+diff --git a/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js b/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
+index 3d99fac3e..33e4bd295 100644
+--- a/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
++++ b/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
+@@ -7,0 +8 @@ import * as path from 'node:path';
++import {pathToFileURL} from 'node:url';
+@@ -83,2 +84,3 @@ async function runMain() {
+-if (import.meta.main) {
+-  runMain();
++if (process.argv[1] &&
++    pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
++  await runMain();
