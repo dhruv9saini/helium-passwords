@@ -174,6 +174,12 @@ root-space, watchdog, or eight-hour bounds. The worker exports all four
 job-count variables as `1`; the pinned environment and platform entry points
 reject missing or different values instead of choosing their own defaults.
 
+The prepared Linux platform also passes GN bootstrap's built-in
+`--use-custom-libcxx` option. The platform deliberately selects Chromium's
+downloaded Clang for that bootstrap, so its matching in-tree libc++ and
+libc++abi headers must be selected explicitly rather than depending on host
+C++ headers.
+
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.
 The budget covers its source, output, temporary files, and redirected caches.
