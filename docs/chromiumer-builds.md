@@ -266,12 +266,19 @@ blocks. GNU
 suppresses only entries that disappear after their parent directory was read,
 which is normal while Git or Ninja mutates a tree. It does not suppress every
 active-tree race: a directory can disappear after `find` has begun traversing
-it. A failed scan is discarded and retried once from the root. A repeated
-failure, an inconsistent exit status, or invalid counter output is fatal and
-stops the job. The stream retains no path or inode table. Multiple directory
-entries for one hard-linked file are counted more than once, a conservative
-early stop rather than an undercount. The ceiling is polled, not an ext4
-project quota, so a job can briefly cross the budget between completed scans.
+it. After the initial complete readiness scan, the watchdog accepts that narrow
+second race only when every diagnostic is an exact `No such file or directory`
+for a descendant of the still-present job root. The partial scan then omits a
+name that is no longer reachable there; the next poll accounts for any
+replacement or renamed entry. A missing root, permission or I/O error, mixed
+diagnostic, or any other failed scan is discarded and retried once from the
+root. A repeated unclassified failure, an inconsistent exit status, or invalid
+counter output is fatal and stops the job. Multiple directory entries for one
+hard-linked file are counted more than once, a conservative early stop rather
+than an undercount. The ceiling is polled, not an ext4 project quota, so a job
+can briefly cross the budget between completed scans. The independent root-free
+check continues every supervisor second while any disk scan runs. The stream
+retains no path or inode table.
 
 Admission requires cgroup v2 CPU, memory, I/O, and PID controllers, a running
 user systemd manager, the standard supervision tools, the job's remaining disk
@@ -286,15 +293,16 @@ second, including while that scan runs and during the 30-second delay before
 the next scan, it takes a fresh `/` free-space reading and a fresh
 `MemAvailable` reading. A root-floor breach stops the build on that check; two
 consecutive low-memory readings stop it on the second check. Disk-budget
-evaluation occurs only after one complete valid scan. A scan-command failure,
-with or without a diagnostic, is retried exactly once because a
-concurrent build-tree mutation can invalidate a traversal. The partial count is
-never used. `disk-scan-retry.env` records the retry, and the first stderr is
-preserved verbatim in `disk-scan-first-error.log`. A second consecutive scan
-failure remains fatal. `health.env` is then atomically replaced with the
-successful disk result and the latest fresh filesystem, memory, and load
-readings. Consequently health-file cadence is scan duration plus the 30-second
-inter-scan delay, not one second or exactly 30 seconds.
+evaluation occurs after a valid scan or, after readiness, a scan whose only
+failure is that narrowly classified descendant disappearance. Any other
+scan-command failure, with or without a diagnostic, is retried exactly once
+because a concurrent build-tree mutation can invalidate a traversal. Its
+partial count is never used. `disk-scan-retry.env` records the retry, and the
+first stderr is preserved verbatim in `disk-scan-first-error.log`. A second
+consecutive unclassified failure remains fatal. `health.env` is then atomically
+replaced with the admitted disk result and the latest fresh filesystem, memory,
+and load readings. Consequently health-file cadence is scan duration plus the
+30-second inter-scan delay, not one second or exactly 30 seconds.
 
 `watchdog-ready.env` is written only after the first complete healthy disk
 scan. The build command waits for that marker and an active watchdog before it
