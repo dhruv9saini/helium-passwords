@@ -652,6 +652,18 @@ provenance, forbid any locked key from appearing again in the appended
 A/B pair verifiers require both the source flags and effective locked values to
 be byte-identical.
 
+When a frozen exact product commit predates a current build-verifier fix, keep
+that product checkout detached and clean. Run immutable copies of the current
+`build-android-ci.sh` or `build-android-control-ci.sh`, media verifier, and
+locked-GN verifier from the Chromiumer command instead of editing the frozen
+checkout. Set `HELIUM_ANDROID_TOOLING_COMMIT` to the full commit containing
+those copies, and point `HELIUM_ANDROID_MEDIA_CONFIG_VERIFIER` and
+`HELIUM_ANDROID_LOCKED_GN_VERIFIER` at them. Each artifact records the tooling
+commit and script hashes in `android-tooling.env`; the artifact verifier
+recomputes every hash from that commit. The source commit/status fields still
+bind the untouched product checkout. An external script without this
+commit-and-hash binding is not admissible.
+
 Always preserve the commit from the staged source manifest and pass that exact
 value to both artifact verifiers even if `main` advances while the detached job
 runs. A clean ancestor artifact may be checksum/provenance verified and kept as

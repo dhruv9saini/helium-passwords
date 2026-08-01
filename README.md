@@ -36,7 +36,9 @@ and the d/da native cookie transport gate is
   that profile has a verified recoverable backup.
 - Chromium is never built on lm. Every large build uses the isolated
   [chromiumer workflow](docs/chromiumer-builds.md) and its durable completion
-  notification.
+  notification. A frozen product commit may use only hash-bound newer build
+  tooling recorded separately in the artifact; its product source stays clean
+  and retains its own exact commit identity.
 
 ## Repository map
 

@@ -13,6 +13,14 @@ repo_root=$(cd "$4" && pwd)
 requested_ref=$5
 depot_tools_commit=$6
 gn_bin=${GN:-gn}
+build_driver=$(realpath -e "${HELIUM_ANDROID_BUILD_DRIVER:?missing Android build-driver path}")
+media_config_verifier=$(realpath -e "${HELIUM_ANDROID_MEDIA_CONFIG_VERIFIER:-${BASH_SOURCE[0]}}")
+locked_gn_verifier=$(realpath -e "${HELIUM_ANDROID_LOCKED_GN_VERIFIER:-$repo_root/scripts/chromium/verify-android-locked-gn-args.sh}")
+tooling_commit=${HELIUM_ANDROID_TOOLING_COMMIT:-$(git -C "$repo_root" rev-parse HEAD)}
+[[ "$tooling_commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "Android tooling commit must be a full SHA-1" >&2
+  exit 1
+}
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
 "$repo_root/scripts/chromium/validate-android-build-lock.sh" >/dev/null
@@ -75,9 +83,22 @@ require_arg "^android_override_version_name = \"${HELIUM_ANDROID_VERSION_NAME//.
 
 cp "$chromium_src/$out_dir/args.gn" "$provenance_dir/args.gn"
 cp "$repo_root/helium-chromium/flags.gn" "$provenance_dir/flags.gn"
-"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh" \
+"$locked_gn_verifier" \
   "$provenance_dir/flags.gn" "$provenance_dir/args.gn" "$resolved_args" \
   "$provenance_dir/locked-gn-args-resolved.txt" >/dev/null
+{
+  printf 'schema_version=1\n'
+  printf 'tooling_commit=%s\n' "$tooling_commit"
+  printf 'build_driver_source=scripts/chromium/build-android-ci.sh\n'
+  printf 'build_driver_sha256=%s\n' \
+    "$(sha256sum "$build_driver" | cut -d' ' -f1)"
+  printf 'media_config_verifier_source=scripts/chromium/verify-android-media-config.sh\n'
+  printf 'media_config_verifier_sha256=%s\n' \
+    "$(sha256sum "$media_config_verifier" | cut -d' ' -f1)"
+  printf 'locked_gn_verifier_source=scripts/chromium/verify-android-locked-gn-args.sh\n'
+  printf 'locked_gn_verifier_sha256=%s\n' \
+    "$(sha256sum "$locked_gn_verifier" | cut -d' ' -f1)"
+} > "$provenance_dir/android-tooling.env"
 cp "$repo_root/chromium/android-build.lock" "$provenance_dir/android-build.lock"
 printf '%s\n' "$requested_ref" > "$provenance_dir/chromium-ref-requested.txt"
 printf '%s\n' "$depot_tools_commit" > "$provenance_dir/depot-tools-commit.txt"
@@ -117,6 +138,7 @@ done < "$provenance_dir/android-composition.tsv" \
     flags.gn \
     gn-args-resolved.txt \
     locked-gn-args-resolved.txt \
+    android-tooling.env \
     chromium-source-commit.txt \
     chromium-ref-requested.txt \
     depot-tools-commit.txt \

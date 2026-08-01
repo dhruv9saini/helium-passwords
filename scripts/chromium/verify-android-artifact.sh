@@ -55,6 +55,48 @@ recorded_provenance_inventory=$(sed -n 's/^[0-9a-f]\{64\}  //p' \
 }
 "$repo_root/scripts/chromium/android-build-environment.sh" verify "$provenance"
 
+tooling="$provenance/android-tooling.env"
+[[ -f "$tooling" && ! -L "$tooling" ]] || {
+  echo "artifact is missing regular Android tooling provenance" >&2
+  exit 1
+}
+metadata() {
+  local name=$1 file=$2 value
+  value=$(sed -n "s/^${name}=//p" "$file")
+  [[ -n "$value" && "$(grep -c "^${name}=" "$file")" -eq 1 ]] || {
+    echo "$file is missing unique $name" >&2
+    exit 1
+  }
+  printf '%s\n' "$value"
+}
+tooling_commit=$(metadata tooling_commit "$tooling")
+[[ "$tooling_commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "artifact Android tooling commit is invalid" >&2
+  exit 1
+}
+git -C "$repo_root" cat-file -e "$tooling_commit^{commit}"
+git -C "$repo_root" merge-base --is-ancestor "$tooling_commit" HEAD || {
+  echo "artifact Android tooling commit is not in the current source history" >&2
+  exit 1
+}
+verify_tooling_source() {
+  local source_key=$1 hash_key=$2 expected_source=$3
+  local source recorded_hash expected_hash
+  source=$(metadata "$source_key" "$tooling")
+  recorded_hash=$(metadata "$hash_key" "$tooling")
+  [[ "$source" == "$expected_source" && "$recorded_hash" =~ ^[0-9a-f]{64}$ ]] || {
+    echo "artifact Android tooling identity is invalid: $expected_source" >&2
+    exit 1
+  }
+  expected_hash=$(git -C "$repo_root" show "$tooling_commit:$expected_source" | sha256sum | cut -d' ' -f1)
+  [[ "$recorded_hash" == "$expected_hash" ]] || {
+    echo "artifact Android tooling hash does not match its commit: $expected_source" >&2
+    exit 1
+  }
+}
+verify_tooling_source locked_gn_verifier_source locked_gn_verifier_sha256 \
+  scripts/chromium/verify-android-locked-gn-args.sh
+
 flags_gn="$provenance/flags.gn"
 args_gn="$provenance/args.gn"
 locked_gn_args="$provenance/locked-gn-args-resolved.txt"
@@ -89,7 +131,15 @@ cmp -s "$provenance/android-build.lock" "$repo_root/chromium/android-build.lock"
 . "$repo_root/chromium/android-build.lock"
 
 if [[ "$expected_package" == computer.helium.control.test ]]; then
-  grep -Fq 'scripts/chromium/build-android-control-ci.sh' \
+  [[ "$(metadata schema_version "$tooling")" == 1 && \
+      "$(cut -d= -f1 "$tooling" | sort)" == \
+      $'build_driver_sha256\nbuild_driver_source\nlocked_gn_verifier_sha256\nlocked_gn_verifier_source\nschema_version\ntooling_commit' ]] || {
+    echo "control artifact has an unexpected Android tooling inventory" >&2
+    exit 1
+  }
+  verify_tooling_source build_driver_source build_driver_sha256 \
+    scripts/chromium/build-android-control-ci.sh
+  grep -Eq '(^|[/[:space:]])build-android-control-ci\.sh([[:space:]]|$)' \
     "$provenance/build-command.txt" || {
     echo "control artifact build command does not name the control builder" >&2
     exit 1
@@ -110,7 +160,18 @@ if [[ "$expected_package" == computer.helium.control.test ]]; then
     }
   done
 else
-  grep -Eq '(^|[[:space:]])(bash[[:space:]]+)?scripts/chromium/build-android-ci\.sh([[:space:]]|$)' \
+  [[ "$(metadata schema_version "$tooling")" == 1 && \
+      "$(cut -d= -f1 "$tooling" | sort)" == \
+      $'build_driver_sha256\nbuild_driver_source\nlocked_gn_verifier_sha256\nlocked_gn_verifier_source\nmedia_config_verifier_sha256\nmedia_config_verifier_source\nschema_version\ntooling_commit' ]] || {
+    echo "Sync artifact has an unexpected Android tooling inventory" >&2
+    exit 1
+  }
+  verify_tooling_source build_driver_source build_driver_sha256 \
+    scripts/chromium/build-android-ci.sh
+  verify_tooling_source media_config_verifier_source \
+    media_config_verifier_sha256 \
+    scripts/chromium/verify-android-media-config.sh
+  grep -Eq '(^|[/[:space:]])build-android-ci\.sh([[:space:]]|$)' \
     "$provenance/build-command.txt" || {
     echo "Sync artifact build command does not name the Sync builder" >&2
     exit 1

@@ -17,6 +17,14 @@ gclient_jobs=${GCLIENT_JOBS:-1}
 autoninja_jobs=${AUTONINJA_JOBS:-1}
 manifest_package=computer.helium.control.test
 target=chrome_public_apk
+build_driver=$(realpath -e "${HELIUM_ANDROID_BUILD_DRIVER:-${BASH_SOURCE[0]}}")
+locked_gn_verifier=${HELIUM_ANDROID_LOCKED_GN_VERIFIER:-"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh"}
+locked_gn_verifier=$(realpath -e "$locked_gn_verifier")
+tooling_commit=${HELIUM_ANDROID_TOOLING_COMMIT:-$(git -C "$repo_root" rev-parse HEAD)}
+[[ "$tooling_commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "Android tooling commit must be a full SHA-1" >&2
+  exit 1
+}
 
 [[ "$autoninja_jobs" == 1 ]] || {
   echo 'AUTONINJA_JOBS must remain 1 for the isolated control build' >&2
@@ -137,10 +145,20 @@ grep -qx "android_override_version_name = \"$HELIUM_ANDROID_VERSION_NAME\"" \
 provenance="$artifact_dir/build-provenance"
 cp "$out_dir/args.gn" "$provenance/args.gn"
 cp "$repo_root/helium-chromium/flags.gn" "$provenance/flags.gn"
-"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh" \
+"$locked_gn_verifier" \
   "$provenance/flags.gn" "$provenance/args.gn" \
   "$provenance/gn-args-resolved.txt" \
   "$provenance/locked-gn-args-resolved.txt" >/dev/null
+{
+  printf 'schema_version=1\n'
+  printf 'tooling_commit=%s\n' "$tooling_commit"
+  printf 'build_driver_source=scripts/chromium/build-android-control-ci.sh\n'
+  printf 'build_driver_sha256=%s\n' \
+    "$(sha256sum "$build_driver" | cut -d' ' -f1)"
+  printf 'locked_gn_verifier_source=scripts/chromium/verify-android-locked-gn-args.sh\n'
+  printf 'locked_gn_verifier_sha256=%s\n' \
+    "$(sha256sum "$locked_gn_verifier" | cut -d' ' -f1)"
+} > "$provenance/android-tooling.env"
 cp "$repo_root/chromium/android-build.lock" "$provenance/android-build.lock"
 printf '%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT" \
   > "$provenance/chromium-ref-requested.txt"

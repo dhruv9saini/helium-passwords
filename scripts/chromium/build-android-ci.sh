@@ -41,6 +41,14 @@ use_siso=${CHROMIUM_ANDROID_USE_SISO:-auto}
 siso_gomemlimit=${CHROMIUM_ANDROID_SISO_GOMEMLIMIT:-1536MiB}
 siso_flags=${CHROMIUM_ANDROID_SISO_FLAGS:-}
 manifest_package=${CHROMIUM_ANDROID_MANIFEST_PACKAGE:-computer.helium.sync}
+build_driver=$(realpath -e "${BASH_SOURCE[0]}")
+media_config_verifier=${HELIUM_ANDROID_MEDIA_CONFIG_VERIFIER:-"$repo_root/scripts/chromium/verify-android-media-config.sh"}
+media_config_verifier=$(realpath -e "$media_config_verifier")
+locked_gn_verifier=${HELIUM_ANDROID_LOCKED_GN_VERIFIER:-"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh"}
+locked_gn_verifier=$(realpath -e "$locked_gn_verifier")
+export HELIUM_ANDROID_BUILD_DRIVER=${HELIUM_ANDROID_BUILD_DRIVER:-$build_driver}
+export HELIUM_ANDROID_MEDIA_CONFIG_VERIFIER=$media_config_verifier
+export HELIUM_ANDROID_LOCKED_GN_VERIFIER=$locked_gn_verifier
 
 # Chromium bindgen treats TARGET as a Rust target triple env var and fails if the
 # workflow-level target-name variable leaks into the build environment.
@@ -241,7 +249,7 @@ EOF
   "$repo_root/scripts/chromium/validate-android-pruned-build-graph.sh" \
     "$workspace/src" "$workspace/src/$out_dir" "$chromium_ref" \
     "$repo_root/helium-chromium/pruning.list" "$target"
-  "$repo_root/scripts/chromium/verify-android-media-config.sh" \
+  "$media_config_verifier" \
     "$workspace/src" "$out_dir" "$artifact_dir/build-provenance" \
     "$repo_root" "$chromium_ref" "$depot_tools_commit"
   "$repo_root/scripts/chromium/android-build-environment.sh" record \

@@ -452,6 +452,11 @@ restores Chromium's native password manager.
   provenance, forbid every later mention or reassignment of its locked keys,
   and carry the effective locked values. The artifact and pair verifiers bind
   both the source flags and effective values byte-for-byte.
+  If an exact frozen product commit needs a newer build/verifier correction,
+  keep its checkout clean and run immutable current tooling copies with
+  `HELIUM_ANDROID_TOOLING_COMMIT`; artifacts must carry and verify the resulting
+  `android-tooling.env` hashes. Never patch the frozen source in place or
+  report the tooling commit as the product commit.
   Keep `ffmpeg_branding = "Chrome"` with `proprietary_codecs = true` so regular
   MP4/H.264/AAC video works. This is separate from DRM/Widevine.
   Default `is_official_build = false` for local laptop builds because Chromium's
