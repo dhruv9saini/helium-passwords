@@ -19,6 +19,10 @@ job_override_seen=false
 arguments=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
+        --)
+            arguments+=("$@")
+            break
+            ;;
         -j|--jobs)
             [ "$#" -ge 2 ] || {
                 echo "Chromiumer Ninja received a job option without a value" >&2

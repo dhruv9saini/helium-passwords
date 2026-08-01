@@ -47,6 +47,21 @@ EOF
 )" ]
 done
 
+HELIUM_BUILD_JOBS=1 HELIUM_REAL_NINJA="${fake_ninja}" \
+    HELIUM_NINJA_TEST_ARGUMENTS="${arguments}" \
+    "${shim}" -C out/Default -- -j1 --jobs=8 chrome
+[ "$(cat "${arguments}")" = "$(cat <<'EOF'
+-j
+1
+-C
+out/Default
+--
+-j1
+--jobs=8
+chrome
+EOF
+)" ]
+
 if HELIUM_BUILD_JOBS=2 HELIUM_REAL_NINJA="${fake_ninja}" \
     HELIUM_NINJA_TEST_ARGUMENTS="${arguments}" \
     "${shim}" -C out/Default chrome >/dev/null 2>&1; then

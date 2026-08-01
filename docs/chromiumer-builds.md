@@ -463,8 +463,9 @@ The driver therefore puts the checked-in
 before doing so, and leaves the platform's explicit bound intact for other
 build paths. The shim accepts and strips exactly one policy-equivalent one-job
 spelling (`-j 1`, `-j1`, `--jobs 1`, or `--jobs=1`), rejects a non-1 or second
-override, and invokes real Ninja once with its own `-j 1`. The CPU quota and
-`TasksMax` remain independent outer bounds.
+override, preserves `--` plus every following target verbatim, and invokes real
+Ninja once with its own `-j 1`. The CPU quota and `TasksMax` remain independent
+outer bounds.
 
 Start the job with:
 

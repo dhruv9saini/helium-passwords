@@ -57,8 +57,9 @@ and job ID to `scripts/build-chromiumer-linux.sh` exactly as shown in
 provenance-bound archive plus its strict build-produced deployment receipt;
 `scripts/verify-linux-runtime.sh` must admit both before the executable can
 enter the disposable native-password gate. The guarded Ninja shim preserves
-the platform's one-job intent, strips one equivalent `-j 1` spelling, rejects
-non-1 or duplicate overrides, and invokes real Ninja once with `-j 1`.
+the platform's one-job intent, strips one equivalent `-j 1` spelling, stops at
+Ninja's `--` target delimiter, rejects non-1 or duplicate overrides, and
+invokes real Ninja once with `-j 1`.
 
 ## Releases
 
