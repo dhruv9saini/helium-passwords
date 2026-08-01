@@ -296,7 +296,6 @@ EOF
                 print "        return 1"
                 print "    }"
                 print "    CFLAGS=\"${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}\" \\"
-                print "    LDFLAGS=\"${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}\" \\"
                 print
                 print "        --use-custom-libcxx \\"
                 next
@@ -307,9 +306,21 @@ EOF
         grep -Fq 'local bootstrap_sysroot_arch' "${linux_shared_build}"
         grep -Fq 'CFLAGS="${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
             "${linux_shared_build}"
-        grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
-            "${linux_shared_build}"
         grep -Fq '        --use-custom-libcxx \' "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ] && \
+        grep -Fqx '    LDFLAGS="${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
+            "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "    LDFLAGS=\"${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}\" \\" { next }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ]; then
+        ! grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
+            "${linux_shared_build}"
     fi
 
     linux_package_sh="${destination}/scripts/package.sh"

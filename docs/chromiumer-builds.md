@@ -191,10 +191,13 @@ The prepared Linux platform also passes GN bootstrap's built-in
 downloaded Clang for that bootstrap, so its matching in-tree libc++ and
 libc++abi headers must be selected explicitly rather than depending on host
 C++ headers. The same scoped invocation passes Chromium's installed Debian
-host sysroot through `CFLAGS` and `LDFLAGS`. Downloaded Clang otherwise has no
+host sysroot through compile-only `CFLAGS`. Downloaded Clang otherwise has no
 platform C headers inside the pinned Nix environment: libc++ is found, but its
-`mbstate_t` and wide-character declarations cannot resolve. A missing sysroot
-or an unsupported GN host architecture fails before bootstrap. Chromium 150's
+`mbstate_t` and wide-character declarations cannot resolve. The sysroot is
+deliberately absent from `LDFLAGS`: `libc++.gn.so` is built as a host library,
+and forcing Bullseye libc and libpthread into the final GN host-tool link mixes
+host GLIBC symbols with sysroot libraries. A missing sysroot or an unsupported
+GN host architecture fails before bootstrap. Chromium 150's
 libc++ also consumes shared LLVM libc headers, while the best-effort GN
 bootstrap template still names the removed `third_party/llvm/libc` directory.
 The prepared platform rewrites that one exact template entry to the canonical
