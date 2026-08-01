@@ -490,7 +490,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
         "--signing-key", key,
       ]);
       assert.match(androidRejected.stderr,
-        /Android adapter unavailable.*no package or profile was touched/);
+        /display mode does not match the admitted platform/);
 
       const unmarked = path.join(temporary, "unmarked");
       fs.mkdirSync(unmarked, {mode: 0o700});

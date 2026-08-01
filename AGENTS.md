@@ -176,8 +176,13 @@ restores Chromium's native password manager.
   authenticated by `scripts/tabs/tab-proof-status.mjs`; never hand-write a
   healthy status. Neutral and full-profile status requires two source-bound
   restore proofs from distinct destinations. The desktop runner accepts only a
-  marked `drill-*` profile. Android remains fail-closed to the exact
-  `computer.helium.sync.test` identity until its app-sandbox adapter exists.
+  marked `drill-*` profile. Android admits only the exact checksum-bound
+  `computer.helium.sync.test` APK and `oneplus` namespace through
+  `scripts/tabs/android-tab-profile.sh` plus the sole disposable browser
+  boundary. The fresh test package's `app_chrome` tree is the native proof and
+  stopped full-profile backup source; neutral and full-profile restores use
+  new fixed package-private drill paths. No adapter clears/uninstalls a package,
+  accepts caller flags, or accesses `computer.helium.sync`.
 - `scripts/android-local/start-arch-xmonad-root.sh` also keeps Android
   Tailscale usable for chroot `ssh`/`mosh`: if `com.tailscale.ipn` is installed
   and `ARCH_X11_TAILSCALE_CONNECT` is not `0`, startup whitelists the app from

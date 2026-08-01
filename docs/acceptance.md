@@ -249,6 +249,14 @@ destination is authenticated or that any site session is portable.
   generation lacking two verified off-source copies.
 - A restore drill into a disposable profile checks counts and representative
   state, restarts a second time, and records success.
+- Android runs the same three mechanisms only in the checksum-admitted
+  `computer.helium.sync.test` package. Its native proof uses a fresh synthetic
+  `app_chrome` tree so the current stopped Android profile producer can stream
+  that exact generation to NAS plus da. Neutral and full-profile restores are
+  round-trip fingerprinted into new fixed package-private `drill-*` paths.
+  Every launch uses `disposable-browser.sh`; clean exit is `Browser.close`,
+  crash is same-UID `SIGKILL`, and command-line evidence must bind the exact
+  socket, user-data path, and native-or-neutral restore switch.
 - Before any browser preparation, the standalone `validate-restore` command
   independently rechecks the receipt's source binding, session hash and size,
   strict schemas, permissions, symlink rejection, and exact two-file

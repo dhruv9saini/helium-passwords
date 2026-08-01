@@ -6,6 +6,8 @@ usage() {
 usage:
   disposable-browser.sh install ACCEPTANCE_DIRECTORY ADB_SERIAL
   disposable-browser.sh launch ACCEPTANCE_DIRECTORY ADB_SERIAL [--fixture-receipt FILE]
+    [--tab-runtime-profile DRILL-SLUG --tab-runtime-mode native|neutral|full-profile
+     --tab-runtime-restore none|native|neutral]
 
 Install or launch only a checksum-admitted computer.helium.sync.test or
 computer.helium.control.test APK. The launch command temporarily owns Android's
@@ -37,6 +39,9 @@ esac
 acceptance=$(realpath -e -- "$acceptance_input")
 
 fixture_receipt=
+tab_runtime_profile=
+tab_runtime_mode=
+tab_runtime_restore=
 if [[ "$operation" == launch ]]; then
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -45,9 +50,45 @@ if [[ "$operation" == launch ]]; then
         fixture_receipt=$2
         shift 2
         ;;
+      --tab-runtime-profile)
+        [[ $# -ge 2 && -z "$tab_runtime_profile" ]] || { usage; exit 64; }
+        tab_runtime_profile=$2
+        shift 2
+        ;;
+      --tab-runtime-mode)
+        [[ $# -ge 2 && -z "$tab_runtime_mode" ]] || { usage; exit 64; }
+        tab_runtime_mode=$2
+        shift 2
+        ;;
+      --tab-runtime-restore)
+        [[ $# -ge 2 && -z "$tab_runtime_restore" ]] || { usage; exit 64; }
+        tab_runtime_restore=$2
+        shift 2
+        ;;
       *) usage; exit 64 ;;
     esac
   done
+fi
+if [[ -n "$tab_runtime_profile" || -n "$tab_runtime_mode" ||
+      -n "$tab_runtime_restore" ]]; then
+  [[ "$tab_runtime_profile" =~ ^drill-[a-z0-9][a-z0-9._-]{0,57}$ ]] || {
+    echo "tab runtime profile must be a drill-* slug" >&2
+    exit 64
+  }
+  case "$tab_runtime_mode" in native|neutral|full-profile) ;; *) usage; exit 64 ;; esac
+  case "$tab_runtime_restore" in none|native|neutral) ;; *) usage; exit 64 ;; esac
+  [[ "$tab_runtime_restore" != neutral || "$tab_runtime_mode" == neutral ]] || {
+    echo "only a neutral tab runtime profile may request the native importer" >&2
+    exit 64
+  }
+  [[ "$tab_runtime_restore" != none || "$tab_runtime_mode" == native ]] || {
+    echo "only the initial native launch may omit session restore" >&2
+    exit 64
+  }
+  [[ -z "$fixture_receipt" ]] || {
+    echo "tab runtime and protocol fixture launch modes cannot be combined" >&2
+    exit 64
+  }
 fi
 
 for tool in adb awk find grep jq realpath sed sha256sum sort; do
@@ -223,6 +264,7 @@ adb_command=(adb -s "$serial")
 }
 
 installed_apk_sha256=
+installed_data_dir=
 verify_installed() {
   local package_dump installed_apk
   local -a package_paths=()
@@ -264,6 +306,14 @@ verify_installed() {
     echo "installed disposable package version does not match the admission" >&2
     return 1
   }
+  installed_data_dir=$(
+    sed -n 's/^[[:space:]]*dataDir=//p' <<<"$package_dump" | head -n 1
+  )
+  [[ "$installed_data_dir" == "/data/user/0/$package" ||
+      "$installed_data_dir" == "/data/data/$package" ]] || {
+    echo "installed disposable package has an unexpected dataDir" >&2
+    return 1
+  }
 }
 
 if [[ "$operation" == install ]]; then
@@ -283,6 +333,57 @@ if [[ "$operation" == install ]]; then
 fi
 
 verify_installed
+
+tab_runtime_user_data_dir=
+if [[ -n "$tab_runtime_profile" ]]; then
+  [[ "$package" == computer.helium.sync.test ]] || {
+    echo "tab runtime launch admits only computer.helium.sync.test" >&2
+    exit 1
+  }
+  if [[ "$tab_runtime_mode" == native ]]; then
+    tab_runtime_parent=$installed_data_dir
+    tab_runtime_user_data_dir=$installed_data_dir/app_chrome
+  else
+    tab_runtime_parent="$installed_data_dir/helium-tab-runtime-$tab_runtime_mode"
+    tab_runtime_user_data_dir="$tab_runtime_parent/$tab_runtime_profile"
+  fi
+  "${adb_command[@]}" exec-out run-as "$package" sh -c \
+    "test -d '$tab_runtime_parent' && test ! -L '$tab_runtime_parent' && test -d '$tab_runtime_user_data_dir' && test ! -L '$tab_runtime_user_data_dir' && test -d '$tab_runtime_user_data_dir/Default' && test ! -L '$tab_runtime_user_data_dir/Default'" \
+    >/dev/null || {
+    echo "tab runtime profile was not staged inside the disposable package" >&2
+    exit 1
+  }
+  case "$tab_runtime_mode" in
+    native)
+      expected_runtime_marker=.helium-tab-runtime-native-profile-v1
+      expected_runtime_marker_content=helium-tab-runtime-native-profile-v1
+      ;;
+    neutral)
+      [[ "$("${adb_command[@]}" exec-out run-as "$package" cat \
+        "$tab_runtime_parent/.helium-tabs-disposable-root-v1")" == \
+          helium-tabs-disposable-root-v1 ]] || {
+        echo "neutral tab runtime parent marker is invalid" >&2
+        exit 1
+      }
+      expected_runtime_marker=.helium-tabs-disposable-browser-profile-v2
+      expected_runtime_marker_content=helium-tabs-disposable-browser-profile-v2
+      ;;
+    full-profile)
+      expected_runtime_marker=.helium-profile-restore-receipt.env
+      expected_runtime_marker_content=
+      ;;
+  esac
+  runtime_marker_content=$("${adb_command[@]}" exec-out run-as "$package" cat \
+    "$tab_runtime_user_data_dir/$expected_runtime_marker") || {
+    echo "tab runtime profile marker is missing" >&2
+    exit 1
+  }
+  [[ "$tab_runtime_mode" == full-profile ||
+      "$runtime_marker_content" == "$expected_runtime_marker_content" ]] || {
+    echo "tab runtime profile marker is invalid" >&2
+    exit 1
+  }
+fi
 
 debug_app=$(
   "${adb_command[@]}" shell settings get global debug_app | tr -d '\r'
@@ -447,6 +548,14 @@ command_line_file="$temporary/admitted-command-line"
   printf 'chrome --enable-automation --remote-debugging-socket-name=%s' \
     "$device_socket"
   [[ -z "$fixture_switch" ]] || printf ' %s' "$fixture_switch"
+  if [[ -n "$tab_runtime_user_data_dir" ]]; then
+    printf ' --user-data-dir=%s --no-first-run --no-default-browser-check' \
+      "$tab_runtime_user_data_dir"
+    case "$tab_runtime_restore" in
+      native) printf ' --restore-last-session' ;;
+      neutral) printf ' --helium-restore-disposable-tabs=oneplus' ;;
+    esac
+  fi
   printf '\n'
 } > "$command_line_file"
 command_line_sha256=$(sha256sum "$command_line_file" | awk '{print $1}')
@@ -495,4 +604,9 @@ printf 'operation=launch\npackage=%s\napk_sha256=%s\ndevice_socket=%s\ncommand_l
 if [[ -n "$fixture_receipt_sha256" ]]; then
   printf 'fixture_receipt_sha256=%s\nfixture_spki_sha256_base64=%s\n' \
     "$fixture_receipt_sha256" "$fixture_spki"
+fi
+if [[ -n "$tab_runtime_user_data_dir" ]]; then
+  printf 'tab_runtime_mode=%s\ntab_runtime_user_data_dir=%s\n' \
+    "$tab_runtime_mode" "$tab_runtime_user_data_dir"
+  printf 'tab_runtime_restore=%s\n' "$tab_runtime_restore"
 fi

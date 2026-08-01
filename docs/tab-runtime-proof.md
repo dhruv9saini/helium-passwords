@@ -1,14 +1,17 @@
 # Disposable tab runtime proofs
 
-This gate drives one explicitly supplied, pinned desktop Helium executable
-through the three device-local tab recovery mechanisms. It never discovers a
-browser, accepts a normal profile, changes a launcher, opens another device's
-snapshot automatically, or communicates with the Helium Sync service.
+This gate drives one explicitly supplied, pinned desktop Helium executable or
+prepared Android Sync `.test` APK through the three device-local tab recovery
+mechanisms. It never discovers a browser, accepts a normal profile, changes a
+launcher, opens another device's snapshot automatically, or communicates with
+the Helium Sync service.
 
-The runtime uses Chromium's DevTools pipe, not a listening debugging port. CDP
-is limited to synthetic tab creation and read-only window/URL topology
-observation. It does not read or mutate cookies, passwords, storage, or
-personal profile data. The neutral import itself remains the native
+Desktop uses Chromium's DevTools pipe. Android uses only the exact test
+package's fixed localabstract socket through a short-lived loopback ADB
+forward; it never opens a device TCP listener. CDP is limited to synthetic tab
+creation, lifecycle control, and read-only window/URL topology observation. It
+does not read or mutate cookies, passwords, storage, or personal profile data.
+The neutral import itself remains the native
 `--helium-restore-disposable-tabs` bridge.
 
 ## Local evidence authority
@@ -45,14 +48,17 @@ browser=/absolute/pinned-artifact/helium
 browser_sha256=$(sha256sum "$browser" | awk '{print $1}')
 ```
 
-Every command requires `--package-id desktop`, the exact hash, a logical
-source device and profile, and an explicit display mode. `headless` is useful
-for automation. Repeat the final gate in `headed` mode when validating normal
-desktop window behavior.
+Every command requires the exact artifact hash, package identity, logical
+source device/profile, and explicit display mode. Desktop uses
+`--package-id desktop`; `headless` is useful for automation, and the final gate
+must also run `headed` when validating normal desktop window behavior.
 
-The only recognized Android identity is `computer.helium.sync.test`. It
-currently fails before reading a binary, package, or profile because a safe
-Android app-sandbox CDP adapter is not implemented. Production
+The only recognized Android identity is `computer.helium.sync.test`, with
+`--source-device oneplus` and `--display-mode device`. `--browser` is the exact
+prepared `Browser-test.apk`; `--acceptance-dir` and `--adb-serial` are also
+required. The runner validates the local APK metadata before device access,
+then `android-tab-profile.sh` revalidates the full prepared inventory and the
+installed monolithic APK before touching a synthetic sandbox path. Production
 `computer.helium.sync` and every other package identity are rejected.
 
 ## 1. Chromium native recovery
@@ -208,6 +214,70 @@ node scripts/tabs/tab-proof-status.mjs emit \
   --evidence-dir /secure/helium-tab-proof/evidence/proof-d-full-da
 ```
 
+## Android app-sandbox execution
+
+Install the prepared Sync `.test` APK only through the guarded boundary. The
+package must be fresh: native staging refuses an existing `app_chrome` tree.
+The native run creates that synthetic tree, and each launch temporarily owns
+and restores Android's two Chromium command-line files plus debug-app selection.
+
+```sh
+acceptance=/absolute/prepared-sync-acceptance
+apk=$acceptance/Browser-test.apk
+apk_sha256=$(sha256sum "$apk" | awk '{print $1}')
+serial=ONEPLUS_ADB_SERIAL
+
+scripts/android-media/disposable-browser.sh install "$acceptance" "$serial"
+
+node scripts/tabs/tab-runtime-proof.mjs native \
+  --browser "$apk" --browser-sha256 "$apk_sha256" \
+  --acceptance-dir "$acceptance" --adb-serial "$serial" \
+  --package-id computer.helium.sync.test --display-mode device \
+  --profile-dir /secure/helium-tab-proof/native/drill-oneplus-native \
+  --source-device oneplus --profile default \
+  --evidence-dir /secure/helium-tab-proof/evidence/proof-oneplus-native \
+  --signing-key /secure/helium-tab-proof/evidence/runtime-proof.key
+```
+
+The runner exposes the package's fixed localabstract DevTools socket through a
+new exact ADB forward for each launch. It verifies CDP `Android-Package`, the
+Chromium source revision, installed APK hash, effective socket, exact
+user-data-dir, and the one admitted restore mode. `Browser.close` plus main-PID
+exit is a clean step. The crash step sends `SIGKILL` only through `run-as` to
+the exact test-package main PID. Each forward is removed before the next step.
+
+After the native proof, stream the stopped synthetic `app_chrome` tree through
+the existing two-destination Android producer. The config must name the test
+package's exact resolved `<dataDir>/app_chrome`; selecting the `.test` package
+does not weaken any topology, receipt, or restore rule.
+
+```sh
+ANDROID_SERIAL="$serial" CHROMIUM_ANDROID_PACKAGE=computer.helium.sync.test \
+  scripts/android-local/backup-android-chromium-profile.sh \
+    /secure/oneplus-test-app-profile.conf
+```
+
+Restore that one generation independently from `nas-on-lm` and `da-copy` into
+new marked local `drill-*` roots. Run the full-profile command shown above for
+each restore, replacing the common desktop arguments with the Android
+arguments from the native command. Neutral topology likewise requires two
+independent current-orchestrator restores, two prepared browser profiles, and
+two Android neutral runs with `--helium-tabs` and the matching source receipt.
+The adapter round-trips every prepared profile through the package sandbox
+before launch. After first neutral import it fetches only the terminal marker
+and native receipt into the retained local prepared profile, where
+`helium-tabs validate-browser-state` independently authenticates the immutable
+source binding before the second launch.
+
+Android runtime evidence adds acceptance/source commits, APK/version identity,
+ADB serial, fixed socket, sandbox path, staged profile fingerprint, adapter
+receipt hash, and the exact runtime/profile-adapter/browser-boundary source
+hashes. Health emission still has exactly three mechanisms; neutral and
+full-profile each still require two distinct source destinations. Remove only
+the exact marked synthetic paths with `android-tab-profile.sh remove` after all
+backup, fault-injection, evidence, and status gates finish. The adapter never
+clears or uninstalls a package.
+
 ## Final gate and evidence limits
 
 ```sh
@@ -225,9 +295,7 @@ those supported fields through Chromium's tab APIs before CDP verifies first-
 and second-start persistence. Native and full-profile CDP evidence therefore
 claims exactly `cdp-window-url-multiset-v1`, not a stronger topology.
 
-Android still needs an adapter that installs and starts only the admitted
-`.test` APK, uses its package-specific DevTools socket, reads only its
-disposable app sandbox, preserves any device command-line state, and performs
-the equivalent first/second-start and SIGKILL drills. Until that adapter and
-root/sandbox boundary pass tests, no Android health status can be emitted by
-this workflow.
+Android health still requires real current-artifact execution: one native
+clean/crash/second-restart proof plus two neutral and two full-profile proofs
+from the independently restored destinations. Source presence or a single
+package launch cannot emit a healthy status.

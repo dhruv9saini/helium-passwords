@@ -105,8 +105,8 @@ wrong-device, symlinked, group-readable, malformed, or duplicated fields make
 only that mechanism unhealthy. Freshness ceilings are 30 days for a tested
 native clean/crash recovery, 30 minutes for neutral topology, and seven days
 for a full-profile generation. Backup replicas never receive separate health
-records. `tab-runtime-proof.mjs` now performs the disposable desktop CDP
-drills, and `tab-proof-status.mjs` authenticates their strict evidence before
+records. `tab-runtime-proof.mjs` performs the disposable desktop and admitted
+Android `.test` CDP drills, and `tab-proof-status.mjs` authenticates their strict evidence before
 atomically emitting these files. Neutral and full-profile health each require
 two authenticated runs from different source destinations. See
 [tab-runtime-proof.md](tab-runtime-proof.md).
@@ -121,6 +121,9 @@ Before personal enrollment, every source device must independently pass:
 Fault injection corrupts one source, newest generation, retention plan,
 recipient, or destination at a time. Acceptance fails if one injected fault
 damages a sibling mechanism or if any restore tool targets a live profile.
-The desktop orchestration and evidence path is source-tested. Native Android
-remains closed until a `computer.helium.sync.test`-only app-sandbox/CDP adapter
-can prove the same gates without reaching a personal package or profile.
+The orchestration and evidence path supports desktop plus the exact
+checksum-admitted `computer.helium.sync.test` Android package. Android stages
+only round-trip-verified synthetic drill profiles, launches through the sole
+disposable boundary, and binds clean CDP close or same-UID crash evidence to
+the exact APK and sandbox path. Runtime health remains closed until the real
+returned APK passes all three mechanisms and both restore destinations.

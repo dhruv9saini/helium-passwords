@@ -154,6 +154,7 @@ function emit(options) {
         value.profile !== profile ||
         value.generation !== first.generation ||
         value.browser.sha256 !== first.browser.sha256 ||
+        value.platform !== first.platform ||
         value.package_id !== first.package_id ||
         JSON.stringify(value.expected_topology) !==
           JSON.stringify(first.expected_topology)) {

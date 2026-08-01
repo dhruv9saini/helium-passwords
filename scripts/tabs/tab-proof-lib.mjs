@@ -355,8 +355,11 @@ export function validateEvidence(value) {
   ], "runtime evidence");
   if (value.schema_version !== 1 ||
       value.evidence_type !== "helium-tab-runtime-proof-v1" ||
-      value.state !== "healthy" || value.platform !== "desktop" ||
-      value.package_id !== "desktop" || !MECHANISMS.has(value.mechanism)) {
+      value.state !== "healthy" || !MECHANISMS.has(value.mechanism) ||
+      !new Set(["desktop", "android"]).has(value.platform) ||
+      (value.platform === "desktop" && value.package_id !== "desktop") ||
+      (value.platform === "android" &&
+       value.package_id !== "computer.helium.sync.test")) {
     fail("runtime evidence identity is invalid");
   }
   validDevice(value.source_device);
@@ -370,7 +373,7 @@ export function validateEvidence(value) {
       value.completed_unix > Math.floor(Date.now() / 1000)) {
     fail("runtime evidence completion time is invalid");
   }
-  exactKeys(value.browser, [
+  const browserKeys = [
     "path",
     "sha256",
     "size",
@@ -380,7 +383,23 @@ export function validateEvidence(value) {
     "user_agent",
     "js_version",
     "display_mode",
-  ], "browser evidence");
+  ];
+  if (value.platform === "android") {
+    browserKeys.push(
+      "acceptance_dir",
+      "source_archive_sha256",
+      "chromium_commit",
+      "helium_sync_commit",
+      "version_code",
+      "version_name",
+      "device_socket",
+      "adb_serial",
+      "runtime_proof_sha256",
+      "profile_adapter_sha256",
+      "browser_boundary_sha256",
+    );
+  }
+  exactKeys(value.browser, browserKeys, "browser evidence");
   requireAbsolute(value.browser.path, "browser evidence path");
   validSHA256(value.browser.sha256, "browser evidence SHA-256");
   if (!Number.isSafeInteger(value.browser.size) || value.browser.size < 1 ||
@@ -389,15 +408,60 @@ export function validateEvidence(value) {
       typeof value.browser.protocol_version !== "string" ||
       typeof value.browser.user_agent !== "string" ||
       typeof value.browser.js_version !== "string" ||
-      !["headless", "headed"].includes(value.browser.display_mode)) {
+      (value.platform === "desktop" &&
+       !["headless", "headed"].includes(value.browser.display_mode)) ||
+      (value.platform === "android" &&
+       value.browser.display_mode !== "device")) {
     fail("browser evidence is invalid");
   }
-  exactKeys(value.disposable_profile, ["path", "marker"],
+  if (value.platform === "android") {
+    requireAbsolute(value.browser.acceptance_dir,
+      "Android acceptance evidence directory");
+    validSHA256(value.browser.source_archive_sha256,
+      "Android source archive evidence SHA-256");
+    validSHA256(value.browser.runtime_proof_sha256,
+      "Android runtime proof source SHA-256");
+    validSHA256(value.browser.profile_adapter_sha256,
+      "Android profile adapter source SHA-256");
+    validSHA256(value.browser.browser_boundary_sha256,
+      "Android browser boundary source SHA-256");
+    if (!/^[0-9a-f]{40}$/.test(value.browser.chromium_commit) ||
+        !/^[0-9a-f]{40}$/.test(value.browser.helium_sync_commit) ||
+        !/^[1-9][0-9]*$/.test(value.browser.version_code) ||
+        !/^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$/.test(
+          value.browser.version_name) ||
+        value.browser.device_socket !==
+          "helium_sync_test_devtools_remote" ||
+        !/^[A-Za-z0-9._:-]+$/.test(value.browser.adb_serial)) {
+      fail("Android browser provenance evidence is invalid");
+    }
+  }
+  const profileKeys = ["path", "marker"];
+  if (value.platform === "android") {
+    profileKeys.push(
+      "device_path",
+      "staged_profile_sha256",
+      "adapter_receipt_sha256",
+    );
+  }
+  exactKeys(value.disposable_profile, profileKeys,
     "disposable profile evidence");
   requireAbsolute(value.disposable_profile.path, "disposable profile path");
   if (typeof value.disposable_profile.marker !== "string" ||
       value.disposable_profile.marker.length < 1) {
     fail("disposable profile marker is invalid");
+  }
+  if (value.platform === "android") {
+    if (typeof value.disposable_profile.device_path !== "string" ||
+        !new RegExp(
+          "^/data/(?:user/0|data)/computer\\.helium\\.sync\\.test/(?:app_chrome|helium-tab-runtime-(?:neutral|full-profile)/drill-[a-z0-9][a-z0-9._-]{0,57})$",
+        ).test(value.disposable_profile.device_path)) {
+      fail("Android disposable profile device path is invalid");
+    }
+    validSHA256(value.disposable_profile.staged_profile_sha256,
+      "Android staged profile SHA-256");
+    validSHA256(value.disposable_profile.adapter_receipt_sha256,
+      "Android profile adapter receipt SHA-256");
   }
   const expected = validateTopologyRecord(value.expected_topology,
     "expected topology");
