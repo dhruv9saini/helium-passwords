@@ -187,7 +187,11 @@ libc++ also consumes shared LLVM libc headers, while the best-effort GN
 bootstrap template still names the removed `third_party/llvm/libc` directory.
 The prepared platform rewrites that one exact template entry to the canonical
 `third_party/llvm-libc/src` include root, then requires both that exact entry
-and `shared/fp_bits.h` before bootstrap.
+and `shared/fp_bits.h` before bootstrap. Chromium's normal libc++abi target
+also carries the temporary `_LIBCPP_CONSTINIT=constinit` compatibility define
+needed by its pinned libc++/libc++abi roll. The best-effort bootstrap template
+omits that target define, so the prepared platform adds it only to the
+handwritten `cxx_libcxxabi` rule and requires the exact resulting command.
 
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.

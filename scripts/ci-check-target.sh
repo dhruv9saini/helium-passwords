@@ -113,6 +113,8 @@ if [ "${platform}" = "linux" ]; then
         "${checkout}/scripts/shared.sh"
     grep -Fq 'shared/fp_bits.h' \
         "${checkout}/scripts/shared.sh"
+    grep -Fq -- '-D_LIBCPP_CONSTINIT=constinit' \
+        "${checkout}/scripts/shared.sh"
     grep -Fq 'local bootstrap_sysroot_arch' \
         "${checkout}/scripts/shared.sh"
     grep -Fq 'debian_bullseye_${bootstrap_sysroot_arch}-sysroot' \
