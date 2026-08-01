@@ -462,6 +462,15 @@ restores Chromium's native password manager.
   `HELIUM_ANDROID_TOOLING_COMMIT`; artifacts must carry and verify the resulting
   `android-tooling.env` hashes. Never patch the frozen source in place or
   report the tooling commit as the product commit.
+  Runtime acceptance is a separate immutable input. The accepted commit and
+  checksum inventory live in `chromium/android-runtime-kit.lock`; both Sync
+  roles and the upstream control must package those exact lifecycle files,
+  record the product and runtime-kit commits independently, and verify every
+  packaged kit file against the named kit commit. Never source the kit from a
+  frozen product checkout merely because it is the build `HEAD`.
+  The test and production Sync outputs have the same archive basename. Return
+  them to separate job-scoped immutable directories and write one artifact
+  return receipt per directory; never fetch either into a shared destination.
   Keep `ffmpeg_branding = "Chrome"` with `proprietary_codecs = true` so regular
   MP4/H.264/AAC video works. This is separate from DRM/Widevine.
   Default `is_official_build = false` for local laptop builds because Chromium's

@@ -4,6 +4,8 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
+# shellcheck source=../../chromium/android-runtime-kit.lock
+. "$repo_root/chromium/android-runtime-kit.lock"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-media-config.XXXXXX")
 cleanup() {
   find "$test_root" -depth -delete
@@ -50,6 +52,9 @@ EOF
 chmod +x "$test_root/bin/git"
 
 PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
+  HELIUM_ANDROID_RUNTIME_KIT_VERIFIER="$repo_root/scripts/chromium/verify-android-runtime-kit-source.sh" \
+  HELIUM_ANDROID_RUNTIME_KIT_COMMIT="$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
+  HELIUM_ANDROID_RUNTIME_KIT_SHA256="$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256" \
   "$repo_root/scripts/chromium/verify-android-media-config.sh" \
   "$test_root/src" out/Test "$test_root/provenance" "$repo_root" \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
@@ -72,6 +77,9 @@ grep -q 'chromium/patches/0001-helium-sync-overlay-files.patch' \
 cp "$test_root/src/out/Test/args.gn" "$test_root/src/out/Test/args.reassigned.gn"
 printf 'enable_mdns = true\n' >> "$test_root/src/out/Test/args.gn"
 if PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
+  HELIUM_ANDROID_RUNTIME_KIT_VERIFIER="$repo_root/scripts/chromium/verify-android-runtime-kit-source.sh" \
+  HELIUM_ANDROID_RUNTIME_KIT_COMMIT="$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
+  HELIUM_ANDROID_RUNTIME_KIT_SHA256="$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256" \
   "$repo_root/scripts/chromium/verify-android-media-config.sh" \
   "$test_root/src" out/Test "$test_root/reassigned" "$repo_root" \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
@@ -83,6 +91,9 @@ mv "$test_root/src/out/Test/args.reassigned.gn" "$test_root/src/out/Test/args.gn
 
 sed -i 's/proprietary_codecs = true/proprietary_codecs = false/' "$test_root/bin/gn"
 if PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
+  HELIUM_ANDROID_RUNTIME_KIT_VERIFIER="$repo_root/scripts/chromium/verify-android-runtime-kit-source.sh" \
+  HELIUM_ANDROID_RUNTIME_KIT_COMMIT="$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
+  HELIUM_ANDROID_RUNTIME_KIT_SHA256="$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256" \
   "$repo_root/scripts/chromium/verify-android-media-config.sh" \
   "$test_root/src" out/Test "$test_root/rejected" "$repo_root" \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
@@ -114,7 +125,13 @@ grep -Fq 'verify-probe-pair.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'disposable-browser.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'schema_version=6' \
+grep -Fq 'schema_version=7' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'HELIUM_ANDROID_RUNTIME_KIT_ROOT' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+grep -Fq 'runtime_kit_commit' \
+  "$repo_root/scripts/chromium/build-android-ci.sh"
+! grep -Fq 'show "$sync_commit:scripts/android-media/' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 grep -Fq 'prepare-cookie-acceptance-profile.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh"

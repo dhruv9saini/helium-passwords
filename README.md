@@ -54,7 +54,10 @@ and the d/da native cookie transport gate is
   Android profile bytes are round-trip fingerprinted and every launch remains
   inside the guarded disposable browser boundary.
 - `scripts/chromium/`: pinned Android composition, codec/streaming provenance,
-  and remote compile entry points.
+  remote compile entry points, and the verifier for the separately locked
+  Android runtime-acceptance kit. `chromium/android-runtime-kit.lock` is the
+  sole accepted lifecycle-kit identity; a frozen product commit never supplies
+  acceptance files implicitly.
 - `scripts/password-runtime/`: shared artifact-bound native password fixture
   and UI receipt plus the private Sync state/journal receipt extension.
 - `scripts/cookie-runtime/`: private two-desktop native CookieManager transport

@@ -91,7 +91,7 @@ Make that check executable on lm (the current SDK tool path is explicit):
 AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
   scripts/chromium/verify-android-artifact.sh \
   /srv/nas/helium-builds/JOB/chrome_public_apk-arm64.tar.xz \
-  computer.helium.sync.test HELIUM_SYNC_COMMIT
+  computer.helium.sync.test HELIUM_SYNC_COMMIT RUNTIME_KIT_COMMIT
 ```
 
 The verifier also checks the relocatable provenance manifest, pinned Chromium
@@ -106,7 +106,10 @@ It rejects an artifact lock other than the repository lock and
 uses `aapt2 dump badging` to require the package-role debuggable bit plus versionCode
 `787500005` and versionName `150.0.7871.181`; the code is exactly one above the
 observed installed production code `787500004`. It prints those versions plus
-the APK and runtime-kit SHA-256 values. Prepare a new, immutable disposable test
+the APK and runtime-kit SHA-256 values. The runtime-kit commit must be the exact
+value in `chromium/android-runtime-kit.lock`; product and kit commits are
+verified separately, and every lifecycle file must match that kit commit.
+Prepare a new, immutable disposable test
 directory from that verified archive:
 
 ```sh
@@ -115,6 +118,7 @@ AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
   /srv/nas/helium-builds/JOB/chrome_public_apk-arm64.tar.xz \
   computer.helium.sync.test \
   HELIUM_SYNC_COMMIT \
+  RUNTIME_KIT_COMMIT \
   /srv/nas/helium-acceptance/JOB
 
 (cd /srv/nas/helium-acceptance/JOB && sha256sum -c PACKAGE_SHA256SUMS)

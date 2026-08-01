@@ -46,9 +46,18 @@ media_config_verifier=${HELIUM_ANDROID_MEDIA_CONFIG_VERIFIER:-"$repo_root/script
 media_config_verifier=$(realpath -e "$media_config_verifier")
 locked_gn_verifier=${HELIUM_ANDROID_LOCKED_GN_VERIFIER:-"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh"}
 locked_gn_verifier=$(realpath -e "$locked_gn_verifier")
+runtime_kit_verifier=${HELIUM_ANDROID_RUNTIME_KIT_VERIFIER:?missing Android runtime-kit verifier}
+runtime_kit_verifier=$(realpath -e "$runtime_kit_verifier")
+runtime_kit_root=${HELIUM_ANDROID_RUNTIME_KIT_ROOT:?missing Android runtime-kit source}
+runtime_kit_commit=${HELIUM_ANDROID_RUNTIME_KIT_COMMIT:?missing Android runtime-kit commit}
+runtime_kit_source_sha256=${HELIUM_ANDROID_RUNTIME_KIT_SHA256:?missing Android runtime-kit SHA256SUMS binding}
 export HELIUM_ANDROID_BUILD_DRIVER=${HELIUM_ANDROID_BUILD_DRIVER:-$build_driver}
 export HELIUM_ANDROID_MEDIA_CONFIG_VERIFIER=$media_config_verifier
 export HELIUM_ANDROID_LOCKED_GN_VERIFIER=$locked_gn_verifier
+export HELIUM_ANDROID_RUNTIME_KIT_VERIFIER=$runtime_kit_verifier
+
+"$runtime_kit_verifier" "$runtime_kit_root" "$runtime_kit_commit" \
+  "$runtime_kit_source_sha256" >/dev/null
 
 # Chromium bindgen treats TARGET as a Rust target triple env var and fails if the
 # workflow-level target-name variable leaks into the build environment.
@@ -270,19 +279,21 @@ package_runtime_acceptance() {
   local destination=$1
   local sync_commit
   local source
+  "$runtime_kit_verifier" "$runtime_kit_root" "$runtime_kit_commit" \
+    "$runtime_kit_source_sha256" >/dev/null
   sync_commit=$(git -C "$repo_root" rev-parse HEAD)
   mkdir -p "$destination"
   for source in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     disposable-browser.sh prepare-cookie-acceptance-profile.sh \
     run-device-probe.sh verify-probe-pair.sh; do
-    git -C "$repo_root" show "$sync_commit:scripts/android-media/$source" \
-      > "$destination/$source"
-    chmod 755 "$destination/$source"
+    install -m 755 "$runtime_kit_root/$source" "$destination/$source"
   done
   {
-    printf 'schema_version=6\n'
+    printf 'schema_version=7\n'
     printf 'probe_schema_version=1\n'
     printf 'helium_sync_commit=%s\n' "$sync_commit"
+    printf 'runtime_kit_commit=%s\n' "$runtime_kit_commit"
+    printf 'runtime_kit_source_sha256=%s\n' "$runtime_kit_source_sha256"
     printf 'chromium_commit=%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT"
     printf 'manifest_package=%s\n' "$manifest_package"
     printf 'version_code=%s\n' "$HELIUM_ANDROID_VERSION_CODE"

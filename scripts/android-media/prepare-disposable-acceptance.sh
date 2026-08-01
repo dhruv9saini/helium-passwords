@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ $# -ne 4 ]]; then
-  echo "usage: $0 ANDROID_ARCHIVE EXPECTED_PACKAGE EXPECTED_HELIUM_SYNC_COMMIT NEW_OUTPUT_DIRECTORY" >&2
+if [[ $# -ne 5 ]]; then
+  echo "usage: $0 ANDROID_ARCHIVE EXPECTED_PACKAGE EXPECTED_HELIUM_SYNC_COMMIT EXPECTED_RUNTIME_KIT_COMMIT NEW_OUTPUT_DIRECTORY" >&2
   exit 64
 fi
 
@@ -10,10 +10,13 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
 "$repo_root/scripts/chromium/validate-android-build-lock.sh" >/dev/null
+# shellcheck source=../../chromium/android-runtime-kit.lock
+. "$repo_root/chromium/android-runtime-kit.lock"
 archive=$(realpath "$1")
 expected_package=$2
 expected_sync_commit=$3
-output=$(realpath -m "$4")
+expected_runtime_kit_commit=$4
+output=$(realpath -m "$5")
 
 case "$expected_package" in
   computer.helium.sync.test) expected_apk=HeliumSync.apk ;;
@@ -24,6 +27,14 @@ esac
 [[ "$expected_sync_commit" =~ ^[0-9a-f]{40}$ ]] || {
   echo "expected Helium Sync commit must be a full SHA-1" >&2
   exit 64
+}
+[[ "$expected_runtime_kit_commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "expected Android runtime-kit commit must be a full SHA-1" >&2
+  exit 64
+}
+[[ "$expected_runtime_kit_commit" == "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" ]] || {
+  echo "expected Android runtime-kit commit does not match its lock" >&2
+  exit 1
 }
 [[ ! -e "$output" ]] || { echo "output directory already exists" >&2; exit 1; }
 command -v tar >/dev/null
@@ -37,7 +48,8 @@ trap cleanup EXIT
 
 verify_result="$temporary/verify.env"
 "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$archive" "$expected_package" "$expected_sync_commit" > "$verify_result"
+  "$archive" "$expected_package" "$expected_sync_commit" \
+  "$expected_runtime_kit_commit" > "$verify_result"
 
 extracted="$temporary/extracted"
 staged="$temporary/staged"

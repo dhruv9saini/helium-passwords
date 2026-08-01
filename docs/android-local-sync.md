@@ -85,9 +85,13 @@ count remains zero and non-cookie transfer remains `not-tested`.
 The codec and streaming fixtures live under `scripts/android-media/`.
 `scripts/chromium/build-android-ci.sh` pins the Chromium/core commits, rejects
 moving refs, composes the shared Passwords/Sync patch train, records resolved GN
-args, packages the commit-bound runtime acceptance scripts, and compiles only
-on chromiumer. Its codec flags and source tests are necessary but not runtime
-proof. `scripts/android-media/prepare-disposable-acceptance.sh` verifies a
+args, packages the separately locked runtime acceptance scripts, and compiles
+only on chromiumer. The product commit and lifecycle-kit commit are independent
+artifact identities: `chromium/android-runtime-kit.lock` names the only
+accepted kit, and the artifact verifier compares every packaged executable to
+that commit. A frozen product checkout never supplies the kit from its own
+`HEAD`. Its codec flags and source tests are necessary but not runtime proof.
+`scripts/android-media/prepare-disposable-acceptance.sh` verifies a
 returned Sync or upstream-control test-package archive, creates a new
 checksum-complete test directory with one `Browser-test.apk`, and never
 installs or launches it. The artifact-carried

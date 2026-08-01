@@ -16,6 +16,9 @@ gn_bin=${GN:-gn}
 build_driver=$(realpath -e "${HELIUM_ANDROID_BUILD_DRIVER:?missing Android build-driver path}")
 media_config_verifier=$(realpath -e "${HELIUM_ANDROID_MEDIA_CONFIG_VERIFIER:-${BASH_SOURCE[0]}}")
 locked_gn_verifier=$(realpath -e "${HELIUM_ANDROID_LOCKED_GN_VERIFIER:-$repo_root/scripts/chromium/verify-android-locked-gn-args.sh}")
+runtime_kit_verifier=$(realpath -e "${HELIUM_ANDROID_RUNTIME_KIT_VERIFIER:?missing Android runtime-kit verifier}")
+runtime_kit_commit=${HELIUM_ANDROID_RUNTIME_KIT_COMMIT:?missing Android runtime-kit commit}
+runtime_kit_source_sha256=${HELIUM_ANDROID_RUNTIME_KIT_SHA256:?missing Android runtime-kit SHA256SUMS binding}
 tooling_commit=${HELIUM_ANDROID_TOOLING_COMMIT:-$(git -C "$repo_root" rev-parse HEAD)}
 [[ "$tooling_commit" =~ ^[0-9a-f]{40}$ ]] || {
   echo "Android tooling commit must be a full SHA-1" >&2
@@ -98,6 +101,11 @@ cp "$repo_root/helium-chromium/flags.gn" "$provenance_dir/flags.gn"
   printf 'locked_gn_verifier_source=scripts/chromium/verify-android-locked-gn-args.sh\n'
   printf 'locked_gn_verifier_sha256=%s\n' \
     "$(sha256sum "$locked_gn_verifier" | cut -d' ' -f1)"
+  printf 'runtime_kit_commit=%s\n' "$runtime_kit_commit"
+  printf 'runtime_kit_source_sha256=%s\n' "$runtime_kit_source_sha256"
+  printf 'runtime_kit_verifier_source=scripts/chromium/verify-android-runtime-kit-source.sh\n'
+  printf 'runtime_kit_verifier_sha256=%s\n' \
+    "$(sha256sum "$runtime_kit_verifier" | cut -d' ' -f1)"
 } > "$provenance_dir/android-tooling.env"
 cp "$repo_root/chromium/android-build.lock" "$provenance_dir/android-build.lock"
 printf '%s\n' "$requested_ref" > "$provenance_dir/chromium-ref-requested.txt"

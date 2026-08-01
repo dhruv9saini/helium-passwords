@@ -2,15 +2,24 @@
 set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# shellcheck source=../../chromium/android-runtime-kit.lock
+. "$repo_root/chromium/android-runtime-kit.lock"
+[[ "$HELIUM_ANDROID_RUNTIME_KIT_SCHEMA" == 1 &&
+    "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" =~ ^[0-9a-f]{40}$ &&
+    "$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "invalid Android runtime-kit lock" >&2
+  exit 1
+}
 
-if [[ $# -ne 3 ]]; then
-  echo "usage: $0 ARCHIVE EXPECTED_PACKAGE EXPECTED_HELIUM_SYNC_COMMIT" >&2
+if [[ $# -ne 4 ]]; then
+  echo "usage: $0 ARCHIVE EXPECTED_PACKAGE EXPECTED_HELIUM_SYNC_COMMIT EXPECTED_RUNTIME_KIT_COMMIT" >&2
   exit 64
 fi
 
 archive=$(realpath "$1")
 expected_package=$2
 expected_sync_commit=$3
+expected_runtime_kit_commit=$4
 aapt2=${AAPT2:-aapt2}
 
 case "$expected_package" in
@@ -25,6 +34,19 @@ esac
 [[ "$expected_sync_commit" =~ ^[0-9a-f]{40}$ ]] || {
   echo "expected Helium Sync commit must be a full SHA-1" >&2
   exit 64
+}
+[[ "$expected_runtime_kit_commit" =~ ^[0-9a-f]{40}$ ]] || {
+  echo "expected Android runtime-kit commit must be a full SHA-1" >&2
+  exit 64
+}
+[[ "$expected_runtime_kit_commit" == "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" ]] || {
+  echo "expected Android runtime-kit commit does not match its lock" >&2
+  exit 1
+}
+git -C "$repo_root" cat-file -e "$expected_runtime_kit_commit^{commit}"
+git -C "$repo_root" merge-base --is-ancestor "$expected_runtime_kit_commit" HEAD || {
+  echo "expected Android runtime-kit commit is not in current history" >&2
+  exit 1
 }
 command -v "$aapt2" >/dev/null
 
@@ -133,12 +155,14 @@ cmp -s "$provenance/android-build.lock" "$repo_root/chromium/android-build.lock"
 if [[ "$expected_package" == computer.helium.control.test ]]; then
   [[ "$(metadata schema_version "$tooling")" == 1 && \
       "$(cut -d= -f1 "$tooling" | sort)" == \
-      $'build_driver_sha256\nbuild_driver_source\nlocked_gn_verifier_sha256\nlocked_gn_verifier_source\nschema_version\ntooling_commit' ]] || {
+      $'build_driver_sha256\nbuild_driver_source\nlocked_gn_verifier_sha256\nlocked_gn_verifier_source\nruntime_kit_commit\nruntime_kit_source_sha256\nruntime_kit_verifier_sha256\nruntime_kit_verifier_source\nschema_version\ntooling_commit' ]] || {
     echo "control artifact has an unexpected Android tooling inventory" >&2
     exit 1
   }
   verify_tooling_source build_driver_source build_driver_sha256 \
     scripts/chromium/build-android-control-ci.sh
+  verify_tooling_source runtime_kit_verifier_source runtime_kit_verifier_sha256 \
+    scripts/chromium/verify-android-runtime-kit-source.sh
   grep -Eq '(^|[/[:space:]])build-android-control-ci\.sh([[:space:]]|$)' \
     "$provenance/build-command.txt" || {
     echo "control artifact build command does not name the control builder" >&2
@@ -162,7 +186,7 @@ if [[ "$expected_package" == computer.helium.control.test ]]; then
 else
   [[ "$(metadata schema_version "$tooling")" == 1 && \
       "$(cut -d= -f1 "$tooling" | sort)" == \
-      $'build_driver_sha256\nbuild_driver_source\nlocked_gn_verifier_sha256\nlocked_gn_verifier_source\nmedia_config_verifier_sha256\nmedia_config_verifier_source\nschema_version\ntooling_commit' ]] || {
+      $'build_driver_sha256\nbuild_driver_source\nlocked_gn_verifier_sha256\nlocked_gn_verifier_source\nmedia_config_verifier_sha256\nmedia_config_verifier_source\nruntime_kit_commit\nruntime_kit_source_sha256\nruntime_kit_verifier_sha256\nruntime_kit_verifier_source\nschema_version\ntooling_commit' ]] || {
     echo "Sync artifact has an unexpected Android tooling inventory" >&2
     exit 1
   }
@@ -171,6 +195,8 @@ else
   verify_tooling_source media_config_verifier_source \
     media_config_verifier_sha256 \
     scripts/chromium/verify-android-media-config.sh
+  verify_tooling_source runtime_kit_verifier_source runtime_kit_verifier_sha256 \
+    scripts/chromium/verify-android-runtime-kit-source.sh
   grep -Eq '(^|[/[:space:]])build-android-ci\.sh([[:space:]]|$)' \
     "$provenance/build-command.txt" || {
     echo "Sync artifact build command does not name the Sync builder" >&2
@@ -195,6 +221,21 @@ else
     }
   done
 fi
+[[ "$(metadata runtime_kit_commit "$tooling")" ==
+    "$expected_runtime_kit_commit" ]] || {
+  echo "artifact Android tooling names the wrong runtime-kit commit" >&2
+  exit 1
+}
+runtime_kit_source_sha256=$(metadata runtime_kit_source_sha256 "$tooling")
+[[ "$runtime_kit_source_sha256" =~ ^[0-9a-f]{64}$ ]] || {
+  echo "artifact Android tooling has an invalid runtime-kit source hash" >&2
+  exit 1
+}
+[[ "$runtime_kit_source_sha256" ==
+    "$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256" ]] || {
+  echo "artifact Android runtime-kit source hash does not match its lock" >&2
+  exit 1
+}
 [[ "$(tr -d '\r\n' < "$provenance/chromium-source-commit.txt")" == \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT" ]] || {
   echo "artifact Chromium commit does not match its lock" >&2
@@ -297,19 +338,33 @@ done
   cd "$runtime_kit"
   sha256sum -c SHA256SUMS
 )
-[[ "$(wc -l < "$runtime_kit/kit.env")" -eq 9 ]] || {
+[[ "$(wc -l < "$runtime_kit/kit.env")" -eq 11 ]] || {
   echo "runtime acceptance kit metadata inventory is invalid" >&2
   exit 1
 }
-grep -qx 'schema_version=6' "$runtime_kit/kit.env"
+grep -qx 'schema_version=7' "$runtime_kit/kit.env"
 grep -qx 'probe_schema_version=1' "$runtime_kit/kit.env"
 grep -qx "helium_sync_commit=$expected_sync_commit" "$runtime_kit/kit.env"
+grep -qx "runtime_kit_commit=$expected_runtime_kit_commit" "$runtime_kit/kit.env"
+grep -qx "runtime_kit_source_sha256=$runtime_kit_source_sha256" \
+  "$runtime_kit/kit.env"
 grep -qx "chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT" "$runtime_kit/kit.env"
 grep -qx "manifest_package=$expected_package" "$runtime_kit/kit.env"
 grep -qx "version_code=$HELIUM_ANDROID_VERSION_CODE" "$runtime_kit/kit.env"
 grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$runtime_kit/kit.env"
 grep -qx 'target_cpu=arm64' "$runtime_kit/kit.env"
 grep -qx 'artifact_target=chrome_public_apk' "$runtime_kit/kit.env"
+
+for kit_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
+  disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+  run-device-probe.sh verify-probe-pair.sh; do
+  git -C "$repo_root" show \
+    "$expected_runtime_kit_commit:scripts/android-media/$kit_file" \
+    | cmp -s - "$runtime_kit/$kit_file" || {
+    echo "runtime acceptance kit file does not match its named commit: $kit_file" >&2
+    exit 1
+  }
+done
 
 mapfile -d '' apks < <(find "$temporary" -type f -name "$expected_apk" -print0)
 [[ ${#apks[@]} -eq 1 ]] || {
@@ -352,6 +407,8 @@ printf 'version_code=%s\n' "$apk_version_code"
 printf 'version_name=%s\n' "$apk_version_name"
 printf 'chromium_commit=%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT"
 printf 'helium_sync_commit=%s\n' "$expected_sync_commit"
+printf 'runtime_kit_commit=%s\n' "$expected_runtime_kit_commit"
+printf 'runtime_kit_source_sha256=%s\n' "$runtime_kit_source_sha256"
 printf 'apk_path=%s\n' "${apks[0]#$temporary/}"
 printf 'apk_sha256=%s\n' "$(sha256sum "${apks[0]}" | cut -d' ' -f1)"
 printf 'runtime_kit_sha256=%s\n' "$(sha256sum "$runtime_kit/SHA256SUMS" | cut -d' ' -f1)"

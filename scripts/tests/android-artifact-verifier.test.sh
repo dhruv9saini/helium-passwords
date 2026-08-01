@@ -4,12 +4,15 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 # shellcheck source=../../chromium/android-build.lock
 . "$repo_root/chromium/android-build.lock"
+# shellcheck source=../../chromium/android-runtime-kit.lock
+. "$repo_root/chromium/android-runtime-kit.lock"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-artifact-test.XXXXXX")
 cleanup() { find "$test_root" -depth -delete; }
 trap cleanup EXIT
 nix_source_sha256=$(sha256sum "$repo_root/chromium/nix/chromiumer-shell.nix" | awk '{ print $1 }')
 
 commit=1111111111111111111111111111111111111111
+tooling_commit=$(git -C "$repo_root" rev-parse HEAD)
 checksum_provenance() {
   local directory=$1
   (
@@ -79,51 +82,37 @@ cp "$repo_root/helium-chromium/flags.gn" \
   "$test_root/input/build-provenance/args.gn" \
   "$test_root/input/build-provenance/gn-args-resolved.txt" \
   "$test_root/input/build-provenance/locked-gn-args-resolved.txt" >/dev/null
+cat > "$test_root/input/build-provenance/android-tooling.env" <<EOF
+schema_version=1
+tooling_commit=$tooling_commit
+build_driver_source=scripts/chromium/build-android-ci.sh
+build_driver_sha256=$(sha256sum "$repo_root/scripts/chromium/build-android-ci.sh" | cut -d' ' -f1)
+media_config_verifier_source=scripts/chromium/verify-android-media-config.sh
+media_config_verifier_sha256=$(sha256sum "$repo_root/scripts/chromium/verify-android-media-config.sh" | cut -d' ' -f1)
+locked_gn_verifier_source=scripts/chromium/verify-android-locked-gn-args.sh
+locked_gn_verifier_sha256=$(sha256sum "$repo_root/scripts/chromium/verify-android-locked-gn-args.sh" | cut -d' ' -f1)
+runtime_kit_commit=$HELIUM_ANDROID_RUNTIME_KIT_COMMIT
+runtime_kit_source_sha256=$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256
+runtime_kit_verifier_source=scripts/chromium/verify-android-runtime-kit-source.sh
+runtime_kit_verifier_sha256=$(sha256sum "$repo_root/scripts/chromium/verify-android-runtime-kit-source.sh" | cut -d' ' -f1)
+EOF
 : > "$test_root/input/out/HeliumSync.apk"
 checksum_provenance "$test_root/input/build-provenance"
 
-cat > "$test_root/input/runtime-acceptance/fixture-server.mjs" <<'EOF'
-#!/usr/bin/env node
-EOF
-cat > "$test_root/input/runtime-acceptance/run-cdp-probe.mjs" <<'EOF'
-#!/usr/bin/env node
-EOF
-cat > "$test_root/input/runtime-acceptance/run-device-probe.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-EOF
-cat > "$test_root/input/runtime-acceptance/disposable-browser.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-EOF
-cat > "$test_root/input/runtime-acceptance/prepare-cookie-acceptance-profile.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-EOF
-cat > "$test_root/input/runtime-acceptance/verify-probe-pair.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-EOF
-cat > "$test_root/input/runtime-acceptance/generate-fixtures.sh" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-mkdir -p "$1"
-printf 'synthetic mp4\n' > "$1/h264-aac.mp4"
-printf 'synthetic fragmented mp4\n' > "$1/h264-aac-fragmented.mp4"
-printf 'synthetic webm\n' > "$1/vp9-opus.webm"
-(
-  cd "$1"
-  sha256sum h264-aac.mp4 h264-aac-fragmented.mp4 vp9-opus.webm > SHA256SUMS
-  printf '{}\n' > h264-aac.ffprobe.json
-  printf '{}\n' > vp9-opus.ffprobe.json
-  printf 'synthetic ffmpeg\n' > FFMPEG_VERSION
-)
-EOF
+for source in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
+  disposable-browser.sh prepare-cookie-acceptance-profile.sh \
+  run-device-probe.sh verify-probe-pair.sh; do
+  git -C "$repo_root" show \
+    "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT:scripts/android-media/$source" \
+    > "$test_root/input/runtime-acceptance/$source"
+done
 chmod +x "$test_root/input/runtime-acceptance/"{fixture-server.mjs,run-cdp-probe.mjs,disposable-browser.sh,prepare-cookie-acceptance-profile.sh,run-device-probe.sh,verify-probe-pair.sh,generate-fixtures.sh}
 cat > "$test_root/input/runtime-acceptance/kit.env" <<EOF
-schema_version=6
+schema_version=7
 probe_schema_version=1
 helium_sync_commit=$commit
+runtime_kit_commit=$HELIUM_ANDROID_RUNTIME_KIT_COMMIT
+runtime_kit_source_sha256=$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256
 chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT
 manifest_package=computer.helium.sync.test
 version_code=$HELIUM_ANDROID_VERSION_CODE
@@ -153,11 +142,15 @@ chmod +x "$test_root/aapt2"
 AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > "$test_root/result"
 grep -qx 'package=computer.helium.sync.test' "$test_root/result"
 grep -qx "version_code=$HELIUM_ANDROID_VERSION_CODE" "$test_root/result"
 grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$test_root/result"
 grep -qx "helium_sync_commit=$commit" "$test_root/result"
+grep -qx "runtime_kit_commit=$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" "$test_root/result"
+grep -qx "runtime_kit_source_sha256=$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256" \
+  "$test_root/result"
 grep -Eq '^apk_sha256=[0-9a-f]{64}$' "$test_root/result"
 grep -Eq '^runtime_kit_sha256=[0-9a-f]{64}$' "$test_root/result"
 
@@ -175,7 +168,8 @@ tar -C "$test_root/missing-boundary-input" \
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/missing-boundary-artifact.tar.xz" \
-  computer.helium.sync.test "$commit" > /dev/null 2>&1; then
+  computer.helium.sync.test "$commit" "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
+  > /dev/null 2>&1; then
   echo "Android artifact without its disposable boundary unexpectedly passed" >&2
   exit 1
 fi
@@ -208,6 +202,7 @@ chmod +x "$test_root/production-aapt2"
 AAPT2="$test_root/production-aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/production-artifact.tar.xz" computer.helium.sync "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > "$test_root/production-result"
 grep -qx 'package=computer.helium.sync' "$test_root/production-result"
 sed '/badging)/s/\\n"/\\napplication-debuggable\\n"/' \
@@ -216,6 +211,7 @@ chmod +x "$test_root/debuggable-production-aapt2"
 if AAPT2="$test_root/debuggable-production-aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/production-artifact.tar.xz" computer.helium.sync "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "debuggable production Android manifest unexpectedly passed" >&2
   exit 1
@@ -229,6 +225,7 @@ tar -C "$test_root/foreign-lock-input" -caf "$test_root/foreign-lock.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/foreign-lock.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "self-consistent foreign Android build lock unexpectedly passed" >&2
   exit 1
@@ -248,6 +245,18 @@ find "$test_root/control-input/build-provenance" -maxdepth 1 -type f \
      -o -name android-composition.sha256 -o -name sync-inputs.sha256 \) -delete
 printf 'bash scripts/chromium/build-android-control-ci.sh \n' \
   > "$test_root/control-input/build-provenance/build-command.txt"
+cat > "$test_root/control-input/build-provenance/android-tooling.env" <<EOF
+schema_version=1
+tooling_commit=$tooling_commit
+build_driver_source=scripts/chromium/build-android-control-ci.sh
+build_driver_sha256=$(sha256sum "$repo_root/scripts/chromium/build-android-control-ci.sh" | cut -d' ' -f1)
+locked_gn_verifier_source=scripts/chromium/verify-android-locked-gn-args.sh
+locked_gn_verifier_sha256=$(sha256sum "$repo_root/scripts/chromium/verify-android-locked-gn-args.sh" | cut -d' ' -f1)
+runtime_kit_commit=$HELIUM_ANDROID_RUNTIME_KIT_COMMIT
+runtime_kit_source_sha256=$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256
+runtime_kit_verifier_source=scripts/chromium/verify-android-runtime-kit-source.sh
+runtime_kit_verifier_sha256=$(sha256sum "$repo_root/scripts/chromium/verify-android-runtime-kit-source.sh" | cut -d' ' -f1)
+EOF
 checksum_provenance "$test_root/control-input/build-provenance"
 (
   cd "$test_root/control-input/runtime-acceptance"
@@ -269,11 +278,13 @@ chmod +x "$test_root/control-aapt2"
 AAPT2="$test_root/control-aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/control-artifact.tar.xz" computer.helium.control.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > "$test_root/control-result"
 grep -qx 'package=computer.helium.control.test' "$test_root/control-result"
 AAPT2="$test_root/control-aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
   "$test_root/control-artifact.tar.xz" computer.helium.control.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   "$test_root/control-prepared" > "$test_root/control-prepared-result"
 grep -qx 'package=computer.helium.control.test' \
   "$test_root/control-prepared/acceptance.env"
@@ -288,6 +299,7 @@ tar -C "$test_root/foreign-flags-input" -caf "$test_root/foreign-flags.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/foreign-flags.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "Android artifact with foreign flags.gn unexpectedly passed" >&2
   exit 1
@@ -302,6 +314,7 @@ tar -C "$test_root/reassigned-flags-input" \
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/reassigned-flags.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "Android artifact with a locked-key args.gn reassignment unexpectedly passed" >&2
   exit 1
@@ -310,6 +323,7 @@ fi
 AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
   "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   "$test_root/prepared" \
   > "$test_root/prepared-result"
 grep -qx 'package=computer.helium.sync.test' "$test_root/prepared/acceptance.env"
@@ -328,6 +342,7 @@ grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$test_root/prepared/accept
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
   "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   "$test_root/prepared" \
   > /dev/null 2>&1; then
   echo "existing disposable acceptance directory was unexpectedly overwritten" >&2
@@ -340,6 +355,7 @@ chmod +x "$test_root/stale-version-aapt2"
 if AAPT2="$test_root/stale-version-aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "stale APK versionCode unexpectedly passed" >&2
   exit 1
@@ -348,6 +364,7 @@ fi
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/artifact.tar.xz" computer.helium.sync "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "mismatched package unexpectedly passed" >&2
   exit 1
@@ -360,6 +377,7 @@ tar -C "$test_root/input" -caf "$test_root/mutated-depot.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/mutated-depot.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "mutated depot_tools provenance unexpectedly passed" >&2
   exit 1
@@ -373,13 +391,14 @@ tar -C "$test_root/input" -caf "$test_root/tampered-runtime.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/tampered-runtime.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "tampered runtime acceptance kit unexpectedly passed" >&2
   exit 1
 fi
-cat > "$test_root/input/runtime-acceptance/fixture-server.mjs" <<'EOF'
-#!/usr/bin/env node
-EOF
+git -C "$repo_root" show \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT:scripts/android-media/fixture-server.mjs" \
+  > "$test_root/input/runtime-acceptance/fixture-server.mjs"
 
 printf 'dirty\n' > "$test_root/input/build-provenance/helium-sync-status.txt"
 checksum_provenance "$test_root/input/build-provenance"
@@ -387,6 +406,7 @@ tar -C "$test_root/input" -caf "$test_root/dirty.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/dirty.tar.xz" computer.helium.sync.test "$commit" \
+  "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "dirty source provenance unexpectedly passed" >&2
   exit 1

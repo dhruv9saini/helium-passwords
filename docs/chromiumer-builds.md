@@ -617,6 +617,11 @@ artifact provenance, so invoke them through `chromiumer-nix.sh run`:
 cd /home/d/coding/helium/helium-sync
 scripts/dev.sh check
 sync_commit=$(git rev-parse HEAD)
+runtime_kit_commit=$(sed -n 's/^HELIUM_ANDROID_RUNTIME_KIT_COMMIT=//p' \
+  chromium/android-runtime-kit.lock)
+runtime_kit_root=/home/d/.local/libexec/helium-android-runtime-kit-$runtime_kit_commit
+runtime_kit_sha=$(sed -n 's/^HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256=//p' \
+  chromium/android-runtime-kit.lock)
 
 sync_job=hs-android-150-sync-test-01
 scripts/chromiumer-job.sh preflight 80
@@ -628,6 +633,10 @@ scripts/chromiumer-job.sh start "$sync_job" \
     env HELIUM_SYNC_REPO=. GITHUB_WORKSPACE=.build \
       CHROMIUM_WORKSPACE=.build/chromium-android-sync-test \
       ARTIFACT_DIR=.build/android-sync-test-artifacts \
+      HELIUM_ANDROID_RUNTIME_KIT_ROOT="$runtime_kit_root" \
+      HELIUM_ANDROID_RUNTIME_KIT_COMMIT="$runtime_kit_commit" \
+      HELIUM_ANDROID_RUNTIME_KIT_SHA256="$runtime_kit_sha" \
+      HELIUM_ANDROID_RUNTIME_KIT_VERIFIER=/home/d/.local/libexec/helium-android-tooling/verify-android-runtime-kit-source.sh \
       CHROMIUM_ANDROID_MANIFEST_PACKAGE=computer.helium.sync.test \
       CHROMIUM_ANDROID_PHASE=all \
       bash scripts/chromium/build-android-ci.sh
@@ -642,6 +651,10 @@ scripts/chromiumer-job.sh start "$control_job" \
     env HELIUM_SYNC_REPO=. GITHUB_WORKSPACE=.build \
       CHROMIUM_WORKSPACE=.build/chromium-android-control \
       ARTIFACT_DIR=.build/android-control-artifacts \
+      HELIUM_ANDROID_RUNTIME_KIT_ROOT="$runtime_kit_root" \
+      HELIUM_ANDROID_RUNTIME_KIT_COMMIT="$runtime_kit_commit" \
+      HELIUM_ANDROID_RUNTIME_KIT_SHA256="$runtime_kit_sha" \
+      HELIUM_ANDROID_RUNTIME_KIT_VERIFIER=/home/d/.local/libexec/helium-android-tooling/verify-android-runtime-kit-source.sh \
       bash scripts/chromium/build-android-control-ci.sh
 ```
 
@@ -667,6 +680,15 @@ recomputes every hash from that commit. The source commit/status fields still
 bind the untouched product checkout. An external script without this
 commit-and-hash binding is not admissible.
 
+The runtime lifecycle kit is a second immutable source, not part of the frozen
+product source. Materialize exactly the commit and checksum inventory in
+`chromium/android-runtime-kit.lock`, pass its real directory plus all three
+`HELIUM_ANDROID_RUNTIME_KIT_*` bindings and the immutable source verifier, and
+record those bindings in `android-tooling.env` and `runtime-acceptance/kit.env`.
+The artifact verifier compares every packaged lifecycle executable byte for
+byte with that named commit. It rejects an old product-HEAD kit even when the
+APK itself correctly comes from the frozen product commit.
+
 Always preserve the commit from the staged source manifest and pass that exact
 value to both artifact verifiers even if `main` advances while the detached job
 runs. A clean ancestor artifact may be checksum/provenance verified and kept as
@@ -686,10 +708,12 @@ scripts/chromiumer-job.sh fetch "$sync_job" \
 sync_archive=/srv/nas/helium-builds/$sync_job/chrome_public_apk-arm64.tar.xz
 AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
   scripts/chromium/verify-android-artifact.sh \
-    "$sync_archive" computer.helium.sync.test "$sync_commit"
+    "$sync_archive" computer.helium.sync.test "$sync_commit" \
+    "$runtime_kit_commit"
 AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
   scripts/android-media/prepare-disposable-acceptance.sh \
     "$sync_archive" computer.helium.sync.test "$sync_commit" \
+    "$runtime_kit_commit" \
     /home/d/.local/state/helium-acceptance/$sync_job
 scripts/chromiumer-job.sh cleanup "$sync_job"
 
@@ -699,16 +723,24 @@ scripts/chromiumer-job.sh fetch "$control_job" \
 control_archive=/srv/nas/helium-builds/$control_job/chromium-control-apk-arm64.tar.xz
 AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
   scripts/chromium/verify-android-artifact.sh \
-    "$control_archive" computer.helium.control.test "$sync_commit"
+    "$control_archive" computer.helium.control.test "$sync_commit" \
+    "$runtime_kit_commit"
 AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
   scripts/android-media/prepare-disposable-acceptance.sh \
     "$control_archive" computer.helium.control.test "$sync_commit" \
+    "$runtime_kit_commit" \
     /home/d/.local/state/helium-acceptance/$control_job
 scripts/chromiumer-job.sh cleanup "$control_job"
 ```
 
 `prepare-disposable-acceptance.sh` refuses an existing output directory. Never
 reuse or overwrite an earlier acceptance generation.
+
+Test and production Sync builds both emit
+`chrome_public_apk-arm64.tar.xz`. Fetch them into their distinct job-scoped NAS
+directories and retain each wrapper-produced `artifact-receipt.env` beside its
+archive. A common fetch directory is forbidden because the second basename
+would collide with the first artifact and erase the product-role distinction.
 
 `CHROMIUM_REF` may be omitted because the helper uses the lock; if supplied it
 must equal the same full commit:
