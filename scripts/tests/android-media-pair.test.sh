@@ -34,6 +34,8 @@ make_generation() {
     "$acceptance/build-provenance" "$evidence"
   cp "$repo_root/helium-chromium/flags.gn" \
     "$acceptance/build-provenance/flags.gn"
+  sed 's/=/ = /' "$repo_root/helium-chromium/flags.gn" | sort \
+    > "$acceptance/build-provenance/locked-gn-args-resolved.txt"
   for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     disposable-browser.sh prepare-cookie-acceptance-profile.sh \
     run-device-probe.sh verify-probe-pair.sh; do
@@ -146,6 +148,7 @@ grep -Eq '^pair_receipt_sha256=[0-9a-f]{64}$' "$test_root/pass.out"
 grep -qx "helium_sync_commit=$sync_commit" "$test_root/pair.env"
 grep -qx "chromium_commit=$chromium_commit" "$test_root/pair.env"
 grep -Eq '^shared_flags_gn_sha256=[0-9a-f]{64}$' "$test_root/pair.env"
+grep -Eq '^shared_locked_gn_args_sha256=[0-9a-f]{64}$' "$test_root/pair.env"
 grep -Eq '^media_manifest_sha256=[0-9a-f]{64}$' "$test_root/pair.env"
 
 printf 'enable_mdns=true\n' \
@@ -165,6 +168,31 @@ fi
 grep -q 'not built from byte-identical flags.gn' "$test_root/different-flags.out"
 cp "$test_root/sync-acceptance/build-provenance/flags.gn" \
   "$test_root/control-acceptance/build-provenance/flags.gn"
+(
+  cd "$test_root/control-acceptance"
+  find . -type f ! -name PACKAGE_SHA256SUMS -print0 \
+    | sort -z | xargs -0 sha256sum > PACKAGE_SHA256SUMS
+)
+
+printf 'enable_mdns = true\n' \
+  >> "$test_root/control-acceptance/build-provenance/locked-gn-args-resolved.txt"
+(
+  cd "$test_root/control-acceptance"
+  find . -type f ! -name PACKAGE_SHA256SUMS -print0 \
+    | sort -z | xargs -0 sha256sum > PACKAGE_SHA256SUMS
+)
+if "$repo_root/scripts/android-media/verify-probe-pair.sh" \
+  "$test_root/sync-acceptance" "$test_root/sync-evidence" \
+  "$test_root/control-acceptance" "$test_root/control-evidence" \
+  "$test_root/different-effective-locked.env" \
+  > "$test_root/different-effective-locked.out" 2>&1; then
+  echo 'different effective locked GN values unexpectedly passed' >&2
+  exit 1
+fi
+grep -q 'do not have byte-identical effective locked GN values' \
+  "$test_root/different-effective-locked.out"
+cp "$test_root/sync-acceptance/build-provenance/locked-gn-args-resolved.txt" \
+  "$test_root/control-acceptance/build-provenance/locked-gn-args-resolved.txt"
 (
   cd "$test_root/control-acceptance"
   find . -type f ! -name PACKAGE_SHA256SUMS -print0 \

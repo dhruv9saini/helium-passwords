@@ -58,8 +58,9 @@ and the d/da native cookie transport gate is
   lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
   it rejects every public Funnel plus every Serve listener, Web proxy, and TCP
-  forward involving port 44719 without changing unrelated tailnet-only Serve
-  routes, and does not enable the service unless the endpoint matches lm's live
+  forward whose parsed numeric port is 44719 (including leading-zero forms)
+  without changing unrelated tailnet-only Serve routes, and does not enable the
+  service unless the endpoint matches lm's live
   Tailscale IPv4 and the server restore drill passed. State-changing
   operator actions are serialized, and activation refuses any existing
   listener on the canonical service port.

@@ -57,20 +57,27 @@ recorded_provenance_inventory=$(sed -n 's/^[0-9a-f]\{64\}  //p' \
 
 flags_gn="$provenance/flags.gn"
 args_gn="$provenance/args.gn"
+locked_gn_args="$provenance/locked-gn-args-resolved.txt"
 [[ -f "$flags_gn" && ! -L "$flags_gn" &&
-    -f "$args_gn" && ! -L "$args_gn" ]] || {
-  echo "artifact is missing regular flags.gn or args.gn provenance" >&2
+    -f "$args_gn" && ! -L "$args_gn" &&
+    -f "$locked_gn_args" && ! -L "$locked_gn_args" ]] || {
+  echo "artifact is missing regular locked GN provenance" >&2
   exit 1
 }
 cmp -s "$flags_gn" "$repo_root/helium-chromium/flags.gn" || {
   echo "artifact flags.gn does not match the locked Helium core flags" >&2
   exit 1
 }
-flags_size=$(stat -c %s "$flags_gn")
-[[ "$flags_size" -gt 0 ]] && cmp -n "$flags_size" "$flags_gn" "$args_gn" || {
-  echo "artifact args.gn does not begin with its exact flags.gn" >&2
+locked_check=$(mktemp "$temporary/.locked-gn-args.XXXXXX")
+rm -f "$locked_check"
+"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh" \
+  "$flags_gn" "$args_gn" "$provenance/gn-args-resolved.txt" \
+  "$locked_check" >/dev/null
+cmp -s "$locked_check" "$locked_gn_args" || {
+  echo "artifact effective locked GN values do not match its verified provenance" >&2
   exit 1
 }
+rm -f "$locked_check"
 
 cmp -s "$provenance/android-build.lock" "$repo_root/chromium/android-build.lock" || {
   echo "artifact Android build lock does not match the repository lock" >&2

@@ -18,21 +18,54 @@ else
   serve_config=$(tailscale serve status --json)
 fi
 
-jq -e --arg port "$sync_port" '
+jq -e --argjson port "$sync_port" '
   def configs:
     ., (.Foreground[]? | configs), (.Services[]? | configs);
-  def targets_sync_port:
-    test(":" + $port + "($|[/\\?#])");
+  def object_or_error($label):
+    if . == null then {}
+    elif type == "object" then .
+    else error($label + " must be an object")
+    end;
+  def numeric_port($label):
+    if type == "string" and test("^[0-9]+$") then
+      tonumber as $number |
+      if $number >= 0 and $number <= 65535 and $number == ($number | floor)
+      then $number
+      else error($label + " is outside the TCP port range")
+      end
+    else error($label + " is not a numeric TCP port")
+    end;
+  def listener_port($label):
+    if type != "string" then error($label + " is not a string")
+    elif test("^.+:[0-9]+$") then
+      capture(":(?<port>[0-9]+)$").port | numeric_port($label)
+    else error($label + " has no explicit numeric port")
+    end;
+  def target_port($label):
+    if type != "string" then error($label + " is not a string")
+    elif test("^(?:[A-Za-z][A-Za-z0-9+.-]*://)?(?:\\[[^]]+\\]|[^/:?#]+):[0-9]+(?:[/?#].*)?$") then
+      capture("^(?:[A-Za-z][A-Za-z0-9+.-]*://)?(?:\\[[^]]+\\]|[^/:?#]+):(?<port>[0-9]+)(?:[/?#].*)?$").port |
+      numeric_port($label)
+    else error($label + " has no explicit numeric endpoint port")
+    end;
   [configs |
-    ((.AllowFunnel // {}) | length == 0) and
-    (((.TCP // {}) | has($port)) | not) and
-    ([((.Web // {}) | keys[]?) | endswith(":" + $port)] | any | not) and
-    ([((.TCP // {})[]?.TCPForward?) | select(. != null) |
-      if type == "string" then (targets_sync_port | not) else false end
-    ] | all) and
-    ([((.Web // {})[]?.Handlers[]?.Proxy?) | select(. != null) |
-      if type == "string" then (targets_sync_port | not) else false end
-    ] | all)
+    ((.AllowFunnel | object_or_error("AllowFunnel")) | length == 0) and
+    ((.TCP | object_or_error("TCP")) as $tcp |
+      ([$tcp | keys[] | numeric_port("TCP listener") != $port] | all) and
+      ([$tcp[] |
+        if type == "object" then . else error("TCP listener must be an object") end |
+        .TCPForward? | select(. != null) |
+        target_port("TCPForward target") != $port
+      ] | all)) and
+    ((.Web | object_or_error("Web")) as $web |
+      ([$web | keys[] | listener_port("Web listener") != $port] | all) and
+      ([$web[] |
+        if type == "object" then . else error("Web listener must be an object") end |
+        (.Handlers | object_or_error("Web handlers"))[] |
+        if type == "object" then . else error("Web handler must be an object") end |
+        .Proxy? | select(. != null) |
+        target_port("Web proxy target") != $port
+      ] | all))
   ] | all
 ' <<<"$serve_config" >/dev/null || {
   echo "Helium Sync must have no Funnel, Serve listener, Web proxy, or TCP forward involving port 44719" >&2

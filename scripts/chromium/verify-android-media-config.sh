@@ -75,6 +75,9 @@ require_arg "^android_override_version_name = \"${HELIUM_ANDROID_VERSION_NAME//.
 
 cp "$chromium_src/$out_dir/args.gn" "$provenance_dir/args.gn"
 cp "$repo_root/helium-chromium/flags.gn" "$provenance_dir/flags.gn"
+"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh" \
+  "$provenance_dir/flags.gn" "$provenance_dir/args.gn" "$resolved_args" \
+  "$provenance_dir/locked-gn-args-resolved.txt" >/dev/null
 cp "$repo_root/chromium/android-build.lock" "$provenance_dir/android-build.lock"
 printf '%s\n' "$requested_ref" > "$provenance_dir/chromium-ref-requested.txt"
 printf '%s\n' "$depot_tools_commit" > "$provenance_dir/depot-tools-commit.txt"
@@ -113,6 +116,7 @@ done < "$provenance_dir/android-composition.tsv" \
     args.gn \
     flags.gn \
     gn-args-resolved.txt \
+    locked-gn-args-resolved.txt \
     chromium-source-commit.txt \
     chromium-ref-requested.txt \
     depot-tools-commit.txt \

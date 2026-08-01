@@ -60,8 +60,9 @@ replace the browser gates below.
   composition layers; the control requires a clean Chromium tree and the sole
   `upstream-control` marker, and rejects any patched-composition provenance.
 - No public Tailscale Funnel exists on lm and no Serve listener, Web proxy
-  target, or TCP forward target involves port 44719. Unrelated tailnet-only
-  Serve routes may coexist. Run `scripts/tailnet-serve-acceptance.sh begin
+  target, or TCP forward target has numeric port 44719. Leading-zero spellings
+  are parsed as the same port, malformed targets fail closed, and unrelated
+  tailnet-only Serve routes may coexist. Run `scripts/tailnet-serve-acceptance.sh begin
   ABSOLUTE_NEW_STATE_DIRECTORY` before browser acceptance and the matching
   `verify` action afterward; the latter creates a receipt only when the
   canonical before/after JSON is byte-identical and has the same hash. The

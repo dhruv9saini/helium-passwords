@@ -11,7 +11,8 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$test_root/src/out/Test" "$test_root/bin" "$test_root/provenance"
-printf 'target_os = "android"\n' > "$test_root/src/out/Test/args.gn"
+cat "$repo_root/helium-chromium/flags.gn" > "$test_root/src/out/Test/args.gn"
+printf 'target_os = "android"\n' >> "$test_root/src/out/Test/args.gn"
 git -C "$test_root/src" init -q
 git -C "$test_root/src" config user.email test@helium.invalid
 git -C "$test_root/src" config user.name 'Helium Test'
@@ -20,6 +21,7 @@ git -C "$test_root/src" commit -qm initial
 
 cat > "$test_root/bin/gn" <<EOF
 #!/usr/bin/env bash
+sed 's/=/ = /' '$repo_root/helium-chromium/flags.gn'
 cat <<'ARGS'
 ffmpeg_branding = "Chrome"
 media_use_ffmpeg = true
@@ -57,6 +59,8 @@ grep -qx 'chrome_public_manifest_package = "computer.helium.sync.test"' \
   "$test_root/provenance/gn-args-resolved.txt"
 grep -qx 'debuggable_apks = true' \
   "$test_root/provenance/gn-args-resolved.txt"
+cmp -s <(sed 's/=/ = /' "$repo_root/helium-chromium/flags.gn" | sort) \
+  "$test_root/provenance/locked-gn-args-resolved.txt"
 grep -Eq '^[0-9a-f]{40}$' "$test_root/provenance/chromium-source-commit.txt"
 grep -qx "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
   "$test_root/provenance/depot-tools-commit.txt"
@@ -64,6 +68,18 @@ grep -qx 'DEPOT_TOOLS_UPDATE=0' \
   "$test_root/provenance/depot-tools-update-policy.txt"
 grep -q 'chromium/patches/0001-helium-sync-overlay-files.patch' \
   "$test_root/provenance/sync-inputs.sha256"
+
+cp "$test_root/src/out/Test/args.gn" "$test_root/src/out/Test/args.reassigned.gn"
+printf 'enable_mdns = true\n' >> "$test_root/src/out/Test/args.gn"
+if PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
+  "$repo_root/scripts/chromium/verify-android-media-config.sh" \
+  "$test_root/src" out/Test "$test_root/reassigned" "$repo_root" \
+  "$HELIUM_ANDROID_CHROMIUM_COMMIT" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT" \
+  2>/dev/null; then
+  echo 'Android args.gn locked-key reassignment unexpectedly passed' >&2
+  exit 1
+fi
+mv "$test_root/src/out/Test/args.reassigned.gn" "$test_root/src/out/Test/args.gn"
 
 sed -i 's/proprietary_codecs = true/proprietary_codecs = false/' "$test_root/bin/gn"
 if PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \

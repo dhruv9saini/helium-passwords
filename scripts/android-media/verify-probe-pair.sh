@@ -183,6 +183,11 @@ cmp -s "$sync_acceptance/build-provenance/flags.gn" \
   echo "Sync and control were not built from byte-identical flags.gn" >&2
   exit 1
 }
+cmp -s "$sync_acceptance/build-provenance/locked-gn-args-resolved.txt" \
+  "$control_acceptance/build-provenance/locked-gn-args-resolved.txt" || {
+  echo "Sync and control do not have byte-identical effective locked GN values" >&2
+  exit 1
+}
 
 for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
   disposable-browser.sh prepare-cookie-acceptance-profile.sh \
@@ -233,6 +238,8 @@ chmod 600 "$temporary"
   printf 'control_result_sha256=%s\n' "$(sha256sum "$control_evidence/result.json" | cut -d' ' -f1)"
   printf 'shared_flags_gn_sha256=%s\n' \
     "$(sha256sum "$sync_acceptance/build-provenance/flags.gn" | cut -d' ' -f1)"
+  printf 'shared_locked_gn_args_sha256=%s\n' \
+    "$(sha256sum "$sync_acceptance/build-provenance/locked-gn-args-resolved.txt" | cut -d' ' -f1)"
   printf 'fixture_receipt_sha256=%s\n' \
     "$(sha256sum "$sync_evidence/fixture-provenance.json" | cut -d' ' -f1)"
   printf 'media_manifest_sha256=%s\n' "$(printf '%s' "$sync_media" | sha256sum | cut -d' ' -f1)"

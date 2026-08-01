@@ -347,8 +347,9 @@ the exact Tailscale IPv4 address on the unprivileged port 44719 over HTTP; it
 never listens on a wildcard, LAN/public address, or non-Tailnet non-loopback
 socket. Tailscale access control still limits network
 reachability. Helium has no public Funnel and port 44719 is absent from every
-Tailscale Serve listener, Web proxy target, and TCP forward target, so endpoint
-activation does not publish the service. Unrelated tailnet-only Serve routes
+Tailscale Serve listener, Web proxy target, and TCP forward target after
+numeric port parsing, so spellings such as `044719` cannot publish the service.
+Malformed targets fail closed. Unrelated tailnet-only Serve routes
 may coexist; Helium verifies but never resets or rewrites them. Disposable
 acceptance captures their canonical configuration before and after the run and
 admits only byte-identical hashes.
@@ -356,7 +357,8 @@ admits only byte-identical hashes.
 The service unit is `helium-syncd.service`, runs as the dedicated
 `helium-sync` account, and is hardened by systemd. Its start-time verifier
 requires the exact live Tailscale IPv4 endpoint, no public Funnel, and no
-Serve listener, Web proxy target, or TCP forward target involving port 44719.
+Serve listener, Web proxy target, or TCP forward target whose parsed numeric
+port is 44719.
 The cgroup denies every IP outside `100.64.0.0/10`, capabilities, writable
 system/home paths, host process visibility, and device access; only
 `/var/lib/helium-sync` is writable.

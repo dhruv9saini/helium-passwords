@@ -137,6 +137,10 @@ grep -qx "android_override_version_name = \"$HELIUM_ANDROID_VERSION_NAME\"" \
 provenance="$artifact_dir/build-provenance"
 cp "$out_dir/args.gn" "$provenance/args.gn"
 cp "$repo_root/helium-chromium/flags.gn" "$provenance/flags.gn"
+"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh" \
+  "$provenance/flags.gn" "$provenance/args.gn" \
+  "$provenance/gn-args-resolved.txt" \
+  "$provenance/locked-gn-args-resolved.txt" >/dev/null
 cp "$repo_root/chromium/android-build.lock" "$provenance/android-build.lock"
 printf '%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT" \
   > "$provenance/chromium-ref-requested.txt"

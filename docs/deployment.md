@@ -99,8 +99,10 @@ commit, clean tracked source status, exactly one `HeliumSync.apk`, and the
 artifact-carried runtime acceptance kit. Both the Sync and clean upstream
 control builders prepend the same locked `helium-chromium/flags.gn`; each
 artifact carries those exact bytes, the verifier requires `args.gn` to begin
-with them, and the final pair gate requires the two `flags.gn` files to be
-byte-identical. It rejects an artifact lock other than the repository lock and
+with them and rejects every later mention or reassignment of a locked key. The
+checksummed provenance carries the effective locked values, and the final pair
+gate requires both `flags.gn` and those effective values to be byte-identical.
+It rejects an artifact lock other than the repository lock and
 uses `aapt2 dump badging` to require the package-role debuggable bit plus versionCode
 `787500005` and versionName `150.0.7871.181`; the code is exactly one above the
 observed installed production code `787500004`. It prints those versions plus
@@ -403,8 +405,10 @@ http://LM_TAILSCALE_IPV4:44719
 `LM_TAILSCALE_IPV4` must be the single current `100.64.0.0/10` address reported
 for lm. The installers reject DNS names, HTTPS, wildcard/listen-all addresses,
 wrong ports, every public Funnel, every Serve listener on port 44719, every Web
-proxy or TCP forward target using port 44719, and endpoints that do not match
-the live Tailnet identity. Unrelated tailnet-only Serve routes may coexist and
+proxy or TCP forward target whose parsed numeric port is 44719, and endpoints
+that do not match the live Tailnet identity. Leading-zero forms such as
+`044719` are the same forbidden port, and malformed targets fail closed.
+Unrelated tailnet-only Serve routes may coexist and
 the Helium operator never resets or rewrites them. Gate 0 records their
 canonical JSON before disposable acceptance and creates its final receipt only
 after an identical byte/hash comparison. There is no Helium TLS CA or

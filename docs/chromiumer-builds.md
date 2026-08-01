@@ -647,8 +647,10 @@ fetch the first artifact and clean its verified workspace so the shared disk
 admission is recomputed. Both artifact verifiers receive the saved
 `$sync_commit`; this is the cross-job source binding. Sync and control also
 prepend the locked Helium core `flags.gn`, carry it inside checksummed
-provenance, and the artifact plus final A/B pair verifiers require those files
-to be byte-identical.
+provenance, forbid any locked key from appearing again in the appended
+`args.gn`, and record the effective resolved values. The artifact plus final
+A/B pair verifiers require both the source flags and effective locked values to
+be byte-identical.
 
 Always preserve the commit from the staged source manifest and pass that exact
 value to both artifact verifiers even if `main` advances while the detached job

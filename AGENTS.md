@@ -86,6 +86,8 @@ restores Chromium's native password manager.
   authenticated, encrypted confidentiality boundary; do not add an inner TLS
   CA, server certificate, content-encryption layer, a public Funnel, or a
   Tailscale Serve listener, Web proxy, or TCP forward involving port 44719.
+  Listener and target ports are parsed numerically and malformed targets fail
+  closed; alternate spellings such as `044719` are the same forbidden port.
   Unrelated tailnet-only Serve routes may coexist and must not be reset or
   reconfigured by Helium operators. Acceptance binds their canonical Serve
   configuration before and after the run and requires identical hashes.
@@ -440,7 +442,9 @@ restores Chromium's native password manager.
   `computer.helium.sync` APK is never a production artifact.
   Sync and the clean upstream control must prepend the same locked
   `helium-chromium/flags.gn`, carry those exact bytes in checksummed
-  provenance, and pass the artifact and pair verifiers' byte-identity gate.
+  provenance, forbid every later mention or reassignment of its locked keys,
+  and carry the effective locked values. The artifact and pair verifiers bind
+  both the source flags and effective values byte-for-byte.
   Keep `ffmpeg_branding = "Chrome"` with `proprietary_codecs = true` so regular
   MP4/H.264/AAC video works. This is separate from DRM/Widevine.
   Default `is_official_build = false` for local laptop builds because Chromium's

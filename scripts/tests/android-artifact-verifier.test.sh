@@ -64,6 +64,7 @@ cp "$repo_root/helium-chromium/flags.gn" \
   printf '%s\n' 'target_os = "android"' 'target_cpu = "arm64"'
 } > "$test_root/input/build-provenance/args.gn"
 {
+  sed 's/=/ = /' "$repo_root/helium-chromium/flags.gn"
   printf '%s\n' 'chrome_public_manifest_package = "computer.helium.sync.test"'
   printf 'android_override_version_code = "%s"\n' "$HELIUM_ANDROID_VERSION_CODE"
   printf 'android_override_version_name = "%s"\n' "$HELIUM_ANDROID_VERSION_NAME"
@@ -73,6 +74,11 @@ cp "$repo_root/helium-chromium/flags.gn" \
     'ffmpeg_branding = "Chrome"' 'proprietary_codecs = true' \
     'media_use_ffmpeg = true'
 } > "$test_root/input/build-provenance/gn-args-resolved.txt"
+"$repo_root/scripts/chromium/verify-android-locked-gn-args.sh" \
+  "$test_root/input/build-provenance/flags.gn" \
+  "$test_root/input/build-provenance/args.gn" \
+  "$test_root/input/build-provenance/gn-args-resolved.txt" \
+  "$test_root/input/build-provenance/locked-gn-args-resolved.txt" >/dev/null
 : > "$test_root/input/out/HeliumSync.apk"
 checksum_provenance "$test_root/input/build-provenance"
 
@@ -284,6 +290,20 @@ if AAPT2="$test_root/aapt2" \
   "$test_root/foreign-flags.tar.xz" computer.helium.sync.test "$commit" \
   > /dev/null 2>&1; then
   echo "Android artifact with foreign flags.gn unexpectedly passed" >&2
+  exit 1
+fi
+
+cp -a "$test_root/input" "$test_root/reassigned-flags-input"
+printf 'enable_mdns = true\n' \
+  >> "$test_root/reassigned-flags-input/build-provenance/args.gn"
+checksum_provenance "$test_root/reassigned-flags-input/build-provenance"
+tar -C "$test_root/reassigned-flags-input" \
+  -caf "$test_root/reassigned-flags.tar.xz" .
+if AAPT2="$test_root/aapt2" \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh" \
+  "$test_root/reassigned-flags.tar.xz" computer.helium.sync.test "$commit" \
+  > /dev/null 2>&1; then
+  echo "Android artifact with a locked-key args.gn reassignment unexpectedly passed" >&2
   exit 1
 fi
 
