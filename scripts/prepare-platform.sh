@@ -297,6 +297,7 @@ EOF
                 print "    }"
                 print "    LDFLAGS=\"${LDFLAGS:+${LDFLAGS} }-fuse-ld=lld -rtlib=compiler-rt\" \\"
                 print "    CFLAGS=\"${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}\" \\"
+                print "    AR=\"$clang_bin/llvm-ar\" \\"
                 print
                 print "        --use-custom-libcxx \\"
                 next
@@ -366,6 +367,37 @@ EOF
             "${linux_shared_build}"
         grep -Fq 'command = $cxx -fuse-ld=lld -rtlib=compiler-rt -shared' \
             "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ] && \
+        ! grep -Fq '[ -x "$clang_bin/llvm-ar" ]' "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "    local bootstrap_sysroot_arch" {
+                print "    [ -x \"$clang_bin/llvm-ar\" ] || {"
+                print "        echo \"missing downloaded GN bootstrap archiver: $clang_bin/llvm-ar\" >&2"
+                print "        return 1"
+                print "    }"
+            }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ] && \
+        ! grep -Fq 'AR="$clang_bin/llvm-ar" \' "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "    CFLAGS=\"${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}\" \\" {
+                print
+                print "    AR=\"$clang_bin/llvm-ar\" \\"
+                next
+            }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ]; then
+        grep -Fq '[ -x "$clang_bin/llvm-ar" ]' "${linux_shared_build}"
+        grep -Fq 'AR="$clang_bin/llvm-ar" \' "${linux_shared_build}"
     fi
     if [ -f "${linux_shared_build}" ] && \
         ! grep -Fq '        --build-path out/Default \' "${linux_shared_build}"; then

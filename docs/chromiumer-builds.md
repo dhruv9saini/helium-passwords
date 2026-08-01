@@ -204,7 +204,10 @@ therefore requires the downloaded toolchain's adjacent `ld.lld` and selects it
 for both the handwritten libc++ link and the generated GN host link with
 `-fuse-ld=lld`. Both host links also select Clang's matching compiler runtime
 with `-rtlib=compiler-rt`; neither flag introduces the compile sysroot into
-`LDFLAGS`. The invocation also uses the bootstrap's supported
+`LDFLAGS`. Generated GN host archives likewise cannot depend on a generic host
+`ar`; the prepared bootstrap requires the downloaded toolchain's adjacent
+`llvm-ar` and passes its absolute path through bootstrap's `AR` environment
+input. The invocation also uses the bootstrap's supported
 `--build-path out/Default` option. Custom libc++ is a shared host library with
 an origin-relative rpath; leaving the bootstrap at its default `out/Release`
 build directory while requesting only the GN executable under `out/Default`
