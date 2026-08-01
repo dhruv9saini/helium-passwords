@@ -219,8 +219,37 @@ EOF
             "${linux_shared_build}"
     fi
     if [ -f "${linux_shared_build}" ] && \
-        ! grep -Fq -- '--use-custom-libcxx' "${linux_shared_build}"; then
-        perl -0pi -e 's|(CXX="\$clang_bin/clang\+\+" \./tools/gn/bootstrap/bootstrap\.py \\\n)|$1        --use-custom-libcxx \\\n|' \
+        ! grep -Fq 'local bootstrap_sysroot_arch' "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "    CXX=\"$clang_bin/clang++\" ./tools/gn/bootstrap/bootstrap.py \\" {
+                print "    local bootstrap_sysroot_arch"
+                print "    case \"$_host_arch\" in"
+                print "        x64) bootstrap_sysroot_arch=amd64 ;;"
+                print "        arm64) bootstrap_sysroot_arch=arm64 ;;"
+                print "        *)"
+                print "            echo \"unsupported GN bootstrap host architecture: $_host_arch\" >&2"
+                print "            return 1"
+                print "            ;;"
+                print "    esac"
+                print "    local bootstrap_sysroot=\"${_src_dir}/build/linux/debian_bullseye_${bootstrap_sysroot_arch}-sysroot\""
+                print "    [ -d \"$bootstrap_sysroot\" ] || {"
+                print "        echo \"missing GN bootstrap host sysroot: $bootstrap_sysroot\" >&2"
+                print "        return 1"
+                print "    }"
+                print "    CFLAGS=\"${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}\" \\"
+                print "    LDFLAGS=\"${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}\" \\"
+                print
+                print "        --use-custom-libcxx \\"
+                next
+            }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+        grep -Fq 'local bootstrap_sysroot_arch' "${linux_shared_build}"
+        grep -Fq 'CFLAGS="${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
+            "${linux_shared_build}"
+        grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
             "${linux_shared_build}"
         grep -Fq '        --use-custom-libcxx \' "${linux_shared_build}"
     fi
