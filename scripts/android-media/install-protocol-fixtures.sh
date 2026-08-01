@@ -295,15 +295,28 @@ wait_live() {
 verify_live() {
   verify_source
   verify_tls
-  local temp temp_root h2_version h3_warm_version h3_version
-  temp_root=${TMPDIR:-/tmp}
-  temp=$(mktemp -d "$temp_root/helium-media-protocol-verify.XXXXXX")
+  local temp h2_version h3_warm_version h3_version
+  [[ -d "$state_root" && ! -L "$state_root" &&
+      "$(realpath -e "$state_root")" == "$state_root" &&
+      "$(stat -c %u "$state_root")" == "$user_id" &&
+      "$(stat -c %a "$state_root")" == 700 ]] || {
+    echo "fixture state root must be a private owned real directory" >&2
+    return 1
+  }
+  temp=$(mktemp -d "$state_root/.protocol-verify.XXXXXX")
+  chmod 0700 "$temp"
   cleanup_verify() {
     case "$temp" in
-      "$temp_root"/helium-media-protocol-verify.*) find "$temp" -depth -delete ;;
+      "$state_root"/.protocol-verify.*) find "$temp" -depth -delete ;;
     esac
   }
   trap cleanup_verify RETURN
+  [[ ! -L "$temp" && "$(realpath -e "$temp")" == "$temp" &&
+      "$(stat -c %u "$temp")" == "$user_id" &&
+      "$(stat -c %a "$temp")" == 700 ]] || {
+    echo "fixture verification temp directory is unsafe" >&2
+    return 1
+  }
   h2_version=$(curl --fail --silent --show-error --max-time 10 \
     --noproxy '*' --http2 --tlsv1.3 --tls-max 1.3 \
     --cacert "$HELIUM_MEDIA_TLS_CA_CERT" \

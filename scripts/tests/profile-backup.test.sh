@@ -193,12 +193,23 @@ if "$tool" status "$config" "$generation2" >/dev/null 2>&1; then
   echo 'tampered profile backup passed status' >&2
   exit 1
 fi
+if "$tool" restore-to-disposable "$config" nas-copy "$generation2" \
+  "$test_root/restore-root/drill-damaged-nas" >/dev/null 2>&1; then
+  echo 'tampered selected profile backup restored' >&2
+  exit 1
+fi
 "$tool" quarantine "$config" nas-copy "$generation2" checksum-failed |
   grep -x "quarantined=$generation2" >/dev/null
 [[ ! -e "$test_root/nas/fixture/default/generations/$generation2" ]]
 find "$test_root/nas/fixture/default/quarantine" \
   -maxdepth 1 -type d -name "$generation2.*.checksum-failed" |
   grep . >/dev/null
+peer_recovery=$test_root/restore-root/drill-peer-recovery
+"$tool" restore-to-disposable "$config" fixture-peer-copy \
+  "$generation2" "$peer_recovery" |
+  grep -x 'restore=disposable-only' >/dev/null
+cmp "$test_root/profile/Default/Preferences" \
+  "$peer_recovery/Default/Preferences"
 if "$tool" retention-apply "$config" >/dev/null 2>&1; then
   echo 'retention proceeded across disagreeing destination inventories' >&2
   exit 1

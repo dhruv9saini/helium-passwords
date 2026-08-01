@@ -87,4 +87,7 @@ A pass proves one browser-originated save revision, exactly one update
 revision, exactly one tombstone revision, and zero state or journal writes on
 the three unchanged restarts. It does not replace the three-device stale-write,
 pending-join, token-rotation, or malformed-record gates in
-[`acceptance.md`](acceptance.md).
+[`acceptance.md`](acceptance.md). After this receipt exists, the three-client
+runtime gate re-audits it without mutation and binds it to the d/da/oneplus
+flow; see
+[`three-client-disposable-acceptance.md`](three-client-disposable-acceptance.md).

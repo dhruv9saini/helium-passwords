@@ -16,6 +16,8 @@ its private Sync evidence extension is
 [docs/password-runtime-sync-acceptance.md](docs/password-runtime-sync-acceptance.md),
 and the d/da native cookie transport gate is
 [docs/cookie-runtime-acceptance.md](docs/cookie-runtime-acceptance.md).
+The sole complete d/da/OnePlus fleet launch and terminal receipt are specified in
+[docs/android-full-e2e-acceptance.md](docs/android-full-e2e-acceptance.md).
 
 ## Invariants
 
@@ -62,6 +64,9 @@ and the d/da native cookie transport gate is
   and UI receipt plus the private Sync state/journal receipt extension.
 - `scripts/cookie-runtime/`: private two-desktop native CookieManager transport
   fixture and immutable receipt gate.
+- `scripts/android-acceptance/`: the guarded `.test`-only phase reset, exact
+  backup configuration template, and create-new fleet E2E receipt that also
+  binds the Linux artifact and independent d/da tab-recovery gates.
 - `systemd/helium-syncd.service`: least-privilege HTTP service bound only to
   lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;

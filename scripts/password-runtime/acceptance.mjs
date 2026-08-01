@@ -7,7 +7,7 @@ import path from "node:path";
 import {pathToFileURL} from "node:url";
 
 const SCHEMA_VERSION = 2;
-const PROFILE_MARKER = "helium-password-runtime-v2\n";
+export const DISPOSABLE_PROFILE_MARKER = "helium-password-runtime-v2\n";
 const SCREENSHOT_MAX_BYTES = 32 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ANDROID_TEST_PACKAGE = /^(?:[a-z][a-z0-9_]*\.){2,}[a-z][a-z0-9_]*\.test$/;
@@ -310,7 +310,11 @@ export async function initializeRun({
   if (platform === "linux") {
     profile = path.join(root, "profile");
     await fsp.mkdir(profile, {mode: 0o700});
-    await fsp.writeFile(path.join(profile, "SYNTHETIC_ONLY"), PROFILE_MARKER, {mode: 0o600, flag: "wx"});
+    await fsp.writeFile(
+      path.join(profile, "SYNTHETIC_ONLY"),
+      DISPOSABLE_PROFILE_MARKER,
+      {mode: 0o600, flag: "wx"},
+    );
   }
   const run = {
     schema_version: SCHEMA_VERSION,
@@ -460,7 +464,7 @@ export function validateAcceptance(run, fixtureEvidence) {
   };
 }
 
-export async function auditRun({runRoot, fixtureEvidence}) {
+export async function auditArtifactAdmission(runRoot) {
   const {root, run} = await loadRun(runRoot);
   const artifact = await regularFile(run.artifact_path, "browser artifact");
   if (sha256(await fsp.readFile(artifact.resolved)) !== run.artifact_sha256) {
@@ -469,7 +473,7 @@ export async function auditRun({runRoot, fixtureEvidence}) {
   if (run.platform === "linux") {
     const marker = path.join(root, "profile", "SYNTHETIC_ONLY");
     if (run.profile_path !== path.join(root, "profile") ||
-        await fsp.readFile(marker, "utf8") !== PROFILE_MARKER) {
+        await fsp.readFile(marker, "utf8") !== DISPOSABLE_PROFILE_MARKER) {
       throw new Error("Linux disposable profile marker is missing or invalid");
     }
     const admission = await readLinuxArtifactAdmission(
@@ -482,6 +486,11 @@ export async function auditRun({runRoot, fixtureEvidence}) {
   } else {
     throw new Error("acceptance platform or Android test-package boundary is invalid");
   }
+  return {root, run};
+}
+
+export async function auditRun({runRoot, fixtureEvidence}) {
+  const {root, run} = await auditArtifactAdmission(runRoot);
   for (const capture of run.captures) {
     exactKeys(capture, ["step", "captured_at", "screenshot", "screenshot_sha256"], `capture ${capture.step}`);
     const screenshotPath = path.resolve(root, capture.screenshot);
