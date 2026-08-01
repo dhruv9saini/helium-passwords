@@ -1,5 +1,6 @@
 helium-passwords/restore-password-autofill.patch
 helium-passwords/restore-password-ui.patch
 helium-passwords/declare-devtools-css-tsconfig-output.patch
+helium-passwords/devtools-node22-entrypoints.patch
 helium-passwords/android-search-engine-api-compat.patch
 helium-passwords/disable-android-safe-browsing-bridges.patch
