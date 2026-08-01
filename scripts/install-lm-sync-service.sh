@@ -172,10 +172,19 @@ tailscale_identity() {
   sync_listen=$sync_ip:$sync_port
 }
 
-verify_no_funnel() {
-  jq -e 'type == "object" and length == 0' \
-    <<<"$(tailscale funnel status --json)" >/dev/null || {
-    echo "Tailscale Funnel must remain empty for Helium Sync" >&2
+verify_tailnet_exposure() {
+  local serve_config
+  serve_config=$(tailscale serve status --json)
+  jq -e --arg port "$sync_port" '
+    def configs:
+      ., (.Foreground[]? | configs), (.Services[]? | configs);
+    [configs |
+      ((.AllowFunnel // {}) | length == 0) and
+      (((.TCP // {}) | has($port)) | not) and
+      ([((.Web // {}) | keys[]?) | endswith(":" + $port)] | any | not)
+    ] | all
+  ' <<<"$serve_config" >/dev/null || {
+    echo "Helium Sync must have no Funnel or Tailscale Serve listener on port 44719" >&2
     return 1
   }
 }
@@ -197,7 +206,7 @@ read_endpoint_config() {
 verify_endpoint() {
   verify_source >/dev/null
   tailscale_identity
-  verify_no_funnel
+  verify_tailnet_exposure
   read_endpoint_config
   [[ "$configured_listen" == "$sync_listen" ]] || {
     echo "installed endpoint does not match lm's live Tailscale IPv4" >&2

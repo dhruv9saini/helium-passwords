@@ -346,12 +346,15 @@ lm is the control plane and hosts the readable service. `helium-syncd` binds
 the exact Tailscale IPv4 address on the unprivileged port 44719 over HTTP; it
 never listens on a wildcard, LAN/public address, or non-Tailnet non-loopback
 socket. Tailscale access control still limits network
-reachability. Tailscale Serve and Funnel remain empty, so endpoint activation
-does not publish the service or require LocalAPI access.
+reachability. Helium has no public Funnel and port 44719 is absent from every
+Tailscale Serve configuration, so endpoint activation does not publish the
+service. Unrelated tailnet-only Serve routes may coexist; Helium verifies but
+never resets or rewrites them.
 
 The service unit is `helium-syncd.service`, runs as the dedicated
 `helium-sync` account, and is hardened by systemd. Its start-time verifier
-requires the exact live Tailscale IPv4 endpoint and empty Serve/Funnel state.
+requires the exact live Tailscale IPv4 endpoint, no public Funnel, and no
+Serve listener on port 44719.
 The cgroup denies every IP outside `100.64.0.0/10`, capabilities, writable
 system/home paths, host process visibility, and device access; only
 `/var/lib/helium-sync` is writable.

@@ -399,8 +399,10 @@ http://LM_TAILSCALE_IPV4:44719
 
 `LM_TAILSCALE_IPV4` must be the single current `100.64.0.0/10` address reported
 for lm. The installers reject DNS names, HTTPS, wildcard/listen-all addresses,
-wrong ports, public Serve/Funnel state, and endpoints that do not match the live
-Tailnet identity. There is no Helium TLS CA or content-encryption key.
+wrong ports, every public Funnel, every Serve listener on port 44719, and
+endpoints that do not match the live Tailnet identity. Unrelated tailnet-only
+Serve routes may coexist and the Helium operator never resets or rewrites
+them. There is no Helium TLS CA or content-encryption key.
 
 First deploy the source generation while production remains inactive:
 

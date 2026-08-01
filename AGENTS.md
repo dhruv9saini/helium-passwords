@@ -84,8 +84,9 @@ restores Chromium's native password manager.
 - `cmd/helium-syncd` runs the readable record daemon. Production binds only
   lm's exact Tailscale IPv4 address on port 44719 over HTTP. Tailscale is the
   authenticated, encrypted confidentiality boundary; do not add an inner TLS
-  CA, server certificate, content-encryption layer, or public Serve/Funnel
-  route.
+  CA, server certificate, content-encryption layer, a public Funnel, or a
+  Tailscale Serve listener on port 44719. Unrelated tailnet-only Serve routes
+  may coexist and must not be reset or reconfigured by Helium operators.
 - `cmd/helium-sync` initializes per-device bearer credentials and provides test/push/pull
   commands.
 - `internal/syncstore` stores append-only readable JSON records and a registry

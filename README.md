@@ -27,7 +27,9 @@ and the d/da native cookie transport gate is
   CookieCloud, a phone-local server, or copied profile databases.
 - The Tailnet is the confidentiality boundary. The lm server stores readable
   authenticated JSON records and only hashed device bearer credentials. Do not
-  add content encryption, a private inner TLS CA, or public Serve/Funnel routes.
+  add content encryption, a private inner TLS CA, a public Funnel, or a
+  Tailscale Serve listener on the Sync port. Unrelated tailnet-only Serve
+  routes may coexist and Helium operators leave them unchanged.
 - Tabs never enter sync. They remain device-local and are protected by local
   recovery, atomic versioned snapshots, and two private off-source copies.
 - No personal profile is touched until all compiled disposable gates pass and
@@ -55,9 +57,10 @@ and the d/da native cookie transport gate is
 - `systemd/helium-syncd.service`: least-privilege HTTP service bound only to
   lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
-  it keeps Tailscale Serve/Funnel empty and does not enable the service unless
-  the endpoint matches lm's live Tailscale IPv4 and the server restore drill
-  passed. State-changing
+  it rejects every public Funnel and every Serve listener on port 44719 without
+  changing unrelated tailnet-only Serve routes, and does not enable the service
+  unless the endpoint matches lm's live Tailscale IPv4 and the server restore
+  drill passed. State-changing
   operator actions are serialized, and activation refuses any existing
   listener on the canonical service port.
 - `scripts/helium-sync-server-backup.sh`: read-only validation and versioned

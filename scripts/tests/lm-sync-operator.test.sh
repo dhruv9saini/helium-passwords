@@ -13,7 +13,7 @@ cat >"$test_root/bin/tailscale" <<'MOCK'
 set -euo pipefail
 case "${1:-} ${2:-} ${3:-}" in
   "status --json ") cat "${TAILSCALE_STATUS_FIXTURE:?}" ;;
-  "funnel status --json") cat "${FUNNEL_STATUS_FIXTURE:?}" ;;
+  "serve status --json") cat "${SERVE_STATUS_FIXTURE:?}" ;;
   *) echo "unexpected tailscale invocation: $*" >&2; exit 2 ;;
 esac
 MOCK
@@ -45,7 +45,16 @@ cat >"$test_root/tailscale.json" <<'JSON'
   }
 }
 JSON
-printf '{}\n' >"$test_root/funnel-empty.json"
+cat >"$test_root/serve-file-browser.json" <<'JSON'
+{
+  "TCP": {"8080": {"HTTP": true}},
+  "Web": {
+    "lm.tail0168aa.ts.net:8080": {
+      "Handlers": {"/": {"Proxy": "http://127.0.0.1:8080"}}
+    }
+  }
+}
+JSON
 
 release_root="$test_root/releases"
 unit_root="$test_root/units"
@@ -106,7 +115,7 @@ operator_env=(
   HELIUM_SYNC_CONFIG_ROOT="$config_root"
   HELIUM_SYNC_OPERATOR_LOCK="$test_root/operator.lock"
   TAILSCALE_STATUS_FIXTURE="$test_root/tailscale.json"
-  FUNNEL_STATUS_FIXTURE="$test_root/funnel-empty.json"
+  SERVE_STATUS_FIXTURE="$test_root/serve-file-browser.json"
 )
 run_operator() {
   unshare -Ur env "${operator_env[@]}" \
@@ -148,9 +157,16 @@ fi
 cp "$test_root/endpoint.good" "$config_root/endpoint.env"
 
 printf '%s\n' '{"AllowFunnel":{"lm:443":true}}' >"$test_root/funnel-on.json"
-if unshare -Ur env "${operator_env[@]}" FUNNEL_STATUS_FIXTURE="$test_root/funnel-on.json" \
+if unshare -Ur env "${operator_env[@]}" SERVE_STATUS_FIXTURE="$test_root/funnel-on.json" \
   "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null 2>&1; then
   echo "endpoint gate accepted public Funnel exposure" >&2
+  exit 1
+fi
+
+printf '%s\n' '{"TCP":{"44719":{"HTTP":true}}}' >"$test_root/sync-serve-on.json"
+if unshare -Ur env "${operator_env[@]}" SERVE_STATUS_FIXTURE="$test_root/sync-serve-on.json" \
+  "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null 2>&1; then
+  echo "endpoint gate accepted a Tailscale Serve listener on the Sync port" >&2
   exit 1
 fi
 
