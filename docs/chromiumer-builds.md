@@ -460,9 +460,11 @@ The pinned Linux platform calls raw `ninja`. The
 explicit `-j` count; Ninja does not read the wrapper's `NINJA_JOBS` variable.
 The driver therefore puts the checked-in
 `scripts/chromiumer-bin/ninja` shim first on `PATH`, binds its real Ninja path
-before doing so, and rejects any caller-supplied `-j` override. Every Ninja
-invocation in the platform build consequently receives explicit `-j 1`; the
-CPU quota and `TasksMax` remain independent outer bounds.
+before doing so, and leaves the platform's explicit bound intact for other
+build paths. The shim accepts and strips exactly one policy-equivalent one-job
+spelling (`-j 1`, `-j1`, `--jobs 1`, or `--jobs=1`), rejects a non-1 or second
+override, and invokes real Ninja once with its own `-j 1`. The CPU quota and
+`TasksMax` remain independent outer bounds.
 
 Start the job with:
 
