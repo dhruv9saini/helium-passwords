@@ -29,6 +29,7 @@ const cookieKey = "d".repeat(64);
 const keyID = "a1b2c3d4e5f60708";
 const TRAIN = Object.freeze({
   source_commit: "1".repeat(40),
+  passwords_commit: "4".repeat(40),
   core_commit: "2".repeat(40),
   chromium_commit: "3".repeat(40),
   chromium_version: "150.0.7871.181",
@@ -46,9 +47,10 @@ async function writeJSON(filePath, value) {
   await fsp.writeFile(filePath, `${JSON.stringify(value)}\n`, {mode: 0o600});
 }
 
-async function writeLinuxArtifactReceipt(root, artifact, arch) {
+async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
   const artifactHash = digest(await fsp.readFile(artifact));
-  const bundle = path.join(root, `helium-passwords-linux-${arch}`);
+  const receiptRoot = path.join(root, `${label}-admission`);
+  const bundle = path.join(receiptRoot, `helium-sync-linux-${arch}`);
   const runtime = path.join(bundle, "runtime");
   const provenance = path.join(bundle, "provenance");
   const browser = path.join(runtime, "helium");
@@ -62,10 +64,62 @@ async function writeLinuxArtifactReceipt(root, artifact, arch) {
     return `${hash}  ${path.relative(bundle, file)}`;
   }))).join("\n")}\n`;
   await fsp.writeFile(inventory, inventoryRaw, {mode: 0o600});
-  const receipt = path.join(root, `${arch}-artifact-receipt.env`);
+  const archive = path.join(root, `helium-sync-linux-${arch}.tar.xz`);
+  try {
+    await fsp.writeFile(archive, `synthetic-${arch}-archive`, {
+      mode: 0o600,
+      flag: "wx",
+    });
+  } catch (error) {
+    if (error.code !== "EEXIST") throw error;
+  }
+  const archiveStat = await fsp.stat(archive);
+  const archiveHash = digest(await fsp.readFile(archive));
+  const manifestRaw = [
+    "schema_version=3",
+    "product=helium-sync",
+    "platform=linux",
+    `arch=${arch}`,
+    "target=linux-x86_64",
+    `source_commit=${TRAIN.source_commit}`,
+    `source_tree=${"7".repeat(64)}`,
+    `helium_passwords_commit=${TRAIN.passwords_commit}`,
+    `helium_sync_commit=${TRAIN.source_commit}`,
+    `helium_core_commit=${TRAIN.core_commit}`,
+    `chromium_version=${TRAIN.chromium_version}`,
+    `chromium_commit=${TRAIN.chromium_commit}`,
+    `build_job_id=synthetic-${arch}`,
+    "platform_repository=https://github.com/helium-linux/helium-linux",
+    `platform_commit=${"4".repeat(40)}`,
+    "depot_tools_commit=980d6af16e06ff993a52029019dc0628c0a0e1f0",
+    `gn_args_sha256=${"8".repeat(64)}`,
+    `nix_provenance_sha256=${"9".repeat(64)}`,
+    `patch_inventory_sha256=${"a".repeat(64)}`,
+    `runtime_inventory_sha256=${digest(inventoryRaw)}`,
+    "",
+  ].join("\n");
+  await fsp.writeFile(path.join(provenance, "manifest.env"), manifestRaw,
+    {mode: 0o600});
+  const manifestHash = digest(manifestRaw);
+  await fsp.writeFile(path.join(receiptRoot,
+    "deployment-artifact-receipt.env"), [
+    "schema_version=1",
+    `artifact_sha256=${archiveHash}`,
+    `artifact_size=${archiveStat.size}`,
+    "target=linux-x86_64",
+    `helium_sync_commit=${TRAIN.source_commit}`,
+    `helium_passwords_commit=${TRAIN.passwords_commit}`,
+    `helium_core_commit=${TRAIN.core_commit}`,
+    `chromium_commit=${TRAIN.chromium_commit}`,
+    `build_job_id=synthetic-${arch}`,
+    `provenance_sha256=${manifestHash}`,
+    "created_at=2026-07-23T08:00:00Z",
+    "",
+  ].join("\n"), {mode: 0o600});
+  const receipt = path.join(receiptRoot, "artifact-receipt.env");
   await fsp.writeFile(receipt, [
     "schema_version=2",
-    "product=helium-passwords",
+    "product=helium-sync",
     "platform=linux",
     `arch=${arch}`,
     `source_commit=${TRAIN.source_commit}`,
@@ -73,14 +127,14 @@ async function writeLinuxArtifactReceipt(root, artifact, arch) {
     `chromium_version=${TRAIN.chromium_version}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
     `platform_commit=${"4".repeat(40)}`,
-    `bundle=${path.join(root, "bundle.tar.xz")}`,
-    `bundle_sha256=${"5".repeat(64)}`,
-    `provenance_manifest_sha256=${"6".repeat(64)}`,
-    `browser_executable=${path.relative(root, artifact)}`,
+    `bundle=${archive}`,
+    `bundle_sha256=${archiveHash}`,
+    `provenance_manifest_sha256=${manifestHash}`,
+    `browser_executable=${path.relative(receiptRoot, artifact)}`,
     `browser_sha256=${artifactHash}`,
-    `runtime_inventory=${path.relative(root, inventory)}`,
+    `runtime_inventory=${path.relative(receiptRoot, inventory)}`,
     `runtime_inventory_sha256=${digest(inventoryRaw)}`,
-    "verified_at=synthetic-fixture",
+    `verified_at=synthetic-fixture-${label}`,
     "",
   ].join("\n"), {mode: 0o600});
   return receipt;
@@ -97,11 +151,17 @@ async function writeAndroidAdmission(root) {
   await fsp.writeFile(path.join(runtime, "fixture.txt"),
     "synthetic Android runtime kit\n", {mode: 0o600});
   await fsp.writeFile(path.join(runtime, "kit.env"), [
-    "schema_version=6",
+    "schema_version=7",
+    "probe_schema_version=1",
     `helium_sync_commit=${TRAIN.source_commit}`,
+    `runtime_kit_commit=${"7".repeat(40)}`,
+    `runtime_kit_source_sha256=${"8".repeat(64)}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
     "manifest_package=computer.helium.sync.test",
+    "version_code=787500005",
+    `version_name=${TRAIN.chromium_version}`,
     "target_cpu=arm64",
+    "artifact_target=chrome_public_apk",
     "",
   ].join("\n"), {mode: 0o600});
   await fsp.writeFile(path.join(provenance, "helium-sync-commit.txt"),
@@ -272,6 +332,9 @@ function browserEvidence(manifest, nativeUIReceiptSHA256 = {
       artifact_sha256: admitted.artifact_sha256,
       admission_sha256: {
         receipt: admitted.admission.receipt_sha256,
+        deployment_receipt: admitted.admission.deployment_receipt_sha256,
+        provenance_manifest: admitted.admission.provenance_manifest_sha256,
+        returned_archive: admitted.admission.returned_archive_sha256,
         inventory: admitted.admission.inventory_sha256,
       },
       profile_marker_sha256: admitted.profile_marker_sha256,
@@ -430,12 +493,12 @@ function serverEvidence(manifest, browser) {
   return {
     schema_version: 1,
     source_train: manifest.source_train,
-    evidence_scope: "disposable-tls-service",
+    evidence_scope: "disposable-tailnet-http-service",
     transport: {
-      tls: "verified",
-      network: "tailscale",
-      device_auth: "per-device",
-      payload_visibility: "ciphertext-only",
+      endpoint: "http://100.64.0.1:44719/",
+      network: "tailscale-private",
+      device_auth: "per-device-bearer",
+      payload_visibility: "readable-private-journal",
     },
     enrollment_order: ["d", "da", "oneplus"],
     join_cursors: {da: "4", oneplus: "4"},
@@ -489,9 +552,15 @@ function serverEvidence(manifest, browser) {
     },
     journal: {
       sha256: "9".repeat(64),
+      schema_version: "2",
       tabs_records: "0",
-      plaintext_detected: false,
-      secret_fields_logged: false,
+      payload_storage: "readable",
+      bearer_tokens_present: false,
+      private_mode: true,
+    },
+    logs: {
+      password_values_detected: false,
+      bearer_tokens_detected: false,
     },
   };
 }
@@ -552,6 +621,18 @@ function manifestFixture() {
         "prepared-android-inventory" : "linux-runtime-receipt",
       receipt_path: `/synthetic/${target}/receipt`,
       receipt_sha256: receipt,
+      deployment_receipt_path: platform === "linux" ?
+        `/synthetic/${target}/deployment-receipt` : null,
+      deployment_receipt_sha256: platform === "linux" ? "3".repeat(64) : null,
+      provenance_manifest_path: platform === "linux" ?
+        `/synthetic/${target}/manifest` : null,
+      provenance_manifest_sha256: platform === "linux" ? "4".repeat(64) : null,
+      returned_archive_path: platform === "linux" ?
+        "/synthetic/helium-sync-linux-x86_64.tar.xz" : null,
+      returned_archive_sha256: platform === "linux" ? "5".repeat(64) : null,
+      build_job_id: platform === "linux" ? "synthetic-x86_64" : null,
+      depot_tools_commit: platform === "linux" ?
+        "980d6af16e06ff993a52029019dc0628c0a0e1f0" : null,
       inventory_path: platform === "android" ?
         `/synthetic/${target}/inventory` : null,
       inventory_sha256: inventory,
@@ -565,7 +646,7 @@ function manifestFixture() {
     devices: {
       d: device({
         platform: "linux",
-        target: "linux-arm64-chroot",
+        target: "linux-x86_64",
         packageName: "",
         artifact: "a".repeat(64),
         receipt: "b".repeat(64),
@@ -596,17 +677,19 @@ function manifestFixture() {
 
 async function preparedInputs(root) {
   const dArtifact = path.join(
-    root, "helium-passwords-linux-arm64", "runtime", "helium-wrapper");
+    root, "d-admission", "helium-sync-linux-x86_64", "runtime",
+    "helium-wrapper");
   const daArtifact = path.join(
-    root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
+    root, "da-admission", "helium-sync-linux-x86_64", "runtime",
+    "helium-wrapper");
   await fsp.mkdir(path.dirname(dArtifact), {recursive: true});
   await fsp.mkdir(path.dirname(daArtifact), {recursive: true});
-  await fsp.writeFile(dArtifact, "synthetic d arm64 browser", {mode: 0o700});
-  await fsp.writeFile(daArtifact, "synthetic da x86_64 browser", {mode: 0o700});
+  await fsp.writeFile(dArtifact, "synthetic x86_64 browser", {mode: 0o700});
+  await fsp.writeFile(daArtifact, "synthetic x86_64 browser", {mode: 0o700});
   const dArtifactReceipt = await writeLinuxArtifactReceipt(
-    root, dArtifact, "arm64");
+    root, dArtifact, "x86_64", "d");
   const daArtifactReceipt = await writeLinuxArtifactReceipt(
-    root, daArtifact, "x86_64");
+    root, daArtifact, "x86_64", "da");
   const oneplusArtifact = await writeAndroidAdmission(root);
   return {
     dArtifact,
@@ -641,10 +724,15 @@ test("initialization rejects the wrong per-device target and a split source trai
     path.join(os.tmpdir(), "helium-three-client-train-"));
   try {
     const wrongTarget = await preparedInputs(wrongTargetRoot);
+    const wrongReceipt = await fsp.readFile(
+      wrongTarget.dArtifactReceipt, "utf8");
+    await fsp.writeFile(
+      wrongTarget.dArtifactReceipt,
+      wrongReceipt.replace("arch=x86_64", "arch=arm64"),
+      {mode: 0o600},
+    );
     await assert.rejects(initializeThreeClientRun({
       ...wrongTarget,
-      dArtifact: wrongTarget.daArtifact,
-      dArtifactReceipt: wrongTarget.daArtifactReceipt,
       output: path.join(wrongTargetRoot, "run"),
     }), /wrong architecture/);
 
@@ -662,7 +750,7 @@ test("initialization rejects the wrong per-device target and a split source trai
     await assert.rejects(initializeThreeClientRun({
       ...splitTrain,
       output: path.join(splitTrainRoot, "run"),
-    }), /shared source train/);
+    }), /deployment receipt or provenance|shared source train/);
   } finally {
     await fsp.rm(wrongTargetRoot, {recursive: true, force: true});
     await fsp.rm(splitTrainRoot, {recursive: true, force: true});
@@ -686,7 +774,7 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
         `helium-three-client-device-v1:${device}\n`,
       );
     }
-    assert.equal(manifest.devices.d.target, "linux-arm64-chroot");
+    assert.equal(manifest.devices.d.target, "linux-x86_64");
     assert.equal(manifest.devices.da.target, "linux-x86_64");
     assert.equal(manifest.devices.oneplus.target, "android-arm64");
     assert.equal(manifest.devices.oneplus.package, "computer.helium.sync.test");
@@ -792,7 +880,7 @@ test("browser evidence fails closed on join publication, stale overwrite, cookie
   inventedOnePlusProfile.devices.find(entry => entry.device === "oneplus")
     .profile_marker_sha256 = "9".repeat(64);
   assert.throws(() => validateBrowserEvidence(inventedOnePlusProfile, manifest),
-    /device identity|invented a filesystem profile/);
+    /device identity|invented .*filesystem profile/);
 
   const joinPublished = structuredClone(baseline);
   joinPublished.devices.find(entry => entry.device === "da")
@@ -848,7 +936,7 @@ test("browser evidence fails closed on join publication, stale overwrite, cookie
     /browser evidence boundary/);
 });
 
-test("server evidence rejects enrollment reorder, stale acceptance, 32-bit counters, plaintext, and tabs", () => {
+test("server evidence rejects reorder, stale writes, 32-bit counters, secret logs, and tabs", () => {
   const manifest = manifestFixture();
   const browser = browserEvidence(manifest);
   const baseline = serverEvidence(manifest, browser);
@@ -874,15 +962,15 @@ test("server evidence rejects enrollment reorder, stale acceptance, 32-bit count
   assert.throws(() => validateServerEvidence(uint32, manifest, browser),
     /64-bit sequence/);
 
-  const plaintext = structuredClone(baseline);
-  plaintext.journal.plaintext_detected = true;
-  assert.throws(() => validateServerEvidence(plaintext, manifest, browser),
-    /plaintext/);
+  const secretLog = structuredClone(baseline);
+  secretLog.logs.password_values_detected = true;
+  assert.throws(() => validateServerEvidence(secretLog, manifest, browser),
+    /password value/);
 
   const tabs = structuredClone(baseline);
   tabs.journal.tabs_records = "1";
   assert.throws(() => validateServerEvidence(tabs, manifest, browser),
-    /contains tabs/);
+    /schema-2 boundary/);
 });
 
 test("orchestrator source contains no alternate browser writer or tab transport", async () => {

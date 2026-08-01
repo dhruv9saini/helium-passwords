@@ -12,21 +12,23 @@ The source tests have two deliberately separate responsibilities:
   rejection with fake files. It also runs the existing native password
   acceptance and Sync receipt code instead of recreating their state machines.
 - `go test ./internal/syncstore ./cmd/helium-sync-synthetic-client` exercises
-  the real `syncstore.Client`, authenticated `Handler`, E2EE records, d seed,
-  pull-only enrollment, no-op publication suppression, CAS conflict,
-  tombstones, credential/content-key rotation, cookie records, and 64-bit
-  counters. The fake receipt test is not presented as protocol proof.
+  the real `syncstore.Client`, authenticated `Handler`, readable schema-2
+  records, d seed, pull-only enrollment, no-op publication suppression, CAS
+  conflict, tombstones, bearer rotation, cookie records, and 64-bit counters.
+  The fake receipt test is not presented as protocol proof.
 
-Runtime completion still requires three compiled, independently admitted
-browser artifacts and the existing disposable TLS service. The gate validates
-the resulting evidence; it does not invent browser UI or server observations.
+Runtime completion still requires one returned Linux runtime executed
+independently on d and da, one independently admitted Android APK, and the
+marker-gated private-Tailnet HTTP service. The gate
+validates the resulting evidence; it does not invent browser UI or server
+observations.
 
 ## Initialize
 
 Use the exact artifact for each execution environment:
 
-- `d`: the Linux arm64 chroot executable and its verified Linux runtime receipt;
-- `da`: the Linux x86_64 executable and its verified Linux runtime receipt; and
+- `d` and `da`: separate verifications and executions of the same returned
+  Linux x86_64 archive and build-produced deployment receipt; and
 - `oneplus`: `Browser-test.apk` from the prepared
   `computer.helium.sync.test` directory. Its `acceptance.env`,
   `PACKAGE_SHA256SUMS`, and every inventoried runtime/provenance member are the
@@ -40,16 +42,20 @@ browser profile for OnePlus: the exact test package, APK hash, acceptance
 metadata, and complete prepared-directory inventory are its boundary.
 
 All three admissions must report the same private source commit, Helium core
-commit, Chromium commit, and four-component Chromium version. Mixing artifacts
-from different builds or swapping the two Linux architectures fails during
-initialization. The output directory must not exist.
+commit, Chromium commit, and four-component Chromium version. Both Linux runs
+must additionally bind the same archive, Passwords commit, build-produced
+deployment receipt, extracted schema-3 internal manifest, build job, and
+pinned depot_tools commit. Their locally generated runtime receipts may differ
+in paths and verification time. Mixing source trains, using two Linux
+artifacts, or substituting a non-x86_64 runtime fails during initialization.
+The output directory must not exist.
 
 ```sh
 node scripts/sync-runtime/three-client-acceptance.mjs init \
-  --d-artifact /absolute/d-arm64/runtime/helium-wrapper \
-  --d-artifact-receipt /absolute/d-arm64/artifact-receipt.env \
-  --da-artifact /absolute/da-x86_64/runtime/helium-wrapper \
-  --da-artifact-receipt /absolute/da-x86_64/artifact-receipt.env \
+  --d-artifact "$d_verified_linux/helium-sync-linux-x86_64/runtime/helium-wrapper" \
+  --d-artifact-receipt "$d_verified_linux/artifact-receipt.env" \
+  --da-artifact "$da_verified_linux/helium-sync-linux-x86_64/runtime/helium-wrapper" \
+  --da-artifact-receipt "$da_verified_linux/artifact-receipt.env" \
   --oneplus-artifact /absolute/oneplus-prepared/Browser-test.apk \
   --output /absolute/new/three-client-run
 ```
@@ -105,10 +111,12 @@ source-only script. It must name
 `native-password-store-and-cookie-manager` and, for each device, bind its
 platform, target, package, artifact SHA-256, admission hashes, native
 `sync-receipt.json` SHA-256, and Linux profile marker or Android null marker.
-Server evidence must come from the canonical TLS service, name the exact shared
-source/core/Chromium train, and record only device, cursor, revision, count,
-result, and journal-hash metadata. It must not contain payloads, credentials,
-tokens, nonces, or ciphertext.
+Server evidence must come from the canonical marker-gated service at the exact
+literal private-Tailnet IPv4 HTTP endpoint on port 44719. It names the shared
+source/core/Chromium train, per-device bearer authentication, readable private
+schema-2 journal, and content-free log scans. Evidence records only device,
+cursor, revision, count, result, and journal-hash metadata; it never records a
+password value or bearer token. Tabs must be absent from the journal.
 
 ## Verify
 
@@ -124,7 +132,8 @@ node scripts/sync-runtime/three-client-acceptance.mjs status \
   --run /absolute/three-client-run
 ```
 
-Verification rehashes all three artifacts, both Linux receipts, the complete
+Verification rehashes all three executions, the returned Linux archive,
+runtime and deployment receipts, internal provenance manifest, the complete
 prepared Android inventory, both Linux markers, all three native screenshot and
 Sync state/journal receipts, browser receipt, server receipt, and both origin
 audits. It copies the admitted content-free inputs and a mode-0600 receipt
@@ -135,4 +144,6 @@ the copied evidence; corruption does not degrade to a stale success label.
 A source-test pass means the gate and canonical protocol foundations are ready.
 It does not mean any browser artifact passed. Personal enrollment remains
 blocked until all three native runtime receipts and the consolidated
-three-device receipt exist for the exact returned artifacts.
+three-device receipt exist for the exact returned artifacts. The fleet
+finalizer additionally binds the returned Linux full-graph receipt to the same
+archive, deployment job, internal manifest, and both desktop executions.

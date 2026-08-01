@@ -139,9 +139,12 @@ scripts/profile-backup/helium-profile-backup.sh restore-to-disposable \
   /secure/profile-restore-drills/drill-d-GENERATION
 ```
 
-Restore first verifies both independent copies, then streams the selected
-authenticated destination archive through zstd without staging a source-local
-archive. Extraction is confined to a new child of the marked
+Restore verifies the selected authenticated destination's complete inventory,
+receipt, hash, and size independently, then streams that archive through zstd
+without staging a source-local archive. This permits a healthy replica to
+recover while its damaged sibling is quarantined; the normal pre-fault gate
+still restores and proves both destinations separately. Extraction is confined
+to a new child of the marked
 disposable root. A local backup's restored normalized tree, or an Android
 backup's decrypted tar stream, must equal the corresponding admitted
 fingerprint before the atomic publish and secret-free restore receipt. The

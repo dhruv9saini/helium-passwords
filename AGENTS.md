@@ -81,6 +81,13 @@ restores Chromium's native password manager.
   Chromium command-line files and debug-app selection on every exit. Never add
   normal package identities, caller-supplied flags, package clearing, or
   uninstall behavior to it.
+  The only package-data reset is the separate
+  `scripts/android-acceptance/reset-disposable-package.sh` boundary between
+  Android phases of one fleet full E2E run. It admits only the inventoried
+  Sync `.test` APK,
+  rejects network ADB, verifies production/global state is unchanged, and emits
+  a create-new receipt. It must never be generalized to production or used as
+  a partial-test shortcut.
 - `cmd/helium-syncd` runs the readable record daemon. Production binds only
   lm's exact Tailscale IPv4 address on port 44719 over HTTP. Tailscale is the
   authenticated, encrypted confidentiality boundary; do not add an inner TLS

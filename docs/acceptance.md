@@ -97,8 +97,8 @@ loopback fixture attestation; a checklist alone cannot pass this gate.
 
 ## Gate 2: Password Sync
 
-Use separate disposable targets: the `d` Linux arm64-chroot profile, the `da`
-Linux x86_64 profile, and the separately installed
+Use separate disposable targets: the `d` and `da` Linux x86_64 profiles and the
+separately installed
 `computer.helium.sync.test` OnePlus package. The OnePlus target is package
 admission, not a fabricated Linux profile directory.
 For the native lifecycle, run the private extension in
@@ -110,6 +110,8 @@ The consolidated artifact-bound flow and final receipt are defined in
 [`three-client-disposable-acceptance.md`](three-client-disposable-acceptance.md).
 Its fake-file tests validate only receipt admission; the real Go sync-store
 tests remain the protocol proof, and a compiled-browser run remains mandatory.
+The d/da/OnePlus device matrix becomes one pass only through the ordered fleet receipt in
+[`android-full-e2e-acceptance.md`](android-full-e2e-acceptance.md).
 
 - d is explicitly created as the sole seed. da and oneplus start pending and
   pull d's inventory without publishing any pre-existing local credential.
@@ -415,7 +417,7 @@ record only timing/status observations, never conversation content or tokens.
 
 | Device | Desktop browser | Android browser | Required manual checks |
 | --- | --- | --- | --- |
-| `d` | Linux ARM64 chroot Helium | N/A | Authoritative seed, password lifecycle, service restart, local tab restore |
+| `d` | Linux x86_64 Helium | N/A | Authoritative seed, password lifecycle, service restart, local tab restore |
 | `da` | Linux x86_64 | N/A | Pull-only join, password/cookie convergence, independent local tab restore |
 | `oneplus` | N/A | Android arm64 Helium Sync | Native Android password store, background sync, codecs, streaming, tab restore |
 

@@ -220,6 +220,10 @@ Install the prepared Sync `.test` APK only through the guarded boundary. The
 package must be fresh: native staging refuses an existing `app_chrome` tree.
 The native run creates that synthetic tree, and each launch temporarily owns
 and restores Android's two Chromium command-line files plus debug-app selection.
+In the single fleet E2E, Android freshness comes from the preceding
+`password-sync` to `tab-recovery` receipt produced by the separate, `.test`-only
+[`reset-disposable-package.sh`](../scripts/android-acceptance/reset-disposable-package.sh).
+The tab adapter itself still never clears or uninstalls a package.
 
 ```sh
 acceptance=/absolute/prepared-sync-acceptance
@@ -303,3 +307,12 @@ Android health still requires real current-artifact execution: one native
 clean/crash/second-restart proof plus two neutral and two full-profile proofs
 from the independently restored destinations. Source presence or a single
 package launch cannot emit a healthy status.
+
+The terminal fleet gate in
+[android-full-e2e-acceptance.md](android-full-e2e-acceptance.md) consumes the
+five authenticated proofs and three emitted status receipts independently for
+d and da, plus the corresponding Android proofs and status receipts. For each
+desktop it also binds a previous-neutral-generation fallback, an independent
+full-profile replica fallback, their four rejection/quarantine receipts, and the schema-3
+full-profile backup receipt. A local status, unverified evidence directory, or
+single-replica restore cannot satisfy that terminal receipt.

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
@@ -21,8 +22,8 @@ const JOINERS = Object.freeze(["da", "oneplus"]);
 const DEVICE_SPECS = Object.freeze({
   d: Object.freeze({
     platform: "linux",
-    target: "linux-arm64-chroot",
-    arch: "arm64",
+    target: "linux-x86_64",
+    arch: "x86_64",
     packageName: "",
   }),
   da: Object.freeze({
@@ -43,6 +44,8 @@ const CREDENTIAL_KEY = /^credential\/v2\/[0-9a-f]{64}$/;
 const COOKIE_KEY = /^[0-9a-f]{64}$/;
 const EVIDENCE_REF = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const INT64_MAX = 9223372036854775807n;
+const LINUX_DEPOT_TOOLS_COMMIT =
+  "980d6af16e06ff993a52029019dc0628c0a0e1f0";
 const ORIGIN_STATE_KINDS = Object.freeze([
   "cache-storage",
   "indexed-db",
@@ -53,6 +56,12 @@ const ORIGIN_STATE_KINDS = Object.freeze([
 
 function sha256(data) {
   return crypto.createHash("sha256").update(data).digest("hex");
+}
+
+async function sha256File(filePath) {
+  const hash = crypto.createHash("sha256");
+  for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
+  return hash.digest("hex");
 }
 
 function equalJSON(left, right) {
@@ -88,6 +97,28 @@ function positiveInt64(value, label) {
   const parsed = int64String(value, label);
   if (parsed === 0n) throw new Error(`${label} must be positive`);
   return parsed;
+}
+
+function requireTailnetHTTP(value, label) {
+  let endpoint;
+  try {
+    endpoint = new URL(value);
+  } catch {
+    throw new Error(`${label} must be an exact URL`);
+  }
+  const octets = endpoint.hostname.split(".").map(Number);
+  const tailnetIPv4 = octets.length === 4 &&
+    octets.every((octet, index) => Number.isInteger(octet) &&
+      octet >= 0 && octet <= 255 && String(octet) ===
+        endpoint.hostname.split(".")[index]) &&
+    octets[0] === 100 && octets[1] >= 64 && octets[1] <= 127;
+  if (endpoint.protocol !== "http:" || !tailnetIPv4 ||
+      endpoint.port !== "44719" || endpoint.pathname !== "/" ||
+      endpoint.username || endpoint.password || endpoint.search ||
+      endpoint.hash) {
+    throw new Error(`${label} must be literal private-Tailnet HTTP port 44719`);
+  }
+  return endpoint.href;
 }
 
 async function regularFile(filePath, label, maximum = 4 * 1024 * 1024) {
@@ -168,6 +199,12 @@ async function readEnv(filePath, label) {
   return {file, raw, values};
 }
 
+function requireEnvKeys(env, expected, label) {
+  if (!equalJSON([...env.values.keys()].sort(), [...expected].sort())) {
+    throw new Error(`${label} has an unexpected field inventory`);
+  }
+}
+
 async function readCommitFile(filePath, label) {
   const file = await regularFile(filePath, label, 128);
   return {
@@ -189,20 +226,122 @@ async function describeAdmittedDevice(run, device) {
     if (receipt.values.get("arch") !== spec.arch) {
       throw new Error(`${device} Linux artifact has the wrong architecture`);
     }
+    const verifiedRoot = path.dirname(receipt.file.resolved);
+    const deployment = await readEnv(
+      path.join(verifiedRoot, "deployment-artifact-receipt.env"),
+      `${device} deployment artifact receipt`,
+    );
+    if ((deployment.file.info.mode & 0o077) !== 0) {
+      throw new Error(
+        `${device} deployment artifact receipt must be private`,
+      );
+    }
+    requireEnvKeys(deployment, [
+      "schema_version", "artifact_sha256", "artifact_size", "target",
+      "helium_sync_commit", "helium_passwords_commit",
+      "helium_core_commit", "chromium_commit", "build_job_id",
+      "provenance_sha256", "created_at",
+    ], `${device} deployment artifact receipt`);
+    const manifest = await readEnv(
+      path.join(
+        verifiedRoot,
+        `helium-sync-linux-${spec.arch}`,
+        "provenance",
+        "manifest.env",
+      ),
+      `${device} internal provenance manifest`,
+    );
+    requireEnvKeys(manifest, [
+      "schema_version", "product", "platform", "arch", "target",
+      "source_commit", "source_tree", "helium_passwords_commit",
+      "helium_sync_commit", "helium_core_commit", "chromium_version",
+      "chromium_commit", "build_job_id", "platform_repository",
+      "platform_commit", "depot_tools_commit", "gn_args_sha256",
+      "nix_provenance_sha256", "patch_inventory_sha256",
+      "runtime_inventory_sha256",
+    ], `${device} internal provenance manifest`);
+    const sourceCommit = exactCommit(
+      receipt.values.get("source_commit"), `${device} source commit`);
+    const passwordsCommit = exactCommit(
+      deployment.values.get("helium_passwords_commit"),
+      `${device} Passwords commit`,
+    );
+    const coreCommit = exactCommit(
+      receipt.values.get("helium_core_commit"), `${device} core commit`);
+    const chromiumCommit = exactCommit(
+      receipt.values.get("chromium_commit"), `${device} Chromium commit`);
+    const platformCommit = exactCommit(
+      receipt.values.get("platform_commit"), `${device} platform commit`);
+    const depotToolsCommit = exactCommit(
+      manifest.values.get("depot_tools_commit"),
+      `${device} depot_tools commit`,
+    );
+    const bundle = await regularFile(
+      receipt.values.get("bundle"), `${device} returned Linux archive`,
+      16 * 1024 * 1024 * 1024,
+    );
+    const bundleSHA256 = await sha256File(bundle.resolved);
+    const manifestSHA256 = sha256(manifest.raw);
+    if (deployment.values.get("schema_version") !== "1" ||
+        deployment.values.get("target") !== spec.target ||
+        deployment.values.get("artifact_sha256") !== bundleSHA256 ||
+        deployment.values.get("artifact_sha256") !==
+          receipt.values.get("bundle_sha256") ||
+        deployment.values.get("artifact_size") !== String(bundle.info.size) ||
+        deployment.values.get("provenance_sha256") !== manifestSHA256 ||
+        deployment.values.get("provenance_sha256") !==
+          receipt.values.get("provenance_manifest_sha256") ||
+        deployment.values.get("helium_sync_commit") !== sourceCommit ||
+        deployment.values.get("helium_core_commit") !== coreCommit ||
+        deployment.values.get("chromium_commit") !== chromiumCommit ||
+        deployment.values.get("build_job_id") !==
+          manifest.values.get("build_job_id") ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(
+          deployment.values.get("build_job_id") || "") ||
+        !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/.test(
+          deployment.values.get("created_at") || "") ||
+        manifest.values.get("schema_version") !== "3" ||
+        manifest.values.get("product") !== "helium-sync" ||
+        manifest.values.get("platform") !== "linux" ||
+        manifest.values.get("arch") !== spec.arch ||
+        manifest.values.get("target") !== spec.target ||
+        manifest.values.get("source_commit") !== sourceCommit ||
+        manifest.values.get("helium_sync_commit") !== sourceCommit ||
+        manifest.values.get("helium_passwords_commit") !== passwordsCommit ||
+        manifest.values.get("helium_core_commit") !== coreCommit ||
+        manifest.values.get("chromium_commit") !== chromiumCommit ||
+        manifest.values.get("chromium_version") !==
+          receipt.values.get("chromium_version") ||
+        manifest.values.get("platform_commit") !== platformCommit ||
+        depotToolsCommit !== LINUX_DEPOT_TOOLS_COMMIT ||
+        !HASH.test(manifest.values.get("source_tree") || "") ||
+        !["gn_args_sha256", "nix_provenance_sha256",
+          "patch_inventory_sha256", "runtime_inventory_sha256"].every(
+          field => HASH.test(manifest.values.get(field) || "")) ||
+        !/^https:\/\/[^ \t\r\n]+$/.test(
+          manifest.values.get("platform_repository") || "")) {
+      throw new Error(`${device} deployment receipt or provenance is inconsistent`);
+    }
     admission = {
       kind: "linux-runtime-receipt",
       receipt_path: receipt.file.resolved,
       receipt_sha256: sha256(receipt.raw),
+      deployment_receipt_path: deployment.file.resolved,
+      deployment_receipt_sha256: sha256(deployment.raw),
+      provenance_manifest_path: manifest.file.resolved,
+      provenance_manifest_sha256: manifestSHA256,
+      returned_archive_path: bundle.resolved,
+      returned_archive_sha256: bundleSHA256,
+      build_job_id: manifest.values.get("build_job_id"),
+      depot_tools_commit: depotToolsCommit,
       inventory_path: null,
       inventory_sha256: null,
     };
     train = {
-      source_commit: exactCommit(
-        receipt.values.get("source_commit"), `${device} source commit`),
-      core_commit: exactCommit(
-        receipt.values.get("helium_core_commit"), `${device} core commit`),
-      chromium_commit: exactCommit(
-        receipt.values.get("chromium_commit"), `${device} Chromium commit`),
+      source_commit: sourceCommit,
+      passwords_commit: passwordsCommit,
+      core_commit: coreCommit,
+      chromium_commit: chromiumCommit,
       chromium_version: receipt.values.get("chromium_version"),
     };
   } else {
@@ -244,11 +383,20 @@ async function describeAdmittedDevice(run, device) {
       kind: "prepared-android-inventory",
       receipt_path: metadata.file.resolved,
       receipt_sha256: sha256(metadata.raw),
+      deployment_receipt_path: null,
+      deployment_receipt_sha256: null,
+      provenance_manifest_path: null,
+      provenance_manifest_sha256: null,
+      returned_archive_path: null,
+      returned_archive_sha256: null,
+      build_job_id: null,
+      depot_tools_commit: null,
       inventory_path: inventory.resolved,
       inventory_sha256: sha256(inventoryRaw),
     };
     train = {
       source_commit: source.value,
+      passwords_commit: null,
       core_commit: core.value,
       chromium_commit: chromium.value,
       chromium_version: metadata.values.get("version_name"),
@@ -288,14 +436,42 @@ async function describeAdmittedDevice(run, device) {
 function requireOneTrain(trains) {
   const expected = trains.d;
   exactKeys(expected, [
-    "source_commit", "core_commit", "chromium_commit", "chromium_version",
+    "source_commit", "passwords_commit", "core_commit", "chromium_commit",
+    "chromium_version",
   ], "source train");
+  exactCommit(expected.passwords_commit, "shared Passwords commit");
   for (const device of DEVICES) {
-    if (!equalJSON(trains[device], expected)) {
+    const actual = trains[device];
+    exactKeys(actual, Object.keys(expected), `${device} source train`);
+    if (actual.source_commit !== expected.source_commit ||
+        actual.core_commit !== expected.core_commit ||
+        actual.chromium_commit !== expected.chromium_commit ||
+        actual.chromium_version !== expected.chromium_version ||
+        (actual.passwords_commit !== null &&
+          actual.passwords_commit !== expected.passwords_commit)) {
       throw new Error(`${device} artifact is not on the shared source train`);
     }
   }
   return expected;
+}
+
+function requireOneLinuxRuntime(devices) {
+  const fields = [
+    "artifact_sha256", "returned_archive_sha256",
+    "deployment_receipt_sha256", "provenance_manifest_sha256",
+    "build_job_id", "depot_tools_commit",
+  ];
+  for (const field of fields) {
+    const dValue = field === "artifact_sha256"
+      ? devices.d.artifact_sha256
+      : devices.d.admission[field];
+    const daValue = field === "artifact_sha256"
+      ? devices.da.artifact_sha256
+      : devices.da.admission[field];
+    if (dValue !== daValue) {
+      throw new Error(`d and da do not use one exact returned Linux runtime: ${field}`);
+    }
+  }
 }
 
 export async function initializeThreeClientRun({
@@ -351,6 +527,7 @@ export async function initializeThreeClientRun({
     devices[device] = admitted.descriptor;
     trains[device] = admitted.train;
   }
+  requireOneLinuxRuntime(devices);
   const manifest = {
     schema_version: SCHEMA_VERSION,
     root,
@@ -389,7 +566,8 @@ async function loadManifest(runRoot) {
     throw new Error("three-client run metadata is invalid");
   }
   exactKeys(manifest.source_train, [
-    "source_commit", "core_commit", "chromium_commit", "chromium_version",
+    "source_commit", "passwords_commit", "core_commit", "chromium_commit",
+    "chromium_version",
   ], "shared source train");
   const trains = {};
   for (const device of DEVICES) {
@@ -402,6 +580,10 @@ async function loadManifest(runRoot) {
     ], `${device} device admission`);
     exactKeys(recorded.admission, [
       "kind", "receipt_path", "receipt_sha256",
+      "deployment_receipt_path", "deployment_receipt_sha256",
+      "provenance_manifest_path", "provenance_manifest_sha256",
+      "returned_archive_path", "returned_archive_sha256", "build_job_id",
+      "depot_tools_commit",
       "inventory_path", "inventory_sha256",
     ], `${device} admission files`);
     if (recorded.native_run !== nativeRunPath(root, device) ||
@@ -420,6 +602,7 @@ async function loadManifest(runRoot) {
     }
     trains[device] = current.train;
   }
+  requireOneLinuxRuntime(manifest.devices);
   if (!equalJSON(requireOneTrain(trains), manifest.source_train)) {
     throw new Error("shared artifact source train changed");
   }
@@ -721,11 +904,17 @@ export function validateBrowserEvidence(value, manifest) {
       "native_ui_receipt_sha256", "role", "phase_before", "phase_after",
       "initial_sync", "unchanged_restart",
     ], "browser device evidence");
-    exactKeys(entry.admission_sha256, ["receipt", "inventory"],
+    exactKeys(entry.admission_sha256, [
+      "receipt", "deployment_receipt", "provenance_manifest",
+      "returned_archive", "inventory",
+    ],
       `${entry.device} browser admission hashes`);
     const recorded = manifest.devices[entry.device];
     const expectedAdmission = recorded && {
       receipt: recorded.admission.receipt_sha256,
+      deployment_receipt: recorded.admission.deployment_receipt_sha256,
+      provenance_manifest: recorded.admission.provenance_manifest_sha256,
+      returned_archive: recorded.admission.returned_archive_sha256,
       inventory: recorded.admission.inventory_sha256,
     };
     if (!DEVICES.includes(entry.device) || devices.has(entry.device) ||
@@ -746,10 +935,21 @@ export function validateBrowserEvidence(value, manifest) {
     if (entry.device === "oneplus") {
       requireHash(entry.admission_sha256.inventory,
         "OnePlus admission inventory hash");
-      if (entry.profile_marker_sha256 !== null) {
-        throw new Error("OnePlus browser evidence invented a filesystem profile");
+      if (entry.admission_sha256.deployment_receipt !== null ||
+          entry.admission_sha256.provenance_manifest !== null ||
+          entry.admission_sha256.returned_archive !== null ||
+          entry.profile_marker_sha256 !== null) {
+        throw new Error(
+          "OnePlus browser evidence invented a Linux admission or filesystem profile",
+        );
       }
     } else {
+      requireHash(entry.admission_sha256.deployment_receipt,
+        `${entry.device} deployment receipt hash`);
+      requireHash(entry.admission_sha256.provenance_manifest,
+        `${entry.device} provenance manifest hash`);
+      requireHash(entry.admission_sha256.returned_archive,
+        `${entry.device} returned archive hash`);
       requireHash(entry.profile_marker_sha256,
         `${entry.device} profile marker hash`);
       if (entry.admission_sha256.inventory !== null) {
@@ -783,22 +983,22 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
     "schema_version", "source_train", "evidence_scope", "transport",
     "enrollment_order", "join_cursors",
     "initial_publications", "restarts", "password", "cookies",
-    "counter_probe", "journal",
+    "counter_probe", "journal", "logs",
   ], "server evidence");
   if (value.schema_version !== SCHEMA_VERSION ||
       !equalJSON(value.source_train, manifest.source_train) ||
-      value.evidence_scope !== "disposable-tls-service" ||
+      value.evidence_scope !== "disposable-tailnet-http-service" ||
       !equalJSON(value.enrollment_order, DEVICES)) {
     throw new Error("server evidence identity or enrollment order is invalid");
   }
   exactKeys(value.transport, [
-    "tls", "network", "device_auth", "payload_visibility",
+    "endpoint", "network", "device_auth", "payload_visibility",
   ], "server transport");
-  if (value.transport.tls !== "verified" ||
-      value.transport.network !== "tailscale" ||
-      value.transport.device_auth !== "per-device" ||
-      value.transport.payload_visibility !== "ciphertext-only") {
-    throw new Error("server transport did not use authenticated TLS/E2EE");
+  requireTailnetHTTP(value.transport.endpoint, "server endpoint");
+  if (value.transport.network !== "tailscale-private" ||
+      value.transport.device_auth !== "per-device-bearer" ||
+      value.transport.payload_visibility !== "readable-private-journal") {
+    throw new Error("server transport did not use the admitted Tailnet HTTP boundary");
   }
   exactKeys(value.join_cursors, JOINERS, "server join cursors");
   exactKeys(value.initial_publications, DEVICES, "server initial publications");
@@ -916,13 +1116,23 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
     throw new Error("server did not prove 64-bit sequence handling");
   }
   exactKeys(value.journal, [
-    "sha256", "tabs_records", "plaintext_detected", "secret_fields_logged",
+    "sha256", "schema_version", "tabs_records", "payload_storage",
+    "bearer_tokens_present", "private_mode",
   ], "server journal evidence");
   requireHash(value.journal.sha256, "server journal hash");
   if (value.journal.tabs_records !== "0" ||
-      value.journal.plaintext_detected !== false ||
-      value.journal.secret_fields_logged !== false) {
-    throw new Error("server journal contains tabs, plaintext, or logged secrets");
+      value.journal.schema_version !== "2" ||
+      value.journal.payload_storage !== "readable" ||
+      value.journal.bearer_tokens_present !== false ||
+      value.journal.private_mode !== true) {
+    throw new Error("server journal violates the private readable schema-2 boundary");
+  }
+  exactKeys(value.logs, [
+    "password_values_detected", "bearer_tokens_detected",
+  ], "server log evidence");
+  if (value.logs.password_values_detected !== false ||
+      value.logs.bearer_tokens_detected !== false) {
+    throw new Error("server logs contain a password value or bearer token");
   }
 }
 
@@ -994,6 +1204,9 @@ function admissionHashes(manifest) {
     const admission = manifest.devices[device].admission;
     return [device, {
       receipt: admission.receipt_sha256,
+      deployment_receipt: admission.deployment_receipt_sha256,
+      provenance_manifest: admission.provenance_manifest_sha256,
+      returned_archive: admission.returned_archive_sha256,
       inventory: admission.inventory_sha256,
     }];
   }));

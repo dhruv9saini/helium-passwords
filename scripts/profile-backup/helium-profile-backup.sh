@@ -692,6 +692,35 @@ verify_generation() (
   done
 )
 
+verify_selected_generation() (
+  local index=$1 generation=$2 scratch=$3 dir archive receipt inventory hash size
+  valid_generation "$generation" || die "invalid generation"
+  require_ssh_material
+  verify_destination_host "$index"
+  dir=$(generation_dir "$index" "$generation")
+  archive=$(archive_path "$index" "$generation")
+  receipt=$(receipt_path "$index" "$generation")
+  destination_run "$index" test -d "$dir"
+  destination_run "$index" test ! -L "$dir"
+  inventory=$(destination_run "$index" find "$dir" -mindepth 1 -maxdepth 1 \
+    -printf '%f\n' | sort)
+  [[ "$inventory" == $'profile.tar.zst\nreceipt.env' ]] ||
+    die "generation inventory is invalid at ${PROFILE_DEST_IDS[index]}"
+  destination_run "$index" test -f "$archive"
+  destination_run "$index" test ! -L "$archive"
+  destination_run "$index" test -f "$receipt"
+  destination_run "$index" test ! -L "$receipt"
+  destination_copy_from "$index" "$receipt" "$scratch/selected-receipt.env"
+  read_receipt "$scratch/selected-receipt.env"
+  [[ "${RECEIPT[generation]}" == "$generation" ]] ||
+    die "receipt generation mismatch"
+  hash=$(destination_sha256 "$index" "$archive")
+  size=$(destination_size "$index" "$archive")
+  [[ "$hash" == "${RECEIPT[archive_sha256]}" &&
+    "$size" == "${RECEIPT[archive_size]}" ]] ||
+    die "archive checksum or size mismatch at ${PROFILE_DEST_IDS[index]}"
+)
+
 destination_index() {
   local wanted=$1 index
   for index in 0 1; do
@@ -828,7 +857,6 @@ restore_to_disposable() {
     die "restore parent lacks the disposable marker"
   [[ "$(stat -c %a -- "$parent")" == 700 ]] ||
     die "restore parent must have mode 0700"
-  verify_generation "$generation"
   index=$(destination_index "$wanted")
   scratch=$(mktemp -d "$parent/.profile-restore.XXXXXX")
   chmod 700 "$scratch"
@@ -840,6 +868,7 @@ restore_to_disposable() {
     return "$result"
   }
   trap cleanup_restore EXIT
+  verify_selected_generation "$index" "$generation" "$scratch"
   destination_copy_from "$index" "$(receipt_path "$index" "$generation")" \
     "$scratch/receipt.env"
   read_receipt "$scratch/receipt.env"
