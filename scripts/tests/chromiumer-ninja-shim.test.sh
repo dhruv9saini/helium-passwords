@@ -31,6 +31,37 @@ chromedriver
 EOF
 )" ]
 
+for spelling in '-j 1' '-j1' '--jobs 1' '--jobs=1'; do
+    read -r -a job_arguments <<<"${spelling}"
+    HELIUM_BUILD_JOBS=1 HELIUM_REAL_NINJA="${fake_ninja}" \
+        HELIUM_NINJA_TEST_ARGUMENTS="${arguments}" \
+        "${shim}" "${job_arguments[@]}" -C out/Default chrome chromedriver
+    [ "$(cat "${arguments}")" = "$(cat <<'EOF'
+-j
+1
+-C
+out/Default
+chrome
+chromedriver
+EOF
+)" ]
+done
+
+HELIUM_BUILD_JOBS=1 HELIUM_REAL_NINJA="${fake_ninja}" \
+    HELIUM_NINJA_TEST_ARGUMENTS="${arguments}" \
+    "${shim}" -C out/Default -- -j1 --jobs=8 chrome
+[ "$(cat "${arguments}")" = "$(cat <<'EOF'
+-j
+1
+-C
+out/Default
+--
+-j1
+--jobs=8
+chrome
+EOF
+)" ]
+
 if HELIUM_BUILD_JOBS=2 HELIUM_REAL_NINJA="${fake_ninja}" \
     HELIUM_NINJA_TEST_ARGUMENTS="${arguments}" \
     "${shim}" -C out/Default chrome >/dev/null 2>&1; then
@@ -41,6 +72,12 @@ if HELIUM_BUILD_JOBS=1 HELIUM_REAL_NINJA="${fake_ninja}" \
     HELIUM_NINJA_TEST_ARGUMENTS="${arguments}" \
     "${shim}" -j8 -C out/Default chrome >/dev/null 2>&1; then
     echo "Ninja shim accepted a caller job override" >&2
+    exit 1
+fi
+if HELIUM_BUILD_JOBS=1 HELIUM_REAL_NINJA="${fake_ninja}" \
+    HELIUM_NINJA_TEST_ARGUMENTS="${arguments}" \
+    "${shim}" -j1 --jobs=1 -C out/Default chrome >/dev/null 2>&1; then
+    echo "Ninja shim accepted duplicate caller job overrides" >&2
     exit 1
 fi
 if HELIUM_BUILD_JOBS=1 HELIUM_REAL_NINJA="${shim}" \

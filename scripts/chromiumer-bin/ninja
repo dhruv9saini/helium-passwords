@@ -15,13 +15,45 @@ set -euo pipefail
     exit 1
 }
 
-for argument in "$@"; do
-    case "${argument}" in
-        -j|-j*|--jobs|--jobs=*)
-            echo "Chromiumer Ninja owns the fixed one-job limit" >&2
-            exit 1
+job_override_seen=false
+arguments=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --)
+            arguments+=("$@")
+            break
+            ;;
+        -j|--jobs)
+            [ "$#" -ge 2 ] || {
+                echo "Chromiumer Ninja received a job option without a value" >&2
+                exit 1
+            }
+            job_value=$2
+            shift 2
+            ;;
+        -j*)
+            job_value=${1#-j}
+            shift
+            ;;
+        --jobs=*)
+            job_value=${1#--jobs=}
+            shift
+            ;;
+        *)
+            arguments+=("$1")
+            shift
+            continue
             ;;
     esac
+    [ "${job_override_seen}" = false ] || {
+        echo "Chromiumer Ninja rejects multiple job overrides" >&2
+        exit 1
+    }
+    [ "${job_value}" = 1 ] || {
+        echo "Chromiumer Ninja requires every job override to equal 1" >&2
+        exit 1
+    }
+    job_override_seen=true
 done
 
-exec "${HELIUM_REAL_NINJA}" -j "${HELIUM_BUILD_JOBS}" "$@"
+exec "${HELIUM_REAL_NINJA}" -j 1 "${arguments[@]}"
