@@ -123,7 +123,10 @@ recipient, or destination at a time. Acceptance fails if one injected fault
 damages a sibling mechanism or if any restore tool targets a live profile.
 The orchestration and evidence path supports desktop plus the exact
 checksum-admitted `computer.helium.sync.test` Android package. Android stages
-only round-trip-verified synthetic drill profiles, launches through the sole
-disposable boundary, and binds clean CDP close or same-UID crash evidence to
-the exact APK and sandbox path. Runtime health remains closed until the real
-returned APK passes all three mechanisms and both restore destinations.
+only round-trip-verified synthetic drill profiles below real, fully resolved
+package paths and binds the exact local marker or restore receipt before any
+admitted removal. It launches through the sole disposable boundary and binds
+clean CDP close or same-UID crash evidence to the exact APK and sandbox path.
+Runtime health requires one Android package, APK hash, and source-archive
+generation across every mechanism and remains closed until that real returned
+APK passes all three mechanisms and both restore destinations.

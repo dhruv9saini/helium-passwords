@@ -350,6 +350,7 @@ function stageAndroidProfile(common, mode) {
     "device_profile",
     "apk_sha256",
     "profile_tree_sha256",
+    "binding_sha256",
   ]), "Android tab profile stage");
   if (fields.get("operation") !== "stage" ||
       fields.get("package") !== ANDROID_PACKAGE ||
@@ -360,18 +361,18 @@ function stageAndroidProfile(common, mode) {
   }
   const deviceProfile = fields.get("device_profile");
   const dataPrefix = `/data/user/0/${ANDROID_PACKAGE}`;
-  const legacyPrefix = `/data/data/${ANDROID_PACKAGE}`;
   const expectedSuffix = mode === "native"
     ? "/app_chrome"
     : `/helium-tab-runtime-${mode}/${path.basename(common.profileDir)}`;
-  if (![`${dataPrefix}${expectedSuffix}`, `${legacyPrefix}${expectedSuffix}`]
-    .includes(deviceProfile)) {
+  if (deviceProfile !== `${dataPrefix}${expectedSuffix}`) {
     fail("Android tab profile stage returned an unexpected device path");
   }
   return {
     deviceProfile,
     profileTreeSHA256: validSHA256(fields.get("profile_tree_sha256"),
       "staged Android profile SHA-256"),
+    bindingSHA256: validSHA256(fields.get("binding_sha256"),
+      "staged Android marker or receipt SHA-256"),
     receiptSHA256: sha256(Buffer.from(output)),
   };
 }
@@ -1336,7 +1337,10 @@ async function runFullProfile(common, expectedEvidenceDirectory, signingKey) {
       expectedEvidence.value.profile !== common.profile ||
       expectedEvidence.value.browser.sha256 !== common.browserSHA256 ||
       expectedEvidence.value.platform !== common.platform ||
-      expectedEvidence.value.package_id !== common.packageID) {
+      expectedEvidence.value.package_id !== common.packageID ||
+      (common.platform === "android" &&
+       expectedEvidence.value.browser.source_archive_sha256 !==
+         common.acceptance.sourceArchiveSHA256)) {
     fail("full-profile expectation must be an authenticated matching native proof");
   }
   const receiptPath = path.join(common.profileDir, PROFILE_RECEIPT);
@@ -1545,6 +1549,7 @@ async function main(command, options) {
     Object.assign(profileEvidence, {
       device_path: result.androidStage.deviceProfile,
       staged_profile_sha256: result.androidStage.profileTreeSHA256,
+      binding_sha256: result.androidStage.bindingSHA256,
       adapter_receipt_sha256: result.androidStage.receiptSHA256,
     });
   }

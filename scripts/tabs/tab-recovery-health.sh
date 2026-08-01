@@ -40,6 +40,7 @@ results=()
 status_result() {
 	local mechanism=$1 maximum_age=$2 file
 	local line key value mode owner completed state generation
+	local platform package_id browser_sha256 source_generation
 	local version proof_device proof_profile proof_mechanism reason=healthy
 	file="$status_root/$mechanism.status"
 	declare -A fields=()
@@ -60,7 +61,7 @@ status_result() {
 			key=${line%%=*}
 			value=${line#*=}
 			case "$key" in
-				version|mechanism|state|source_device|profile|completed_unix|generation|evidence|destination_a_host|destination_b_host|archive_sha256_a|archive_sha256_b|archive_size_a|archive_size_b) ;;
+				version|mechanism|state|platform|package_id|browser_sha256|source_generation|source_device|profile|completed_unix|generation|evidence) ;;
 				*) reason=unknown_field; break ;;
 			esac
 			if [ -n "${fields[$key]+set}" ] || [ -z "$value" ]; then
@@ -75,13 +76,23 @@ status_result() {
 		version=${fields[version]:-}
 		proof_mechanism=${fields[mechanism]:-}
 		state=${fields[state]:-}
+		platform=${fields[platform]:-}
+		package_id=${fields[package_id]:-}
+		browser_sha256=${fields[browser_sha256]:-}
+		source_generation=${fields[source_generation]:-}
 		proof_device=${fields[source_device]:-}
 		proof_profile=${fields[profile]:-}
 		completed=${fields[completed_unix]:-}
 		generation=${fields[generation]:-${fields[evidence]:-}}
-		if [ "$version" != 1 ] || [ "$proof_mechanism" != "$mechanism" ] ||
+		if [ "$version" != 2 ] || [ "$proof_mechanism" != "$mechanism" ] ||
 			[ "$state" != healthy ] || [ "$proof_device" != "$source_device" ] ||
 			[ "$proof_profile" != "$profile" ] ||
+			! [[ "$platform" =~ ^(desktop|android)$ ]] ||
+			{ [ "$platform" = desktop ] && [ "$package_id" != desktop ]; } ||
+			{ [ "$platform" = android ] &&
+			  [ "$package_id" != computer.helium.sync.test ]; } ||
+			! [[ "$browser_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+			! [[ "$source_generation" =~ ^[0-9a-f]{64}$ ]] ||
 			! [[ "$completed" =~ ^[0-9]+$ ]] ||
 			[ -z "$generation" ]; then
 			reason=invalid_proof
@@ -96,8 +107,14 @@ status_result() {
 		--arg mechanism "$mechanism" \
 		--arg state "$([ "$reason" = healthy ] && printf healthy || printf unhealthy)" \
 		--arg reason "$reason" \
+		--arg platform "${platform:-}" \
+		--arg package_id "${package_id:-}" \
+		--arg browser_sha256 "${browser_sha256:-}" \
+		--arg source_generation "${source_generation:-}" \
 		--argjson maximum_age_seconds "$maximum_age" \
 		'{mechanism:$mechanism,state:$state,reason:$reason,
+		  runtime_identity:{platform:$platform,package_id:$package_id,
+		    browser_sha256:$browser_sha256,source_generation:$source_generation},
 		  maximum_age_seconds:$maximum_age_seconds}'
 }
 
@@ -106,7 +123,8 @@ for index in "${!mechanisms[@]}"; do
 done
 
 healthy=$(printf '%s\n' "${results[@]}" |
-	jq -s 'all(.state == "healthy")')
+	jq -s 'all(.state == "healthy") and
+	  ([.[].runtime_identity] | unique | length) == 1')
 printf '%s\n' "${results[@]}" |
 	jq -sc \
 		--arg source_device "$source_device" \

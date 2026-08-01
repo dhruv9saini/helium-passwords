@@ -270,10 +270,14 @@ and native receipt into the retained local prepared profile, where
 source binding before the second launch.
 
 Android runtime evidence adds acceptance/source commits, APK/version identity,
-ADB serial, fixed socket, sandbox path, staged profile fingerprint, adapter
-receipt hash, and the exact runtime/profile-adapter/browser-boundary source
-hashes. Health emission still has exactly three mechanisms; neutral and
-full-profile each still require two distinct source destinations. Remove only
+ADB serial, fixed socket, sandbox path, staged profile fingerprint, exact local
+marker-or-restore-receipt hash, adapter receipt hash, and the exact
+runtime/profile-adapter/browser-boundary source hashes. Staging and removal
+require the package parent and profile to resolve to their literal real paths;
+removal also requires the device marker or receipt to match the retained local
+binding byte for byte. Health emission still has exactly three mechanisms,
+requires one platform/package/APK/source generation across all three, and keeps
+the two distinct-source requirements for neutral and full-profile. Remove only
 the exact marked synthetic paths with `android-tab-profile.sh remove` after all
 backup, fault-injection, evidence, and status gates finish. The adapter never
 clears or uninstalls a package.

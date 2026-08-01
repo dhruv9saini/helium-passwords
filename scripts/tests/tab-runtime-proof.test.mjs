@@ -10,6 +10,8 @@ const repo = path.resolve(new URL("../..", import.meta.url).pathname);
 const runtime = path.join(repo, "scripts/tabs/tab-runtime-proof.mjs");
 const status = path.join(repo, "scripts/tabs/tab-proof-status.mjs");
 const health = path.join(repo, "scripts/tabs/tab-recovery-health.sh");
+const androidProfile = path.join(repo,
+  "scripts/tabs/android-tab-profile.sh");
 
 function run(file, args, options = {}) {
   const result = spawnSync(file, args, {
@@ -247,6 +249,7 @@ function runtimeCommon(browser, browserHash, profile, evidence, key) {
 test("runtime proof source is observation-only and fail-closed", () => {
   const runner = fs.readFileSync(runtime, "utf8");
   const emitter = fs.readFileSync(status, "utf8");
+  const adapter = fs.readFileSync(androidProfile, "utf8");
   assert.match(runner, /"--remote-debugging-pipe"/);
   assert.doesNotMatch(runner, /remote-debugging-port|Network\.setCookie|CookieManager|PasswordStore|HeliumSyncClient|Latest\(|Push\(/);
   assert.match(runner, /packageID === "computer\.helium\.sync\.test"/);
@@ -256,6 +259,10 @@ test("runtime proof source is observation-only and fail-closed", () => {
     /mechanism === "chromium-native-session" \? 1 : 2/);
   assert.match(emitter, /destinations\.size !== 2/);
   assert.match(emitter, /readAuthenticatedEvidence/);
+  assert.match(emitter, /runtimeSourceGeneration/);
+  assert.match(adapter, /binding_sha256=/);
+  assert.match(adapter, /readlink -f '\$device_parent'/);
+  assert.match(adapter, /device_binding_sha256/);
 });
 
 test("three runtime mechanisms emit health only from authenticated drills",
@@ -463,6 +470,34 @@ test("three runtime mechanisms emit health only from authenticated drills",
         "neutral-topology",
         "full-profile",
       ]);
+
+      const fullStatus = path.join(statusRoot, "full-profile.status");
+      const originalFullStatus = fs.readFileSync(fullStatus, "utf8");
+      writePrivate(fullStatus, originalFullStatus
+        .replace("platform=desktop", "platform=android")
+        .replace("package_id=desktop",
+          "package_id=computer.helium.sync.test"));
+      const mixedPlatform = JSON.parse(run(health,
+        [statusRoot, "d", "default"]));
+      assert.equal(mixedPlatform.healthy, false);
+
+      const differentBrowserHash = browserHash === "0".repeat(64)
+        ? "1".repeat(64)
+        : "0".repeat(64);
+      writePrivate(fullStatus, originalFullStatus
+        .replace(`browser_sha256=${browserHash}`,
+          `browser_sha256=${differentBrowserHash}`));
+      const mixedBrowser = JSON.parse(run(health,
+        [statusRoot, "d", "default"]));
+      assert.equal(mixedBrowser.healthy, false);
+
+      writePrivate(fullStatus, originalFullStatus
+        .replace(`source_generation=${browserHash}`,
+          `source_generation=${differentBrowserHash}`));
+      const mixedSourceGeneration = JSON.parse(run(health,
+        [statusRoot, "d", "default"]));
+      assert.equal(mixedSourceGeneration.healthy, false);
+      writePrivate(fullStatus, originalFullStatus);
 
       const tampered = path.join(evidenceRoot, "proof-tampered");
       fs.cpSync(nativeEvidence, tampered, {recursive: true});

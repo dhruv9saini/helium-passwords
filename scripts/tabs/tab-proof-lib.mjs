@@ -441,6 +441,7 @@ export function validateEvidence(value) {
     profileKeys.push(
       "device_path",
       "staged_profile_sha256",
+      "binding_sha256",
       "adapter_receipt_sha256",
     );
   }
@@ -460,6 +461,8 @@ export function validateEvidence(value) {
     }
     validSHA256(value.disposable_profile.staged_profile_sha256,
       "Android staged profile SHA-256");
+    validSHA256(value.disposable_profile.binding_sha256,
+      "Android staged profile marker or receipt SHA-256");
     validSHA256(value.disposable_profile.adapter_receipt_sha256,
       "Android profile adapter receipt SHA-256");
   }

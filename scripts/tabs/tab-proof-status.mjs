@@ -115,11 +115,21 @@ function verify(options) {
   const evidence = readAuthenticatedEvidence(directories[0], key);
   console.log(JSON.stringify({
     mechanism: evidence.value.mechanism,
+    platform: evidence.value.platform,
+    package_id: evidence.value.package_id,
+    browser_sha256: evidence.value.browser.sha256,
+    source_generation: runtimeSourceGeneration(evidence.value),
     source_device: evidence.value.source_device,
     profile: evidence.value.profile,
     generation: evidence.value.generation,
     evidence_sha256: evidence.sha256,
   }));
+}
+
+function runtimeSourceGeneration(value) {
+  return value.platform === "android"
+    ? value.browser.source_archive_sha256
+    : value.browser.sha256;
 }
 
 function emit(options) {
@@ -147,6 +157,7 @@ function emit(options) {
     fail(`${mechanism} requires exactly ${requiredCount} evidence director${requiredCount === 1 ? "y" : "ies"}`);
   }
   const first = evidences[0].value;
+  const sourceGeneration = runtimeSourceGeneration(first);
   for (const evidence of evidences) {
     const value = evidence.value;
     if (value.mechanism !== mechanism ||
@@ -154,6 +165,7 @@ function emit(options) {
         value.profile !== profile ||
         value.generation !== first.generation ||
         value.browser.sha256 !== first.browser.sha256 ||
+        runtimeSourceGeneration(value) !== sourceGeneration ||
         value.platform !== first.platform ||
         value.package_id !== first.package_id ||
         JSON.stringify(value.expected_topology) !==
@@ -190,9 +202,13 @@ function emit(options) {
   const evidenceHash = sha256(Buffer.from(
     `${evidences.map(evidence => evidence.sha256).sort().join("\n")}\n`));
   const status = [
-    "version=1",
+    "version=2",
     `mechanism=${mechanism}`,
     "state=healthy",
+    `platform=${first.platform}`,
+    `package_id=${first.package_id}`,
+    `browser_sha256=${first.browser.sha256}`,
+    `source_generation=${sourceGeneration}`,
     `source_device=${device}`,
     `profile=${profile}`,
     `completed_unix=${completed}`,

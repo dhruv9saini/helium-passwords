@@ -50,7 +50,23 @@ done
   exit 1
 }
 acceptance=$(realpath -e -- "$acceptance_input")
-profile=$(realpath -e -- "$profile_input")
+[[ "$profile_input" == /* &&
+    "$(realpath -ms -- "$profile_input")" == "$profile_input" ]] || {
+  echo "local tab profile path must be absolute and lexically normalized" >&2
+  exit 1
+}
+parent=$(dirname -- "$profile_input")
+[[ -d "$parent" && ! -L "$parent" &&
+    "$(realpath -e -- "$parent")" == "$parent" ]] || {
+  echo "local tab profile parent must be a real resolved directory" >&2
+  exit 1
+}
+[[ -d "$profile_input" && ! -L "$profile_input" &&
+    "$(realpath -e -- "$profile_input")" == "$profile_input" ]] || {
+  echo "local tab profile must be a real resolved directory" >&2
+  exit 1
+}
+profile=$profile_input
 [[ -f "$acceptance/acceptance.env" &&
     ! -L "$acceptance/acceptance.env" &&
     -f "$acceptance/PACKAGE_SHA256SUMS" &&
@@ -81,12 +97,13 @@ while IFS= read -r -d '' link; do
   }
 done < <(find "$profile" -type l -print0)
 
-parent=$(dirname "$profile")
 case "$mode" in
   native)
     expected_parent_marker=.helium-tab-runtime-proof-root-v1
     expected_parent_content=helium-tab-runtime-proof-root-v1
-    [[ "$(<"$profile/.helium-tab-runtime-native-profile-v1")" == \
+    binding_file=.helium-tab-runtime-native-profile-v1
+    [[ -f "$profile/$binding_file" && ! -L "$profile/$binding_file" &&
+        "$(<"$profile/$binding_file")" == \
         helium-tab-runtime-native-profile-v1 ]] || {
       echo "native tab profile marker is invalid" >&2
       exit 1
@@ -95,7 +112,9 @@ case "$mode" in
   neutral)
     expected_parent_marker=.helium-tabs-disposable-root-v1
     expected_parent_content=helium-tabs-disposable-root-v1
-    [[ "$(<"$profile/.helium-tabs-disposable-browser-profile-v2")" == \
+    binding_file=.helium-tabs-disposable-browser-profile-v2
+    [[ -f "$profile/$binding_file" && ! -L "$profile/$binding_file" &&
+        "$(<"$profile/$binding_file")" == \
         helium-tabs-disposable-browser-profile-v2 ]] || {
       echo "neutral tab profile marker is invalid" >&2
       exit 1
@@ -104,8 +123,8 @@ case "$mode" in
   full-profile)
     expected_parent_marker=.helium-disposable-profile-restore-root
     expected_parent_content=
-    [[ -f "$profile/.helium-profile-restore-receipt.env" &&
-        ! -L "$profile/.helium-profile-restore-receipt.env" ]] || {
+    binding_file=.helium-profile-restore-receipt.env
+    [[ -f "$profile/$binding_file" && ! -L "$profile/$binding_file" ]] || {
       echo "full-profile restore receipt is missing or unsafe" >&2
       exit 1
     }
@@ -117,6 +136,7 @@ esac
   echo "local tab profile parent marker is invalid" >&2
   exit 1
 }
+local_binding_sha256=$(sha256sum "$profile/$binding_file" | cut -d' ' -f1)
 
 profile_fingerprint() {
   local directory=$1
@@ -154,6 +174,15 @@ data_dir=$(sed -n 's/^[[:space:]]*dataDir=//p' <<<"$package_dump" | head -n 1)
   echo "installed disposable package has an unexpected dataDir" >&2
   exit 1
 }
+resolved_data_dir=$(
+  "${adb_command[@]}" exec-out run-as "$package" /system/bin/readlink -f \
+    "$data_dir" | tr -d '\r'
+)
+[[ "$resolved_data_dir" == "/data/user/0/$package" ]] || {
+  echo "disposable package dataDir does not resolve to its exact sandbox" >&2
+  exit 1
+}
+data_dir=$resolved_data_dir
 
 slug=$(basename "$profile")
 if [[ "$mode" == native ]]; then
@@ -177,8 +206,9 @@ case "$operation" in
     cleanup_stage() {
       local result=$?
       if [[ "$result" -ne 0 && "$device_created" == true ]]; then
-        "${adb_command[@]}" exec-out run-as "$package" rm -rf -- \
-          "$device_profile" >/dev/null 2>&1 || true
+        "${adb_command[@]}" exec-out run-as "$package" sh -c \
+          "test -d '$device_parent' && test ! -L '$device_parent' && test \"\$(readlink -f '$device_parent')\" = '$device_parent' && test -d '$device_profile' && test ! -L '$device_profile' && test \"\$(readlink -f '$device_profile')\" = '$device_profile' && rm -rf -- '$device_profile'" \
+          >/dev/null 2>&1 || true
       fi
       find "$temporary" -depth -delete
       return "$result"
@@ -186,36 +216,57 @@ case "$operation" in
     trap cleanup_stage EXIT
     if [[ "$mode" == native ]]; then
       "${adb_command[@]}" exec-out run-as "$package" sh -c \
-        "umask 077; test ! -e '$device_profile'; mkdir '$device_profile'; chmod 700 '$device_profile'" \
+        "umask 077; test -d '$device_parent'; test ! -L '$device_parent'; test \"\$(readlink -f '$device_parent')\" = '$device_parent'; test ! -e '$device_profile'; test ! -L '$device_profile'; mkdir '$device_profile'; chmod 700 '$device_profile'" \
         >/dev/null || {
         echo "fresh disposable package already has an app_chrome profile" >&2
         exit 1
       }
-      device_created=true
-      tar -C "$profile" -cf - . |
-        "${adb_command[@]}" exec-out run-as "$package" sh -c \
-          "cd '$device_profile' && /system/bin/tar -xf -"
     else
+      parent_state=$("${adb_command[@]}" exec-out run-as "$package" sh -c \
+        "umask 077; if test -e '$device_parent' || test -L '$device_parent'; then test -d '$device_parent'; test ! -L '$device_parent'; test \"\$(readlink -f '$device_parent')\" = '$device_parent'; printf existing; else mkdir '$device_parent'; chmod 700 '$device_parent'; printf created; fi" | tr -d '\r') || {
+        echo "device tab profile parent is unsafe" >&2
+        exit 1
+      }
+      [[ "$parent_state" == existing || "$parent_state" == created ]] || {
+        echo "device tab profile parent state is invalid" >&2
+        exit 1
+      }
+      if [[ "$mode" == neutral && "$parent_state" == existing ]]; then
+        "${adb_command[@]}" exec-out run-as "$package" sh -c \
+          "test -f '$device_parent/.helium-tabs-disposable-root-v1'; test ! -L '$device_parent/.helium-tabs-disposable-root-v1'; test \"\$(cat '$device_parent/.helium-tabs-disposable-root-v1')\" = helium-tabs-disposable-root-v1" \
+          >/dev/null || {
+          echo "existing neutral device parent marker is invalid" >&2
+          exit 1
+        }
+      fi
+      if [[ "$mode" == neutral && "$parent_state" == created ]]; then
+        "${adb_command[@]}" exec-out run-as "$package" sh -c \
+          "umask 077; printf 'helium-tabs-disposable-root-v1\n' > '$device_parent/.helium-tabs-disposable-root-v1'" \
+          >/dev/null
+      fi
       "${adb_command[@]}" exec-out run-as "$package" sh -c \
-        "umask 077; mkdir -p '$device_parent'; chmod 700 '$device_parent'; test ! -e '$device_profile'" \
+        "umask 077; test -d '$device_parent'; test ! -L '$device_parent'; test \"\$(readlink -f '$device_parent')\" = '$device_parent'; test ! -e '$device_profile'; test ! -L '$device_profile'; mkdir '$device_profile'; chmod 700 '$device_profile'" \
         >/dev/null || {
         echo "device tab profile target already exists or is unsafe" >&2
         exit 1
       }
-      if [[ "$mode" == neutral ]]; then
-        "${adb_command[@]}" exec-out run-as "$package" sh -c \
-          "umask 077; printf 'helium-tabs-disposable-root-v1\\n' > '$device_parent/.helium-tabs-disposable-root-v1'" \
-          >/dev/null
-      fi
-      device_created=true
-      tar -C "$parent" -cf - "$slug" |
-        "${adb_command[@]}" exec-out run-as "$package" sh -c \
-          "cd '$device_parent' && /system/bin/tar -xf -"
     fi
+    device_created=true
+    tar -C "$profile" -cf - . |
+      "${adb_command[@]}" exec-out run-as "$package" sh -c \
+        "cd '$device_profile' && /system/bin/tar -xf -"
     "${adb_command[@]}" exec-out run-as "$package" sh -c \
-      "test -d '$device_profile' && test ! -L '$device_profile' && test -d '$device_profile/Default' && test ! -L '$device_profile/Default'" \
+      "test -d '$device_parent' && test ! -L '$device_parent' && test \"\$(readlink -f '$device_parent')\" = '$device_parent' && test -d '$device_profile' && test ! -L '$device_profile' && test \"\$(readlink -f '$device_profile')\" = '$device_profile' && test -d '$device_profile/Default' && test ! -L '$device_profile/Default'" \
       >/dev/null || {
       echo "staged Android tab profile is incomplete or unsafe" >&2
+      exit 1
+    }
+    device_binding_sha256=$(
+      "${adb_command[@]}" exec-out run-as "$package" cat \
+        "$device_profile/$binding_file" | sha256sum | cut -d' ' -f1
+    )
+    [[ "$device_binding_sha256" == "$local_binding_sha256" ]] || {
+      echo "staged Android marker or receipt does not match its local source" >&2
       exit 1
     }
     mkdir -m 700 "$temporary/$slug"
@@ -234,6 +285,7 @@ case "$operation" in
       "$package" "$mode" "$profile"
     printf 'device_profile=%s\napk_sha256=%s\nprofile_tree_sha256=%s\n' \
       "$device_profile" "$expected_apk_sha" "$local_profile_sha256"
+    printf 'binding_sha256=%s\n' "$local_binding_sha256"
     ;;
   fetch-neutral)
     temporary=$(mktemp -d "${TMPDIR:-/tmp}/helium-android-tab-fetch.XXXXXX")
@@ -247,7 +299,7 @@ case "$operation" in
     }
     trap cleanup_fetch EXIT
     "${adb_command[@]}" exec-out run-as "$package" sh -c \
-      "test -d '$device_profile' && test ! -L '$device_profile' && test -f '$device_profile/.helium-tabs-restore-consumed-v2' && test ! -L '$device_profile/.helium-tabs-restore-consumed-v2' && test -f '$device_profile/.helium-tabs-restore-receipt-v2.json' && test ! -L '$device_profile/.helium-tabs-restore-receipt-v2.json'" \
+      "test -d '$device_parent' && test ! -L '$device_parent' && test \"\$(readlink -f '$device_parent')\" = '$device_parent' && test -d '$device_profile' && test ! -L '$device_profile' && test \"\$(readlink -f '$device_profile')\" = '$device_profile' && test -f '$device_profile/.helium-tabs-restore-consumed-v2' && test ! -L '$device_profile/.helium-tabs-restore-consumed-v2' && test -f '$device_profile/.helium-tabs-restore-receipt-v2.json' && test ! -L '$device_profile/.helium-tabs-restore-receipt-v2.json'" \
       >/dev/null || {
       echo "Android neutral profile has no safe consumed state" >&2
       exit 1
@@ -308,25 +360,31 @@ case "$operation" in
       "$(sha256sum "$local_receipt" | cut -d' ' -f1)"
     ;;
   remove)
-    case "$mode" in
-      native) device_marker=.helium-tab-runtime-native-profile-v1 ;;
-      neutral) device_marker=.helium-tabs-disposable-browser-profile-v2 ;;
-      full-profile) device_marker=.helium-profile-restore-receipt.env ;;
-    esac
     "${adb_command[@]}" exec-out run-as "$package" sh -c \
-      "test -d '$device_profile' && test ! -L '$device_profile' && test -f '$device_profile/$device_marker' && test ! -L '$device_profile/$device_marker'" \
+      "test -d '$device_parent' && test ! -L '$device_parent' && test \"\$(readlink -f '$device_parent')\" = '$device_parent' && test -d '$device_profile' && test ! -L '$device_profile' && test \"\$(readlink -f '$device_profile')\" = '$device_profile' && test -f '$device_profile/$binding_file' && test ! -L '$device_profile/$binding_file'" \
       >/dev/null || {
       echo "refusing to remove an unmarked Android tab profile" >&2
       exit 1
     }
-    "${adb_command[@]}" exec-out run-as "$package" rm -rf -- \
-      "$device_profile" >/dev/null
-    "${adb_command[@]}" exec-out run-as "$package" test ! -e \
-      "$device_profile" >/dev/null || {
+    device_binding_sha256=$(
+      "${adb_command[@]}" exec-out run-as "$package" cat \
+        "$device_profile/$binding_file" | sha256sum | cut -d' ' -f1
+    )
+    [[ "$device_binding_sha256" == "$local_binding_sha256" ]] || {
+      echo "refusing to remove an Android profile with a different binding" >&2
+      exit 1
+    }
+    "${adb_command[@]}" exec-out run-as "$package" sh -c \
+      "test -d '$device_parent' && test ! -L '$device_parent' && test \"\$(readlink -f '$device_parent')\" = '$device_parent' && test -d '$device_profile' && test ! -L '$device_profile' && test \"\$(readlink -f '$device_profile')\" = '$device_profile' && rm -rf -- '$device_profile'" \
+      >/dev/null
+    "${adb_command[@]}" exec-out run-as "$package" sh -c \
+      "test -d '$device_parent' && test ! -L '$device_parent' && test \"\$(readlink -f '$device_parent')\" = '$device_parent' && test ! -e '$device_profile' && test ! -L '$device_profile'" \
+      >/dev/null || {
       echo "Android tab profile removal did not complete" >&2
       exit 1
     }
     printf 'operation=remove\npackage=%s\nmode=%s\ndevice_profile=%s\n' \
       "$package" "$mode" "$device_profile"
+    printf 'binding_sha256=%s\n' "$local_binding_sha256"
     ;;
 esac
