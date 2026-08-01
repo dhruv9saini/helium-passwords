@@ -42,7 +42,7 @@ done
   echo "Android runtime-kit source has an unexpected inventory" >&2
   exit 1
 }
-[[ "$(sha256sum "$source_root/SHA256SUMS" | cut -d' ' -f1)" ==
+[[ "$(sha256sum "$source_root/SHA256SUMS" | cut -d' ' -f1)" == \
     "$expected_inventory_sha256" ]] || {
   echo "Android runtime-kit source inventory does not match its command binding" >&2
   exit 1

@@ -221,7 +221,7 @@ else
     }
   done
 fi
-[[ "$(metadata runtime_kit_commit "$tooling")" ==
+[[ "$(metadata runtime_kit_commit "$tooling")" == \
     "$expected_runtime_kit_commit" ]] || {
   echo "artifact Android tooling names the wrong runtime-kit commit" >&2
   exit 1
@@ -231,7 +231,7 @@ runtime_kit_source_sha256=$(metadata runtime_kit_source_sha256 "$tooling")
   echo "artifact Android tooling has an invalid runtime-kit source hash" >&2
   exit 1
 }
-[[ "$runtime_kit_source_sha256" ==
+[[ "$runtime_kit_source_sha256" == \
     "$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256" ]] || {
   echo "artifact Android runtime-kit source hash does not match its lock" >&2
   exit 1
