@@ -73,7 +73,7 @@ preflight() {
         "${disk_budget_gib}" "${remote_work}"
 }
 
-stage() {
+stage() (
     local job=$1
     local disk_budget_gib=$2
     local repository=${3:-"${root_dir}"}
@@ -110,6 +110,7 @@ stage() {
 
     local archive checkout manifest archive_sha helium_submodule
     local repository_commit repository_origin core_origin
+    local passwords_ref passwords_commit source_depth
     [ ! -L "${local_source_staging}" ] || {
         echo "local source staging root must not be a symlink: ${local_source_staging}" >&2
         exit 1
@@ -136,8 +137,30 @@ stage() {
         exit 1
     }
 
+    passwords_ref=$(awk -F= '
+        $1 == "HELIUM_LINUX_PASSWORDS_REF" { count += 1; value = $2 }
+        END { if (count == 1) print value; else exit 1 }
+    ' "${repository}/linux-product.conf") || {
+        echo "Linux product binding must contain one Passwords ref" >&2
+        exit 1
+    }
+    passwords_commit=$(git -C "${repository}" rev-parse --verify \
+        "${passwords_ref}^{commit}") || {
+        echo "Linux product Passwords ref is unavailable" >&2
+        exit 1
+    }
+    git -C "${repository}" merge-base --is-ancestor \
+        "${passwords_commit}" "${repository_commit}" || {
+        echo "Linux product Passwords ref is not a source ancestor" >&2
+        exit 1
+    }
+    source_depth=$((
+        $(git -C "${repository}" rev-list --ancestry-path --count \
+            "${passwords_commit}..${repository_commit}") + 1
+    ))
+
     git init --quiet "${checkout}"
-    git -C "${checkout}" fetch --quiet --depth=1 \
+    git -C "${checkout}" fetch --quiet --depth="${source_depth}" \
         "file://${repository}" "${repository_commit}"
     git -C "${checkout}" checkout --quiet --detach FETCH_HEAD
     git -C "${checkout}" -c protocol.file.allow=always \
@@ -177,9 +200,9 @@ stage() {
     find "${temp_dir}" -depth -delete
     temp_dir=
     trap - EXIT
-}
+)
 
-start() {
+start() (
     local job=$1
     shift
     validate_job "${job}"
@@ -259,7 +282,7 @@ start() {
     printf '%s\nnotification=armed\n' "${output}"
     find "${temp_dir}" -depth -delete
     trap - EXIT
-}
+)
 
 resume() (
     local parent=$1

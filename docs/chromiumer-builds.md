@@ -138,7 +138,8 @@ bash scripts/tests/chromiumer-management.test.sh
 
 The **local wrapper** is `scripts/chromiumer-job.sh` in the Helium checkout on
 `lm`. “Local” means it is the control client: it validates job IDs and a clean
-Git tree, materializes a shallow detached checkout of the superproject `HEAD`
+Git tree, materializes a minimal-depth detached checkout of the superproject
+`HEAD` that retains the exact Passwords ancestor named by `linux-product.conf`,
 together with the exact `helium-chromium` gitlink commit, transfers that
 checkout as one archive, and provides the one interface for
 start/status/logs/cancel/fetch/cleanup. It does not compile and it does not
@@ -290,8 +291,9 @@ unit deadline remains unchanged and includes readiness time.
 
 Use a unique lowercase job ID. Staging refuses a dirty repository, requires the
 checked-out `helium-chromium` submodule to match the superproject gitlink, and
-creates a shallow detached Git checkout containing exactly those two commits.
-The retained minimal Git metadata lets build-time provenance and cleanliness
+creates a minimal-depth detached Git checkout containing the source commit,
+its exact configured Passwords ancestor, and the core commit. The retained
+minimal Git metadata lets build-time ancestry, provenance, and cleanliness
 checks resolve the staged commits without contacting a remote. The wrapper
 transfers that checkout directly over the dedicated SSH connection, checks the
 archive SHA-256 on chromiumer, and expands it under the job workspace. It does
