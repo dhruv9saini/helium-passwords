@@ -78,6 +78,19 @@ disk_usage_bytes() {
         awk '{ blocks += $1 } END { printf "%.0f\n", blocks * 512 }'
 }
 
+transient_descendant_disappearance() {
+    local diagnostic=$1
+    local root=$2
+    [ -d "${root}" ] && [ -s "${diagnostic}" ] || return 1
+
+    local line
+    local prefix="find: '${root}/"
+    local suffix="': No such file or directory"
+    while IFS= read -r line; do
+        [[ "${line}" == "${prefix}"*"${suffix}" ]] || return 1
+    done <"${diagnostic}"
+}
+
 required_build_available_bytes() {
     local budget=$1
     local used=$2
@@ -1064,6 +1077,13 @@ watch_job() {
             set +e
             disk_usage_bytes "${work_dir}" >"${scan_result}" 2>"${scan_error}"
             local result=$?
+            if [ "${result}" -eq 1 ] && \
+                [ -f "${state_dir}/watchdog-ready.env" ] && \
+                transient_descendant_disappearance \
+                    "${scan_error}" "${work_dir}"; then
+                result=0
+                : >"${scan_error}"
+            fi
             printf '%s\n' "${result}" >"${scan_status_temp}"
             mv "${scan_status_temp}" "${scan_status}"
             exit "${result}"

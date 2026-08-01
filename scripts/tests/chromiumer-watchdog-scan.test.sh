@@ -88,6 +88,28 @@ if disk_usage_bytes "${test_root}/missing-start" \
     exit 1
 fi
 
+# GNU find can still report a directory that disappears after it has already
+# begun traversing that directory. Admit only exact descendant ENOENT
+# diagnostics while the scan root itself remains present.
+printf "find: '%s/delete': No such file or directory\n" "${race_root}" \
+    >"${test_root}/descendant.error"
+transient_descendant_disappearance \
+    "${test_root}/descendant.error" "${race_root}"
+printf "find: '%s': No such file or directory\n" "${race_root}" \
+    >"${test_root}/root.error"
+if transient_descendant_disappearance \
+    "${test_root}/root.error" "${race_root}"; then
+    echo 'missing scan root was misclassified as a descendant race' >&2
+    exit 1
+fi
+printf "find: '%s/delete': Permission denied\n" "${race_root}" \
+    >"${test_root}/permission.error"
+if transient_descendant_disappearance \
+    "${test_root}/permission.error" "${race_root}"; then
+    echo 'permission failure was misclassified as a descendant race' >&2
+    exit 1
+fi
+
 fake_bin="${test_root}/guard-bin"
 mkdir "${fake_bin}"
 cat >"${fake_bin}/df" <<'EOF'
