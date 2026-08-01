@@ -323,6 +323,31 @@ EOF
             "${linux_shared_build}"
     fi
     if [ -f "${linux_shared_build}" ] && \
+        ! grep -Fq -- '-fuse-ld=lld' "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "    local bootstrap_sysroot_arch" {
+                print "    [ -x \"$clang_bin/ld.lld\" ] || {"
+                print "        echo \"missing downloaded GN bootstrap linker: $clang_bin/ld.lld\" >&2"
+                print "        return 1"
+                print "    }"
+                print "    if grep -Fqx \047  command = $cxx -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group\047 \"$bootstrap_libcxx_ninja\"; then"
+                print "        sed -i \047s|^  command = \\$cxx -shared -fPIC -o \\$out -Wl,--start-group \\$in -Wl,--end-group$|  command = $cxx -fuse-ld=lld -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group|\047 \"$bootstrap_libcxx_ninja\""
+                print "    fi"
+                print "    grep -Fqx \047  command = $cxx -fuse-ld=lld -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group\047 \"$bootstrap_libcxx_ninja\" || {"
+                print "        echo \"unexpected GN bootstrap libc++ linker command\" >&2"
+                print "        return 1"
+                print "    }"
+            }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ]; then
+        grep -Fq '[ -x "$clang_bin/ld.lld" ]' "${linux_shared_build}"
+        grep -Fq -- '-fuse-ld=lld' "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ] && \
         ! grep -Fq '        --build-path out/Default \' "${linux_shared_build}"; then
         tmp_linux_shared="$(mktemp)"
         awk '
