@@ -322,6 +322,21 @@ EOF
         ! grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
             "${linux_shared_build}"
     fi
+    if [ -f "${linux_shared_build}" ] && \
+        ! grep -Fq '        --build-path out/Default \' "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "        --use-custom-libcxx \\" {
+                print "        --build-path out/Default \\"
+            }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ]; then
+        [ "$(grep -Fc '        --build-path out/Default \' \
+            "${linux_shared_build}")" -eq 1 ]
+    fi
 
     linux_package_sh="${destination}/scripts/package.sh"
     if [ -f "${linux_package_sh}" ] && \
