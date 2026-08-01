@@ -170,6 +170,10 @@ if [ "${platform}" = "linux" ]; then
         "${checkout}/scripts/shared.sh"
     ! grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }--sysroot=${bootstrap_sysroot}" \' \
         "${checkout}/scripts/shared.sh"
+    grep -Fq '[ -x "$clang_bin/ld.lld" ]' \
+        "${checkout}/scripts/shared.sh"
+    grep -Fq -- '-fuse-ld=lld' \
+        "${checkout}/scripts/shared.sh"
     [ "$(grep -Fc '        --build-path out/Default \' \
         "${checkout}/scripts/shared.sh")" -eq 1 ]
     grep -Fq '        --use-custom-libcxx \' \

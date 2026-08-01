@@ -197,11 +197,16 @@ platform C headers inside the pinned Nix environment: libc++ is found, but its
 deliberately absent from `LDFLAGS`: `libc++.gn.so` is built as a host library,
 and forcing Bullseye libc and libpthread into the final GN host-tool link mixes
 host GLIBC symbols with sysroot libraries. A missing sysroot or an unsupported
-GN host architecture fails before bootstrap. The invocation also uses the
-bootstrap's supported `--build-path out/Default` option. Custom libc++ is a
-shared host library with an origin-relative rpath; leaving the bootstrap at its
-default `out/Release` build directory while requesting only the GN executable
-under `out/Default` strands `libc++.gn.so` in the former directory. One build
+GN host architecture fails before bootstrap. The pinned FHS deliberately does
+not provide a generic `ld`, while Chromium's downloaded Clang otherwise asks
+for bare `ld` when linking the custom host library. The prepared bootstrap
+therefore requires the downloaded toolchain's adjacent `ld.lld` and selects it
+only for that handwritten libc++ link rule with `-fuse-ld=lld`. The invocation
+also uses the bootstrap's supported `--build-path out/Default` option. Custom
+libc++ is a shared host library with an origin-relative rpath; leaving the
+bootstrap at its default `out/Release` build directory while requesting only
+the GN executable under `out/Default` strands `libc++.gn.so` in the former
+directory. One build
 path keeps the executable and its runtime library together without a loader
 override or a second copy. Chromium 150's
 libc++ also consumes shared LLVM libc headers, while the best-effort GN
