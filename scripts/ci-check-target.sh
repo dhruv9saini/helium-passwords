@@ -129,6 +129,10 @@ if [ "${platform}" = "linux" ]; then
         "${checkout}/scripts/shared.sh"
     grep -Fq 'command = $cxx -fuse-ld=lld -rtlib=compiler-rt -shared' \
         "${checkout}/scripts/shared.sh"
+    grep -Fq '[ -x "$clang_bin/llvm-ar" ]' \
+        "${checkout}/scripts/shared.sh"
+    grep -Fq 'AR="$clang_bin/llvm-ar" \' \
+        "${checkout}/scripts/shared.sh"
     [ "$(grep -Fc '        --build-path out/Default \' \
         "${checkout}/scripts/shared.sh")" -eq 1 ]
     grep -Fq '        --use-custom-libcxx \' \
