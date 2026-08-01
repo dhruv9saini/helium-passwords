@@ -241,6 +241,13 @@ EOF
                 print "        echo \"unexpected GN bootstrap LLVM libc include root\" >&2"
                 print "        return 1"
                 print "    }"
+                print "    if ! grep -Fq -- \047-D_LIBCPP_CONSTINIT=constinit\047 \"$bootstrap_libcxx_ninja\"; then"
+                print "        sed -i \047/^rule cxx_libcxxabi$/{n;s/ -DLIBCXXABI_SILENT_TERMINATE / -D_LIBCPP_CONSTINIT=constinit -DLIBCXXABI_SILENT_TERMINATE /;}\047 \"$bootstrap_libcxx_ninja\""
+                print "    fi"
+                print "    grep -Fqx \047  command = $cxx $cflags -D_LIBCXXABI_NO_EXCEPTIONS -D_LIBCPP_BUILDING_LIBRARY -D_LIBCPP_CONSTINIT=constinit -DLIBCXXABI_SILENT_TERMINATE -c $in -o $out\047 \"$bootstrap_libcxx_ninja\" || {"
+                print "        echo \"unexpected GN bootstrap libc++abi compatibility defines\" >&2"
+                print "        return 1"
+                print "    }"
                 next
             }
             { print }
@@ -249,6 +256,25 @@ EOF
         grep -Fq 'local bootstrap_libcxx_ninja' "${linux_shared_build}"
         grep -Fq 'libc = third_party/llvm-libc/src' "${linux_shared_build}"
         grep -Fq 'shared/fp_bits.h' "${linux_shared_build}"
+        grep -Fq -- '-D_LIBCPP_CONSTINIT=constinit' "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ] && \
+        ! grep -Fq -- '-D_LIBCPP_CONSTINIT=constinit' "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "    local bootstrap_sysroot_arch" {
+                print "    if ! grep -Fq -- \047-D_LIBCPP_CONSTINIT=constinit\047 \"$bootstrap_libcxx_ninja\"; then"
+                print "        sed -i \047/^rule cxx_libcxxabi$/{n;s/ -DLIBCXXABI_SILENT_TERMINATE / -D_LIBCPP_CONSTINIT=constinit -DLIBCXXABI_SILENT_TERMINATE /;}\047 \"$bootstrap_libcxx_ninja\""
+                print "    fi"
+                print "    grep -Fqx \047  command = $cxx $cflags -D_LIBCXXABI_NO_EXCEPTIONS -D_LIBCPP_BUILDING_LIBRARY -D_LIBCPP_CONSTINIT=constinit -DLIBCXXABI_SILENT_TERMINATE -c $in -o $out\047 \"$bootstrap_libcxx_ninja\" || {"
+                print "        echo \"unexpected GN bootstrap libc++abi compatibility defines\" >&2"
+                print "        return 1"
+                print "    }"
+            }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+        grep -Fq -- '-D_LIBCPP_CONSTINIT=constinit' "${linux_shared_build}"
     fi
     if [ -f "${linux_shared_build}" ] && \
         ! grep -Fq 'local bootstrap_sysroot_arch' "${linux_shared_build}"; then
