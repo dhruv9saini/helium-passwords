@@ -74,6 +74,7 @@ require_arg "^android_override_version_name = \"${HELIUM_ANDROID_VERSION_NAME//.
   'versionName must match the Chromium engine version'
 
 cp "$chromium_src/$out_dir/args.gn" "$provenance_dir/args.gn"
+cp "$repo_root/helium-chromium/flags.gn" "$provenance_dir/flags.gn"
 cp "$repo_root/chromium/android-build.lock" "$provenance_dir/android-build.lock"
 printf '%s\n' "$requested_ref" > "$provenance_dir/chromium-ref-requested.txt"
 printf '%s\n' "$depot_tools_commit" > "$provenance_dir/depot-tools-commit.txt"
@@ -110,6 +111,7 @@ done < "$provenance_dir/android-composition.tsv" \
   cd "$provenance_dir"
   sha256sum \
     args.gn \
+    flags.gn \
     gn-args-resolved.txt \
     chromium-source-commit.txt \
     chromium-ref-requested.txt \

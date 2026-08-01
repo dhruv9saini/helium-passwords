@@ -30,7 +30,10 @@ make_generation() {
   esac
   local acceptance="$test_root/$role-acceptance"
   local evidence="$test_root/$role-evidence"
-  mkdir -p "$acceptance/runtime-acceptance" "$evidence"
+  mkdir -p "$acceptance/runtime-acceptance" \
+    "$acceptance/build-provenance" "$evidence"
+  cp "$repo_root/helium-chromium/flags.gn" \
+    "$acceptance/build-provenance/flags.gn"
   for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     disposable-browser.sh prepare-cookie-acceptance-profile.sh \
     run-device-probe.sh verify-probe-pair.sh; do
@@ -142,7 +145,31 @@ grep -qx "pair_receipt=$test_root/pair.env" "$test_root/pass.out"
 grep -Eq '^pair_receipt_sha256=[0-9a-f]{64}$' "$test_root/pass.out"
 grep -qx "helium_sync_commit=$sync_commit" "$test_root/pair.env"
 grep -qx "chromium_commit=$chromium_commit" "$test_root/pair.env"
+grep -Eq '^shared_flags_gn_sha256=[0-9a-f]{64}$' "$test_root/pair.env"
 grep -Eq '^media_manifest_sha256=[0-9a-f]{64}$' "$test_root/pair.env"
+
+printf 'enable_mdns=true\n' \
+  >> "$test_root/control-acceptance/build-provenance/flags.gn"
+(
+  cd "$test_root/control-acceptance"
+  find . -type f ! -name PACKAGE_SHA256SUMS -print0 \
+    | sort -z | xargs -0 sha256sum > PACKAGE_SHA256SUMS
+)
+if "$repo_root/scripts/android-media/verify-probe-pair.sh" \
+  "$test_root/sync-acceptance" "$test_root/sync-evidence" \
+  "$test_root/control-acceptance" "$test_root/control-evidence" \
+  "$test_root/different-flags.env" > "$test_root/different-flags.out" 2>&1; then
+  echo 'different-flags Sync/control evidence unexpectedly passed' >&2
+  exit 1
+fi
+grep -q 'not built from byte-identical flags.gn' "$test_root/different-flags.out"
+cp "$test_root/sync-acceptance/build-provenance/flags.gn" \
+  "$test_root/control-acceptance/build-provenance/flags.gn"
+(
+  cd "$test_root/control-acceptance"
+  find . -type f ! -name PACKAGE_SHA256SUMS -print0 \
+    | sort -z | xargs -0 sha256sum > PACKAGE_SHA256SUMS
+)
 
 sed -i 's/1111111111111111111111111111111111111111/3333333333333333333333333333333333333333/' \
   "$test_root/control-acceptance/acceptance.env" "$test_root/control-evidence/acceptance.env" \

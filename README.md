@@ -57,12 +57,15 @@ and the d/da native cookie transport gate is
 - `systemd/helium-syncd.service`: least-privilege HTTP service bound only to
   lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
-  it rejects every public Funnel and every Serve listener on port 44719 without
-  changing unrelated tailnet-only Serve routes, and does not enable the service
-  unless the endpoint matches lm's live Tailscale IPv4 and the server restore
-  drill passed. State-changing
+  it rejects every public Funnel plus every Serve listener, Web proxy, and TCP
+  forward involving port 44719 without changing unrelated tailnet-only Serve
+  routes, and does not enable the service unless the endpoint matches lm's live
+  Tailscale IPv4 and the server restore drill passed. State-changing
   operator actions are serialized, and activation refuses any existing
   listener on the canonical service port.
+- `scripts/tailnet-serve-acceptance.sh`: create-new Gate 0 evidence that
+  requires the canonical unrelated Serve configuration to be byte-identical
+  before and after a disposable acceptance run.
 - `scripts/helium-sync-server-backup.sh`: read-only validation and versioned
   backup of only the hashed registry, readable journal, journal snapshots, and
   optional quarantine. It never archives client bearer tokens.

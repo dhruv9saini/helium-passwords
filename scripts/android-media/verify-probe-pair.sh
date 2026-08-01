@@ -178,6 +178,12 @@ verify_generation \
   "$control_acceptance" "$control_evidence" \
   computer.helium.control.test helium_control_test_devtools_remote
 
+cmp -s "$sync_acceptance/build-provenance/flags.gn" \
+  "$control_acceptance/build-provenance/flags.gn" || {
+  echo "Sync and control were not built from byte-identical flags.gn" >&2
+  exit 1
+}
+
 for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
   disposable-browser.sh prepare-cookie-acceptance-profile.sh \
   run-device-probe.sh verify-probe-pair.sh; do
@@ -225,6 +231,8 @@ chmod 600 "$temporary"
   printf 'control_archive_sha256=%s\n' "$(metadata "$control_env" source_archive_sha256)"
   printf 'control_apk_sha256=%s\n' "$(metadata "$control_env" apk_sha256)"
   printf 'control_result_sha256=%s\n' "$(sha256sum "$control_evidence/result.json" | cut -d' ' -f1)"
+  printf 'shared_flags_gn_sha256=%s\n' \
+    "$(sha256sum "$sync_acceptance/build-provenance/flags.gn" | cut -d' ' -f1)"
   printf 'fixture_receipt_sha256=%s\n' \
     "$(sha256sum "$sync_evidence/fixture-provenance.json" | cut -d' ' -f1)"
   printf 'media_manifest_sha256=%s\n' "$(printf '%s' "$sync_media" | sha256sum | cut -d' ' -f1)"

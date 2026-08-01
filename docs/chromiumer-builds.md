@@ -645,7 +645,10 @@ scripts/chromiumer-job.sh start "$control_job" \
 Do not run the two 80 GiB jobs concurrently. Before starting the second job,
 fetch the first artifact and clean its verified workspace so the shared disk
 admission is recomputed. Both artifact verifiers receive the saved
-`$sync_commit`; this is the cross-job source binding.
+`$sync_commit`; this is the cross-job source binding. Sync and control also
+prepend the locked Helium core `flags.gn`, carry it inside checksummed
+provenance, and the artifact plus final A/B pair verifiers require those files
+to be byte-identical.
 
 Always preserve the commit from the staged source manifest and pass that exact
 value to both artifact verifiers even if `main` advances while the detached job

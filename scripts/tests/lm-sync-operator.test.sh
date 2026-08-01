@@ -170,6 +170,24 @@ if unshare -Ur env "${operator_env[@]}" SERVE_STATUS_FIXTURE="$test_root/sync-se
   exit 1
 fi
 
+printf '%s\n' \
+  '{"TCP":{"8081":{"HTTP":true}},"Web":{"lm:8081":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:44719"}}}}}' \
+  >"$test_root/sync-web-proxy-on.json"
+if unshare -Ur env "${operator_env[@]}" SERVE_STATUS_FIXTURE="$test_root/sync-web-proxy-on.json" \
+  "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null 2>&1; then
+  echo "endpoint gate accepted an alternate-port Web proxy to the Sync port" >&2
+  exit 1
+fi
+
+printf '%s\n' \
+  '{"TCP":{"8082":{"TCPForward":"100.100.105.47:44719"}}}' \
+  >"$test_root/sync-tcp-forward-on.json"
+if unshare -Ur env "${operator_env[@]}" SERVE_STATUS_FIXTURE="$test_root/sync-tcp-forward-on.json" \
+  "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null 2>&1; then
+  echo "endpoint gate accepted an alternate-port TCP forward to the Sync port" >&2
+  exit 1
+fi
+
 unit="$repo_root/systemd/helium-syncd.service"
 for directive in \
   'User=helium-sync' \

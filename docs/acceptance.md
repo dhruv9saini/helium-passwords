@@ -59,11 +59,14 @@ replace the browser gates below.
   provenance requires the locked Helium core plus core/Passwords/Sync
   composition layers; the control requires a clean Chromium tree and the sole
   `upstream-control` marker, and rejects any patched-composition provenance.
-- No public Tailscale Funnel exists on lm and no Serve configuration listens on
-  port 44719. Unrelated tailnet-only Serve routes may coexist, but their
-  canonical configuration hash must be unchanged before and after acceptance.
-  The installed endpoint contains only lm's exact current Tailscale IPv4
-  address and port 44719.
+- No public Tailscale Funnel exists on lm and no Serve listener, Web proxy
+  target, or TCP forward target involves port 44719. Unrelated tailnet-only
+  Serve routes may coexist. Run `scripts/tailnet-serve-acceptance.sh begin
+  ABSOLUTE_NEW_STATE_DIRECTORY` before browser acceptance and the matching
+  `verify` action afterward; the latter creates a receipt only when the
+  canonical before/after JSON is byte-identical and has the same hash. The
+  installed endpoint contains only lm's exact current Tailscale IPv4 address
+  and port 44719.
 - Each disposable client accepts only
   `http://<literal-100.64.0.0/10-address>:44719`. DNS names, HTTPS, userinfo,
   query/fragment components, wildcard addresses, and any non-Tailnet route fail

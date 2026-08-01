@@ -173,20 +173,7 @@ tailscale_identity() {
 }
 
 verify_tailnet_exposure() {
-  local serve_config
-  serve_config=$(tailscale serve status --json)
-  jq -e --arg port "$sync_port" '
-    def configs:
-      ., (.Foreground[]? | configs), (.Services[]? | configs);
-    [configs |
-      ((.AllowFunnel // {}) | length == 0) and
-      (((.TCP // {}) | has($port)) | not) and
-      ([((.Web // {}) | keys[]?) | endswith(":" + $port)] | any | not)
-    ] | all
-  ' <<<"$serve_config" >/dev/null || {
-    echo "Helium Sync must have no Funnel or Tailscale Serve listener on port 44719" >&2
-    return 1
-  }
+  "$repo_root/scripts/verify-tailnet-exposure.sh" >/dev/null
 }
 
 read_endpoint_config() {

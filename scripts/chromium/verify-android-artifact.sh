@@ -55,6 +55,23 @@ recorded_provenance_inventory=$(sed -n 's/^[0-9a-f]\{64\}  //p' \
 }
 "$repo_root/scripts/chromium/android-build-environment.sh" verify "$provenance"
 
+flags_gn="$provenance/flags.gn"
+args_gn="$provenance/args.gn"
+[[ -f "$flags_gn" && ! -L "$flags_gn" &&
+    -f "$args_gn" && ! -L "$args_gn" ]] || {
+  echo "artifact is missing regular flags.gn or args.gn provenance" >&2
+  exit 1
+}
+cmp -s "$flags_gn" "$repo_root/helium-chromium/flags.gn" || {
+  echo "artifact flags.gn does not match the locked Helium core flags" >&2
+  exit 1
+}
+flags_size=$(stat -c %s "$flags_gn")
+[[ "$flags_size" -gt 0 ]] && cmp -n "$flags_size" "$flags_gn" "$args_gn" || {
+  echo "artifact args.gn does not begin with its exact flags.gn" >&2
+  exit 1
+}
+
 cmp -s "$provenance/android-build.lock" "$repo_root/chromium/android-build.lock" || {
   echo "artifact Android build lock does not match the repository lock" >&2
   exit 1

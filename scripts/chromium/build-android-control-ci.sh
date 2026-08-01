@@ -89,7 +89,8 @@ git diff --cached --quiet HEAD --
 
 rm -rf "$artifact_dir/build-provenance"
 mkdir -p "$out_dir" "$artifact_dir/build-provenance"
-cat > "$out_dir/args.gn" <<EOF
+cat "$repo_root/helium-chromium/flags.gn" > "$out_dir/args.gn"
+cat >> "$out_dir/args.gn" <<EOF
 target_os = "android"
 target_cpu = "arm64"
 is_official_build = false
@@ -135,6 +136,7 @@ grep -qx "android_override_version_name = \"$HELIUM_ANDROID_VERSION_NAME\"" \
 
 provenance="$artifact_dir/build-provenance"
 cp "$out_dir/args.gn" "$provenance/args.gn"
+cp "$repo_root/helium-chromium/flags.gn" "$provenance/flags.gn"
 cp "$repo_root/chromium/android-build.lock" "$provenance/android-build.lock"
 printf '%s\n' "$HELIUM_ANDROID_CHROMIUM_COMMIT" \
   > "$provenance/chromium-ref-requested.txt"

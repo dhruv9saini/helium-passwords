@@ -85,8 +85,10 @@ restores Chromium's native password manager.
   lm's exact Tailscale IPv4 address on port 44719 over HTTP. Tailscale is the
   authenticated, encrypted confidentiality boundary; do not add an inner TLS
   CA, server certificate, content-encryption layer, a public Funnel, or a
-  Tailscale Serve listener on port 44719. Unrelated tailnet-only Serve routes
-  may coexist and must not be reset or reconfigured by Helium operators.
+  Tailscale Serve listener, Web proxy, or TCP forward involving port 44719.
+  Unrelated tailnet-only Serve routes may coexist and must not be reset or
+  reconfigured by Helium operators. Acceptance binds their canonical Serve
+  configuration before and after the run and requires identical hashes.
 - `cmd/helium-sync` initializes per-device bearer credentials and provides test/push/pull
   commands.
 - `internal/syncstore` stores append-only readable JSON records and a registry
@@ -436,6 +438,9 @@ restores Chromium's native password manager.
   that package as Android's debug app and inspect synthetic bridge metadata.
   The artifact verifier enforces this package-role split; a debuggable
   `computer.helium.sync` APK is never a production artifact.
+  Sync and the clean upstream control must prepend the same locked
+  `helium-chromium/flags.gn`, carry those exact bytes in checksummed
+  provenance, and pass the artifact and pair verifiers' byte-identity gate.
   Keep `ffmpeg_branding = "Chrome"` with `proprietary_codecs = true` so regular
   MP4/H.264/AAC video works. This is separate from DRM/Widevine.
   Default `is_official_build = false` for local laptop builds because Chromium's

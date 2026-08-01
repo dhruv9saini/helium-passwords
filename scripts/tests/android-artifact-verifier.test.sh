@@ -57,6 +57,12 @@ realise_start_gate_bytes=128849018880
 EOF
 printf 'bash scripts/chromium/build-android-ci.sh \n' \
   > "$test_root/input/build-provenance/build-command.txt"
+cp "$repo_root/helium-chromium/flags.gn" \
+  "$test_root/input/build-provenance/flags.gn"
+{
+  cat "$repo_root/helium-chromium/flags.gn"
+  printf '%s\n' 'target_os = "android"' 'target_cpu = "arm64"'
+} > "$test_root/input/build-provenance/args.gn"
 {
   printf '%s\n' 'chrome_public_manifest_package = "computer.helium.sync.test"'
   printf 'android_override_version_code = "%s"\n' "$HELIUM_ANDROID_VERSION_CODE"
@@ -267,6 +273,19 @@ grep -qx 'package=computer.helium.control.test' \
   "$test_root/control-prepared/acceptance.env"
 [[ -f "$test_root/control-prepared/Browser-test.apk" ]]
 [[ -x "$test_root/control-prepared/runtime-acceptance/disposable-browser.sh" ]]
+
+cp -a "$test_root/input" "$test_root/foreign-flags-input"
+printf 'enable_mdns=true\n' \
+  >> "$test_root/foreign-flags-input/build-provenance/flags.gn"
+checksum_provenance "$test_root/foreign-flags-input/build-provenance"
+tar -C "$test_root/foreign-flags-input" -caf "$test_root/foreign-flags.tar.xz" .
+if AAPT2="$test_root/aapt2" \
+  "$repo_root/scripts/chromium/verify-android-artifact.sh" \
+  "$test_root/foreign-flags.tar.xz" computer.helium.sync.test "$commit" \
+  > /dev/null 2>&1; then
+  echo "Android artifact with foreign flags.gn unexpectedly passed" >&2
+  exit 1
+fi
 
 AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
