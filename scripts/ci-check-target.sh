@@ -154,6 +154,12 @@ if [ "${platform}" = "linux" ]; then
     grep -q 'HELIUM_BUILD_JOBS' "${checkout}/scripts/docker-build.sh"
     grep -Fq 'ninja -j "${HELIUM_BUILD_JOBS:-$(nproc)}"' \
         "${checkout}/scripts/shared.sh"
+    grep -Fq 'local bootstrap_libcxx_ninja' \
+        "${checkout}/scripts/shared.sh"
+    grep -Fq 'libc = third_party/llvm-libc/src' \
+        "${checkout}/scripts/shared.sh"
+    grep -Fq 'shared/fp_bits.h' \
+        "${checkout}/scripts/shared.sh"
     grep -Fq 'local bootstrap_sysroot_arch' \
         "${checkout}/scripts/shared.sh"
     grep -Fq 'debian_bullseye_${bootstrap_sysroot_arch}-sysroot' \
