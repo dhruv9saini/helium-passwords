@@ -1,0 +1,17 @@
+--- a/third_party/devtools-frontend/src/scripts/build/ninja/generate_css.gni
++++ b/third_party/devtools-frontend/src/scripts/build/ninja/generate_css.gni
+@@ -32,4 +32,6 @@ template("generate_css") {
+-    outputs = []
++    _css_outputs = []
+     foreach(_input, sources) {
+-      outputs += [ "$target_gen_dir/$_input.js" ]
++      _css_outputs += [ "$target_gen_dir/$_input.js" ]
+     }
++    outputs =
++        [ "$target_gen_dir/$target_name-tsconfig.json" ] + _css_outputs
+@@ -39,4 +41,4 @@ template("generate_css") {
+     if (!devtools_bundle) {
+       metadata = {
+-        grd_files = outputs
++        grd_files = _css_outputs
+       }
