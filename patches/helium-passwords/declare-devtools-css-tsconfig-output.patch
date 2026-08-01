@@ -1,0 +1,11 @@
+--- a/third_party/devtools-frontend/src/scripts/build/ninja/generate_css.gni
++++ b/third_party/devtools-frontend/src/scripts/build/ninja/generate_css.gni
+@@ -29,7 +29,7 @@ template("generate_css") {
+       string_join(",", sources),
+     ]
+ 
+-    outputs = []
++    outputs = [ "$target_gen_dir/$target_name-tsconfig.json" ]
+     foreach(_input, sources) {
+       outputs += [ "$target_gen_dir/$_input.js" ]
+     }
