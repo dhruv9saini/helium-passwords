@@ -6,10 +6,11 @@ This is the executable desktop transport gate for the native Chromium
 `sync-receipt.json`. It never uses CDP, an extension, a cookie writer, a raw
 profile database, or a personal profile.
 
-Use the passed private-password profile on d and initialize a second fresh
-Linux admission run on da with the same verified runtime. `d-test` is the
-active seed; `da-test` starts pending and uses only its own enrollment
-directory. The final cookie receipt binds da's untouched zero-capture
+Use the passed private-password profile named `d-test` on d and initialize a
+second fresh Linux admission profile named `da-test` on da with the same
+verified runtime. Those disposable profile names use the product's canonical
+device identities: `d` is the active seed and `da` starts pending with only its
+own enrollment directory. The final cookie receipt binds da's untouched zero-capture
 `run.json`, proving that its profile was created only after the da runtime and
 complete receipt inventory were rehashed. The fixture binds to `127.0.0.1` on d. A temporary
 strict Tailnet SSH local-forward on da exposes the same loopback host and port,

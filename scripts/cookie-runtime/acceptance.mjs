@@ -150,7 +150,7 @@ function validateCookieState(state, label) {
     "baseline_cookie_fingerprint", "remote_deleted",
   ], `${label} cookie record`);
   if (parseCounter(record.remote_revision, `${label} remote revision`) !== 3n ||
-      record.device_id !== "d-test" || record.remote_payload_fingerprint !== "deleted" ||
+      record.device_id !== "d" || record.remote_payload_fingerprint !== "deleted" ||
       record.baseline_cookie_fingerprint !== "deleted" || record.remote_deleted !== true) {
     fail(`${label} does not contain the terminal d tombstone`);
   }
@@ -216,9 +216,9 @@ function validateJournal(raw, fixture, recordKey) {
   const cookies = records.filter(record => record.kind === "cookies");
   if (cookies.length !== 3) fail("server journal does not contain exactly three cookie revisions");
   const expected = [
-    {revision: 1n, deleted: false, device: "d-test", fingerprint: fixture.value_fingerprints.initial_sha256},
-    {revision: 2n, deleted: false, device: "da-test", fingerprint: fixture.value_fingerprints.updated_sha256},
-    {revision: 3n, deleted: true, device: "d-test"},
+    {revision: 1n, deleted: false, device: "d", fingerprint: fixture.value_fingerprints.initial_sha256},
+    {revision: 2n, deleted: false, device: "da", fingerprint: fixture.value_fingerprints.updated_sha256},
+    {revision: 3n, deleted: true, device: "d"},
   ];
   for (let index = 0; index < cookies.length; index += 1) {
     const record = cookies[index];
