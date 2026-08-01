@@ -295,6 +295,7 @@ EOF
                 print "        echo \"missing GN bootstrap host sysroot: $bootstrap_sysroot\" >&2"
                 print "        return 1"
                 print "    }"
+                print "    LDFLAGS=\"${LDFLAGS:+${LDFLAGS} }-fuse-ld=lld -rtlib=compiler-rt\" \\"
                 print "    CFLAGS=\"${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}\" \\"
                 print
                 print "        --use-custom-libcxx \\"
@@ -323,7 +324,20 @@ EOF
             "${linux_shared_build}"
     fi
     if [ -f "${linux_shared_build}" ] && \
-        ! grep -Fq -- '-fuse-ld=lld' "${linux_shared_build}"; then
+        ! grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }-fuse-ld=lld -rtlib=compiler-rt" \' \
+            "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "    CFLAGS=\"${CFLAGS:+${CFLAGS} }--sysroot=${bootstrap_sysroot}\" \\" {
+                print "    LDFLAGS=\"${LDFLAGS:+${LDFLAGS} }-fuse-ld=lld -rtlib=compiler-rt\" \\"
+            }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ] && \
+        ! grep -Fq 'command = $cxx -fuse-ld=lld -rtlib=compiler-rt -shared' \
+            "${linux_shared_build}"; then
         tmp_linux_shared="$(mktemp)"
         awk '
             $0 == "    local bootstrap_sysroot_arch" {
@@ -332,9 +346,12 @@ EOF
                 print "        return 1"
                 print "    }"
                 print "    if grep -Fqx \047  command = $cxx -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group\047 \"$bootstrap_libcxx_ninja\"; then"
-                print "        sed -i \047s|^  command = \\$cxx -shared -fPIC -o \\$out -Wl,--start-group \\$in -Wl,--end-group$|  command = $cxx -fuse-ld=lld -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group|\047 \"$bootstrap_libcxx_ninja\""
+                print "        sed -i \047s|^  command = \\$cxx -shared -fPIC -o \\$out -Wl,--start-group \\$in -Wl,--end-group$|  command = $cxx -fuse-ld=lld -rtlib=compiler-rt -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group|\047 \"$bootstrap_libcxx_ninja\""
                 print "    fi"
-                print "    grep -Fqx \047  command = $cxx -fuse-ld=lld -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group\047 \"$bootstrap_libcxx_ninja\" || {"
+                print "    if grep -Fqx \047  command = $cxx -fuse-ld=lld -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group\047 \"$bootstrap_libcxx_ninja\"; then"
+                print "        sed -i \047s|^  command = \\$cxx -fuse-ld=lld -shared -fPIC -o \\$out -Wl,--start-group \\$in -Wl,--end-group$|  command = $cxx -fuse-ld=lld -rtlib=compiler-rt -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group|\047 \"$bootstrap_libcxx_ninja\""
+                print "    fi"
+                print "    grep -Fqx \047  command = $cxx -fuse-ld=lld -rtlib=compiler-rt -shared -fPIC -o $out -Wl,--start-group $in -Wl,--end-group\047 \"$bootstrap_libcxx_ninja\" || {"
                 print "        echo \"unexpected GN bootstrap libc++ linker command\" >&2"
                 print "        return 1"
                 print "    }"
@@ -345,7 +362,10 @@ EOF
     fi
     if [ -f "${linux_shared_build}" ]; then
         grep -Fq '[ -x "$clang_bin/ld.lld" ]' "${linux_shared_build}"
-        grep -Fq -- '-fuse-ld=lld' "${linux_shared_build}"
+        grep -Fq 'LDFLAGS="${LDFLAGS:+${LDFLAGS} }-fuse-ld=lld -rtlib=compiler-rt" \' \
+            "${linux_shared_build}"
+        grep -Fq 'command = $cxx -fuse-ld=lld -rtlib=compiler-rt -shared' \
+            "${linux_shared_build}"
     fi
     if [ -f "${linux_shared_build}" ] && \
         ! grep -Fq '        --build-path out/Default \' "${linux_shared_build}"; then
