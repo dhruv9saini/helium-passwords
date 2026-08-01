@@ -131,6 +131,11 @@ byte-identical no-op restart snapshots.
 ## Gate 3: Cookies and Login State
 
 The fixture server issues controlled cookies and rotating synthetic tokens.
+The Linux d/da transport lifecycle and immutable receipt are specified in
+[`cookie-runtime-acceptance.md`](cookie-runtime-acceptance.md). It proves one
+real host-only HttpOnly cookie create/update/tombstone round trip through two
+returned-browser disposable profiles; it does not substitute for the Android
+transaction fixture or the broader attribute and partition matrix below.
 Before the networked three-client cases, the Android Sync test package must
 pass its browser-native CookieManager fixture. Prepare only a stopped,
 hash-admitted `computer.helium.sync.test` package with the artifact-carried

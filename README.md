@@ -13,7 +13,9 @@ The product contract and current implementation boundary are
 canonical private issue ledger. The shared artifact-bound native password
 protocol is [docs/password-runtime-acceptance.md](docs/password-runtime-acceptance.md);
 its private Sync evidence extension is
-[docs/password-runtime-sync-acceptance.md](docs/password-runtime-sync-acceptance.md).
+[docs/password-runtime-sync-acceptance.md](docs/password-runtime-sync-acceptance.md),
+and the d/da native cookie transport gate is
+[docs/cookie-runtime-acceptance.md](docs/cookie-runtime-acceptance.md).
 
 ## Invariants
 
@@ -48,6 +50,8 @@ its private Sync evidence extension is
   and remote compile entry points.
 - `scripts/password-runtime/`: shared artifact-bound native password fixture
   and UI receipt plus the private Sync state/journal receipt extension.
+- `scripts/cookie-runtime/`: private two-desktop native CookieManager transport
+  fixture and immutable receipt gate.
 - `systemd/helium-syncd.service`: least-privilege HTTP service bound only to
   lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;
