@@ -219,6 +219,38 @@ EOF
             "${linux_shared_build}"
     fi
     if [ -f "${linux_shared_build}" ] && \
+        ! grep -Fq 'local bootstrap_libcxx_ninja' "${linux_shared_build}"; then
+        tmp_linux_shared="$(mktemp)"
+        awk '
+            $0 == "    local clang_bin=\"${_src_dir}/third_party/llvm-build/Release+Asserts/bin\"" {
+                print
+                print "    local bootstrap_libcxx_ninja=\"${_src_dir}/tools/gn/bootstrap/libc++.ninja\""
+                print "    local bootstrap_llvm_libc=\"${_src_dir}/third_party/llvm-libc/src\""
+                print "    [ -f \"$bootstrap_libcxx_ninja\" ] || {"
+                print "        echo \"missing GN bootstrap libc++ template: $bootstrap_libcxx_ninja\" >&2"
+                print "        return 1"
+                print "    }"
+                print "    [ -f \"$bootstrap_llvm_libc/shared/fp_bits.h\" ] || {"
+                print "        echo \"missing GN bootstrap LLVM libc headers: $bootstrap_llvm_libc\" >&2"
+                print "        return 1"
+                print "    }"
+                print "    if grep -Fqx \047libc = third_party/llvm/libc\047 \"$bootstrap_libcxx_ninja\"; then"
+                print "        sed -i \047s|^libc = third_party/llvm/libc$|libc = third_party/llvm-libc/src|\047 \"$bootstrap_libcxx_ninja\""
+                print "    fi"
+                print "    grep -Fqx \047libc = third_party/llvm-libc/src\047 \"$bootstrap_libcxx_ninja\" || {"
+                print "        echo \"unexpected GN bootstrap LLVM libc include root\" >&2"
+                print "        return 1"
+                print "    }"
+                next
+            }
+            { print }
+        ' "${linux_shared_build}" > "${tmp_linux_shared}"
+        mv "${tmp_linux_shared}" "${linux_shared_build}"
+        grep -Fq 'local bootstrap_libcxx_ninja' "${linux_shared_build}"
+        grep -Fq 'libc = third_party/llvm-libc/src' "${linux_shared_build}"
+        grep -Fq 'shared/fp_bits.h' "${linux_shared_build}"
+    fi
+    if [ -f "${linux_shared_build}" ] && \
         ! grep -Fq 'local bootstrap_sysroot_arch' "${linux_shared_build}"; then
         tmp_linux_shared="$(mktemp)"
         awk '

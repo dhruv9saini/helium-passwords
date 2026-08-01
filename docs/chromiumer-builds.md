@@ -182,7 +182,12 @@ C++ headers. The same scoped invocation passes Chromium's installed Debian
 host sysroot through `CFLAGS` and `LDFLAGS`. Downloaded Clang otherwise has no
 platform C headers inside the pinned Nix environment: libc++ is found, but its
 `mbstate_t` and wide-character declarations cannot resolve. A missing sysroot
-or an unsupported GN host architecture fails before bootstrap.
+or an unsupported GN host architecture fails before bootstrap. Chromium 150's
+libc++ also consumes shared LLVM libc headers, while the best-effort GN
+bootstrap template still names the removed `third_party/llvm/libc` directory.
+The prepared platform rewrites that one exact template entry to the canonical
+`third_party/llvm-libc/src` include root, then requires both that exact entry
+and `shared/fp_bits.h` before bootstrap.
 
 There is no global 100 GiB class and no build-filesystem reserve. Every
 production job declares a positive whole-GiB budget at `preflight` and `stage`.
