@@ -206,6 +206,37 @@ if unshare -Ur env "${operator_env[@]}" SERVE_STATUS_FIXTURE="$test_root/sync-tc
   exit 1
 fi
 
+for invalid_container in Foreground Services; do
+  printf '{"%s":[]}\n' "$invalid_container" \
+    >"$test_root/invalid-$invalid_container-container.json"
+  if unshare -Ur env "${operator_env[@]}" \
+    SERVE_STATUS_FIXTURE="$test_root/invalid-$invalid_container-container.json" \
+    "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null 2>&1; then
+    echo "endpoint gate accepted a non-object $invalid_container container" >&2
+    exit 1
+  fi
+done
+
+for null_child_container in Foreground Services; do
+  printf '{"%s":{"child":null}}\n' "$null_child_container" \
+    >"$test_root/null-$null_child_container-child.json"
+  if unshare -Ur env "${operator_env[@]}" \
+    SERVE_STATUS_FIXTURE="$test_root/null-$null_child_container-child.json" \
+    "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null 2>&1; then
+    echo "endpoint gate accepted a null $null_child_container child config" >&2
+    exit 1
+  fi
+done
+
+printf '%s\n' '{"Services":{"svc":{"Services":{"nested":"invalid"}}}}' \
+  >"$test_root/non-object-descended-service.json"
+if unshare -Ur env "${operator_env[@]}" \
+  SERVE_STATUS_FIXTURE="$test_root/non-object-descended-service.json" \
+  "$repo_root/scripts/install-lm-sync-service.sh" verify-endpoint >/dev/null 2>&1; then
+  echo "endpoint gate accepted a non-object descended Services config" >&2
+  exit 1
+fi
+
 unit="$repo_root/systemd/helium-syncd.service"
 for directive in \
   'User=helium-sync' \

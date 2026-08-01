@@ -88,6 +88,8 @@ restores Chromium's native password manager.
   Tailscale Serve listener, Web proxy, or TCP forward involving port 44719.
   Listener and target ports are parsed numerically and malformed targets fail
   closed; alternate spellings such as `044719` are the same forbidden port.
+  Present `Foreground` and `Services` containers and every recursively
+  descended Serve config must be non-null objects or verification fails.
   Unrelated tailnet-only Serve routes may coexist and must not be reset or
   reconfigured by Helium operators. Acceptance binds their canonical Serve
   configuration before and after the run and requires identical hashes.

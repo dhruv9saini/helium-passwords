@@ -352,7 +352,9 @@ numeric port parsing, so spellings such as `044719` cannot publish the service.
 Malformed targets fail closed. Unrelated tailnet-only Serve routes
 may coexist; Helium verifies but never resets or rewrites them. Disposable
 acceptance captures their canonical configuration before and after the run and
-admits only byte-identical hashes.
+admits only byte-identical hashes. The verifier recursively traverses optional
+`Foreground` and `Services` trees, requiring each present container and every
+descended config to be a non-null object.
 
 The service unit is `helium-syncd.service`, runs as the dedicated
 `helium-sync` account, and is hardened by systemd. Its start-time verifier

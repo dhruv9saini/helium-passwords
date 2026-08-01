@@ -19,8 +19,18 @@ else
 fi
 
 jq -e --argjson port "$sync_port" '
+  def child_configs($label):
+    if (has($label) | not) then {}
+    elif .[$label] | type == "object" then .[$label]
+    else error($label + " must be an object")
+    end;
   def configs:
-    ., (.Foreground[]? | configs), (.Services[]? | configs);
+    if type != "object" then error("Serve config must be an object")
+    else
+      .,
+      ((child_configs("Foreground") | to_entries[]) | .value | configs),
+      ((child_configs("Services") | to_entries[]) | .value | configs)
+    end;
   def object_or_error($label):
     if . == null then {}
     elif type == "object" then .

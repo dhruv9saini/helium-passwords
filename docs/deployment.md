@@ -408,8 +408,9 @@ wrong ports, every public Funnel, every Serve listener on port 44719, every Web
 proxy or TCP forward target whose parsed numeric port is 44719, and endpoints
 that do not match the live Tailnet identity. Leading-zero forms such as
 `044719` are the same forbidden port, and malformed targets fail closed.
-Unrelated tailnet-only Serve routes may coexist and
-the Helium operator never resets or rewrites them. Gate 0 records their
+Present `Foreground` and `Services` containers and every recursively descended
+config must be non-null objects. Unrelated tailnet-only Serve routes may
+coexist and the Helium operator never resets or rewrites them. Gate 0 records their
 canonical JSON before disposable acceptance and creates its final receipt only
 after an identical byte/hash comparison. There is no Helium TLS CA or
 content-encryption key.
