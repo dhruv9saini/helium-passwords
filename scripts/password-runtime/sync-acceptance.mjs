@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
 import crypto from "node:crypto";
+import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 
 import {auditRun, NATIVE_PASSWORD_STEPS} from "./acceptance.mjs";
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 const RUN_NONCE = /^[0-9a-f]{64}$/;
 export const SYNC_PASSWORD_STEPS = Object.freeze([
   "saved_store",
@@ -197,12 +198,30 @@ export async function captureSyncStep({runRoot, step, passwordState, journal}) {
   }
   const state = await readJSON(passwordState, "disposable password state");
   const journalFile = await regularFile(journal, "disposable readable journal");
+  const stateRaw = await fsp.readFile(state.resolved);
+  const journalRaw = await fsp.readFile(journalFile.resolved);
+  const rawRoot = path.join(root, "sync-raw");
+  const rawDirectory = path.join(rawRoot, step);
+  await fsp.mkdir(rawRoot, {mode: 0o700, recursive: true});
+  await fsp.mkdir(rawDirectory, {mode: 0o700});
+  const stateRelative = path.posix.join("sync-raw", step, "password-state.json");
+  const journalRelative = path.posix.join("sync-raw", step, "records.jsonl");
+  await fsp.writeFile(path.join(root, stateRelative), stateRaw,
+    {mode: 0o600, flag: "wx"});
+  await fsp.writeFile(path.join(root, journalRelative), journalRaw,
+    {mode: 0o600, flag: "wx"});
   const capture = {
     step,
     captured_at: new Date().toISOString(),
     screenshot_sha256: publicCapture.screenshot_sha256,
     password_state: summarizePasswordState(state.value),
-    journal: summarizeJournal(await fsp.readFile(journalFile.resolved, "utf8")),
+    journal: summarizeJournal(journalRaw.toString("utf8")),
+    raw_evidence: {
+      password_state: stateRelative,
+      password_state_sha256: sha256(stateRaw),
+      journal: journalRelative,
+      journal_sha256: sha256(journalRaw),
+    },
   };
   sync.run.captures.push(capture);
   await writeJSON(sync.path, sync.run);
@@ -238,10 +257,65 @@ export function validateSyncAcceptance(syncRun, publicRun) {
       !equalJSON(syncRun.captures.map(item => item.step), SYNC_PASSWORD_STEPS)) {
     throw new Error("Sync acceptance steps are incomplete or out of order");
   }
+  const rawRoot = path.join(syncRun.run_root, "sync-raw");
+  const rawRootStat = fs.lstatSync(rawRoot);
+  if (!rawRootStat.isDirectory() || rawRootStat.isSymbolicLink() ||
+      (rawRootStat.mode & 0o077) !== 0 ||
+      !equalJSON(fs.readdirSync(rawRoot).sort(), [...SYNC_PASSWORD_STEPS].sort())) {
+    throw new Error("Sync raw native evidence inventory is invalid");
+  }
+  for (const step of SYNC_PASSWORD_STEPS) {
+    const directory = path.join(rawRoot, step);
+    const stat = fs.lstatSync(directory);
+    if (!stat.isDirectory() || stat.isSymbolicLink() ||
+        (stat.mode & 0o077) !== 0 ||
+        !equalJSON(fs.readdirSync(directory).sort(),
+          ["password-state.json", "records.jsonl"])) {
+      throw new Error(`${step} raw native evidence inventory is invalid`);
+    }
+  }
   for (const capture of syncRun.captures) {
+    exactKeys(capture, [
+      "step", "captured_at", "screenshot_sha256", "password_state",
+      "journal", "raw_evidence",
+    ], `${capture.step} Sync capture`);
+    exactKeys(capture.raw_evidence, [
+      "password_state", "password_state_sha256", "journal", "journal_sha256",
+    ], `${capture.step} raw evidence`);
     const publicCapture = publicRun.captures.find(item => item.step === capture.step);
     if (!publicCapture || publicCapture.screenshot_sha256 !== capture.screenshot_sha256) {
       throw new Error(`${capture.step} Sync metadata is not bound to its public UI capture`);
+    }
+    const admitRaw = (relative, expectedHash, label) => {
+      if (typeof relative !== "string" || relative.startsWith("/") ||
+          relative.split("/").some(part => !part || part === "." || part === "..")) {
+        throw new Error(`${label} has an unsafe path`);
+      }
+      const resolved = path.resolve(syncRun.run_root, relative);
+      if (!resolved.startsWith(`${path.resolve(syncRun.run_root)}${path.sep}`)) {
+        throw new Error(`${label} escaped the run root`);
+      }
+      const stat = fs.lstatSync(resolved);
+      if (!stat.isFile() || stat.isSymbolicLink() || (stat.mode & 0o077) !== 0) {
+        throw new Error(`${label} is not a private regular file`);
+      }
+      const raw = fs.readFileSync(resolved);
+      if (!/^[0-9a-f]{64}$/.test(expectedHash) || sha256(raw) !== expectedHash) {
+        throw new Error(`${label} changed after capture`);
+      }
+      return raw;
+    };
+    const stateRaw = admitRaw(capture.raw_evidence.password_state,
+      capture.raw_evidence.password_state_sha256,
+      `${capture.step} raw password state`);
+    const journalRaw = admitRaw(capture.raw_evidence.journal,
+      capture.raw_evidence.journal_sha256, `${capture.step} raw journal`);
+    const state = summarizePasswordState(JSON.parse(stateRaw.toString("utf8")));
+    const journal = summarizeJournal(journalRaw.toString("utf8"));
+    if (!equalJSON(state, capture.password_state) ||
+        !equalJSON(journal, capture.journal) ||
+        capture.journal.sha256 !== capture.raw_evidence.journal_sha256) {
+      throw new Error(`${capture.step} summaries do not derive from raw native evidence`);
     }
   }
   const saved = captureByStep(syncRun, "saved_store");

@@ -15,19 +15,26 @@ profile or the production Android package.
 
 The fleet finalizer requires these exact build outputs:
 
-- one `helium-sync-linux-x86_64.tar.xz`, its build-produced deployment
-  receipt, and `helium-sync-linux-x86_64.full-graph.env`;
+- one `helium-sync-linux-x86_64.tar.xz`, its schema-2 build-produced deployment
+  receipt, and the sibling private `helium-sync-linux-x86_64.full-graph/`
+  evidence directory;
 - the separately returned Sync and no-patch control Android archives; and
 - both prepared Android acceptance directories.
 
 The Linux archive is used by both d and da. Each machine still runs its own
 verification, native-password, and local-tab drills. The finalizer rehashes
 the archive, deployment receipt, both locally generated runtime receipts,
-extracted schema-3 `provenance/manifest.env`, and full-graph receipt. The
+extracted schema-4 `provenance/manifest.env`, and every full-graph evidence
+file. The
 deployment, manifest, and graph job IDs must agree; the manifest must include the pinned depot_tools
-commit. The full-graph receipt must prove the fresh `chrome,chromedriver`
-graph, every DevTools CSS action's tsconfig output, both Node-22 entrypoints,
-and the complete one-job Ninja boundary.
+commit. The full-graph inventory rehashes `build.ninja`, `toolchain.ninja`,
+the rerun target query, DevTools CSS and AI source, platform bootstrap,
+immutable build operator, Ninja shim, fresh or authenticated retained-repair
+boundary, and every external capture/finalization/packaging/recovery tool. Its
+schema-3 receipt must prove the `chrome,chromedriver` graph, every scoped
+DevTools CSS action's tsconfig output, both Node-22 entrypoints, and the
+complete one-job Ninja boundary. The deployment
+receipt and internal manifest repeat the graph receipt and inventory hashes.
 
 The Sync and control prepared directories must rehash completely and bind the
 two supplied raw archives. They must agree on source/core/Chromium/version,
@@ -40,7 +47,10 @@ runtime kit, build tooling, `flags.gn`, and locked GN args.
 2. Run Sync and control through their artifact-carried disposable browser and
    device probe. The pair must cover the native CookieManager transaction,
    H2/H3, codecs and streaming, Service Worker, background/foreground, and
-   Wi-Fi-to-cellular handoff, then produce one matched A/B receipt.
+   Wi-Fi-to-cellular handoff, then produce one matched A/B receipt. The shared
+   offline auditor imports and reruns the artifact-carried complete probe
+   validator, rehashes both full acceptance/evidence inventories, and binds
+   both runs to one physical OnePlus identity.
 3. Use `reset-disposable-package.sh` to clear only
    `computer.helium.sync.test` from `media-cookie` to `password-sync`. The
    physical-USB receipt must prove the production package and Android global
@@ -58,7 +68,8 @@ runtime kit, build tooling, `flags.gn`, and locked GN args.
 6. On each desktop, corrupt the newest neutral generation and recover a
    distinct previous generation, then corrupt one full-profile destination
    and recover the same generation from the other destination. Retain both
-   authenticated fallback proofs and all four rejection/quarantine receipts.
+   authenticated fallback proofs and all four private HMAC-authenticated
+   rejection/quarantine receipt directories.
    Each content-free `helium-desktop-tab-fault-matrix-v1` records the device,
    artifact hash, two cases, unchanged sibling mechanisms, and false for live
    or personal-profile access.
@@ -80,6 +91,18 @@ The desktop and Android fault matrices use the same two case names:
 and recovery generations. The full-profile case binds one generation and two
 distinct admitted destinations. Each case hashes its rejection receipt,
 quarantine receipt, and HMAC-authenticated fallback proof.
+
+Create each operation receipt with
+`scripts/tabs/tab-fault-operation.mjs record`. Its private input JSON contains
+only the operation identity, exact negative/quarantine/recovery results,
+generation/destination fields, and monotonic timestamps. The recorder itself
+rehashes the pre-fault archive, damaged input, quarantined archive, fallback
+`evidence.json`, and sibling-state snapshots supplied through
+`--pre-fault-archive`, `--damaged-input`, `--quarantine-archive`,
+`--fallback-evidence`, `--sibling-before`, and `--sibling-after`; those hashes
+must prove damage, byte-identical quarantine, recovery, and unchanged sibling
+state before the HMAC receipt directory is published. Do not put caller-made
+hashes in the input JSON.
 
 ## One terminal receipt
 
@@ -158,8 +181,14 @@ node scripts/android-acceptance/full-e2e.mjs verify \
   --output "$new_fleet_receipt"
 ```
 
-The finalizer enforces phase chronology, one physical OnePlus ADB identity,
+Pass `--linux-full-graph-receipt` the external evidence directory's exact
+`receipt.env`; the finalizer re-audits its sibling inventory and requires it to
+equal both archived copies used by d and da.
+
+The finalizer enforces phase chronology, independent d and da machine
+identities, one physical OnePlus USB serial/model/fingerprint across every
+Android phase,
 fresh authenticated tab statuses, the complete d/da/OnePlus device matrix,
 both replica restores and both corruption fallbacks per device. It never
-overwrites an output. Only its schema-2
-`helium-sync-fleet-full-e2e-v2` receipt is a complete fleet pass.
+overwrites an output. Only its schema-3
+`helium-sync-fleet-full-e2e-v3` receipt is a complete fleet pass.

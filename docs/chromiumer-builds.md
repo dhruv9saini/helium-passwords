@@ -802,6 +802,70 @@ Build stdout and stderr go to the systemd journal. `logs` invokes
 `journalctl --user --unit=helium-job-<job>.service`; no second log file or log
 rotation mechanism is maintained by the wrapper.
 
+For a retained frozen build whose immutable operator produced a successful
+fresh-graph boundary, finalize it externally from a clean current tooling
+checkout. Do not edit or rerun the frozen product checkout, live build unit,
+operator, or Ninja shim. The finalizer only reruns `ninja -t query`, captures
+the concrete completed graph and exact producer sources, and packages the
+already-built runtime into new outputs. Supply the real Ninja explicitly so
+the capture cannot resolve the immutable shim through `PATH`:
+
+```sh
+HELIUM_BUILD_OPERATOR=/home/d/.local/state/helium-agent/eac8a57-linux-full-graph-node22-operator.sh \
+HELIUM_NINJA_SHIM=/home/d/.local/libexec/helium-ninja-full-graph-node22/ninja \
+HELIUM_REAL_NINJA=/nix/store/...-ninja-.../bin/ninja \
+scripts/finalize-retained-linux-full-graph.sh \
+  helium-sync x86_64 linux-x86_64 "$job" \
+  "$frozen_product_checkout" \
+  "$frozen_product_checkout/build/platforms/linux" \
+  "/home/d/.local/state/helium-builds/$job/full-graph-boundary.env" \
+  "/srv/nas/helium-builds/$job/final/helium-sync-linux-x86_64.tar.xz" \
+  "/srv/nas/helium-builds/$job/final/helium-sync-linux-x86_64.receipt.env"
+```
+
+The output parent must already exist and all three outputs must be new. The
+sibling `helium-sync-linux-x86_64.full-graph/` directory contains its schema-3
+`receipt.env`, `SHA256SUMS`, concrete graph and target query, DevTools and
+platform sources, graph boundary, operator, shim, recovery tool, and
+finalization tools. The
+schema-4 internal manifest and schema-2 deployment receipt both bind the graph
+receipt and inventory hashes. A failed attempt is preserved; choose a new
+empty output directory after diagnosing it.
+
+The job20 false-positive is recoverable without source sync or GN. Its
+immutable local receipt is
+`/home/d/.local/state/helium-builds/hs-linux-x64-eac8a57-20/graph-gate-failure.env`
+with SHA-256
+`e3d6316545b45d4f4a8ac4525642f664a6f01f3954a374407e019446362c02ae`.
+The retained-repair entry point rehashes that exact mode-0400 receipt,
+operator, failed shim, frozen source, `build.ninja`, and `toolchain.ninja`.
+It reproduces the failed broad 211/117 diagnostic but admits only the scoped
+94 DevTools generate-CSS actions with zero missing tsconfig outputs. It also
+rechecks the ui/kit output/phony/downstream graph, AI skill edge, and the
+absence of pre-build outputs before invoking real Ninja directly at `-j 1`:
+
+```sh
+HELIUM_BUILD_OPERATOR=/home/d/.local/state/helium-agent/eac8a57-linux-full-graph-node22-operator.sh \
+HELIUM_NINJA_SHIM=/home/d/.local/libexec/helium-ninja-full-graph-node22/ninja \
+HELIUM_REAL_NINJA=/nix/store/...-ninja-.../bin/ninja \
+scripts/continue-retained-linux-full-graph-failure.sh \
+  helium-sync x86_64 linux-x86_64 hs-linux-x64-eac8a57-20 \
+  "$frozen_product_checkout" \
+  "$frozen_product_checkout/build/platforms/linux" \
+  /home/d/.local/state/helium-builds/hs-linux-x64-eac8a57-20/graph-gate-failure.env \
+  e3d6316545b45d4f4a8ac4525642f664a6f01f3954a374407e019446362c02ae \
+  /srv/nas/helium-builds/hs-linux-x64-eac8a57-20/final/helium-sync-linux-x86_64.tar.xz \
+  /srv/nas/helium-builds/hs-linux-x64-eac8a57-20/final/helium-sync-linux-x86_64.receipt.env
+```
+
+The entry point writes a mode-0400 preflight receipt before Ninja. A failed
+Ninja invocation writes a separate immutable failure receipt and deliberately
+refuses an automatic retry because outputs may then be partial. A successful
+Ninja invocation writes the repair boundary and passes it to the ordinary
+external finalizer. If only finalization fails after both binaries exist, do
+not rebuild; diagnose it and invoke the finalizer with the preserved repair
+boundary and entirely new artifact destinations.
+
 Package build outputs as one file on chromiumer, then return that exact file.
 The default destination is the NAS mounted on `lm`; pass a third argument only
 when intentionally returning to another `lm` directory:
@@ -867,10 +931,11 @@ the archive manifest. It also rejects an unexpected source train, product,
 architecture, target, field/file inventory, symlink, canonical patch-series
 member, GN args, Nix environment, or runtime hash. The destination is
 published atomically only after the complete check. It contains a mode-0600
-copy of the deployment receipt and a separate mode-0600 version-2
+copy of the deployment receipt and a separate mode-0600 version-3
 `artifact-receipt.env` for disposable runtime acceptance. The latter admits
 exactly one `runtime/helium-wrapper` entry point and binds the complete runtime
-checksum inventory. It is not an installer receipt. The native password gate
+checksum inventory plus the re-audited private full-graph directory. It is not
+an installer receipt. The native password gate
 rechecks every listed runtime file after transfer, so an unchanged wrapper
 cannot conceal a changed browser binary, library, or resource.
 

@@ -7,10 +7,13 @@ readable journal agreement, a deletion tombstone, and byte-identical no-op
 restart state. Keeping these checks here leaves the public Passwords harness
 independent of the private record schema.
 
-The extension accepts only secret-free metadata from `password-state.json` and
-the isolated readable server journal. It hashes any observed synthetic payload
-for the receipt, rejects unknown fields and plaintext-shaped credential keys,
-and never retains payload values. Never point it
+The extension accepts only disposable synthetic `password-state.json` and an
+isolated readable server journal. Each step copies those exact raw inputs into
+its private mode-0700 `sync-raw/STEP/` directory, stores mode-0600 files, and
+records their SHA-256 values. Verification reopens and parses those copies,
+recomputes every summary, and rejects extra steps, files, or directories. The
+public receipt remains content-free; raw synthetic payloads stay inside the
+private run. Never point it
 at a personal profile, production Android app data, or a production server
 journal.
 
@@ -54,12 +57,13 @@ or retroactive snapshot if the named public step is no longer the most recent
 capture. A failure invalidates the run; start a new disposable result directory
 rather than editing `run.json` or `sync-run.json`.
 
-The private run is schema 2 and copies the public run's exact 256-bit
+The private run is schema 3 and copies the public run's exact 256-bit
 `run_nonce`. Capture and verification fail if either run has an older schema,
 an absent or malformed nonce, or different nonces. The shared capture gate
 accepts only a structurally complete PNG with valid chunk CRCs; the final
 private verifier invokes the shared audit again and therefore revalidates every
-PNG and its recorded SHA-256 before reading Sync metadata.
+PNG, raw native state, complete journal, and recorded SHA-256 before reading
+Sync metadata.
 
 ## Verify
 
@@ -79,7 +83,7 @@ node scripts/password-runtime/sync-acceptance.mjs verify \
 The second command rehashes the browser artifact, every public screenshot, the
 fixture evidence, and the exact schema-2 public receipt before checking Sync
 metadata. The public receipt and fixture evidence must carry the same
-`run_nonce` as both run files. It creates a schema-2, mode-0600
+`run_nonce` as both run files. It creates a schema-3, mode-0600
 `sync-receipt.json`, bound to `receipt.json` and that nonce, and refuses to
 replace an existing private receipt.
 

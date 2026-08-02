@@ -285,7 +285,7 @@ package_runtime_acceptance() {
   mkdir -p "$destination"
   for source in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-    run-device-probe.sh verify-probe-pair.sh; do
+    run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh; do
     install -m 755 "$runtime_kit_root/$source" "$destination/$source"
   done
   {
@@ -305,7 +305,8 @@ package_runtime_acceptance() {
     cd "$destination"
     sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
       disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-      run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+      run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh \
+      kit.env > SHA256SUMS
   )
 }
 

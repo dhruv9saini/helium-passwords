@@ -11,212 +11,58 @@ sync_evidence=$(realpath "$2")
 control_acceptance=$(realpath "$3")
 control_evidence=$(realpath "$4")
 receipt=$(realpath -m "$5")
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+auditor="$script_dir/audit-probe-pair.mjs"
 
-command -v jq >/dev/null
+command -v node >/dev/null
 command -v sha256sum >/dev/null
-[[ ! -e "$receipt" && ! -L "$receipt" ]] || {
-  echo "pair receipt already exists" >&2
+[[ -f "$auditor" && ! -L "$auditor" && ! -e "$receipt" && ! -L "$receipt" ]] || {
+  echo "offline auditor is unsafe or pair receipt already exists" >&2
   exit 1
 }
 
-metadata() {
-  local file=$1
-  local name=$2
-  local value
-  value=$(sed -n "s/^${name}=//p" "$file")
-  [[ -n "$value" && "$(grep -c "^${name}=" "$file")" -eq 1 ]] || {
-    echo "$file is missing unique $name" >&2
+audit=$(
+  node "$auditor" verify \
+    --sync-acceptance "$sync_acceptance" \
+    --sync-evidence "$sync_evidence" \
+    --control-acceptance "$control_acceptance" \
+    --control-evidence "$control_evidence"
+)
+declare -A values=()
+allowed=(
+  helium_sync_commit chromium_commit sync_archive_sha256 sync_apk_sha256
+  sync_result_sha256 control_archive_sha256 control_apk_sha256
+  control_result_sha256 shared_flags_gn_sha256
+  shared_locked_gn_args_sha256 fixture_receipt_sha256 media_manifest_sha256
+  physical_identity_sha256 offline_auditor_sha256
+)
+while IFS= read -r line || [[ -n "$line" ]]; do
+  [[ "$line" =~ ^([a-z][a-z0-9_]*)=(.+)$ ]] || {
+    echo "offline auditor emitted a malformed line" >&2
     exit 1
   }
-  printf '%s\n' "$value"
-}
-
-verify_generation() {
-  local acceptance=$1
-  local evidence=$2
-  local expected_package=$3
-  local expected_socket=$4
-  local acceptance_env="$acceptance/acceptance.env"
-  local evidence_env="$evidence/acceptance.env"
-  local actions="$evidence/actions.env"
-  local result="$evidence/result.json"
-  local media_diagnostics="$evidence/media-diagnostics.json"
-  local package_logcat="$evidence/package-logcat.txt"
-  local package apk_sha chromium_commit sync_commit version_code version_name
-
-  [[ -f "$acceptance/PACKAGE_SHA256SUMS" && -f "$evidence/EVIDENCE_SHA256SUMS" &&
-      -f "$acceptance_env" && -f "$evidence_env" && -f "$actions" && -f "$result" &&
-      -f "$media_diagnostics" && -f "$package_logcat" &&
-      -f "$evidence/fixture-provenance.json" &&
-      -f "$acceptance/runtime-acceptance/SHA256SUMS" ]] || {
-    echo "acceptance or evidence generation is incomplete" >&2
+  key=${BASH_REMATCH[1]}
+  value=${BASH_REMATCH[2]}
+  admitted=false
+  for candidate in "${allowed[@]}"; do
+    if [[ "$key" == "$candidate" ]]; then admitted=true; break; fi
+  done
+  [[ "$admitted" == true && ! -v "values[$key]" ]] || {
+    echo "offline auditor emitted an unexpected or duplicate field" >&2
     exit 1
   }
-  (cd "$acceptance" && sha256sum -c PACKAGE_SHA256SUMS >/dev/null)
-  (cd "$evidence" && sha256sum -c EVIDENCE_SHA256SUMS >/dev/null)
-  cmp -s "$acceptance_env" "$evidence_env" || {
-    echo "device evidence is not bound to its acceptance generation" >&2
-    exit 1
-  }
-
-  package=$(metadata "$acceptance_env" package)
-  apk_sha=$(metadata "$acceptance_env" apk_sha256)
-  chromium_commit=$(metadata "$acceptance_env" chromium_commit)
-  sync_commit=$(metadata "$acceptance_env" helium_sync_commit)
-  version_code=$(metadata "$acceptance_env" version_code)
-  version_name=$(metadata "$acceptance_env" version_name)
-  [[ "$package" == "$expected_package" && "$apk_sha" =~ ^[0-9a-f]{64}$ &&
-      "$chromium_commit" =~ ^[0-9a-f]{40}$ && "$sync_commit" =~ ^[0-9a-f]{40}$ ]] || {
-    echo "acceptance generation has the wrong role or invalid source identity" >&2
-    exit 1
-  }
-  [[ "$(metadata "$acceptance_env" runtime_kit_sha256)" == \
-      "$(sha256sum "$acceptance/runtime-acceptance/SHA256SUMS" | cut -d' ' -f1)" ]] || {
-    echo "acceptance metadata does not identify its runtime kit" >&2
-    exit 1
-  }
-  [[ "$(metadata "$actions" package)" == "$package" &&
-      "$(metadata "$actions" installed_apk_sha256)" == "$apk_sha" &&
-      "$(metadata "$actions" device_socket)" == "$expected_socket" &&
-      "$(metadata "$actions" version_code)" == "$version_code" &&
-      "$(metadata "$actions" version_name)" == "$version_name" &&
-      "$(metadata "$actions" package_uid)" =~ ^[1-9][0-9]*$ &&
-      "$(metadata "$actions" logcat_scope)" == package-uid &&
-      "$(metadata "$actions" background_foreground)" == true &&
-      "$(metadata "$actions" network_handoff)" == wifi-to-cellular ]] || {
-    echo "device actions do not prove the full admitted lifecycle gate" >&2
-    exit 1
-  }
-
-  jq -e \
-    --arg package "$package" \
-    --arg apk "$apk_sha" \
-    --arg chromium "$chromium_commit" \
-    --arg sync "$sync_commit" \
-    --arg socket "$expected_socket" '
-      .runtime.android_package == $package and
-      .runtime.artifact_sha256 == $apk and
-      .runtime.chromium_commit == $chromium and
-      .runtime.helium_sync_commit == $sync and
-      .runtime.device_socket == $socket and
-      .required_transport_protocols == ["h2", "h3"] and
-      .required_lifecycle == {"background_foreground":true,"network_handoff":true} and
-      .service_worker.supported == true and
-      .service_worker.controlled == true and
-      .service_worker.script_url == "/service-worker.js" and
-      .media_diagnostics.source == "CDP Media domain" and
-      .media_diagnostics.enabled == true and
-      .media_diagnostics.event_count > 0 and
-      .media_diagnostics.player_count > 0 and
-      (.drm.widevine.api_available | type) == "boolean" and
-      (.drm.widevine.key_system_available | type) == "boolean" and
-      .drm.widevine.key_system == "com.widevine.alpha"
-    ' "$result" >/dev/null || {
-    echo "probe result is not source-bound full Android evidence" >&2
-    exit 1
-  }
-
-  jq -e --slurpfile result "$result" '
-    .schema_version == 1 and .synthetic_fixture_only == true and
-    .source == "CDP Media domain" and .enabled == true and
-    .event_count > 0 and .player_count > 0 and
-    (.events | length) == .event_count and
-    .event_count == $result[0].media_diagnostics.event_count and
-    .player_count == $result[0].media_diagnostics.player_count and
-    .method_counts == $result[0].media_diagnostics.method_counts
-  ' "$media_diagnostics" >/dev/null || {
-    echo "CDP Media diagnostics are incomplete or not result-bound" >&2
-    exit 1
-  }
-
-  if [[ "$expected_package" == computer.helium.sync.test ]]; then
-    [[ "$(metadata "$actions" cookie_acceptance)" == true &&
-        -f "$evidence/cookie-native-acceptance.json" ]] || {
-      echo "Sync evidence is missing browser-native cookie acceptance" >&2
-      exit 1
-    }
-    jq -e '
-      .schema_version == 1 and
-      .fixture == "helium-cookie-manager-disposable-v1" and
-      .synthetic_only == true and .status == "passed" and
-      .cookie_api == "network::mojom::CookieManager" and
-      .destination_snapshot.snapshot_persisted_before_apply == true and
-      .import.apply_result == "accepted" and
-      .import.readback_result == "exact" and
-      .import.canonical_record_keys_unique == true and
-      .import.partitioned_and_unpartitioned_identity_distinct == true and
-      .destination_rejection.set_result == "rejected" and
-      .destination_rejection.rollback_result == "exact" and
-      .origin_state.cookie_names_guessed == false and
-      .origin_state.registered_adapter_count == 0 and
-      .origin_state.non_cookie_transfer_result == "not-tested" and
-      .cleanup.complete_profile_cookie_store == "empty"
-    ' "$evidence/cookie-native-acceptance.json" >/dev/null || {
-      echo "browser-native cookie acceptance evidence is invalid" >&2
-      exit 1
-    }
-  else
-    [[ "$(metadata "$actions" cookie_acceptance)" == false &&
-        ! -e "$evidence/cookie-native-acceptance.json" ]] || {
-      echo "control evidence must not contain the Sync cookie fixture" >&2
-      exit 1
-    }
-  fi
-
-  local fixture_sha
-  fixture_sha=$(sha256sum "$evidence/fixture-provenance.json" | cut -d' ' -f1)
-  [[ "$(metadata "$actions" fixture_receipt_sha256)" == "$fixture_sha" ]] || {
-    echo "fixture receipt is not bound to the device actions" >&2
-    exit 1
-  }
-}
-
-verify_generation \
-  "$sync_acceptance" "$sync_evidence" \
-  computer.helium.sync.test helium_sync_test_devtools_remote
-verify_generation \
-  "$control_acceptance" "$control_evidence" \
-  computer.helium.control.test helium_control_test_devtools_remote
-
-cmp -s "$sync_acceptance/build-provenance/flags.gn" \
-  "$control_acceptance/build-provenance/flags.gn" || {
-  echo "Sync and control were not built from byte-identical flags.gn" >&2
+  values[$key]=$value
+done <<<"$audit"
+[[ "${#values[@]}" -eq "${#allowed[@]}" ]] || {
+  echo "offline auditor output is incomplete" >&2
   exit 1
 }
-cmp -s "$sync_acceptance/build-provenance/locked-gn-args-resolved.txt" \
-  "$control_acceptance/build-provenance/locked-gn-args-resolved.txt" || {
-  echo "Sync and control do not have byte-identical effective locked GN values" >&2
-  exit 1
-}
-
-for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
-  disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-  run-device-probe.sh verify-probe-pair.sh; do
-  cmp -s "$sync_acceptance/runtime-acceptance/$name" \
-    "$control_acceptance/runtime-acceptance/$name" || {
-    echo "Sync and control used different acceptance code: $name" >&2
-    exit 1
-  }
+for key in "${allowed[@]}"; do
+  [[ -v "values[$key]" ]] || { echo "offline auditor omitted $key" >&2; exit 1; }
 done
-
-sync_env="$sync_acceptance/acceptance.env"
-control_env="$control_acceptance/acceptance.env"
-for name in helium_sync_commit chromium_commit version_code version_name; do
-  [[ "$(metadata "$sync_env" "$name")" == "$(metadata "$control_env" "$name")" ]] || {
-    echo "Sync and control do not share $name" >&2
-    exit 1
-  }
-done
-
-cmp -s "$sync_evidence/fixture-provenance.json" \
-  "$control_evidence/fixture-provenance.json" || {
-  echo "Sync and control did not use the same protocol fixture generation" >&2
-  exit 1
-}
-sync_media=$(jq -cS '.media_manifest' "$sync_evidence/result.json")
-control_media=$(jq -cS '.media_manifest' "$control_evidence/result.json")
-[[ "$sync_media" == "$control_media" ]] || {
-  echo "Sync and control did not exercise byte-identical media fixtures" >&2
+[[ "${values[offline_auditor_sha256]}" == \
+    "$(sha256sum "$auditor" | cut -d' ' -f1)" ]] || {
+  echo "offline auditor did not bind its executing source" >&2
   exit 1
 }
 
@@ -227,24 +73,12 @@ cleanup() { rm -f "$temporary"; }
 trap cleanup EXIT
 chmod 600 "$temporary"
 {
-  printf 'schema_version=1\n'
-  printf 'helium_sync_commit=%s\n' "$(metadata "$sync_env" helium_sync_commit)"
-  printf 'chromium_commit=%s\n' "$(metadata "$sync_env" chromium_commit)"
-  printf 'sync_archive_sha256=%s\n' "$(metadata "$sync_env" source_archive_sha256)"
-  printf 'sync_apk_sha256=%s\n' "$(metadata "$sync_env" apk_sha256)"
-  printf 'sync_result_sha256=%s\n' "$(sha256sum "$sync_evidence/result.json" | cut -d' ' -f1)"
-  printf 'control_archive_sha256=%s\n' "$(metadata "$control_env" source_archive_sha256)"
-  printf 'control_apk_sha256=%s\n' "$(metadata "$control_env" apk_sha256)"
-  printf 'control_result_sha256=%s\n' "$(sha256sum "$control_evidence/result.json" | cut -d' ' -f1)"
-  printf 'shared_flags_gn_sha256=%s\n' \
-    "$(sha256sum "$sync_acceptance/build-provenance/flags.gn" | cut -d' ' -f1)"
-  printf 'shared_locked_gn_args_sha256=%s\n' \
-    "$(sha256sum "$sync_acceptance/build-provenance/locked-gn-args-resolved.txt" | cut -d' ' -f1)"
-  printf 'fixture_receipt_sha256=%s\n' \
-    "$(sha256sum "$sync_evidence/fixture-provenance.json" | cut -d' ' -f1)"
-  printf 'media_manifest_sha256=%s\n' "$(printf '%s' "$sync_media" | sha256sum | cut -d' ' -f1)"
-  printf 'verified_at=%s\n' "$(date --iso-8601=seconds)"
-} > "$temporary"
+  printf 'schema_version=2\n'
+  for key in "${allowed[@]}"; do
+    printf '%s=%s\n' "$key" "${values[$key]}"
+  done
+  printf 'verified_at=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+} >"$temporary"
 ln "$temporary" "$receipt"
 rm "$temporary"
 trap - EXIT

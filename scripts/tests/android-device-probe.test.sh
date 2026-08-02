@@ -38,7 +38,13 @@ cat > "$test_root/bin/adb" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$HELIUM_TEST_ADB_LOG"
 case "$*" in
+  'devices -l') printf 'List of devices attached\nUSB-SERIAL\tdevice usb:1-2 product:CPH2655 model:CPH2655 device:dodge transport_id:7\n' ;;
   *' get-state') printf 'device\n' ;;
+  *' shell getprop ro.product.model') printf 'CPH2655\n' ;;
+  *' shell getprop ro.product.device') printf 'dodge\n' ;;
+  *' shell getprop ro.product.name') printf 'CPH2655\n' ;;
+  *' shell getprop ro.product.manufacturer') printf 'OnePlus\n' ;;
+  *' shell getprop ro.build.fingerprint') printf 'OnePlus/CPH2655/dodge:15/fixture:user/release-keys\n' ;;
   *' shell pm path computer.helium.sync.test') printf 'package:/data/app/test/base.apk\n' ;;
   *' exec-out cat /data/app/test/base.apk') cat "$HELIUM_TEST_INSTALLED_APK" ;;
   *' shell dumpsys package computer.helium.sync.test')
@@ -201,7 +207,7 @@ if PATH="$test_root/bin:$PATH" \
   echo 'network handoff over network ADB unexpectedly passed' >&2
   exit 1
 fi
-grep -q 'requires a non-network ADB transport' "$test_root/network-adb.out"
+grep -q 'requires a non-network, non-emulator ADB serial' "$test_root/network-adb.out"
 
 printf 'different installed APK\n' > "$test_root/different.apk"
 export HELIUM_TEST_INSTALLED_APK="$test_root/different.apk"

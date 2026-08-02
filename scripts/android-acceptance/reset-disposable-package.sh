@@ -55,13 +55,45 @@ receipt_parent=$(dirname -- "$receipt_input")
   exit 1
 }
 
-for tool in adb awk chmod date dirname find grep head ln mktemp realpath sed \
+for tool in adb awk chmod date dirname find grep head ln mktemp node realpath sed \
   sha256sum sort stat tr; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "missing required tool: $tool" >&2
     exit 1
   }
 done
+
+identity_tool=$(realpath -e "$(dirname "${BASH_SOURCE[0]}")/physical-device-identity.mjs")
+identity_output=$(node "$identity_tool" capture --adb-serial "$serial")
+declare -A physical_identity=()
+identity_fields=(
+  schema_version identity_schema adb_serial adb_transport adb_transport_id
+  adb_usb_path_sha256 android_model android_device android_product
+  android_manufacturer build_fingerprint_sha256 physical_identity_sha256
+  captured_at
+)
+while IFS= read -r line || [[ -n "$line" ]]; do
+  [[ "$line" =~ ^([a-z][a-z0-9_]*)=(.+)$ ]] || {
+    echo "physical device identity output is malformed" >&2
+    exit 1
+  }
+  key=${BASH_REMATCH[1]}
+  value=${BASH_REMATCH[2]}
+  admitted=false
+  for candidate in "${identity_fields[@]}"; do
+    if [[ "$key" == "$candidate" ]]; then admitted=true; break; fi
+  done
+  [[ "$admitted" == true && ! -v "physical_identity[$key]" ]] || {
+    echo "physical device identity output is unexpected" >&2
+    exit 1
+  }
+  physical_identity[$key]=$value
+done <<<"$identity_output"
+[[ "${#physical_identity[@]}" -eq "${#identity_fields[@]}" &&
+    "${physical_identity[adb_serial]}" == "$serial" ]] || {
+  echo "physical device identity output is incomplete" >&2
+  exit 1
+}
 
 [[ -f "$acceptance/acceptance.env" &&
     ! -L "$acceptance/acceptance.env" &&
@@ -146,7 +178,7 @@ done
 }
 [[ -f "$acceptance/Browser-test.apk" &&
     ! -L "$acceptance/Browser-test.apk" &&
-    "$(sha256sum "$acceptance/Browser-test.apk" | awk '{print $1}')" ==
+    "$(sha256sum "$acceptance/Browser-test.apk" | awk '{print $1}')" == \
       "${metadata[apk_sha256]}" ]] || {
   echo "acceptance APK is missing or changed" >&2
   exit 1
@@ -351,9 +383,16 @@ cleanup() { rm -f -- "$temporary"; }
 trap cleanup EXIT
 chmod 0600 "$temporary"
 {
-  printf 'schema_version=1\nresult=passed\n'
-  printf 'package=%s\nadb_serial=%s\nadb_transport=physical-usb\n' \
-    "$package" "$serial"
+  printf 'schema_version=2\nresult=passed\n'
+  printf 'package=%s\n' "$package"
+  for key in identity_schema adb_serial adb_transport adb_transport_id \
+    adb_usb_path_sha256 android_model android_device android_product \
+    android_manufacturer build_fingerprint_sha256 physical_identity_sha256; do
+    printf '%s=%s\n' "$key" "${physical_identity[$key]}"
+  done
+  printf 'physical_identity_captured_at=%s\n' "${physical_identity[captured_at]}"
+  printf 'physical_identity_tool_sha256=%s\n' \
+    "$(sha256sum "$identity_tool" | awk '{print $1}')"
   printf 'from_phase=%s\nto_phase=%s\n' "$from_phase" "$to_phase"
   printf 'helium_sync_commit=%s\nchromium_commit=%s\n' \
     "${metadata[helium_sync_commit]}" "${metadata[chromium_commit]}"

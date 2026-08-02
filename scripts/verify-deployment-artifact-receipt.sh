@@ -27,7 +27,7 @@ case "${expected_target}" in
 esac
 
 declare -A values=()
-allowed=' schema_version artifact_sha256 artifact_size target helium_sync_commit helium_passwords_commit helium_core_commit chromium_commit build_job_id provenance_sha256 created_at '
+allowed=' schema_version artifact_sha256 artifact_size target helium_sync_commit helium_passwords_commit helium_core_commit chromium_commit build_job_id provenance_sha256 full_graph_receipt_sha256 full_graph_inventory_sha256 created_at '
 while IFS= read -r line || [ -n "${line}" ]; do
     [ -n "${line}" ] && [[ "${line}" == *=* ]] || {
         echo "invalid deployment receipt line" >&2
@@ -61,6 +61,8 @@ required=(
     chromium_commit
     build_job_id
     provenance_sha256
+    full_graph_receipt_sha256
+    full_graph_inventory_sha256
     created_at
 )
 [ "${#values[@]}" -eq "${#required[@]}" ] || {
@@ -73,7 +75,7 @@ for key in "${required[@]}"; do
         exit 1
     }
 done
-[ "${values[schema_version]}" = 1 ] || {
+[ "${values[schema_version]}" = 2 ] || {
     echo "unsupported deployment receipt schema" >&2
     exit 1
 }
@@ -83,6 +85,8 @@ done
 }
 [[ "${values[artifact_sha256]}" =~ ^[0-9a-f]{64}$ ]] && \
     [[ "${values[provenance_sha256]}" =~ ^[0-9a-f]{64}$ ]] && \
+    [[ "${values[full_graph_receipt_sha256]}" =~ ^[0-9a-f]{64}$ ]] && \
+    [[ "${values[full_graph_inventory_sha256]}" =~ ^[0-9a-f]{64}$ ]] && \
     [[ "${values[artifact_size]}" =~ ^[1-9][0-9]*$ ]] || {
     echo "invalid deployment receipt hash or size" >&2
     exit 1
@@ -111,6 +115,6 @@ done
 printf 'artifact_admission=verified\n'
 for key in artifact_sha256 target helium_sync_commit helium_passwords_commit \
     helium_core_commit chromium_commit build_job_id provenance_sha256 \
-    created_at; do
+    full_graph_receipt_sha256 full_graph_inventory_sha256 created_at; do
     printf '%s=%s\n' "${key}" "${values[${key}]}"
 done

@@ -3,11 +3,11 @@ set -euo pipefail
 
 usage() {
     cat >&2 <<'EOF'
-usage: write-deployment-artifact-receipt.sh ARTIFACT TARGET SYNC-COMMIT PASSWORDS-COMMIT CORE-COMMIT CHROMIUM-COMMIT BUILD-JOB-ID PROVENANCE-SHA256 NEW-RECEIPT
+usage: write-deployment-artifact-receipt.sh ARTIFACT TARGET SYNC-COMMIT PASSWORDS-COMMIT CORE-COMMIT CHROMIUM-COMMIT BUILD-JOB-ID PROVENANCE-SHA256 FULL-GRAPH-RECEIPT-SHA256 FULL-GRAPH-INVENTORY-SHA256 NEW-RECEIPT
 EOF
 }
 
-[ "$#" -eq 9 ] || {
+[ "$#" -eq 11 ] || {
     usage
     exit 2
 }
@@ -19,7 +19,9 @@ core_commit=$5
 chromium_commit=$6
 build_job_id=$7
 provenance_sha256=$8
-receipt=$(realpath -m -- "$9")
+full_graph_receipt_sha256=$9
+full_graph_inventory_sha256=${10}
+receipt=$(realpath -m -- "${11}")
 
 [ -f "${artifact}" ] && [ ! -L "${artifact}" ] && [ -s "${artifact}" ] || {
     echo "artifact must be a regular non-symlink file" >&2
@@ -40,10 +42,13 @@ done
     echo "invalid build job id" >&2
     exit 2
 }
-[[ "${provenance_sha256}" =~ ^[0-9a-f]{64}$ ]] || {
-    echo "invalid provenance SHA-256" >&2
-    exit 1
-}
+for digest in "${provenance_sha256}" "${full_graph_receipt_sha256}" \
+    "${full_graph_inventory_sha256}"; do
+    [[ "${digest}" =~ ^[0-9a-f]{64}$ ]] || {
+        echo "invalid deployment provenance SHA-256" >&2
+        exit 1
+    }
+done
 [ ! -e "${receipt}" ] || {
     echo "refusing to replace existing deployment receipt: ${receipt}" >&2
     exit 1
@@ -57,7 +62,7 @@ cleanup() {
 }
 trap cleanup EXIT
 cat >"${temporary}" <<EOF
-schema_version=1
+schema_version=2
 artifact_sha256=$(sha256sum "${artifact}" | awk '{ print $1 }')
 artifact_size=$(stat -c %s "${artifact}")
 target=${target}
@@ -67,6 +72,8 @@ helium_core_commit=${core_commit}
 chromium_commit=${chromium_commit}
 build_job_id=${build_job_id}
 provenance_sha256=${provenance_sha256}
+full_graph_receipt_sha256=${full_graph_receipt_sha256}
+full_graph_inventory_sha256=${full_graph_inventory_sha256}
 created_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 EOF
 chmod 0644 "${temporary}"

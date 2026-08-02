@@ -13,8 +13,16 @@ import {
 } from "../password-runtime/acceptance.mjs";
 import {auditVerifiedSyncRun} from "../password-runtime/sync-acceptance.mjs";
 import {auditOriginState} from "../session-state/origin-state-audit.mjs";
+import {auditLinuxFullGraphEvidence} from "../linux-full-graph-audit.mjs";
+import {parsePhysicalDeviceIdentityEnv} from
+  "../android-acceptance/physical-device-identity.mjs";
+import {parseLinuxHostIdentityEnv} from "./execution-identity.mjs";
+import {
+  auditDeviceRuntimeEvidence,
+  auditServerRuntimeEvidence,
+} from "./fleet-runtime-evidence.mjs";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const ROOT_MARKER = "helium-three-client-disposable-v1\n";
 const DEVICE_MARKER_PREFIX = "helium-three-client-device-v1:";
 const DEVICES = Object.freeze(["d", "da", "oneplus"]);
@@ -216,13 +224,34 @@ async function readCommitFile(filePath, label) {
   };
 }
 
-async function describeAdmittedDevice(run, device) {
+async function readExecutionIdentity(filePath, device) {
+  const file = await regularFile(filePath, `${device} execution identity`, 4096);
+  if ((file.info.mode & 0o077) !== 0) {
+    throw new Error(`${device} execution identity must be private`);
+  }
+  const raw = await fsp.readFile(file.resolved, "utf8");
+  const value = device === "oneplus"
+    ? parsePhysicalDeviceIdentityEnv(raw)
+    : parseLinuxHostIdentityEnv(raw, device);
+  return {path: file.resolved, sha256: sha256(raw), value};
+}
+
+async function describeAdmittedDevice(run, device, executionIdentity) {
   const spec = DEVICE_SPECS[device];
   let admission;
   let train;
   if (spec.platform === "linux") {
     const receipt = await readEnv(
       run.artifact_receipt, `${device} Linux artifact receipt`);
+    requireEnvKeys(receipt, [
+      "schema_version", "product", "platform", "arch", "source_commit",
+      "helium_core_commit", "chromium_version", "chromium_commit",
+      "platform_commit", "bundle", "bundle_sha256",
+      "provenance_manifest_sha256", "browser_executable", "browser_sha256",
+      "runtime_inventory", "runtime_inventory_sha256", "full_graph_receipt",
+      "full_graph_receipt_sha256", "full_graph_inventory",
+      "full_graph_inventory_sha256", "verified_at",
+    ], `${device} Linux artifact receipt`);
     if (receipt.values.get("arch") !== spec.arch) {
       throw new Error(`${device} Linux artifact has the wrong architecture`);
     }
@@ -240,7 +269,8 @@ async function describeAdmittedDevice(run, device) {
       "schema_version", "artifact_sha256", "artifact_size", "target",
       "helium_sync_commit", "helium_passwords_commit",
       "helium_core_commit", "chromium_commit", "build_job_id",
-      "provenance_sha256", "created_at",
+      "provenance_sha256", "full_graph_receipt_sha256",
+      "full_graph_inventory_sha256", "created_at",
     ], `${device} deployment artifact receipt`);
     const manifest = await readEnv(
       path.join(
@@ -258,7 +288,9 @@ async function describeAdmittedDevice(run, device) {
       "chromium_commit", "build_job_id", "platform_repository",
       "platform_commit", "depot_tools_commit", "gn_args_sha256",
       "nix_provenance_sha256", "patch_inventory_sha256",
-      "runtime_inventory_sha256",
+      "runtime_inventory_sha256", "packaging_tool_commit",
+      "packaging_tool_sha256", "full_graph_receipt_sha256",
+      "full_graph_inventory_sha256",
     ], `${device} internal provenance manifest`);
     const sourceCommit = exactCommit(
       receipt.values.get("source_commit"), `${device} source commit`);
@@ -282,7 +314,27 @@ async function describeAdmittedDevice(run, device) {
     );
     const bundleSHA256 = await sha256File(bundle.resolved);
     const manifestSHA256 = sha256(manifest.raw);
-    if (deployment.values.get("schema_version") !== "1" ||
+    const graphRoot = path.join(
+      verifiedRoot, `helium-sync-linux-${spec.arch}`, "provenance", "full-graph");
+    const graph = await auditLinuxFullGraphEvidence(graphRoot, {
+      job: deployment.values.get("build_job_id"),
+      sourceCommit,
+      passwordsCommit,
+      coreCommit,
+      chromiumCommit,
+      platformCommit,
+    });
+    if (receipt.values.get("schema_version") !== "3" ||
+        receipt.values.get("product") !== "helium-sync" ||
+        receipt.values.get("platform") !== "linux" ||
+        receipt.values.get("full_graph_receipt") !==
+          `helium-sync-linux-${spec.arch}/provenance/full-graph/receipt.env` ||
+        receipt.values.get("full_graph_inventory") !==
+          `helium-sync-linux-${spec.arch}/provenance/full-graph/SHA256SUMS` ||
+        receipt.values.get("full_graph_receipt_sha256") !== graph.receiptSha256 ||
+        receipt.values.get("full_graph_inventory_sha256") !==
+          graph.inventorySha256 ||
+        deployment.values.get("schema_version") !== "2" ||
         deployment.values.get("target") !== spec.target ||
         deployment.values.get("artifact_sha256") !== bundleSHA256 ||
         deployment.values.get("artifact_sha256") !==
@@ -291,6 +343,10 @@ async function describeAdmittedDevice(run, device) {
         deployment.values.get("provenance_sha256") !== manifestSHA256 ||
         deployment.values.get("provenance_sha256") !==
           receipt.values.get("provenance_manifest_sha256") ||
+        deployment.values.get("full_graph_receipt_sha256") !==
+          graph.receiptSha256 ||
+        deployment.values.get("full_graph_inventory_sha256") !==
+          graph.inventorySha256 ||
         deployment.values.get("helium_sync_commit") !== sourceCommit ||
         deployment.values.get("helium_core_commit") !== coreCommit ||
         deployment.values.get("chromium_commit") !== chromiumCommit ||
@@ -300,7 +356,7 @@ async function describeAdmittedDevice(run, device) {
           deployment.values.get("build_job_id") || "") ||
         !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/.test(
           deployment.values.get("created_at") || "") ||
-        manifest.values.get("schema_version") !== "3" ||
+        manifest.values.get("schema_version") !== "4" ||
         manifest.values.get("product") !== "helium-sync" ||
         manifest.values.get("platform") !== "linux" ||
         manifest.values.get("arch") !== spec.arch ||
@@ -313,6 +369,14 @@ async function describeAdmittedDevice(run, device) {
         manifest.values.get("chromium_version") !==
           receipt.values.get("chromium_version") ||
         manifest.values.get("platform_commit") !== platformCommit ||
+        manifest.values.get("full_graph_receipt_sha256") !==
+          graph.receiptSha256 ||
+        manifest.values.get("full_graph_inventory_sha256") !==
+          graph.inventorySha256 ||
+        manifest.values.get("packaging_tool_sha256") !==
+          graph.receipt.packaging_tool_sha256 ||
+        !/^[0-9a-f]{40}$/.test(
+          manifest.values.get("packaging_tool_commit") || "") ||
         depotToolsCommit !== LINUX_DEPOT_TOOLS_COMMIT ||
         !HASH.test(manifest.values.get("source_tree") || "") ||
         !["gn_args_sha256", "nix_provenance_sha256",
@@ -334,6 +398,11 @@ async function describeAdmittedDevice(run, device) {
       returned_archive_sha256: bundleSHA256,
       build_job_id: manifest.values.get("build_job_id"),
       depot_tools_commit: depotToolsCommit,
+      full_graph_root_path: graph.root,
+      full_graph_receipt_path: path.join(graph.root, "receipt.env"),
+      full_graph_receipt_sha256: graph.receiptSha256,
+      full_graph_inventory_path: path.join(graph.root, "SHA256SUMS"),
+      full_graph_inventory_sha256: graph.inventorySha256,
       inventory_path: null,
       inventory_sha256: null,
     };
@@ -391,6 +460,11 @@ async function describeAdmittedDevice(run, device) {
       returned_archive_sha256: null,
       build_job_id: null,
       depot_tools_commit: null,
+      full_graph_root_path: null,
+      full_graph_receipt_path: null,
+      full_graph_receipt_sha256: null,
+      full_graph_inventory_path: null,
+      full_graph_inventory_sha256: null,
       inventory_path: inventory.resolved,
       inventory_sha256: sha256(inventoryRaw),
     };
@@ -428,6 +502,7 @@ async function describeAdmittedDevice(run, device) {
       admission,
       profile_path: run.profile_path,
       profile_marker_sha256: profileMarkerSHA256,
+      execution_identity: executionIdentity,
     },
     train,
   };
@@ -459,6 +534,7 @@ function requireOneLinuxRuntime(devices) {
   const fields = [
     "artifact_sha256", "returned_archive_sha256",
     "deployment_receipt_sha256", "provenance_manifest_sha256",
+    "full_graph_receipt_sha256", "full_graph_inventory_sha256",
     "build_job_id", "depot_tools_commit",
   ];
   for (const field of fields) {
@@ -480,6 +556,9 @@ export async function initializeThreeClientRun({
   daArtifact,
   daArtifactReceipt,
   oneplusArtifact,
+  dExecutionIdentity,
+  daExecutionIdentity,
+  oneplusExecutionIdentity,
   output,
 }) {
   const root = path.resolve(output);
@@ -495,6 +574,15 @@ export async function initializeThreeClientRun({
     da: {artifact: daArtifact, artifactReceipt: daArtifactReceipt},
     oneplus: {artifact: oneplusArtifact, artifactReceipt: ""},
   };
+  const executionIdentities = {
+    d: await readExecutionIdentity(dExecutionIdentity, "d"),
+    da: await readExecutionIdentity(daExecutionIdentity, "da"),
+    oneplus: await readExecutionIdentity(oneplusExecutionIdentity, "oneplus"),
+  };
+  if (executionIdentities.d.value.machine_id_sha256 ===
+      executionIdentities.da.value.machine_id_sha256) {
+    throw new Error("d and da execution identities resolve to one Linux machine");
+  }
   const nativeRuns = {};
   for (const device of DEVICES) {
     const spec = DEVICE_SPECS[device];
@@ -523,7 +611,8 @@ export async function initializeThreeClientRun({
   const devices = {};
   const trains = {};
   for (const device of DEVICES) {
-    const admitted = await describeAdmittedDevice(nativeRuns[device], device);
+    const admitted = await describeAdmittedDevice(
+      nativeRuns[device], device, executionIdentities[device].value);
     devices[device] = admitted.descriptor;
     trains[device] = admitted.train;
   }
@@ -577,13 +666,16 @@ async function loadManifest(runRoot) {
       "native_run", "platform", "target", "package", "artifact_path",
       "artifact_sha256", "admission", "profile_path",
       "profile_marker_sha256",
+      "execution_identity",
     ], `${device} device admission`);
     exactKeys(recorded.admission, [
       "kind", "receipt_path", "receipt_sha256",
       "deployment_receipt_path", "deployment_receipt_sha256",
       "provenance_manifest_path", "provenance_manifest_sha256",
       "returned_archive_path", "returned_archive_sha256", "build_job_id",
-      "depot_tools_commit",
+      "depot_tools_commit", "full_graph_root_path",
+      "full_graph_receipt_path", "full_graph_receipt_sha256",
+      "full_graph_inventory_path", "full_graph_inventory_sha256",
       "inventory_path", "inventory_sha256",
     ], `${device} admission files`);
     if (recorded.native_run !== nativeRunPath(root, device) ||
@@ -595,8 +687,16 @@ async function loadManifest(runRoot) {
     requireHash(recorded.artifact_sha256, `${device} artifact hash`);
     requireHash(recorded.admission.receipt_sha256,
       `${device} admission receipt hash`);
+    if (device === "oneplus") {
+      parsePhysicalDeviceIdentityEnv(Object.entries(recorded.execution_identity)
+        .map(([key, value]) => `${key}=${value}`).join("\n") + "\n");
+    } else {
+      parseLinuxHostIdentityEnv(Object.entries(recorded.execution_identity)
+        .map(([key, value]) => `${key}=${value}`).join("\n") + "\n", device);
+    }
     const audited = await auditArtifactAdmission(recorded.native_run);
-    const current = await describeAdmittedDevice(audited.run, device);
+    const current = await describeAdmittedDevice(
+      audited.run, device, recorded.execution_identity);
     if (!equalJSON(current.descriptor, recorded)) {
       throw new Error(`${device} admitted artifact or boundary changed`);
     }
@@ -882,10 +982,11 @@ function validateCookieEvidence(value) {
   return {imports};
 }
 
-export function validateBrowserEvidence(value, manifest) {
+export function validateBrowserEvidence(value, manifest, runtimeEvidence) {
   exactKeys(value, [
     "schema_version", "evidence_scope", "writer", "source_train",
-    "tabs_observed", "devices", "password", "cookies",
+    "tabs_observed", "runtime_evidence_sha256", "devices", "password",
+    "cookies",
   ], "browser evidence");
   if (value.schema_version !== SCHEMA_VERSION ||
       value.evidence_scope !== "disposable-browser" ||
@@ -896,25 +997,31 @@ export function validateBrowserEvidence(value, manifest) {
     throw new Error("browser evidence boundary is invalid");
   }
   const cookieResult = validateCookieEvidence(value.cookies);
+  exactKeys(value.runtime_evidence_sha256, DEVICES,
+    "browser runtime evidence hashes");
   const devices = new Map();
   for (const entry of value.devices) {
     exactKeys(entry, [
       "device", "platform", "target", "package", "artifact_sha256",
       "admission_sha256", "profile_marker_sha256",
       "native_ui_receipt_sha256", "role", "phase_before", "phase_after",
-      "initial_sync", "unchanged_restart",
+      "execution_identity_sha256", "initial_sync", "unchanged_restart",
     ], "browser device evidence");
     exactKeys(entry.admission_sha256, [
       "receipt", "deployment_receipt", "provenance_manifest",
-      "returned_archive", "inventory",
+      "returned_archive", "full_graph_receipt", "full_graph_inventory",
+      "inventory",
     ],
       `${entry.device} browser admission hashes`);
     const recorded = manifest.devices[entry.device];
+    const actualRuntime = runtimeEvidence?.[entry.device];
     const expectedAdmission = recorded && {
       receipt: recorded.admission.receipt_sha256,
       deployment_receipt: recorded.admission.deployment_receipt_sha256,
       provenance_manifest: recorded.admission.provenance_manifest_sha256,
       returned_archive: recorded.admission.returned_archive_sha256,
+      full_graph_receipt: recorded.admission.full_graph_receipt_sha256,
+      full_graph_inventory: recorded.admission.full_graph_inventory_sha256,
       inventory: recorded.admission.inventory_sha256,
     };
     if (!DEVICES.includes(entry.device) || devices.has(entry.device) ||
@@ -922,6 +1029,10 @@ export function validateBrowserEvidence(value, manifest) {
         entry.target !== recorded?.target ||
         entry.package !== recorded?.package ||
         entry.artifact_sha256 !== recorded?.artifact_sha256 ||
+        !actualRuntime ||
+        value.runtime_evidence_sha256[entry.device] !==
+          actualRuntime.bundle_sha256 ||
+        entry.execution_identity_sha256 !== actualRuntime.identity_sha256 ||
         !equalJSON(entry.admission_sha256, expectedAdmission) ||
         entry.profile_marker_sha256 !== recorded?.profile_marker_sha256 ||
         entry.role !== (entry.device === "d" ? "seed" : "join") ||
@@ -938,6 +1049,8 @@ export function validateBrowserEvidence(value, manifest) {
       if (entry.admission_sha256.deployment_receipt !== null ||
           entry.admission_sha256.provenance_manifest !== null ||
           entry.admission_sha256.returned_archive !== null ||
+          entry.admission_sha256.full_graph_receipt !== null ||
+          entry.admission_sha256.full_graph_inventory !== null ||
           entry.profile_marker_sha256 !== null) {
         throw new Error(
           "OnePlus browser evidence invented a Linux admission or filesystem profile",
@@ -950,6 +1063,10 @@ export function validateBrowserEvidence(value, manifest) {
         `${entry.device} provenance manifest hash`);
       requireHash(entry.admission_sha256.returned_archive,
         `${entry.device} returned archive hash`);
+      requireHash(entry.admission_sha256.full_graph_receipt,
+        `${entry.device} full-graph receipt hash`);
+      requireHash(entry.admission_sha256.full_graph_inventory,
+        `${entry.device} full-graph inventory hash`);
       requireHash(entry.profile_marker_sha256,
         `${entry.device} profile marker hash`);
       if (entry.admission_sha256.inventory !== null) {
@@ -960,12 +1077,51 @@ export function validateBrowserEvidence(value, manifest) {
       `${entry.device} native UI receipt hash`);
     validateInitialSync(entry.initial_sync, entry.device, value.cookies.record_count);
     validateUnchangedRestart(entry.unchanged_restart, entry.device);
+    if (entry.initial_sync.server_sequence !==
+          actualRuntime.initial.client.sequence ||
+        !equalJSON(entry.initial_sync.initial_publications,
+          actualRuntime.initial_publications) ||
+        entry.unchanged_restart.before_sequence !==
+          actualRuntime.initial.client.sequence ||
+        entry.unchanged_restart.after_sequence !==
+          actualRuntime.restart.client.sequence ||
+        entry.unchanged_restart.before_state_sha256 !==
+          actualRuntime.initial.state_sha256 ||
+        entry.unchanged_restart.after_state_sha256 !==
+          actualRuntime.restart.state_sha256 ||
+        entry.unchanged_restart.before_journal_sha256 !==
+          actualRuntime.initial_journal_sha256 ||
+        entry.unchanged_restart.after_journal_sha256 !==
+          actualRuntime.restart_journal_sha256) {
+      throw new Error(`${entry.device} browser claims do not derive from native bridge evidence`);
+    }
     devices.set(entry.device, entry);
   }
   if (DEVICES.some(device => !devices.has(device))) {
     throw new Error("browser evidence omitted a device");
   }
   validatePasswordEvidence(value.password);
+  for (const [device, imported] of cookieResult.imports) {
+    const actual = runtimeEvidence[device].requests.find(request =>
+      request.evidence_ref === imported.authenticated_request.evidence_ref);
+    if (!actual || actual.origin !== imported.authenticated_request.origin ||
+        actual.response_status !== imported.authenticated_request.response_status ||
+        actual.result !== imported.authenticated_request.result ||
+        actual.evidence_sha256 !==
+          imported.authenticated_request.evidence_sha256) {
+      throw new Error(`${device} authenticated request claim has no raw receipt`);
+    }
+  }
+  for (const device of DEVICES) {
+    const terminal = runtimeEvidence[device].terminal;
+    const password = terminal.password.credentials.find(item =>
+      item.key === value.password.record_key);
+    const cookie = terminal.cookie.records[value.cookies.rotating_record_key];
+    if (!password || !password.deleted || password.revision !== "3" ||
+        !cookie || cookie.remote_revision !== "4" || cookie.device_id !== "d") {
+      throw new Error(`${device} terminal native bridges do not contain authoritative state`);
+    }
+  }
   return {devices, cookieImports: cookieResult.imports};
 }
 
@@ -978,16 +1134,18 @@ function validatePublicationCounts(value, label, expectedPasswords, expectedCook
   }
 }
 
-export function validateServerEvidence(value, manifest, browserEvidence) {
+export function validateServerEvidence(value, manifest, browserEvidence,
+  runtimeEvidence) {
   exactKeys(value, [
     "schema_version", "source_train", "evidence_scope", "transport",
     "enrollment_order", "join_cursors",
     "initial_publications", "restarts", "password", "cookies",
-    "counter_probe", "journal", "logs",
+    "counter_probe", "runtime_evidence_sha256", "journal", "logs",
   ], "server evidence");
   if (value.schema_version !== SCHEMA_VERSION ||
       !equalJSON(value.source_train, manifest.source_train) ||
       value.evidence_scope !== "disposable-tailnet-http-service" ||
+      value.runtime_evidence_sha256 !== runtimeEvidence?.bundle_sha256 ||
       !equalJSON(value.enrollment_order, DEVICES)) {
     throw new Error("server evidence identity or enrollment order is invalid");
   }
@@ -997,7 +1155,8 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
   requireTailnetHTTP(value.transport.endpoint, "server endpoint");
   if (value.transport.network !== "tailscale-private" ||
       value.transport.device_auth !== "per-device-bearer" ||
-      value.transport.payload_visibility !== "readable-private-journal") {
+      value.transport.payload_visibility !== "readable-private-journal" ||
+      value.transport.endpoint !== runtimeEvidence.endpoint) {
     throw new Error("server transport did not use the admitted Tailnet HTTP boundary");
   }
   exactKeys(value.join_cursors, JOINERS, "server join cursors");
@@ -1060,6 +1219,12 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
       expectedPasswordRevisions[index],
     )) throw new Error("server password revision history is invalid");
   });
+  const actualPasswordRevisions = runtimeEvidence.records.filter(record =>
+    record.kind === "passwords" && record.key === value.password.record_key)
+    .map(record => [record.revision, record.device_id, record.deleted]);
+  if (!equalJSON(actualPasswordRevisions, expectedPasswordRevisions)) {
+    throw new Error("server password claims do not derive from records.jsonl");
+  }
   exactKeys(value.password.stale_conflict, [
     "device", "expected_revision", "current_revision", "result",
     "accepted_publications",
@@ -1073,6 +1238,14 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
       value.password.stale_conflict.result !== "revision-conflict" ||
       value.password.stale_conflict.accepted_publications !== "0") {
     throw new Error("server did not reject the stale password mutation");
+  }
+  if (runtimeEvidence.password_conflict.request.key !==
+        value.password.record_key ||
+      runtimeEvidence.password_conflict.request.expected_revision !==
+        value.password.stale_conflict.expected_revision ||
+      runtimeEvidence.password_conflict.response.body.current_revision !==
+        value.password.stale_conflict.current_revision) {
+    throw new Error("server password conflict claim has no exact HTTP 409 receipt");
   }
 
   exactKeys(value.cookies, [
@@ -1092,6 +1265,14 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
       throw new Error("server cookie revision history changed source or order");
     }
   });
+  const actualCookieRevisions = runtimeEvidence.records.filter(record =>
+    record.kind === "cookies" && record.key === value.cookies.record_key)
+    .map(record => ({
+      revision: record.revision, device: record.device_id, deleted: record.deleted,
+    }));
+  if (!equalJSON(actualCookieRevisions, value.cookies.revisions)) {
+    throw new Error("server cookie claims do not derive from records.jsonl");
+  }
   exactKeys(value.cookies.rejected_conflict, [
     "device", "expected_revision", "current_revision", "result",
     "accepted_publications",
@@ -1102,6 +1283,13 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
       value.cookies.rejected_conflict.result !== "revision-conflict" ||
       value.cookies.rejected_conflict.accepted_publications !== "0") {
     throw new Error("server cookie conflict did not preserve authoritative revision");
+  }
+  if (runtimeEvidence.cookie_conflict.request.key !== value.cookies.record_key ||
+      runtimeEvidence.cookie_conflict.request.expected_revision !==
+        value.cookies.rejected_conflict.expected_revision ||
+      runtimeEvidence.cookie_conflict.response.body.current_revision !==
+        value.cookies.rejected_conflict.current_revision) {
+    throw new Error("server cookie conflict claim has no exact HTTP 409 receipt");
   }
 
   exactKeys(value.counter_probe, [
@@ -1120,7 +1308,8 @@ export function validateServerEvidence(value, manifest, browserEvidence) {
     "bearer_tokens_present", "private_mode",
   ], "server journal evidence");
   requireHash(value.journal.sha256, "server journal hash");
-  if (value.journal.tabs_records !== "0" ||
+  if (value.journal.sha256 !== runtimeEvidence.journal_sha256 ||
+      value.journal.tabs_records !== "0" ||
       value.journal.schema_version !== "2" ||
       value.journal.payload_storage !== "readable" ||
       value.journal.bearer_tokens_present !== false ||
@@ -1207,6 +1396,8 @@ function admissionHashes(manifest) {
       deployment_receipt: admission.deployment_receipt_sha256,
       provenance_manifest: admission.provenance_manifest_sha256,
       returned_archive: admission.returned_archive_sha256,
+      full_graph_receipt: admission.full_graph_receipt_sha256,
+      full_graph_inventory: admission.full_graph_inventory_sha256,
       inventory: admission.inventory_sha256,
     }];
   }));
@@ -1222,11 +1413,30 @@ export async function verifyThreeClientRun({
   runRoot,
   browserEvidence,
   serverEvidence,
+  dRuntimeEvidence,
+  daRuntimeEvidence,
+  oneplusRuntimeEvidence,
+  serverRuntimeEvidence,
   daOriginAudit,
   oneplusOriginAudit,
 }) {
   const {root, manifest} = await loadManifest(runRoot);
   const nativeRuns = await auditNativeRuns(manifest);
+  const runtimeDevices = {
+    d: await auditDeviceRuntimeEvidence(
+      dRuntimeEvidence, "d", manifest.devices.d.execution_identity),
+    da: await auditDeviceRuntimeEvidence(
+      daRuntimeEvidence, "da", manifest.devices.da.execution_identity),
+    oneplus: await auditDeviceRuntimeEvidence(
+      oneplusRuntimeEvidence, "oneplus",
+      manifest.devices.oneplus.execution_identity),
+  };
+  const serverRuntime = await auditServerRuntimeEvidence(serverRuntimeEvidence);
+  if (DEVICES.some(device =>
+    runtimeDevices[device].terminal.client.sequence !==
+      serverRuntime.max_sequence)) {
+    throw new Error("terminal native bridge cursors do not acknowledge the final journal");
+  }
 
   const browserFile = await readJSON(browserEvidence, "browser-native flow evidence");
   const serverFile = await readJSON(serverEvidence, "server flow evidence");
@@ -1235,9 +1445,10 @@ export async function verifyThreeClientRun({
     oneplusOriginAudit,
     "oneplus origin-state evidence",
   );
-  validateBrowserEvidence(browserFile.value, manifest);
+  validateBrowserEvidence(browserFile.value, manifest, runtimeDevices);
   requireNativeBindings(browserFile.value, nativeRuns);
-  validateServerEvidence(serverFile.value, manifest, browserFile.value);
+  validateServerEvidence(
+    serverFile.value, manifest, browserFile.value, serverRuntime);
   validateOriginAudit(daAuditFile.value, "da", manifest, browserFile.value);
   validateOriginAudit(
     oneplusAuditFile.value,
@@ -1253,6 +1464,12 @@ export async function verifyThreeClientRun({
     source_train: manifest.source_train,
     admission_sha256: admissionHashes(manifest),
     native_ui_receipt_sha256: nativeReceiptHashes(nativeRuns),
+    runtime_evidence_sha256: {
+      d: runtimeDevices.d.bundle_sha256,
+      da: runtimeDevices.da.bundle_sha256,
+      oneplus: runtimeDevices.oneplus.bundle_sha256,
+      server: serverRuntime.bundle_sha256,
+    },
     browser_evidence_sha256: sha256(browserFile.raw),
     server_evidence_sha256: sha256(serverFile.raw),
     da_origin_audit_sha256: sha256(daAuditFile.raw),
@@ -1295,6 +1512,19 @@ export async function verifyThreeClientRun({
         flag: "wx",
       });
     }
+    for (const [name, source] of [
+      ["runtime-d", runtimeDevices.d.root],
+      ["runtime-da", runtimeDevices.da.root],
+      ["runtime-oneplus", runtimeDevices.oneplus.root],
+      ["runtime-server", serverRuntime.root],
+    ]) {
+      await fsp.cp(source, path.join(incoming, name), {
+        recursive: true,
+        errorOnExist: true,
+        force: false,
+        preserveTimestamps: true,
+      });
+    }
     await writeJSONExclusive(path.join(incoming, "receipt.json"), receipt);
     await fsp.rename(incoming, finalDirectory);
   } catch (error) {
@@ -1308,6 +1538,24 @@ export async function auditVerifiedThreeClientRun(runRoot) {
   const {root, manifest} = await loadManifest(runRoot);
   const finalDirectory = path.join(root, "verified");
   const nativeRuns = await auditNativeRuns(manifest);
+  const runtimeDevices = {
+    d: await auditDeviceRuntimeEvidence(
+      path.join(finalDirectory, "runtime-d"), "d",
+      manifest.devices.d.execution_identity),
+    da: await auditDeviceRuntimeEvidence(
+      path.join(finalDirectory, "runtime-da"), "da",
+      manifest.devices.da.execution_identity),
+    oneplus: await auditDeviceRuntimeEvidence(
+      path.join(finalDirectory, "runtime-oneplus"), "oneplus",
+      manifest.devices.oneplus.execution_identity),
+  };
+  const serverRuntime = await auditServerRuntimeEvidence(
+    path.join(finalDirectory, "runtime-server"));
+  if (DEVICES.some(device =>
+    runtimeDevices[device].terminal.client.sequence !==
+      serverRuntime.max_sequence)) {
+    throw new Error("verified terminal bridge cursors do not acknowledge the journal");
+  }
   const browserFile = await readJSON(
     path.join(finalDirectory, "browser-evidence.json"),
     "verified browser-native flow evidence",
@@ -1324,9 +1572,10 @@ export async function auditVerifiedThreeClientRun(runRoot) {
     path.join(finalDirectory, "oneplus-origin-audit.json"),
     "verified oneplus origin-state evidence",
   );
-  validateBrowserEvidence(browserFile.value, manifest);
+  validateBrowserEvidence(browserFile.value, manifest, runtimeDevices);
   requireNativeBindings(browserFile.value, nativeRuns);
-  validateServerEvidence(serverFile.value, manifest, browserFile.value);
+  validateServerEvidence(
+    serverFile.value, manifest, browserFile.value, serverRuntime);
   validateOriginAudit(daAuditFile.value, "da", manifest, browserFile.value);
   validateOriginAudit(
     oneplusAuditFile.value,
@@ -1347,6 +1596,12 @@ export async function auditVerifiedThreeClientRun(runRoot) {
     source_train: manifest.source_train,
     admission_sha256: admissionHashes(manifest),
     native_ui_receipt_sha256: nativeReceiptHashes(nativeRuns),
+    runtime_evidence_sha256: {
+      d: runtimeDevices.d.bundle_sha256,
+      da: runtimeDevices.da.bundle_sha256,
+      oneplus: runtimeDevices.oneplus.bundle_sha256,
+      server: serverRuntime.bundle_sha256,
+    },
     browser_evidence_sha256: sha256(browserFile.raw),
     server_evidence_sha256: sha256(serverFile.raw),
     da_origin_audit_sha256: sha256(daAuditFile.raw),
@@ -1416,9 +1671,9 @@ function requireArgs(args, names) {
 
 function usage() {
   return `usage:
-  three-client-acceptance.mjs init --d-artifact FILE --d-artifact-receipt FILE --da-artifact FILE --da-artifact-receipt FILE --oneplus-artifact Browser-test.apk --output NEW_DIR
+  three-client-acceptance.mjs init --d-artifact FILE --d-artifact-receipt FILE --d-execution-identity FILE --da-artifact FILE --da-artifact-receipt FILE --da-execution-identity FILE --oneplus-artifact Browser-test.apk --oneplus-execution-identity FILE --output NEW_DIR
   three-client-acceptance.mjs status --run DIR
-  three-client-acceptance.mjs verify --run DIR --browser-evidence JSON --server-evidence JSON --da-origin-audit JSON --oneplus-origin-audit JSON
+  three-client-acceptance.mjs verify --run DIR --browser-evidence JSON --server-evidence JSON --d-runtime-evidence DIR --da-runtime-evidence DIR --oneplus-runtime-evidence DIR --server-runtime-evidence DIR --da-origin-audit JSON --oneplus-origin-audit JSON
 `;
 }
 
@@ -1430,8 +1685,10 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (command === "init") {
       requireArgs(args, [
         "d-artifact", "d-artifact-receipt",
+        "d-execution-identity",
         "da-artifact", "da-artifact-receipt",
-        "oneplus-artifact", "output",
+        "da-execution-identity", "oneplus-artifact",
+        "oneplus-execution-identity", "output",
       ]);
       result = await initializeThreeClientRun({
         dArtifact: args["d-artifact"],
@@ -1439,6 +1696,9 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         daArtifact: args["da-artifact"],
         daArtifactReceipt: args["da-artifact-receipt"],
         oneplusArtifact: args["oneplus-artifact"],
+        dExecutionIdentity: args["d-execution-identity"],
+        daExecutionIdentity: args["da-execution-identity"],
+        oneplusExecutionIdentity: args["oneplus-execution-identity"],
         output: args.output,
       });
       result = {
@@ -1453,12 +1713,18 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     } else if (command === "verify") {
       requireArgs(args, [
         "run", "browser-evidence", "server-evidence",
+        "d-runtime-evidence", "da-runtime-evidence",
+        "oneplus-runtime-evidence", "server-runtime-evidence",
         "da-origin-audit", "oneplus-origin-audit",
       ]);
       const receipt = await verifyThreeClientRun({
         runRoot: args.run,
         browserEvidence: args["browser-evidence"],
         serverEvidence: args["server-evidence"],
+        dRuntimeEvidence: args["d-runtime-evidence"],
+        daRuntimeEvidence: args["da-runtime-evidence"],
+        oneplusRuntimeEvidence: args["oneplus-runtime-evidence"],
+        serverRuntimeEvidence: args["server-runtime-evidence"],
         daOriginAudit: args["da-origin-audit"],
         oneplusOriginAudit: args["oneplus-origin-audit"],
       });

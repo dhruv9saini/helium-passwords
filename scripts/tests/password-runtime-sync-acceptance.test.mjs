@@ -190,7 +190,7 @@ test("private receipt binds public UI evidence to exact revisions, tombstone, an
     await fsp.writeFile(publicReceiptPath, `${JSON.stringify(publicReceipt)}\n`, {mode: 0o600});
     const receipt = await verifySyncRun({runRoot, fixtureEvidence: evidencePath});
     assert.equal(receipt.result, "passed");
-    assert.equal(receipt.schema_version, 2);
+    assert.equal(receipt.schema_version, 3);
     assert.equal(receipt.run_nonce, publicRun.run_nonce);
     assert.equal(receipt.saved_revision, "1");
     assert.equal(receipt.updated_revision, "2");
@@ -199,12 +199,13 @@ test("private receipt binds public UI evidence to exact revisions, tombstone, an
 
     const persistedPublicRun = JSON.parse(await fsp.readFile(path.join(runRoot, "run.json"), "utf8"));
     const syncRun = JSON.parse(await fsp.readFile(path.join(runRoot, "sync-run.json"), "utf8"));
-    assert.equal(syncRun.schema_version, 2);
+    assert.equal(syncRun.schema_version, 3);
     assert.equal(syncRun.run_nonce, persistedPublicRun.run_nonce);
     assert.deepEqual(syncRun.captures.map(capture => capture.step), SYNC_PASSWORD_STEPS);
     const corrupted = structuredClone(syncRun);
     corrupted.captures.find(item => item.step === "saved_restart_autofill").journal.sha256 = "f".repeat(64);
-    assert.throws(() => validateSyncAcceptance(corrupted, persistedPublicRun), /unchanged restart/);
+    assert.throws(() => validateSyncAcceptance(corrupted, persistedPublicRun),
+      /summaries do not derive|unchanged restart/);
     assert.throws(() => validateSyncAcceptance({
       ...syncRun,
       run_nonce: "e".repeat(64),

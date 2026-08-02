@@ -202,6 +202,8 @@ write_artifact_receipt() {
     "$commit" "$commit" "$commit" "$commit" \
     fixture-deployment-01 \
     "$(printf fixture-provenance | sha256sum | awk '{print $1}')" \
+    "$(printf fixture-graph-receipt | sha256sum | awk '{print $1}')" \
+    "$(printf fixture-graph-inventory | sha256sum | awk '{print $1}')" \
     "$output" >/dev/null
 }
 

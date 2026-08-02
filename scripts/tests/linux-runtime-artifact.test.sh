@@ -31,9 +31,11 @@ make_fixture() {
     local bundle="${stage}/${bundle_name}"
     local runtime="${bundle}/runtime"
     local provenance="${bundle}/provenance"
+    local graph="${provenance}/full-graph"
     local source_info source_commit source_tree passwords_commit sync_commit
     local core_commit chromium_version chromium_commit target_cpu job
-    local artifact receipt verification output provenance_sha
+    local artifact receipt verification output provenance_sha graph_receipt_sha
+    local graph_inventory_sha packaging_tool_sha packaging_tool_commit
 
     source_info=$("${repo_root}/scripts/linux-product-provenance.sh" \
         "${product}" "${arch}" "${target}")
@@ -51,7 +53,8 @@ make_fixture() {
     esac
     job="synthetic-${arch}-01"
 
-    mkdir -p "${runtime}/locales" "${provenance}"
+    mkdir -p "${runtime}/locales" "${provenance}" "${graph}"
+    chmod 700 "${graph}"
     for file in \
         chrome_100_percent.pak chrome_200_percent.pak chromedriver \
         helium_crashpad_handler icudtl.dat libEGL.so libGLESv2.so \
@@ -86,8 +89,121 @@ EOF
         find runtime -type f -print0 | sort -z |
             xargs -0 sha256sum >provenance/runtime.sha256
     )
+    printf 'synthetic build graph\n' >"${graph}/build.ninja"
+    cat >"${graph}/toolchain.ninja" <<'EOF'
+build gen/third_party/devtools-frontend/src/front_end/ui/kit/css_files-tsconfig.json gen/third_party/devtools-frontend/src/front_end/ui/kit/cards/card.css.js gen/third_party/devtools-frontend/src/front_end/ui/kit/icons/icon.css.js gen/third_party/devtools-frontend/src/front_end/ui/kit/link/link.css.js: __third_party_devtools-frontend_src_front_end_ui_kit_css_files___build_toolchain_linux_clang_x64__rule
+build phony/third_party/devtools-frontend/src/front_end/ui/kit/css_files: phony gen/third_party/devtools-frontend/src/front_end/ui/kit/css_files-tsconfig.json gen/third_party/devtools-frontend/src/front_end/ui/kit/cards/card.css.js gen/third_party/devtools-frontend/src/front_end/ui/kit/icons/icon.css.js gen/third_party/devtools-frontend/src/front_end/ui/kit/link/link.css.js
+build gen/third_party/devtools-frontend/src/front_end/ui/kit/devtools_entrypoint-bundle-tsconfig-tsconfig.json : synthetic_rule || phony/third_party/devtools-frontend/src/front_end/ui/kit/css_files
+build gen/third_party/devtools-frontend/src/front_end/models/ai_assistance/skills/styling.skill.js: synthetic_rule
+EOF
+    printf 'synthetic gni source\n' >"${graph}/generate_css.gni"
+    printf 'synthetic css generator\n' >"${graph}/generate_css_js_files.js"
+    printf 'synthetic AI skills builder\n' >"${graph}/build_ai_skills.mjs"
+    printf 'synthetic platform shared\n' >"${graph}/platform-shared.sh"
+    printf 'synthetic operator\n' >"${graph}/build-operator.sh"
+    printf 'synthetic shim\n' >"${graph}/ninja-shim"
+    printf 'synthetic ninja binary\n' >"${graph}/ninja-binary"
+    printf '1.11.1\n' >"${graph}/ninja-version.txt"
+    cat >"${graph}/ninja-query.txt" <<'EOF'
+gen/third_party/devtools-frontend/src/front_end/ui/kit/css_files-tsconfig.json
+gen/third_party/devtools-frontend/src/front_end/ui/kit/devtools_entrypoint-bundle-tsconfig-tsconfig.json
+  outputs:
+    phony/third_party/devtools-frontend/src/front_end/ui/kit/css_files
+EOF
+    printf 'chrome:\n  outputs:\nchromedriver:\n  outputs:\n' \
+        >"${graph}/full-targets-query.txt"
+    cp "${repo_root}/scripts/capture-linux-full-graph-evidence.sh" \
+        "${graph}/capture-tool.sh"
+    cp "${repo_root}/scripts/package-linux-runtime.sh" \
+        "${graph}/packaging-tool.sh"
+    cp "${repo_root}/scripts/write-deployment-artifact-receipt.sh" \
+        "${graph}/deployment-receipt-tool.sh"
+    cp "${repo_root}/scripts/finalize-retained-linux-full-graph.sh" \
+        "${graph}/finalizer-tool.sh"
+    cp "${repo_root}/scripts/linux-full-graph-audit.mjs" \
+        "${graph}/full-graph-audit-tool.mjs"
+    cp "${repo_root}/scripts/continue-retained-linux-full-graph-failure.sh" \
+        "${graph}/repair-tool.sh"
+    printf '%s\n' "${source_commit}" >"${graph}/product-commit.txt"
+    printf '%s\n' "${chromium_commit}" >"${graph}/chromium-commit.txt"
+    printf '%s\n' 9fbdff55283c9275f285c49dc054a1ff38dcdc96 \
+        >"${graph}/platform-commit.txt"
+    cat >"${graph}/boundary-receipt.env" <<EOF
+schema=helium-fresh-full-graph-boundary-v1
+job=${job}
+source_root=${temporary}/synthetic/build/src
+boundary_epoch=1
+validated_at=2026-07-22T11:59:59+00:00
+node_version=v22.14.0
+full_targets=chrome,chromedriver
+build_ninja_sha256=$(sha256sum "${graph}/build.ninja" | awk '{print $1}')
+toolchain_ninja_sha256=$(sha256sum "${graph}/toolchain.ninja" | awk '{print $1}')
+generate_css_gni_sha256=$(sha256sum "${graph}/generate_css.gni" | awk '{print $1}')
+generate_css_js_sha256=$(sha256sum "${graph}/generate_css_js_files.js" | awk '{print $1}')
+build_ai_skills_sha256=$(sha256sum "${graph}/build_ai_skills.mjs" | awk '{print $1}')
+css_action_edges=1
+css_action_edges_without_tsconfig=0
+ui_css_outputs_materialized_before_full_build=false
+ui_css_phony_orders_all_outputs=true
+ui_downstream_orders_css_phony=true
+ai_skill_action_present=true
+ninja_query_sha256=$(sha256sum "${graph}/ninja-query.txt" | awk '{print $1}')
+graph_validation=passed
+EOF
+    cat >"${graph}/receipt.env" <<EOF
+schema=helium-linux-full-graph-evidence-v3
+job=${job}
+product=${product}
+arch=${arch}
+target=${target}
+helium_sync_commit=${sync_commit}
+helium_passwords_commit=${passwords_commit}
+helium_core_commit=${core_commit}
+chromium_commit=${chromium_commit}
+platform_commit=9fbdff55283c9275f285c49dc054a1ff38dcdc96
+node_version=v22.14.0
+full_targets=chrome,chromedriver
+build_ninja_sha256=$(sha256sum "${graph}/build.ninja" | awk '{print $1}')
+toolchain_ninja_sha256=$(sha256sum "${graph}/toolchain.ninja" | awk '{print $1}')
+generate_css_gni_sha256=$(sha256sum "${graph}/generate_css.gni" | awk '{print $1}')
+generate_css_js_sha256=$(sha256sum "${graph}/generate_css_js_files.js" | awk '{print $1}')
+build_ai_skills_sha256=$(sha256sum "${graph}/build_ai_skills.mjs" | awk '{print $1}')
+platform_shared_sha256=$(sha256sum "${graph}/platform-shared.sh" | awk '{print $1}')
+build_operator_sha256=$(sha256sum "${graph}/build-operator.sh" | awk '{print $1}')
+ninja_shim_sha256=$(sha256sum "${graph}/ninja-shim" | awk '{print $1}')
+ninja_binary_sha256=$(sha256sum "${graph}/ninja-binary" | awk '{print $1}')
+ninja_version_sha256=$(sha256sum "${graph}/ninja-version.txt" | awk '{print $1}')
+ninja_query_sha256=$(sha256sum "${graph}/ninja-query.txt" | awk '{print $1}')
+full_targets_query_sha256=$(sha256sum "${graph}/full-targets-query.txt" | awk '{print $1}')
+boundary_receipt_sha256=$(sha256sum "${graph}/boundary-receipt.env" | awk '{print $1}')
+capture_tool_sha256=$(sha256sum "${graph}/capture-tool.sh" | awk '{print $1}')
+packaging_tool_sha256=$(sha256sum "${graph}/packaging-tool.sh" | awk '{print $1}')
+deployment_receipt_tool_sha256=$(sha256sum "${graph}/deployment-receipt-tool.sh" | awk '{print $1}')
+finalizer_tool_sha256=$(sha256sum "${graph}/finalizer-tool.sh" | awk '{print $1}')
+full_graph_audit_tool_sha256=$(sha256sum "${graph}/full-graph-audit-tool.mjs" | awk '{print $1}')
+repair_tool_sha256=$(sha256sum "${graph}/repair-tool.sh" | awk '{print $1}')
+css_action_edges=1
+css_action_edges_without_tsconfig=0
+ui_css_outputs_materialized_before_full_build=false
+ui_css_phony_orders_all_outputs=true
+ui_downstream_orders_css_phony=true
+ai_skill_action_present=true
+graph_validation=passed
+captured_at=2026-07-22T12:00:00Z
+EOF
+    chmod 600 "${graph}"/*
+    (
+        cd "${graph}"
+        find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' |
+            sort -z | xargs -0 sha256sum >SHA256SUMS
+    )
+    chmod 600 "${graph}/SHA256SUMS"
+    graph_receipt_sha=$(sha256sum "${graph}/receipt.env" | awk '{print $1}')
+    graph_inventory_sha=$(sha256sum "${graph}/SHA256SUMS" | awk '{print $1}')
+    packaging_tool_sha=$(sha256sum "${graph}/packaging-tool.sh" | awk '{print $1}')
+    packaging_tool_commit=$(git -C "${repo_root}" rev-parse HEAD)
     cat >"${provenance}/manifest.env" <<EOF
-schema_version=3
+schema_version=4
 product=${product}
 platform=linux
 arch=${arch}
@@ -107,6 +223,10 @@ gn_args_sha256=$(sha256sum "${provenance}/gn-args.txt" | awk '{ print $1 }')
 nix_provenance_sha256=$(sha256sum "${provenance}/chromiumer-nix.env" | awk '{ print $1 }')
 patch_inventory_sha256=$(sha256sum "${provenance}/patches.sha256" | awk '{ print $1 }')
 runtime_inventory_sha256=$(sha256sum "${provenance}/runtime.sha256" | awk '{ print $1 }')
+packaging_tool_commit=${packaging_tool_commit}
+packaging_tool_sha256=${packaging_tool_sha}
+full_graph_receipt_sha256=${graph_receipt_sha}
+full_graph_inventory_sha256=${graph_inventory_sha}
 EOF
     artifact="${temporary}/${bundle_name}.tar.xz"
     receipt="${temporary}/${bundle_name}.receipt.env"
@@ -116,7 +236,8 @@ EOF
     "${repo_root}/scripts/write-deployment-artifact-receipt.sh" \
         "${artifact}" "${target}" "${sync_commit}" "${passwords_commit}" \
         "${core_commit}" "${chromium_commit}" "${job}" \
-        "${provenance_sha}" "${receipt}" >/dev/null
+        "${provenance_sha}" "${graph_receipt_sha}" \
+        "${graph_inventory_sha}" "${receipt}" >/dev/null
 
     verification="${temporary}/verified-${arch}"
     output=$("${repo_root}/scripts/verify-linux-runtime.sh" \
@@ -131,7 +252,7 @@ EOF
     grep -Fqx "product=${product}" "${verification}/artifact-receipt.env"
     grep -Fqx "arch=${arch}" "${verification}/artifact-receipt.env"
     cmp "${receipt}" "${verification}/deployment-artifact-receipt.env"
-    grep -Fqx 'schema_version=1' "${receipt}"
+    grep -Fqx 'schema_version=2' "${receipt}"
     grep -Fqx "target=${target}" "${receipt}"
     grep -Fqx "helium_passwords_commit=${passwords_commit}" "${receipt}"
     grep -Fqx "helium_sync_commit=${sync_commit}" "${receipt}"
@@ -151,7 +272,6 @@ EOF
 }
 
 make_fixture x86_64 "${HELIUM_LINUX_X86_64_TARGET}"
-make_fixture arm64 "${HELIUM_LINUX_ARM64_TARGET}"
 
 artifact="${temporary}/${product}-linux-x86_64.tar.xz"
 receipt="${temporary}/${product}-linux-x86_64.receipt.env"
@@ -164,7 +284,7 @@ if "${repo_root}/scripts/verify-deployment-artifact-receipt.sh" \
     exit 1
 fi
 cp "${receipt}" "${temporary}/wrong-schema.receipt.env"
-sed -i 's/^schema_version=1$/schema_version=2/' \
+sed -i 's/^schema_version=2$/schema_version=3/' \
     "${temporary}/wrong-schema.receipt.env"
 if "${repo_root}/scripts/verify-deployment-artifact-receipt.sh" \
     "${artifact}" "${temporary}/wrong-schema.receipt.env" \

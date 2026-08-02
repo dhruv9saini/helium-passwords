@@ -8,11 +8,19 @@ import {fileURLToPath, pathToFileURL} from "node:url";
 
 import {auditVerifiedThreeClientRun} from
   "../sync-runtime/three-client-acceptance.mjs";
+import {auditProbePair} from "../android-media/audit-probe-pair.mjs";
+import {auditLinuxFullGraphEvidence} from "../linux-full-graph-audit.mjs";
+import {validatePhysicalDeviceIdentity} from
+  "./physical-device-identity.mjs";
+import {validateLinuxHostIdentity} from
+  "../sync-runtime/execution-identity.mjs";
 import {
   loadSigningKey,
   readAuthenticatedEvidence,
   sha256,
 } from "../tabs/tab-proof-lib.mjs";
+import {readAuthenticatedFaultOperation} from
+  "../tabs/tab-fault-operation.mjs";
 
 const HASH = /^[0-9a-f]{64}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
@@ -312,6 +320,12 @@ function canonicalJSON(value) {
 }
 
 async function auditMediaPair(options, sync, control) {
+  const replayed = await auditProbePair({
+    syncAcceptance: sync.root,
+    syncEvidence: options.syncEvidence,
+    controlAcceptance: control.root,
+    controlEvidence: options.controlEvidence,
+  });
   const syncEvidence = await auditFlatEvidence(options.syncEvidence,
     "Sync device evidence");
   const controlEvidence = await auditFlatEvidence(options.controlEvidence,
@@ -328,16 +342,20 @@ async function auditMediaPair(options, sync, control) {
     "control_archive_sha256", "control_apk_sha256",
     "control_result_sha256", "shared_flags_gn_sha256",
     "shared_locked_gn_args_sha256", "fixture_receipt_sha256",
-    "media_manifest_sha256", "verified_at",
+    "media_manifest_sha256", "physical_identity_sha256",
+    "offline_auditor_sha256", "verified_at",
   ], "Android media A/B receipt");
   const value = name => pair.values.get(name);
-  if (value("schema_version") !== "1" ||
+  if (value("schema_version") !== "2" ||
       value("helium_sync_commit") !== sync.helium_sync_commit ||
       value("chromium_commit") !== sync.chromium_commit ||
       value("sync_archive_sha256") !== sync.source_archive_sha256 ||
       value("sync_apk_sha256") !== sync.apk_sha256 ||
       value("control_archive_sha256") !== control.source_archive_sha256 ||
       value("control_apk_sha256") !== control.apk_sha256 ||
+      value("physical_identity_sha256") !==
+        replayed.physical_identity_sha256 ||
+      value("offline_auditor_sha256") !== replayed.offline_auditor_sha256 ||
       !Number.isFinite(Date.parse(value("verified_at")))) {
     fail("Android media A/B receipt identity is invalid");
   }
@@ -345,7 +363,20 @@ async function auditMediaPair(options, sync, control) {
     "sync_result_sha256", "control_result_sha256",
     "shared_flags_gn_sha256", "shared_locked_gn_args_sha256",
     "fixture_receipt_sha256", "media_manifest_sha256",
+    "physical_identity_sha256", "offline_auditor_sha256",
   ]) requireHash(value(field), `media pair ${field}`);
+  for (const field of [
+    "helium_sync_commit", "chromium_commit", "sync_archive_sha256",
+    "sync_apk_sha256", "sync_result_sha256", "control_archive_sha256",
+    "control_apk_sha256", "control_result_sha256", "shared_flags_gn_sha256",
+    "shared_locked_gn_args_sha256", "fixture_receipt_sha256",
+    "media_manifest_sha256", "physical_identity_sha256",
+    "offline_auditor_sha256",
+  ]) {
+    if (value(field) !== replayed[field]) {
+      fail(`Android media receipt is not reproducible from ${field}`);
+    }
+  }
   const syncResult = await readJSON(path.join(
     syncEvidence.root, "result.json"), "Sync device result");
   const controlResult = await readJSON(path.join(
@@ -394,50 +425,25 @@ async function auditMediaPair(options, sync, control) {
     receipt_sha256: sha256(Buffer.from(pair.raw)),
     fixture_receipt_sha256: value("fixture_receipt_sha256"),
     media_manifest_sha256: value("media_manifest_sha256"),
+    physical_identity: replayed.sync.physical_identity,
+    offline_auditor_sha256: value("offline_auditor_sha256"),
     verified_at: value("verified_at"),
   };
 }
 
-async function auditFullGraphReceipt(file, expectedJob) {
-  const graph = await readEnv(file, [
-    "schema", "job", "source_root", "boundary_epoch", "validated_at",
-    "node_version", "full_targets", "build_ninja_sha256",
-    "toolchain_ninja_sha256", "generate_css_gni_sha256",
-    "generate_css_js_sha256", "build_ai_skills_sha256", "css_action_edges",
-    "css_action_edges_without_tsconfig",
-    "ui_css_outputs_materialized_before_full_build",
-    "ui_css_phony_orders_all_outputs", "ui_downstream_orders_css_phony",
-    "ai_skill_action_present", "ninja_query_sha256", "graph_validation",
-  ], "returned Linux full-graph receipt");
-  const value = name => graph.values.get(name);
-  if (path.basename(graph.file) !==
-        "helium-sync-linux-x86_64.full-graph.env" ||
-      value("schema") !== "helium-fresh-full-graph-boundary-v1" ||
-      value("job") !== expectedJob ||
-      typeof value("source_root") !== "string" ||
-      !path.isAbsolute(value("source_root")) ||
-      !/^[1-9][0-9]*$/.test(value("boundary_epoch")) ||
-      !Number.isFinite(Date.parse(value("validated_at"))) ||
-      value("node_version") !== "v22.14.0" ||
-      value("full_targets") !== "chrome,chromedriver" ||
-      !/^[1-9][0-9]*$/.test(value("css_action_edges")) ||
-      value("css_action_edges_without_tsconfig") !== "0" ||
-      value("ui_css_outputs_materialized_before_full_build") !== "false" ||
-      value("ui_css_phony_orders_all_outputs") !== "true" ||
-      value("ui_downstream_orders_css_phony") !== "true" ||
-      value("ai_skill_action_present") !== "true" ||
-      value("graph_validation") !== "passed") {
-    fail("returned Linux full-graph receipt is invalid or job-mismatched");
+async function auditFullGraphReceipt(file, expected) {
+  const admitted = await regularFile(file, "returned Linux full-graph receipt");
+  if (path.basename(admitted.resolved) !== "receipt.env") {
+    fail("returned Linux full-graph input must be the schema-3 evidence receipt");
   }
-  for (const field of [
-    "build_ninja_sha256", "toolchain_ninja_sha256",
-    "generate_css_gni_sha256", "generate_css_js_sha256",
-    "build_ai_skills_sha256", "ninja_query_sha256",
-  ]) requireHash(value(field), `Linux full graph ${field}`);
+  const graph = await auditLinuxFullGraphEvidence(
+    path.dirname(admitted.resolved), expected);
   return {
-    receipt_sha256: sha256(Buffer.from(graph.raw)),
-    job: value("job"),
-    validated_at: value("validated_at"),
+    ...graph,
+    receipt_sha256: graph.receiptSha256,
+    inventory_sha256: graph.inventorySha256,
+    job: graph.receipt.job,
+    validated_at: graph.receipt.captured_at,
   };
 }
 
@@ -460,7 +466,8 @@ async function auditThreeClient(runRoot, sync, expectedSourceCommit,
   const deployment = await readEnv(linuxInputs.deploymentReceipt, [
     "schema_version", "artifact_sha256", "artifact_size", "target",
     "helium_sync_commit", "helium_passwords_commit", "helium_core_commit",
-    "chromium_commit", "build_job_id", "provenance_sha256", "created_at",
+    "chromium_commit", "build_job_id", "provenance_sha256",
+    "full_graph_receipt_sha256", "full_graph_inventory_sha256", "created_at",
   ], "returned Linux deployment receipt");
   const deploymentValue = name => deployment.values.get(name);
   const archiveSHA256 = await sha256File(archive.resolved);
@@ -468,7 +475,7 @@ async function auditThreeClient(runRoot, sync, expectedSourceCommit,
         "helium-sync-linux-x86_64.tar.xz" ||
       path.basename(deployment.file) !==
         "helium-sync-linux-x86_64.receipt.env" ||
-      deploymentValue("schema_version") !== "1" ||
+      deploymentValue("schema_version") !== "2" ||
       deploymentValue("artifact_sha256") !== archiveSHA256 ||
       deploymentValue("artifact_size") !== String(archive.stat.size) ||
       deploymentValue("target") !== "linux-x86_64" ||
@@ -486,20 +493,47 @@ async function auditThreeClient(runRoot, sync, expectedSourceCommit,
   }
   requireHash(deploymentValue("provenance_sha256"),
     "Linux deployment provenance");
+  requireHash(deploymentValue("full_graph_receipt_sha256"),
+    "Linux deployment full-graph receipt");
+  requireHash(deploymentValue("full_graph_inventory_sha256"),
+    "Linux deployment full-graph inventory");
   const deploymentSHA256 = sha256(Buffer.from(deployment.raw));
   const graph = await auditFullGraphReceipt(
-    linuxInputs.fullGraphReceipt, deploymentValue("build_job_id"));
+    linuxInputs.fullGraphReceipt, {
+      job: deploymentValue("build_job_id"),
+      sourceCommit: expectedSourceCommit,
+      passwordsCommit: deploymentValue("helium_passwords_commit"),
+      coreCommit: sync.helium_core_commit,
+      chromiumCommit: sync.chromium_commit,
+    });
+  if (deploymentValue("full_graph_receipt_sha256") !== graph.receipt_sha256 ||
+      deploymentValue("full_graph_inventory_sha256") !== graph.inventory_sha256) {
+    fail("returned deployment receipt does not bind its full-graph evidence");
+  }
   const linux = {};
   for (const device of ["d", "da"]) {
     const admitted = audited.manifest.devices[device];
     const admittedArtifact = await regularFile(admitted.artifact_path,
       `${device} admitted Linux browser`);
+    const internalGraph = await auditLinuxFullGraphEvidence(
+      admitted.admission.full_graph_root_path, {
+        job: deploymentValue("build_job_id"),
+        sourceCommit: expectedSourceCommit,
+        passwordsCommit: deploymentValue("helium_passwords_commit"),
+        coreCommit: sync.helium_core_commit,
+        chromiumCommit: sync.chromium_commit,
+      });
     if (admitted.platform !== "linux" || admitted.target !== "linux-x86_64" ||
         admitted.artifact_sha256 !== await sha256File(admittedArtifact.resolved) ||
         admitted.admission.returned_archive_sha256 !== archiveSHA256 ||
         admitted.admission.deployment_receipt_sha256 !== deploymentSHA256 ||
         admitted.admission.provenance_manifest_sha256 !==
           deploymentValue("provenance_sha256") ||
+        admitted.admission.full_graph_receipt_sha256 !== graph.receipt_sha256 ||
+        admitted.admission.full_graph_inventory_sha256 !==
+          graph.inventory_sha256 ||
+        internalGraph.receiptSha256 !== graph.receipt_sha256 ||
+        internalGraph.inventorySha256 !== graph.inventory_sha256 ||
         admitted.admission.build_job_id !== deploymentValue("build_job_id") ||
         admitted.admission.depot_tools_commit !== LINUX_DEPOT_TOOLS_COMMIT) {
       fail(`${device} three-client run does not use the supplied Linux provenance`);
@@ -511,6 +545,8 @@ async function auditThreeClient(runRoot, sync, expectedSourceCommit,
       returned_archive_sha256: admitted.admission.returned_archive_sha256,
       deployment_receipt_sha256: deploymentSHA256,
       provenance_manifest_sha256: admitted.admission.provenance_manifest_sha256,
+      full_graph_receipt_sha256: internalGraph.receiptSha256,
+      full_graph_inventory_sha256: internalGraph.inventorySha256,
       depot_tools_commit: admitted.admission.depot_tools_commit,
       build_job_id: admitted.admission.build_job_id,
     };
@@ -518,6 +554,7 @@ async function auditThreeClient(runRoot, sync, expectedSourceCommit,
   for (const field of [
     "browser_sha256", "browser_size", "returned_archive_sha256",
     "deployment_receipt_sha256", "provenance_manifest_sha256",
+    "full_graph_receipt_sha256", "full_graph_inventory_sha256",
     "depot_tools_commit", "build_job_id",
   ]) {
     if (linux.d[field] !== linux.da[field]) {
@@ -536,11 +573,14 @@ async function auditThreeClient(runRoot, sync, expectedSourceCommit,
       size: archive.stat.size,
       deployment_receipt_sha256: deploymentSHA256,
       full_graph_receipt_sha256: graph.receipt_sha256,
+      full_graph_inventory_sha256: graph.inventory_sha256,
       build_job_id: deploymentValue("build_job_id"),
       helium_passwords_commit: deploymentValue("helium_passwords_commit"),
       depot_tools_commit: linux.d.depot_tools_commit,
     },
     linux,
+    execution_identity: Object.fromEntries(["d", "da", "oneplus"].map(
+      device => [device, audited.manifest.devices[device].execution_identity])),
     verified_at: audited.receipt.verified_at,
   };
 }
@@ -562,6 +602,12 @@ async function auditDesktopTabEvidence(directories, statusFiles, keyFile,
   const key = loadSigningKey(keyFile);
   const evidence = directories.map(directory =>
     readAuthenticatedEvidence(path.resolve(directory), key));
+  const executionIdentity = validateLinuxHostIdentity(
+    evidence[0].value.execution_identity, device);
+  if (evidence.some(item => item.value.execution_identity.host_identity_sha256 !==
+      executionIdentity.host_identity_sha256)) {
+    fail(`${device} desktop proofs do not share one executing host identity`);
+  }
   const groups = new Map(TAB_MECHANISMS.map(mechanism => [mechanism, []]));
   for (const item of evidence) {
     const value = item.value;
@@ -668,8 +714,10 @@ async function auditDesktopTabEvidence(directories, statusFiles, keyFile,
     full_profile_evidence_sha256: groups.get("full-profile")
       .map(item => item.sha256).sort(),
     neutral_generation: neutral.generation,
+    neutral_archive_sha256: neutral.source_binding.archive_sha256,
     full_profile_generation: full.generation,
     full_profile_archive_sha256: full.source_binding.archive_sha256,
+    execution_identity: executionIdentity,
     first_completed_at: new Date(Math.min(...evidence.map(
       item => item.value.completed_unix)) * 1000).toISOString(),
     last_completed_at: new Date(Math.max(...evidence.map(
@@ -677,6 +725,79 @@ async function auditDesktopTabEvidence(directories, statusFiles, keyFile,
     native_completed_at: new Date(native.value.completed_unix * 1000).toISOString(),
     first_full_profile_completed_at: new Date(
       Math.min(...fullCompleted) * 1000).toISOString(),
+  };
+}
+
+async function auditFaultOperationSet(operationDirectories, key, platform,
+  device, normalTabs, fallbackProofs, matrixCases, matrixCompletedAt) {
+  if (!Array.isArray(operationDirectories) || operationDirectories.length !== 4) {
+    fail(`${device} tab fault recovery requires four authenticated operations`);
+  }
+  const producer = path.join(
+    path.dirname(fileURLToPath(import.meta.url)), "..", "tabs",
+    "tab-fault-operation.mjs");
+  const producerSHA256 = await sha256File(producer);
+  const operations = operationDirectories.map(directory =>
+    readAuthenticatedFaultOperation(path.resolve(directory), key,
+      producerSHA256));
+  const byIdentity = new Map();
+  for (const operation of operations) {
+    const value = operation.value;
+    const identity = `${value.fault}:${value.operation}`;
+    const expectedIdentity = platform === "desktop"
+      ? normalTabs.execution_identity.host_identity_sha256
+      : normalTabs.execution_identity.physical_identity_sha256;
+    if (byIdentity.has(identity) || value.platform !== platform ||
+        value.source_device !== device || value.profile !== "default" ||
+        value.execution_identity_sha256 !== expectedIdentity ||
+        value.started_unix * 1000 < Date.parse(normalTabs.last_completed_at) ||
+        value.completed_unix * 1000 > Date.parse(matrixCompletedAt)) {
+      fail(`${device} tab fault operation identity or chronology is invalid`);
+    }
+    byIdentity.set(identity, operation);
+  }
+  for (const entry of matrixCases) {
+    const rejection = byIdentity.get(`${entry.fault}:rejection`);
+    const quarantine = byIdentity.get(`${entry.fault}:quarantine`);
+    const proof = fallbackProofs.find(item =>
+      item.value.mechanism === entry.affected_mechanism);
+    const expectedPreFault = entry.affected_mechanism === "neutral-topology"
+      ? normalTabs.neutral_archive_sha256
+      : normalTabs.full_profile_archive_sha256;
+    if (!rejection || !quarantine || !proof ||
+        rejection.sha256 !== entry.rejection_receipt_sha256 ||
+        quarantine.sha256 !== entry.quarantine_receipt_sha256) {
+      fail(`${device} fault matrix does not reference its authenticated operations`);
+    }
+    const left = {...rejection.value};
+    const right = {...quarantine.value};
+    delete left.operation;
+    delete right.operation;
+    if (!equal(left, right) ||
+        left.affected_mechanism !== entry.affected_mechanism ||
+        left.damaged_generation !== entry.damaged_generation ||
+        left.recovery_generation !== entry.recovery_generation ||
+        left.pre_fault_archive_sha256 !== expectedPreFault ||
+        left.fallback_evidence_sha256 !== proof.sha256 ||
+        left.recovery_destination !==
+          proof.value.source_binding.source_destination ||
+        left.recovered_unix > proof.value.completed_unix ||
+        (entry.damaged_destination !== undefined &&
+          left.damaged_destination !== entry.damaged_destination) ||
+        (entry.recovery_destination !== undefined &&
+          left.recovery_destination !== entry.recovery_destination)) {
+      fail(`${device} fault operations do not prove rejection, quarantine, and recovery`);
+    }
+  }
+  if (byIdentity.size !== 4) {
+    fail(`${device} tab fault operation inventory is incomplete`);
+  }
+  const hashes = operations.map(item => item.sha256).sort();
+  return {
+    hashes,
+    set_sha256: sha256(Buffer.from(`${hashes.join("\n")}\n`)),
+    first_started_at: new Date(Math.min(...operations.map(
+      item => item.value.started_unix)) * 1000).toISOString(),
   };
 }
 
@@ -702,7 +823,7 @@ async function auditDesktopTabFaultEvidence(file, fallbackDirectories,
   const expected = new Map([
     ["neutral-corrupt-newest-generation", {
       mechanism: "neutral-topology",
-      rejection: "quarantined",
+      rejection: "create-new-rejected",
       fallback: "previous-generation-restored",
       keys: [
         "fault", "affected_mechanism", "damaged_generation",
@@ -714,7 +835,7 @@ async function auditDesktopTabFaultEvidence(file, fallbackDirectories,
     }],
     ["full-profile-corrupt-destination", {
       mechanism: "full-profile",
-      rejection: "rejected",
+      rejection: "create-new-rejected",
       fallback: "independent-replica-restored",
       keys: [
         "fault", "affected_mechanism", "damaged_generation",
@@ -744,6 +865,8 @@ async function auditDesktopTabFaultEvidence(file, fallbackDirectories,
         !new Set(["neutral-topology", "full-profile"]).has(value.mechanism) ||
         value.platform !== "desktop" || value.package_id !== "desktop" ||
         value.source_device !== device || value.profile !== "default" ||
+        value.execution_identity.host_identity_sha256 !==
+          normalTabs.execution_identity.host_identity_sha256 ||
         value.browser.sha256 !== linuxRuntime.browser_sha256 ||
         value.browser.size !== linuxRuntime.browser_size ||
         !DESKTOP_TAB_DESTINATIONS[device].includes(
@@ -804,17 +927,11 @@ async function auditDesktopTabFaultEvidence(file, fallbackDirectories,
     }
     seen.add(entry.fault);
   }
-  if (!Array.isArray(operationFiles) || operationFiles.length !== 4) {
-    fail(`${device} tab fault recovery requires four operation receipts`);
-  }
-  const operationHashes = await Promise.all(operationFiles.map(async item => {
-    const admitted = await regularFile(item,
-      `${device} tab fault operation receipt`, 8 * 1024 * 1024);
-    return sha256File(admitted.resolved);
-  }));
-  if (new Set(operationHashes).size !== 4 ||
-      !equal(operationHashes.sort(), operationHashesReferenced.sort())) {
-    fail(`${device} tab fault operation receipts do not match its matrix`);
+  const operationSet = await auditFaultOperationSet(
+    operationFiles, key, "desktop", device, normalTabs, fallbackProofs,
+    evidence.value.cases, evidence.value.completed_at);
+  if (!equal(operationSet.hashes, operationHashesReferenced.sort())) {
+    fail(`${device} authenticated fault operations do not match its matrix`);
   }
   const latestFallback = Math.max(...fallbackProofs.map(
     proof => proof.value.completed_unix)) * 1000;
@@ -826,7 +943,7 @@ async function auditDesktopTabFaultEvidence(file, fallbackDirectories,
     fallback_evidence_set_sha256: sha256(Buffer.from(
       `${fallbackProofs.map(proof => proof.sha256).sort().join("\n")}\n`)),
     operation_receipt_set_sha256: sha256(Buffer.from(
-      `${operationHashes.sort().join("\n")}\n`)),
+      `${operationSet.hashes.join("\n")}\n`)),
     first_fallback_at: new Date(Math.min(...fallbackProofs.map(
       proof => proof.value.completed_unix)) * 1000).toISOString(),
     completed_at: evidence.value.completed_at,
@@ -834,7 +951,12 @@ async function auditDesktopTabFaultEvidence(file, fallbackDirectories,
 }
 
 const RESET_FIELDS = Object.freeze([
-  "schema_version", "result", "package", "adb_serial", "adb_transport",
+  "schema_version", "result", "package", "identity_schema", "adb_serial",
+  "adb_transport", "adb_transport_id", "adb_usb_path_sha256",
+  "android_model", "android_device", "android_product",
+  "android_manufacturer", "build_fingerprint_sha256",
+  "physical_identity_sha256", "physical_identity_captured_at",
+  "physical_identity_tool_sha256",
   "from_phase", "to_phase", "helium_sync_commit", "chromium_commit",
   "source_archive_sha256", "acceptance_inventory_sha256", "apk_sha256",
   "version_code", "version_name", "production_package", "production_state",
@@ -851,6 +973,11 @@ async function auditPhaseResets(files, sync) {
     "reset-disposable-package.sh",
   );
   const boundarySHA256 = await sha256File(resetBoundary);
+  const identityBoundary = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    "physical-device-identity.mjs",
+  );
+  const identityBoundarySHA256 = await sha256File(identityBoundary);
   const transitions = new Map();
   for (const file of files) {
     const receipt = await readEnv(file, RESET_FIELDS,
@@ -862,10 +989,11 @@ async function auditPhaseResets(files, sync) {
           "media-cookie->password-sync",
           "password-sync->tab-recovery",
         ]).has(transition) ||
-        value("schema_version") !== "1" || value("result") !== "passed" ||
+        value("schema_version") !== "2" || value("result") !== "passed" ||
         value("package") !== TEST_PACKAGE ||
         value("adb_transport") !== "physical-usb" ||
         !/^[A-Za-z0-9._-]+$/.test(value("adb_serial")) ||
+        value("physical_identity_tool_sha256") !== identityBoundarySHA256 ||
         value("helium_sync_commit") !== sync.helium_sync_commit ||
         value("chromium_commit") !== sync.chromium_commit ||
         value("source_archive_sha256") !== sync.source_archive_sha256 ||
@@ -882,12 +1010,28 @@ async function auditPhaseResets(files, sync) {
     requireHash(value("production_identity_sha256"),
       "production package identity");
     requireHash(value("global_state_sha256"), "Android global-state identity");
+    const physicalIdentity = validatePhysicalDeviceIdentity({
+      schema_version: 1,
+      identity_schema: value("identity_schema"),
+      adb_serial: value("adb_serial"),
+      adb_transport: value("adb_transport"),
+      adb_transport_id: value("adb_transport_id"),
+      adb_usb_path_sha256: value("adb_usb_path_sha256"),
+      android_model: value("android_model"),
+      android_device: value("android_device"),
+      android_product: value("android_product"),
+      android_manufacturer: value("android_manufacturer"),
+      build_fingerprint_sha256: value("build_fingerprint_sha256"),
+      physical_identity_sha256: value("physical_identity_sha256"),
+      captured_at: value("physical_identity_captured_at"),
+    });
     transitions.set(transition, {
       receipt_sha256: sha256(Buffer.from(receipt.raw)),
       adb_serial: value("adb_serial"),
       production_state: value("production_state"),
       production_identity_sha256: value("production_identity_sha256"),
       global_state_sha256: value("global_state_sha256"),
+      physical_identity: physicalIdentity,
       cleared_at: value("cleared_at"),
     });
   }
@@ -901,11 +1045,16 @@ async function auditPhaseResets(files, sync) {
       fail(`Android package resets disagree on ${field}`);
     }
   }
+  if (first.physical_identity.physical_identity_sha256 !==
+      second.physical_identity.physical_identity_sha256) {
+    fail("Android package resets used different physical OnePlus devices");
+  }
   if (Date.parse(first.cleared_at) > Date.parse(second.cleared_at)) {
     fail("Android package-reset phase order is invalid");
   }
   return {
     adb_serial: first.adb_serial,
+    physical_identity: first.physical_identity,
     media_to_sync: first,
     sync_to_tabs: second,
   };
@@ -922,8 +1071,12 @@ async function auditTabEvidence(directories, statusFiles, keyFile, sync,
   const key = loadSigningKey(keyFile);
   const evidence = directories.map(directory =>
     readAuthenticatedEvidence(path.resolve(directory), key));
+  const executionIdentity = validatePhysicalDeviceIdentity(
+    evidence[0].value.execution_identity);
   if (new Set(evidence.map(item => item.value.browser.adb_serial)).size !== 1 ||
-      evidence[0].value.browser.adb_serial !== adbSerial) {
+      evidence[0].value.browser.adb_serial !== adbSerial ||
+      evidence.some(item => item.value.execution_identity.physical_identity_sha256 !==
+        executionIdentity.physical_identity_sha256)) {
     fail("tab evidence did not use the package-reset physical USB ADB device");
   }
   const groups = new Map(TAB_MECHANISMS.map(mechanism => [mechanism, []]));
@@ -1035,7 +1188,9 @@ async function auditTabEvidence(directories, statusFiles, keyFile, sync,
       .map(item => item.sha256).sort(),
     full_profile_generation: full.generation,
     full_profile_archive_sha256: full.source_binding.archive_sha256,
+    execution_identity: executionIdentity,
     neutral_generation: neutral.generation,
+    neutral_archive_sha256: neutral.source_binding.archive_sha256,
     first_completed_at: new Date(Math.min(...evidence.map(
       item => item.value.completed_unix)) * 1000).toISOString(),
     last_completed_at: new Date(Math.max(...evidence.map(
@@ -1072,7 +1227,7 @@ async function auditTabFaultEvidence(file, fallbackDirectories, operationFiles,
   const expected = new Map([
     ["neutral-corrupt-newest-generation", {
       mechanism: "neutral-topology",
-      rejection: "quarantined",
+      rejection: "create-new-rejected",
       fallback: "previous-generation-restored",
       keys: [
         "fault", "affected_mechanism", "damaged_generation",
@@ -1084,7 +1239,7 @@ async function auditTabFaultEvidence(file, fallbackDirectories, operationFiles,
     }],
     ["full-profile-corrupt-destination", {
       mechanism: "full-profile",
-      rejection: "rejected",
+      rejection: "create-new-rejected",
       fallback: "independent-replica-restored",
       keys: [
         "fault", "affected_mechanism", "damaged_generation",
@@ -1121,6 +1276,8 @@ async function auditTabFaultEvidence(file, fallbackDirectories, operationFiles,
         value.browser.chromium_commit !== sync.chromium_commit ||
         value.browser.acceptance_dir !== sync.root ||
         value.browser.adb_serial !== adbSerial ||
+        value.execution_identity.physical_identity_sha256 !==
+          normalTabs.execution_identity.physical_identity_sha256 ||
         !TAB_DESTINATIONS.includes(value.source_binding.source_destination) ||
         (value.mechanism === "full-profile" &&
           value.source_binding.expected_evidence_sha256 !==
@@ -1177,17 +1334,11 @@ async function auditTabFaultEvidence(file, fallbackDirectories, operationFiles,
     }
     seen.add(entry.fault);
   }
-  if (!Array.isArray(operationFiles) || operationFiles.length !== 4) {
-    fail("tab fault recovery requires exactly four operation receipts");
-  }
-  const operationHashes = await Promise.all(operationFiles.map(async file => {
-    const admitted = await regularFile(file, "tab fault operation receipt",
-      8 * 1024 * 1024);
-    return sha256File(admitted.resolved);
-  }));
-  if (new Set(operationHashes).size !== 4 ||
-      !equal(operationHashes.sort(), referencedOperationHashes.sort())) {
-    fail("tab fault operation receipts do not match the fault matrix");
+  const operationSet = await auditFaultOperationSet(
+    operationFiles, key, "android", "oneplus", normalTabs, fallbackProofs,
+    evidence.value.cases, evidence.value.completed_at);
+  if (!equal(operationSet.hashes, referencedOperationHashes.sort())) {
+    fail("authenticated Android fault operations do not match the matrix");
   }
   const latestFallback = Math.max(...fallbackProofs.map(
     proof => proof.value.completed_unix)) * 1000;
@@ -1199,7 +1350,7 @@ async function auditTabFaultEvidence(file, fallbackDirectories, operationFiles,
     fallback_evidence_set_sha256: sha256(Buffer.from(
       `${fallbackProofs.map(proof => proof.sha256).sort().join("\n")}\n`)),
     operation_receipt_set_sha256: sha256(Buffer.from(
-      `${operationHashes.join("\n")}\n`)),
+      `${operationSet.hashes.join("\n")}\n`)),
     first_fallback_at: new Date(Math.min(...fallbackProofs.map(
       proof => proof.value.completed_unix)) * 1000).toISOString(),
     completed_at: evidence.value.completed_at,
@@ -1376,12 +1527,12 @@ function usage() {
     --d-tab-signing-key FILE --d-tab-evidence DIR [five total] \\
     --d-tab-status FILE [three total] --d-tab-fault-evidence FILE \\
     --d-fault-tab-evidence DIR [two total] \\
-    --d-fault-operation-receipt FILE [four total] \\
+    --d-fault-operation-receipt DIR [four total] \\
     --d-profile-backup-receipt FILE \\
     --da-tab-signing-key FILE --da-tab-evidence DIR [five total] \\
     --da-tab-status FILE [three total] --da-tab-fault-evidence FILE \\
     --da-fault-tab-evidence DIR [two total] \\
-    --da-fault-operation-receipt FILE [four total] \\
+    --da-fault-operation-receipt DIR [four total] \\
     --da-profile-backup-receipt FILE \\
     --sync-archive FILE --sync-acceptance DIR --sync-evidence DIR \\
     --control-archive FILE --control-acceptance DIR --control-evidence DIR \\
@@ -1390,7 +1541,7 @@ function usage() {
     --tab-signing-key FILE --tab-evidence DIR [five total] \\
     --tab-status FILE [three total] \\
     --tab-fault-evidence FILE --fault-tab-evidence DIR [two total] \\
-    --fault-operation-receipt FILE [four total] \\
+    --fault-operation-receipt DIR [four total] \\
     --profile-backup-receipt FILE \\
     --tailnet-serve-receipt FILE --output NEW-JSON
 `;
@@ -1470,6 +1621,19 @@ export async function verifyFullE2E(options) {
     options.get("--tab-signing-key"), sync, phaseResets.adb_serial, tabs);
   const profileBackup = await auditProfileBackupReceipt(
     options.get("--profile-backup-receipt"), tabs, "oneplus", "tar-stream-v1");
+  if (desktopTabs.d.execution_identity.host_identity_sha256 !==
+        threeClient.execution_identity.d.host_identity_sha256 ||
+      desktopTabs.da.execution_identity.host_identity_sha256 !==
+        threeClient.execution_identity.da.host_identity_sha256) {
+    fail("desktop tab phases did not execute on their admitted d and da hosts");
+  }
+  const oneplusIdentity = media.physical_identity.physical_identity_sha256;
+  if (phaseResets.physical_identity.physical_identity_sha256 !== oneplusIdentity ||
+      tabs.execution_identity.physical_identity_sha256 !== oneplusIdentity ||
+      threeClient.execution_identity.oneplus.physical_identity_sha256 !==
+        oneplusIdentity) {
+    fail("media, password, reset, and tab phases did not use one physical OnePlus");
+  }
   const serve = await auditServeReceipt(options.get("--tailnet-serve-receipt"));
   const chronology = [
     [serve.began_at, media.verified_at, "Serve begin must precede media A/B"],
@@ -1515,8 +1679,8 @@ export async function verifyFullE2E(options) {
   }
   const verifier = fileURLToPath(import.meta.url);
   const receipt = {
-    schema_version: 2,
-    evidence_type: "helium-sync-fleet-full-e2e-v2",
+    schema_version: 3,
+    evidence_type: "helium-sync-fleet-full-e2e-v3",
     result: "passed",
     source_train: {
       helium_sync_commit: sourceCommit,
@@ -1546,6 +1710,11 @@ export async function verifyFullE2E(options) {
     },
     linux_artifact: threeClient.returned_artifact,
     linux_device_runtime: threeClient.linux,
+    fleet_execution_identity: {
+      d: threeClient.execution_identity.d.host_identity_sha256,
+      da: threeClient.execution_identity.da.host_identity_sha256,
+      oneplus: oneplusIdentity,
+    },
     receipts: {
       media_pair: media.receipt_sha256,
       fixture: media.fixture_receipt_sha256,

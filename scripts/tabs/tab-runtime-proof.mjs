@@ -6,6 +6,11 @@ import http from "node:http";
 import path from "node:path";
 import {fileURLToPath} from "node:url";
 
+import {capturePhysicalDeviceIdentity} from
+  "../android-acceptance/physical-device-identity.mjs";
+import {captureLinuxHostIdentity} from
+  "../sync-runtime/execution-identity.mjs";
+
 import {
   EVIDENCE_DIRECTORY_MARKER,
   EVIDENCE_DIRECTORY_MARKER_CONTENT,
@@ -1494,8 +1499,11 @@ async function main(command, options) {
     common.runtimeProofSHA256 = await sha256File(fileURLToPath(import.meta.url));
     common.profileAdapterSHA256 = await sha256File(ANDROID_PROFILE_ADAPTER);
     common.browserBoundarySHA256 = await sha256File(ANDROID_BROWSER_BOUNDARY);
+    common.executionIdentity = capturePhysicalDeviceIdentity(common.adbSerial);
   } else if (options.has("--acceptance-dir") || options.has("--adb-serial")) {
     fail("desktop runtime proof rejects Android adapter options");
+  } else {
+    common.executionIdentity = captureLinuxHostIdentity(device);
   }
 
   let result;
@@ -1561,6 +1569,7 @@ async function main(command, options) {
     platform,
     package_id: packageID,
     source_device: device,
+    execution_identity: common.executionIdentity,
     profile,
     generation: result.generation,
     completed_unix: completed,

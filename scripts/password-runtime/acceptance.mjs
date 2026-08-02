@@ -6,6 +6,8 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import {pathToFileURL} from "node:url";
 
+import {auditLinuxFullGraphEvidence} from "../linux-full-graph-audit.mjs";
+
 const SCHEMA_VERSION = 2;
 export const DISPOSABLE_PROFILE_MARKER = "helium-password-runtime-v2\n";
 const SCREENSHOT_MAX_BYTES = 32 * 1024 * 1024;
@@ -192,7 +194,9 @@ async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPat
     "helium_core_commit", "chromium_version", "chromium_commit",
     "platform_commit", "bundle", "bundle_sha256",
     "provenance_manifest_sha256", "browser_executable", "browser_sha256",
-    "runtime_inventory", "runtime_inventory_sha256", "verified_at",
+    "runtime_inventory", "runtime_inventory_sha256", "full_graph_receipt",
+    "full_graph_receipt_sha256", "full_graph_inventory",
+    "full_graph_inventory_sha256", "verified_at",
   ].sort();
   if (JSON.stringify([...values.keys()].sort()) !== JSON.stringify(expectedKeys)) {
     throw new Error("Linux artifact receipt has an unexpected field inventory");
@@ -202,8 +206,9 @@ async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPat
   ];
   const digestFields = [
     "bundle_sha256", "provenance_manifest_sha256", "browser_sha256",
+    "full_graph_receipt_sha256", "full_graph_inventory_sha256",
   ];
-  if (values.get("schema_version") !== "2" ||
+  if (values.get("schema_version") !== "3" ||
       values.get("product") !== LINUX_PRODUCT ||
       values.get("platform") !== "linux" || values.get("arch") !== LINUX_ARCH ||
       path.resolve(path.dirname(receipt.resolved),
@@ -247,6 +252,22 @@ async function readLinuxArtifactAdmission(artifactPath, artifactHash, receiptPat
   if (!seen.has("runtime/helium") ||
       !seen.has("runtime/helium-wrapper")) {
     throw new Error("Linux runtime inventory omits the browser or launcher");
+  }
+  const graphRootRelative = `${LINUX_BUNDLE}/provenance/full-graph`;
+  if (values.get("full_graph_receipt") !== `${graphRootRelative}/receipt.env` ||
+      values.get("full_graph_inventory") !== `${graphRootRelative}/SHA256SUMS`) {
+    throw new Error("Linux artifact receipt has invalid full-graph paths");
+  }
+  const graph = await auditLinuxFullGraphEvidence(
+    path.join(receiptRoot, graphRootRelative), {
+      sourceCommit: values.get("source_commit"),
+      coreCommit: values.get("helium_core_commit"),
+      chromiumCommit: values.get("chromium_commit"),
+      platformCommit: values.get("platform_commit"),
+    });
+  if (graph.receiptSha256 !== values.get("full_graph_receipt_sha256") ||
+      graph.inventorySha256 !== values.get("full_graph_inventory_sha256")) {
+    throw new Error("Linux artifact receipt does not bind its full-graph evidence");
   }
   return {resolved: receipt.resolved, raw};
 }

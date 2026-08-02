@@ -27,6 +27,7 @@ required=(
   disposable-browser.sh
   prepare-cookie-acceptance-profile.sh
   run-device-probe.sh
+  audit-probe-pair.mjs
   verify-probe-pair.sh
   kit-source.env
 )

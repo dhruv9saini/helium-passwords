@@ -3,11 +3,11 @@ set -euo pipefail
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/package-linux-runtime.sh PRODUCT ARCH TARGET BUILD-JOB-ID PLATFORM-CHECKOUT OUTPUT.tar.xz OUTPUT.receipt.env
+usage: scripts/package-linux-runtime.sh PRODUCT ARCH TARGET BUILD-JOB-ID PLATFORM-CHECKOUT FULL-GRAPH-EVIDENCE OUTPUT.tar.xz OUTPUT.receipt.env
 EOF
 }
 
-[ "$#" -eq 7 ] || {
+[ "$#" -eq 8 ] || {
     usage
     exit 2
 }
@@ -17,10 +17,12 @@ arch=$2
 target=$3
 build_job_id=$4
 checkout=$(realpath -e "$5")
-output=$6
-receipt=$7
-root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-source_info=$("${root_dir}/scripts/linux-product-provenance.sh" \
+full_graph=$(realpath -e "$6")
+output=$7
+receipt=$8
+tool_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
+product_root=$(realpath -e "${HELIUM_PRODUCT_SOURCE_ROOT:-$tool_root}")
+source_info=$("${product_root}/scripts/linux-product-provenance.sh" \
     "${product}" "${arch}" "${target}")
 [[ "${build_job_id}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
     echo "invalid build job id" >&2
@@ -62,12 +64,13 @@ for path in "${checkout}/.helium-platform-source.env" "${out_dir}/args.gn" \
         exit 1
     }
 done
-[ -z "$(git -C "${root_dir}" status --porcelain --untracked-files=all)" ] || {
-    echo "Helium source must be clean before packaging" >&2
+[ -z "$(git -C "${product_root}" status --porcelain --untracked-files=all)" ] && \
+    [ -z "$(git -C "${tool_root}" status --porcelain --untracked-files=all)" ] || {
+    echo "product and packaging-tool sources must be clean before packaging" >&2
     exit 1
 }
 
-[ "$(git -C "${root_dir}/helium-chromium" rev-parse HEAD)" = "${core_commit}" ] || {
+[ "$(git -C "${product_root}/helium-chromium" rev-parse HEAD)" = "${core_commit}" ] || {
     echo "Helium checkout does not match its committed gitlink" >&2
     exit 1
 }
@@ -76,8 +79,8 @@ done
     exit 1
 }
 
-build_config="${root_dir}/helium-passwords.conf"
-[ ! -f "${root_dir}/go.mod" ] || build_config="${root_dir}/helium-sync.conf"
+build_config="${product_root}/helium-passwords.conf"
+[ ! -f "${product_root}/go.mod" ] || build_config="${product_root}/helium-sync.conf"
 # shellcheck source=/dev/null
 . "${build_config}"
 platform_commit=$(git -C "${checkout}" rev-parse HEAD)
@@ -111,6 +114,113 @@ grep -Fqx "target_cpu = \"${target_cpu}\"" "${out_dir}/args.gn" || {
     echo "Linux GN args do not identify ${arch}" >&2
     exit 1
 }
+
+[ -d "${full_graph}" ] && [ ! -L "${full_graph}" ] && \
+    [ "$(stat -c %a "${full_graph}")" = 700 ] || {
+    echo "full-graph evidence must be a private real directory" >&2
+    exit 1
+}
+expected_graph_files=(
+    SHA256SUMS
+    build-operator.sh
+    build.ninja
+    build_ai_skills.mjs
+    capture-tool.sh
+    chromium-commit.txt
+    deployment-receipt-tool.sh
+    finalizer-tool.sh
+    full-graph-audit-tool.mjs
+    full-targets-query.txt
+    generate_css.gni
+    generate_css_js_files.js
+    boundary-receipt.env
+    ninja-query.txt
+    ninja-binary
+    ninja-shim
+    ninja-version.txt
+    packaging-tool.sh
+    platform-commit.txt
+    platform-shared.sh
+    product-commit.txt
+    receipt.env
+    repair-tool.sh
+    toolchain.ninja
+)
+mapfile -t actual_graph_files < <(
+    find "${full_graph}" -mindepth 1 -maxdepth 1 -type f -printf '%f\n' | sort
+)
+[ "$(printf '%s\n' "${expected_graph_files[@]}" | sort)" = \
+    "$(printf '%s\n' "${actual_graph_files[@]}")" ] && \
+    [ "$(find "${full_graph}" -mindepth 1 -maxdepth 1 ! -type f -print -quit)" = "" ] || {
+    echo "full-graph evidence has an invalid file inventory" >&2
+    exit 1
+}
+for graph_file in "${expected_graph_files[@]}"; do
+    [ -f "${full_graph}/${graph_file}" ] && \
+        [ ! -L "${full_graph}/${graph_file}" ] && \
+        [ "$(stat -c %a "${full_graph}/${graph_file}")" = 600 ] || {
+        echo "full-graph evidence file is unsafe: ${graph_file}" >&2
+        exit 1
+    }
+done
+(
+    cd "${full_graph}"
+    sha256sum --strict --check SHA256SUMS
+) >/dev/null
+mapfile -t graph_inventory_paths < <(awk '{ print $2 }' "${full_graph}/SHA256SUMS" | sort)
+mapfile -t graph_payload_paths < <(
+    find "${full_graph}" -mindepth 1 -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\n' | sort
+)
+[ "$(printf '%s\n' "${graph_inventory_paths[@]}")" = \
+    "$(printf '%s\n' "${graph_payload_paths[@]}")" ] || {
+    echo "full-graph checksum inventory is incomplete" >&2
+    exit 1
+}
+graph_value() {
+    awk -F= -v key="$1" '
+        $1 == key { count++; value=substr($0,length(key)+2) }
+        END { if (count == 1 && value != "") print value; else exit 1 }
+    ' "${full_graph}/receipt.env"
+}
+[ "$(graph_value schema)" = helium-linux-full-graph-evidence-v3 ] && \
+    [ "$(graph_value job)" = "${build_job_id}" ] && \
+    [ "$(graph_value product)" = "${product}" ] && \
+    [ "$(graph_value arch)" = "${arch}" ] && \
+    [ "$(graph_value target)" = "${target}" ] && \
+    [ "$(graph_value helium_sync_commit)" = "${sync_commit}" ] && \
+    [ "$(graph_value helium_passwords_commit)" = "${passwords_commit}" ] && \
+    [ "$(graph_value helium_core_commit)" = "${core_commit}" ] && \
+    [ "$(graph_value chromium_commit)" = "${chromium_commit}" ] && \
+    [ "$(graph_value platform_commit)" = "${platform_commit}" ] && \
+    [ "$(graph_value node_version)" = v22.14.0 ] && \
+    [ "$(graph_value full_targets)" = chrome,chromedriver ] && \
+    [ "$(graph_value graph_validation)" = passed ] || {
+    echo "full-graph receipt is not bound to this build" >&2
+    exit 1
+}
+[ "$(<"${full_graph}/product-commit.txt")" = "${source_commit}" ] && \
+    [ "$(<"${full_graph}/chromium-commit.txt")" = "${chromium_commit}" ] && \
+    [ "$(<"${full_graph}/platform-commit.txt")" = "${platform_commit}" ] && \
+    [ "$(sha256sum "${full_graph}/packaging-tool.sh" | awk '{print $1}')" = \
+        "$(sha256sum "${tool_root}/scripts/package-linux-runtime.sh" | awk '{print $1}')" ] && \
+    [ "$(sha256sum "${full_graph}/capture-tool.sh" | awk '{print $1}')" = \
+        "$(sha256sum "${tool_root}/scripts/capture-linux-full-graph-evidence.sh" | awk '{print $1}')" ] && \
+    [ "$(sha256sum "${full_graph}/deployment-receipt-tool.sh" | awk '{print $1}')" = \
+        "$(sha256sum "${tool_root}/scripts/write-deployment-artifact-receipt.sh" | awk '{print $1}')" ] && \
+    [ "$(sha256sum "${full_graph}/finalizer-tool.sh" | awk '{print $1}')" = \
+        "$(sha256sum "${tool_root}/scripts/finalize-retained-linux-full-graph.sh" | awk '{print $1}')" ] && \
+    [ "$(sha256sum "${full_graph}/full-graph-audit-tool.mjs" | awk '{print $1}')" = \
+        "$(sha256sum "${tool_root}/scripts/linux-full-graph-audit.mjs" | awk '{print $1}')" ] && \
+    [ "$(sha256sum "${full_graph}/repair-tool.sh" | awk '{print $1}')" = \
+        "$(sha256sum "${tool_root}/scripts/continue-retained-linux-full-graph-failure.sh" | awk '{print $1}')" ] || {
+    echo "full-graph concrete source or tooling binding changed" >&2
+    exit 1
+}
+full_graph_receipt_sha256=$(sha256sum "${full_graph}/receipt.env" | awk '{ print $1 }')
+full_graph_inventory_sha256=$(sha256sum "${full_graph}/SHA256SUMS" | awk '{ print $1 }')
+packaging_tool_sha256=$(sha256sum "${tool_root}/scripts/package-linux-runtime.sh" | awk '{ print $1 }')
+packaging_tool_commit=$(git -C "${tool_root}" rev-parse HEAD)
+node "${tool_root}/scripts/linux-full-graph-audit.mjs" "${full_graph}" >/dev/null
 
 mkdir -p "${output_parent}"
 mkdir -p "${receipt_parent}"
@@ -162,8 +272,9 @@ ln -s helium "${runtime}/chrome"
 }
 
 cp "${out_dir}/args.gn" "${provenance}/gn-args.txt"
-"${root_dir}/scripts/chromiumer-nix.sh" provenance >"${provenance}/chromiumer-nix.env"
-"${root_dir}/scripts/patch-inventory.sh" >"${provenance}/patches.sha256"
+cp -a "${full_graph}" "${provenance}/full-graph"
+"${product_root}/scripts/chromiumer-nix.sh" provenance >"${provenance}/chromiumer-nix.env"
+"${product_root}/scripts/patch-inventory.sh" >"${provenance}/patches.sha256"
 (
     cd "${bundle}"
     find runtime -type f -print0 | sort -z | xargs -0 sha256sum >provenance/runtime.sha256
@@ -173,7 +284,7 @@ nix_provenance_sha256=$(sha256sum "${provenance}/chromiumer-nix.env" | awk '{ pr
 patch_inventory_sha256=$(sha256sum "${provenance}/patches.sha256" | awk '{ print $1 }')
 runtime_inventory_sha256=$(sha256sum "${provenance}/runtime.sha256" | awk '{ print $1 }')
 cat >"${provenance}/manifest.env" <<EOF
-schema_version=3
+schema_version=4
 product=${product}
 platform=linux
 arch=${arch}
@@ -193,16 +304,21 @@ gn_args_sha256=${gn_args_sha256}
 nix_provenance_sha256=${nix_provenance_sha256}
 patch_inventory_sha256=${patch_inventory_sha256}
 runtime_inventory_sha256=${runtime_inventory_sha256}
+packaging_tool_commit=${packaging_tool_commit}
+packaging_tool_sha256=${packaging_tool_sha256}
+full_graph_receipt_sha256=${full_graph_receipt_sha256}
+full_graph_inventory_sha256=${full_graph_inventory_sha256}
 EOF
 
 archive="${temporary}/$(basename "${output}")"
 tar --create --xz --file="${archive}" --directory="${temporary}" "${bundle_name}"
 provenance_sha256=$(sha256sum "${provenance}/manifest.env" | awk '{ print $1 }')
 staged_receipt="${temporary}/$(basename "${receipt}")"
-"${root_dir}/scripts/write-deployment-artifact-receipt.sh" \
+"${tool_root}/scripts/write-deployment-artifact-receipt.sh" \
     "${archive}" "${target}" "${sync_commit}" "${passwords_commit}" \
     "${core_commit}" "${chromium_commit}" "${build_job_id}" \
-    "${provenance_sha256}" "${staged_receipt}" >/dev/null
+    "${provenance_sha256}" "${full_graph_receipt_sha256}" \
+    "${full_graph_inventory_sha256}" "${staged_receipt}" >/dev/null
 mv --no-clobber "${archive}" "${output}"
 mv --no-clobber "${staged_receipt}" "${receipt}"
 [ -f "${output}" ] && [ -f "${receipt}" ] || {

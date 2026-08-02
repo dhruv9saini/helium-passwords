@@ -148,11 +148,56 @@ elif [[ -n "$fixture_receipt" ]]; then
   exit 1
 fi
 
-if [[ "$network_handoff" == wifi-to-cellular && "$serial" == *:* ]]; then
-  echo "wifi-to-cellular requires a non-network ADB transport" >&2
+[[ "$serial" =~ ^[A-Za-z0-9._-]+$ && "$serial" != emulator-* ]] || {
+  echo "device probe requires a non-network, non-emulator ADB serial" >&2
   exit 1
-fi
+}
 [[ "$(adb -s "$serial" get-state)" == device ]]
+device_line=$(adb devices -l | awk -v serial="$serial" \
+  '$1 == serial && $2 == "device" {print; count++} END {if (count != 1) exit 1}') || {
+  echo "device probe requires one unambiguous physical ADB transport" >&2
+  exit 1
+}
+[[ " $device_line " == *" usb:"* ]] || {
+  echo "device probe requires a physical USB ADB transport" >&2
+  exit 1
+}
+adb_field() {
+  local name=$1 value
+  value=$(sed -n "s/.*[[:space:]]${name}:\\([^[:space:]]*\\).*/\\1/p" <<<"$device_line")
+  [[ -n "$value" && "$value" != *$'\n'* ]] || {
+    echo "ADB inventory is missing $name" >&2
+    exit 1
+  }
+  printf '%s\n' "$value"
+}
+android_model=$(adb -s "$serial" shell getprop ro.product.model | tr -d '\r')
+android_device=$(adb -s "$serial" shell getprop ro.product.device | tr -d '\r')
+android_product=$(adb -s "$serial" shell getprop ro.product.name | tr -d '\r')
+android_manufacturer=$(adb -s "$serial" shell getprop ro.product.manufacturer | tr -d '\r')
+android_fingerprint=$(adb -s "$serial" shell getprop ro.build.fingerprint | tr -d '\r')
+adb_transport_id=$(adb_field transport_id)
+adb_usb_path=$(adb_field usb)
+[[ "$(adb_field model)" == "$android_model" &&
+    "$(adb_field device)" == "$android_device" &&
+    "$(adb_field product)" == "$android_product" &&
+    "$android_model" == CPH2655 && "$android_device" == dodge &&
+    "$android_manufacturer" == OnePlus &&
+    "$android_product" =~ ^[A-Za-z0-9._-]+$ &&
+    "$adb_transport_id" =~ ^[1-9][0-9]*$ &&
+    -n "$android_fingerprint" && "$android_fingerprint" != *$'\n'* ]] || {
+  echo "ADB transport is not the admitted physical OnePlus" >&2
+  exit 1
+}
+adb_usb_path_sha256=$(printf '%s\n' "$adb_usb_path" | sha256sum | cut -d' ' -f1)
+build_fingerprint_sha256=$(printf '%s\n' "$android_fingerprint" | sha256sum | cut -d' ' -f1)
+physical_identity_sha256=$(
+  printf 'helium-physical-oneplus-v1\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+    "$serial" "$android_model" "$android_device" "$android_product" \
+    "$android_manufacturer" "$build_fingerprint_sha256" |
+    sha256sum | cut -d' ' -f1
+)
+physical_identity_captured_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 mapfile -t package_paths < <(adb -s "$serial" shell pm path "$package" | tr -d '\r')
 [[ ${#package_paths[@]} -eq 1 && "${package_paths[0]}" == package:/data/app/*/base.apk ]] || {
   echo "disposable browser must be one installed monolithic base APK" >&2
@@ -319,8 +364,18 @@ done
 [[ -f "$ready" ]] || { echo "browser probe did not become ready" >&2; exit 1; }
 
 {
-  printf 'schema_version=1\n'
+  printf 'schema_version=2\n'
   printf 'package=%s\n' "$package"
+  printf 'identity_schema=helium-physical-oneplus-v1\n'
+  printf 'adb_serial=%s\nadb_transport=physical-usb\n' "$serial"
+  printf 'adb_transport_id=%s\nadb_usb_path_sha256=%s\n' \
+    "$adb_transport_id" "$adb_usb_path_sha256"
+  printf 'android_model=%s\nandroid_device=%s\nandroid_product=%s\n' \
+    "$android_model" "$android_device" "$android_product"
+  printf 'android_manufacturer=%s\nbuild_fingerprint_sha256=%s\n' \
+    "$android_manufacturer" "$build_fingerprint_sha256"
+  printf 'physical_identity_sha256=%s\nphysical_identity_captured_at=%s\n' \
+    "$physical_identity_sha256" "$physical_identity_captured_at"
   printf 'background_foreground=%s\n' "$background_foreground"
   printf 'network_handoff=%s\n' "$network_handoff"
   printf 'version_code=%s\n' "$installed_version_code"

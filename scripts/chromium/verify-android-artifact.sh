@@ -312,7 +312,8 @@ runtime_kit="$temporary/runtime-acceptance"
 [[ -d "$runtime_kit" ]] || { echo "missing Android runtime acceptance kit" >&2; exit 1; }
 for kit_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
   disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-  run-device-probe.sh verify-probe-pair.sh kit.env SHA256SUMS; do
+  run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh \
+  kit.env SHA256SUMS; do
   [[ -f "$runtime_kit/$kit_file" && ! -L "$runtime_kit/$kit_file" ]] || {
     echo "runtime acceptance kit is missing $kit_file" >&2
     exit 1
@@ -328,7 +329,7 @@ done
 }
 for checked_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
   disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-  run-device-probe.sh verify-probe-pair.sh kit.env; do
+  run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh kit.env; do
   grep -Eq "^[0-9a-f]{64}  ${checked_file}$" "$runtime_kit/SHA256SUMS" || {
     echo "runtime acceptance kit checksum inventory is missing $checked_file" >&2
     exit 1
@@ -357,7 +358,7 @@ grep -qx 'artifact_target=chrome_public_apk' "$runtime_kit/kit.env"
 
 for kit_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
   disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-  run-device-probe.sh verify-probe-pair.sh; do
+  run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh; do
   git -C "$repo_root" show \
     "$expected_runtime_kit_commit:scripts/android-media/$kit_file" \
     | cmp -s - "$runtime_kit/$kit_file" || {

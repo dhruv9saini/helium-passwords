@@ -15,6 +15,8 @@ commit=0123456789abcdef0123456789abcdef01234567
   "$commit" "$commit" "$commit" "$commit" \
   synthetic-admission-01 \
   "$(printf provenance | sha256sum | awk '{print $1}')" \
+  "$(printf graph-receipt | sha256sum | awk '{print $1}')" \
+  "$(printf graph-inventory | sha256sum | awk '{print $1}')" \
   "$receipt" >/dev/null
 
 output=$("$repo_root/scripts/verify-deployment-artifact-receipt.sh" \

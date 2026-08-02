@@ -10,7 +10,7 @@ Every install consumes the artifact and its separate strict receipt. The
 receipt has exactly these fields:
 
 ```text
-schema_version=1
+schema_version=2
 artifact_sha256=<64 lowercase hex>
 artifact_size=<bytes>
 target=linux-x86_64|linux-arm64|linux-arm64-chroot|android-arm64
@@ -20,12 +20,17 @@ helium_core_commit=<40 lowercase hex>
 chromium_commit=<40 lowercase hex>
 build_job_id=<stable chromiumer job id>
 provenance_sha256=<64 lowercase hex>
+full_graph_receipt_sha256=<64 lowercase hex>
+full_graph_inventory_sha256=<64 lowercase hex>
 created_at=<UTC YYYY-MM-DDTHH:MM:SSZ>
 ```
 
 `scripts/verify-deployment-artifact-receipt.sh` rejects unknown or duplicate
 fields, a target mismatch, abbreviated commits, size drift, and artifact hash
-drift. There is one accepted schema and no legacy verifier fallback.
+drift. The two full-graph hashes bind the deployment to the private concrete
+graph evidence copied into `provenance/full-graph/`; the internal schema-4
+manifest repeats both hashes and binds the packaging tool source and commit.
+There is one accepted schema and no legacy verifier fallback.
 `linux-product.conf` binds desktop Sync to `helium-sync-linux-x86_64` and
 `linux-x86_64`, and binds the cross-built OnePlus chroot artifact to
 `helium-sync-linux-arm64` and `linux-arm64-chroot`. It also records the exact

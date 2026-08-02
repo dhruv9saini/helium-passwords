@@ -39,24 +39,41 @@ all three devices. It creates mode-0700 browser profiles only for the two Linux
 targets, retains the existing mode-0600 synthetic marker, and adds distinct
 mode-0600 `d` and `da` identity markers. It does not create a filesystem
 browser profile for OnePlus: the exact test package, APK hash, acceptance
-metadata, and complete prepared-directory inventory are its boundary.
+metadata, complete prepared-directory inventory, and captured physical-USB
+OnePlus identity are its boundary. The initializer also requires independently
+captured d and da host receipts; it rejects the wrong hostname, shared
+machine-id, non-x86_64 host, network ADB transport, emulator, wrong OnePlus
+model, or a second phone.
 
 All three admissions must report the same private source commit, Helium core
 commit, Chromium commit, and four-component Chromium version. Both Linux runs
 must additionally bind the same archive, Passwords commit, build-produced
-deployment receipt, extracted schema-3 internal manifest, build job, and
-pinned depot_tools commit. Their locally generated runtime receipts may differ
+deployment receipt, extracted schema-4 internal manifest, complete concrete
+full-graph inventory, build job, and pinned depot_tools commit. Their locally
+generated runtime receipts may differ
 in paths and verification time. Mixing source trains, using two Linux
 artifacts, or substituting a non-x86_64 runtime fails during initialization.
-The output directory must not exist.
+The output directory must not exist. Run the first identity capture on d, the
+second on da, and the USB capture on the machine physically attached to the
+OnePlus; transfer only those private receipts to the initializer.
 
 ```sh
+(umask 077; node scripts/sync-runtime/execution-identity.mjs capture \
+  --expected-host d > /secure/d-execution-identity.env)
+(umask 077; node scripts/sync-runtime/execution-identity.mjs capture \
+  --expected-host da > /secure/da-execution-identity.env)
+(umask 077; node scripts/android-acceptance/physical-device-identity.mjs capture \
+  --adb-serial "$oneplus_usb_serial" > /secure/oneplus-execution-identity.env)
+
 node scripts/sync-runtime/three-client-acceptance.mjs init \
   --d-artifact "$d_verified_linux/helium-sync-linux-x86_64/runtime/helium-wrapper" \
   --d-artifact-receipt "$d_verified_linux/artifact-receipt.env" \
+  --d-execution-identity /secure/d-execution-identity.env \
   --da-artifact "$da_verified_linux/helium-sync-linux-x86_64/runtime/helium-wrapper" \
   --da-artifact-receipt "$da_verified_linux/artifact-receipt.env" \
+  --da-execution-identity /secure/da-execution-identity.env \
   --oneplus-artifact /absolute/oneplus-prepared/Browser-test.apk \
+  --oneplus-execution-identity /secure/oneplus-execution-identity.env \
   --output /absolute/new/three-client-run
 ```
 
@@ -105,18 +122,48 @@ Helium Sync bridge.
    IndexedDB, service-worker, cache, and other origin state must be reported as
    observed-not-required, not transferred. Tabs are absent from every input.
 
-Browser evidence is an external, content-free JSON receipt because these
-native UI and CookieManager operations cannot be truthfully reconstructed by a
-source-only script. It must name
+Browser evidence is a reviewed, content-free index over separately captured
+raw runtime bundles. It must name
 `native-password-store-and-cookie-manager` and, for each device, bind its
 platform, target, package, artifact SHA-256, admission hashes, native
 `sync-receipt.json` SHA-256, and Linux profile marker or Android null marker.
+For each device,
+`scripts/sync-runtime/fleet-runtime-evidence.mjs capture-device` copies the
+actual client state, initial/restart/terminal PasswordStore bridge state,
+CookieManager bridge state, initial/restart server journals, authenticated
+request receipts, browser log, and exact execution identity into a private
+checksum bundle. Browser claims must derive from those files.
+
 Server evidence must come from the canonical marker-gated service at the exact
 literal private-Tailnet IPv4 HTTP endpoint on port 44719. It names the shared
 source/core/Chromium train, per-device bearer authentication, readable private
 schema-2 journal, and content-free log scans. Evidence records only device,
 cursor, revision, count, result, and journal-hash metadata; it never records a
-password value or bearer token. Tabs must be absent from the journal.
+password value or bearer token. Tabs must be absent from the journal. Capture
+the exact endpoint rather than relying on a fixed lm address. Authenticated
+request and HTTP-409 conflict receipts record the literal endpoint, the
+`Bearer` scheme, and only the SHA-256 of the authorization value. The verifier
+reconstructs the exact conflict error from the kind, key, rejected revision,
+and current revision:
+
+```sh
+node scripts/sync-runtime/fleet-runtime-evidence.mjs capture-server \
+  --endpoint "$tailnet_sync_endpoint" \
+  --records-jsonl /private/server/records.jsonl \
+  --server-log /private/server/server.log \
+  --password-conflict-json /private/server/password-conflict.json \
+  --cookie-conflict-json /private/server/cookie-conflict.json \
+  --output /private/evidence/runtime-server
+```
+
+`capture-device` captures its own current d/da machine identity, or its own
+physical OnePlus identity when `--device oneplus --adb-serial SERIAL` is used;
+it never accepts a caller-supplied identity file. It uses the exact
+`--client-{initial,restart,terminal}-json`,
+`--password-{initial,restart,terminal}-json`,
+`--cookie-{initial,restart,terminal}-json`,
+`--journal-{initial,restart}-jsonl`, `--authenticated-requests-jsonl`, and
+`--browser-log` inputs, plus `--device d|da|oneplus` and `--output`.
 
 ## Verify
 
@@ -125,6 +172,10 @@ node scripts/sync-runtime/three-client-acceptance.mjs verify \
   --run /absolute/three-client-run \
   --browser-evidence /absolute/browser-evidence.json \
   --server-evidence /absolute/server-evidence.json \
+  --d-runtime-evidence /private/evidence/runtime-d \
+  --da-runtime-evidence /private/evidence/runtime-da \
+  --oneplus-runtime-evidence /private/evidence/runtime-oneplus \
+  --server-runtime-evidence /private/evidence/runtime-server \
   --da-origin-audit /absolute/da-origin-audit.json \
   --oneplus-origin-audit /absolute/oneplus-origin-audit.json
 
@@ -133,11 +184,13 @@ node scripts/sync-runtime/three-client-acceptance.mjs status \
 ```
 
 Verification rehashes all three executions, the returned Linux archive,
-runtime and deployment receipts, internal provenance manifest, the complete
+runtime and deployment receipts, internal provenance manifest and concrete
+full-graph bundle, the complete
 prepared Android inventory, both Linux markers, all three native screenshot and
-Sync state/journal receipts, browser receipt, server receipt, and both origin
-audits. It copies the admitted content-free inputs and a mode-0600 receipt
-atomically into `verified/`; an existing result is never replaced. `status`
+Sync state/journal evidence, browser receipt, server receipt, and both origin
+audits. It copies the admitted indexes and four private raw runtime bundles,
+then writes a mode-0600 receipt atomically into `verified/`; an existing result
+is never replaced. `status`
 reports `passed` only after repeating that audit and matching the receipt to
 the copied evidence; corruption does not degrade to a stale success label.
 

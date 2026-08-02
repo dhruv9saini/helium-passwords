@@ -4,6 +4,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
+import {validatePhysicalDeviceIdentity} from
+  "../android-acceptance/physical-device-identity.mjs";
+import {validateLinuxHostIdentity} from
+  "../sync-runtime/execution-identity.mjs";
+
 export const DEVICES = new Set(["d", "da", "oneplus"]);
 export const MECHANISMS = new Set([
   "chromium-native-session",
@@ -344,6 +349,7 @@ export function validateEvidence(value) {
     "platform",
     "package_id",
     "source_device",
+    "execution_identity",
     "profile",
     "generation",
     "completed_unix",
@@ -363,6 +369,11 @@ export function validateEvidence(value) {
     fail("runtime evidence identity is invalid");
   }
   validDevice(value.source_device);
+  if (value.platform === "desktop") {
+    validateLinuxHostIdentity(value.execution_identity, value.source_device);
+  } else {
+    validatePhysicalDeviceIdentity(value.execution_identity);
+  }
   validSlug(value.profile, "profile");
   if (typeof value.generation !== "string" || value.generation.length < 1 ||
       value.generation.length > 256 || /[\r\n\0]/.test(value.generation)) {
@@ -432,7 +443,8 @@ export function validateEvidence(value) {
           value.browser.version_name) ||
         value.browser.device_socket !==
           "helium_sync_test_devtools_remote" ||
-        !/^[A-Za-z0-9._:-]+$/.test(value.browser.adb_serial)) {
+        !/^[A-Za-z0-9._-]+$/.test(value.browser.adb_serial) ||
+        value.browser.adb_serial !== value.execution_identity.adb_serial) {
       fail("Android browser provenance evidence is invalid");
     }
   }
