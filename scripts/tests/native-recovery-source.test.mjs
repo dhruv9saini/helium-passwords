@@ -87,6 +87,9 @@ assert.match(androidBackup, /ANDROID_ADB_SERIAL/);
 assert.match(androidBackup, /oneplus:5555/);
 assert.match(androidBackup, /timeout 20s/);
 assert.match(androidBackup, /adb_device\+=\(-s "\$adb_serial"\)/);
+assert.match(androidBackup, /exec-out run-as "\$package"/);
+assert.match(androidBackup, /disposable package is not available through its debuggable sandbox/);
+assert.doesNotMatch(androidBackup, /debug_ramdisk|\bsu\s+-c\b/);
 assert.match(androidBackup, /verify-snapshot-stream/);
 assert.match(androidBackup, /--max-age-seconds 600/);
 assert.doesNotMatch(scheduler,

@@ -52,6 +52,11 @@ data_dir=$("${adb_device[@]}" shell "dumpsys package '$package'" | tr -d '\r' |
   echo "could not resolve a safe installed package dataDir" >&2
   exit 1
 }
+run_as_dir=$("${adb_device[@]}" exec-out run-as "$package" pwd | tr -d '\r\n')
+[[ "$run_as_dir" == "$data_dir" ]] || {
+  echo "disposable package is not available through its debuggable sandbox" >&2
+  exit 1
+}
 recovery_path=$data_dir/files/helium-native-recovery/oneplus/default
 config_source_count=$(awk -F= '$1 == "source_path" {count++} END {print count+0}' "$config")
 config_source=$(awk -F= '$1 == "source_path" {print substr($0,13)}' "$config")
@@ -60,7 +65,7 @@ config_source=$(awk -F= '$1 == "source_path" {print substr($0,13)}' "$config")
   exit 1
 }
 
-inventory=$("${adb_device[@]}" shell "/debug_ramdisk/su -c '
+inventory=$("${adb_device[@]}" exec-out run-as "$package" sh -c "
 set -eu
 ROOT=\"$recovery_path\"
 test -d \"\$ROOT\"
@@ -79,14 +84,14 @@ for FILE in passwords.current.json cookies.current.json; do
   test \"\$AGE\" -le 600
 done
 find \"\$ROOT\" -mindepth 1 -maxdepth 1 -printf \"%f\\n\" | sort
-'" | tr -d '\r')
+" | tr -d '\r')
 [[ "$inventory" == $'.helium-native-recovery-root-v1\ncookies.current.json\npasswords.current.json' ]] || {
   echo "Android native recovery snapshot inventory is invalid" >&2
   exit 1
 }
 for kind in passwords cookies; do
-  "${adb_device[@]}" exec-out /debug_ramdisk/su -c \
-    "cat '$recovery_path/$kind.current.json'" |
+  "${adb_device[@]}" exec-out run-as "$package" \
+    cat "$recovery_path/$kind.current.json" |
     node "$acceptance" verify-snapshot-stream --kind "$kind" \
       --device oneplus --max-age-seconds 600 >/dev/null
 done
@@ -94,8 +99,8 @@ done
 archive_parent=${recovery_path%/*}
 archive_root=${recovery_path##*/}
 stream_recovery() {
-  "${adb_device[@]}" exec-out /debug_ramdisk/su -c \
-    "cd '$archive_parent' && /system/bin/tar -cf - '$archive_root'"
+  "${adb_device[@]}" exec-out run-as "$package" sh -c \
+    "cd '$archive_parent' && exec /system/bin/tar -cf - '$archive_root'"
 }
 
 work_dir=$(mktemp -d)
