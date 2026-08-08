@@ -38,7 +38,9 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
   that profile has a verified recoverable backup.
 - Chromium is never built on lm. Every large build uses the isolated
   [chromiumer workflow](docs/chromiumer-builds.md) and its durable completion
-  notification. A frozen product commit may use only hash-bound newer build
+  monitor. The monitor records terminal state locally on da; it never launches
+  an assistant or uses OpenBubbles, activation payloads, Mailbridge, a work
+  queue, email, or a personal relay. A frozen product commit may use only hash-bound newer build
   tooling recorded separately in the artifact; its product source stays clean
   and retains its own exact commit identity.
 
@@ -98,7 +100,7 @@ scripts/dev.sh check
 
 The command validates patch composition, Go protocol and recovery tests,
 password/cookie/tab state-machine tests, media/streaming fixtures, Chromiumer
-isolation arithmetic, notifications, and shared public ancestry. It is not a
+isolation arithmetic, terminal monitoring, and shared public ancestry. It is not a
 substitute for a native compile or disposable browser run.
 
 ## Chromium builds
@@ -130,7 +132,8 @@ scripts/chromiumer-job.sh cancel JOB
 The wrapper caps the complete systemd cgroup at two jobs, 200% CPU, 5 GiB
 memory, idle I/O priority, 256 tasks, the declared workspace budget, a 2 GiB
 root floor, and eight hours. Builds are detached, watched, journaled, and
-reported exactly once through lm Mailbridge to `dhruv.codex@gmail.com`.
+recorded exactly once in protected local terminal state on da. No terminal
+result is delivered to an account or assistant endpoint.
 Returned artifacts are checksum-verified before a workspace can be cleaned.
 
 ## Desktop patch flow

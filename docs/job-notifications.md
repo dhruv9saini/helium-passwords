@@ -1,119 +1,90 @@
-# Helium Build Completion Analysis
+# Helium Build Terminal Monitor
 
-Every production Chromium or complete Helium job is armed for one durable work
-item in the already-running Codex session on `da`. A terminal build record
-never starts an isolated Codex worker and never sends a success, failure,
-timeout, cancellation, or Codex-final template. Outbound delivery requires an
-explicit reviewed queue response.
+Helium build completion monitoring is a local, content-free operations path. It
+records what Chromiumer reports and never launches an assistant or sends a
+message.
 
-## Single Flow
+## Retirement boundary
+
+The former OpenBubbles, activation-payload, Mailbridge, work-queue, email, and
+personal-relay paths are retired. No Helium job may call them or recreate an
+equivalent delivery path. Existing historical records are evidence only.
+
+The retained boundary is deliberately narrow:
 
 ```text
-chromiumer job cgroup
+chromiumer isolated job
   -> atomic terminal.env
-  -> lm systemd timer (30 seconds, persistent)
-  -> private immutable analysis prompt
-  -> dedicated restricted SSH key
-  -> da queue-import-helium forced command
-  -> canonical work-queue.sqlite3
-  -> pinned already-running Codex tmux pane
+  -> da persistent user timer
+  -> mode-0600 local JSON state
 ```
 
-Chromiumer contains no mail address, mail credential, work-queue state, or
-Codex credential. The repository-owned worker atomically records one of
-`success`, `failure`, `timeout`, or `cancellation`, plus duration, exit code,
-and a reason. That reason is evidence for Codex and is explicitly not treated
-as a diagnosis.
+Chromiumer owns the build result. The monitor does not diagnose, rewrite, or
+publish it. A separate reviewed operator session may inspect that local state
+and the underlying build evidence.
 
-The lm wrapper registers the build before it starts. Private producer state is
-under:
+## State and behavior
+
+Before a production job starts, `scripts/chromiumer-job.sh` registers its
+product, summary, expected next action, and pinned source manifest. State lives
+at:
 
 ```text
 /home/d/.local/state/helium-job-notifier/jobs/<job>.json
-/home/d/.local/state/helium-job-notifier/events/<job>.txt
-/home/d/.local/state/helium-job-notifier/events/<job>.queue.json
 ```
 
-The system timer polls the remote terminal record. Once terminal, the producer
-atomically writes a mode-0600 prompt containing:
+Every 30 seconds, the timer asks the constrained Chromiumer worker for the
+job's terminal record. While a job is nonterminal the local status remains
+`watching`. Once Chromiumer returns a valid result, the monitor atomically
+records:
 
-- product, job ID, terminal state, duration, exit code, and recorded reason;
-- immutable source provenance and the intended artifact/test summary;
-- public and private repository paths;
-- exact build, watchdog, artifact, and retained-workspace commands/locations;
-- the current end-to-end Helium objective; and
-- instructions to inspect evidence, validate artifacts, fix or continue the
-  next safe in-scope work, and report actual findings.
+- `success`, `failure`, `timeout`, or `cancellation`;
+- duration and exit code;
+- Chromiumer's recorded reason;
+- the pinned product and source context; and
+- `status: "terminal-recorded"`.
 
-It then streams the protected immutable queue envelope through exactly this
-SSH command:
+A temporary SSH or Chromiumer failure leaves the job watched with a visible
+`last_poll_error`; a later poll retries. Concurrent polls serialize under a
+local lock. Repeated polls cannot create a second terminal record.
 
-```sh
-ssh -F none -o BatchMode=yes -o IdentitiesOnly=yes \
-  -o ClearAllForwardings=yes -o RequestTTY=no \
-  -o StrictHostKeyChecking=yes \
-  -o UserKnownHostsFile=/home/d/.ssh/helium_queue_da_known_hosts \
-  -i /home/d/.ssh/helium_queue_da_ed25519 d@da \
-  queue-import-helium \
-  <"/home/d/.local/state/helium-job-notifier/events/${job}.queue.json"
-```
+Legacy delivery-era JSON is migrated in place to schema 3 by removing delivery
+keys and retaining the underlying build result. No event prompt, recipient,
+message body, account credential, or remote delivery record is produced.
 
-The dedicated key is not shared with either Mac integration key. Its
-authorized-key line uses `restrict` and the forced command
-`/home/d/coding/codex-mailbridge/scripts/remote-helium-queue-import.py`.
-That gateway accepts no PTY, forwarding, shell, status, update, or delivery
-command. It validates the full envelope and admits only
-`local:helium-build:<job>:terminal`, `source_kind=local`, and
-`response_policy=important_only`.
+## Installation on da
 
-The producer key and complete queue envelope are idempotent. Identical timer,
-process, restart, concurrent, or commit-before-local-state-update retries
-return the same work item. Rebinding the key to changed immutable bytes fails
-without mutation and moves the producer to visible terminal
-`analysis-conflict`; it never invents another key or falls back to a template.
-Network, SSH, or da-service failures leave the exact local prompt and envelope
-in `terminal-pending` and retry on the next timer.
-
-## Installation and Status
-
-Install the reviewed public backbone on lm:
+Install the reviewed monitor into the user systemd manager:
 
 ```sh
-cd /home/d/coding/helium/helium-passwords
+cd /home/d/coding/helium/helium-sync
 scripts/install-job-notifier.sh
-systemctl status helium-job-notifier.timer --no-pager
-systemctl list-timers helium-job-notifier.timer --no-pager
+systemctl --user status helium-job-notifier.timer --no-pager
+systemctl --user list-timers helium-job-notifier.timer --no-pager
 ```
 
 Installed paths are:
 
 ```text
 /home/d/.local/libexec/helium-job-notifier
-/etc/systemd/system/helium-job-notifier.service
-/etc/systemd/system/helium-job-notifier.timer
+/home/d/.config/systemd/user/helium-job-notifier.service
+/home/d/.config/systemd/user/helium-job-notifier.timer
 ```
 
-The oneshot service runs as `d` with a 10% CPU quota, 128 MiB memory maximum,
-32-task limit, low scheduling priority, private umask, and no credential
-arguments. The persistent system timer runs at boot and every 30 seconds.
-Detached shells, tmux disconnects, and lm restarts do not lose the local watch,
-terminal evidence, import envelope, or da queue item.
+The oneshot has a private umask, a 10% CPU quota, a 128 MiB memory maximum, a
+32-task limit, and low scheduling priority. The persistent timer survives
+detached shells and da restarts.
 
 Content-free inspection is:
 
 ```sh
 /home/d/.local/libexec/helium-job-notifier status "$job"
-journalctl -u helium-job-notifier.service --since today --no-pager
+journalctl --user -u helium-job-notifier.service --since today --no-pager
 ```
 
-Temporary Chromiumer or queue-interface failures leave the producer in
-`watching` or `terminal-pending` and retry on the next timer. After da accepts
-the item, its canonical queue is the source of truth for work status and any
-explicit response. Notification failure can never change `terminal.env`.
+## Starting jobs
 
-## Starting Jobs
-
-The wrapper requires operator context before start:
+The build wrapper requires operator context before it starts:
 
 ```sh
 scripts/chromiumer-job.sh start "$job" \
@@ -122,40 +93,16 @@ scripts/chromiumer-job.sh start "$job" \
   <build-command> [arguments...]
 ```
 
-Use a new job ID for each new run. Its ID is the immutable terminal-event
-identity and cannot be reused with different source or operator context.
+Use a new job ID for every new run. Registration is idempotent only when all
+bound context is byte-for-byte identical.
 
-## Offline Acceptance
-
-The repository simulation performs no Chromium build, Codex invocation,
-mailbox access, or external mail:
+## Offline acceptance
 
 ```sh
 scripts/tests/helium-job-notifier.test.sh
 ```
 
-It synthesizes all four terminal states and proves:
-
-- every result uses the same restricted `queue-import-helium` path;
-- required terminal, provenance, objective, repository, log, and artifact
-  fields appear in the protected prompt;
-- repeated, concurrent, and restart-style polling imports one immutable item;
-- a temporary queue failure retains identical prompt bytes and retries;
-- a changed immutable envelope fails closed without another key;
-- existing terminal prompt bytes remain authoritative across an upgrade; and
-- no local Mailbridge path, recipient, static template, isolated Codex worker,
-  or automatic delivery invocation remains.
-
-Mailbridge's own suite separately proves queue-import idempotence, immutable
-conflict handling, restart-safe wake delivery, exact live-pane binding, and
-explicit-only response delivery.
-
-No Codex project `Stop` hook is installed. Turn-scope hooks would be a second
-path and create routine-agent mail rather than one analysis per terminal build.
-
-## Historical Static Acceptance
-
-The 2026-07-21 `hp-notify-accept-20260721-1829` proof and subsequent build
-templates established the old static-notification path. That path is now
-retired. Existing sent records remain historical evidence, but no new build
-terminal event may use them or the `helium-job:` notification namespace.
+The simulation covers every terminal result, temporary Chromiumer loss,
+concurrent/restart-style polling, immutable local records, and migration from
+legacy delivery state. It performs no Chromium build, assistant invocation,
+account access, network delivery, or external message.
