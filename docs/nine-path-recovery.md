@@ -31,7 +31,7 @@ The replica topology is source-bound and private over Tailscale plus SSH:
 | --- | --- | --- |
 | d | lm NAS | da |
 | da | lm NAS | d |
-| oneplus | lm NAS, streamed by lm over rooted ADB | da |
+| oneplus | lm NAS; P3/C3 stream through fixed ADB plus the debuggable `.test` app sandbox, while the disabled T2 source runs in an isolated Magisk chroot | da |
 
 For neutral password/cookie capture, copy the matching example from
 `scripts/native-recovery` to a mode-0600 path outside the repository. Desktop
@@ -155,10 +155,15 @@ nine-path runtime gate is not being reported as complete prematurely:
   sources. d and da use inactive systemd user timers. OnePlus has only the
   disabled Arch-chroot source, config template, and Magisk-runner template: no
   active config, enable marker, or `service.d` runner exists.
-- OnePlus is reachable through its Tailnet address and authorized rooted ADB.
+- OnePlus is reachable through its Tailnet address and authorized ADB. The
+  P3/C3 producer reconnects only `oneplus:5555`, binds every command to that
+  serial, and reads only the debuggable `computer.helium.sync.test` sandbox
+  through Android `run-as`; it does not need Magisk root or an unlocked screen.
   Its installed production packages are outside this disposable gate and have
   not been opened or changed. Device execution must use a newly built,
-  checksum-admitted `computer.helium.sync.test` package.
+  checksum-admitted `computer.helium.sync.test` package. The separate T2
+  Arch-chroot runner remains disabled and root-gated until its native export
+  and live route preflight both pass.
 
 These installed-but-disabled states are deliberate. The timers become active
 only after the current Linux and Android test artifacts pass native
