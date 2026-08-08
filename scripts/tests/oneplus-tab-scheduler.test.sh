@@ -14,6 +14,11 @@ installer="${repo_root}/scripts/tabs/install-oneplus-tab-scheduler.sh"
 runner="${repo_root}/scripts/tabs/oneplus-tab-cycle-service.sh"
 config="${repo_root}/scripts/tabs/tab-ops.oneplus.conf.example"
 
+fleet_output=$("${repo_root}/scripts/tabs/tab-fleet-audit.sh" \
+    "${repo_root}/scripts/tabs/tab-ops.d.conf.example" \
+    "${repo_root}/scripts/tabs/tab-ops.conf.example" "${config}")
+grep -q '^fleet_configuration=verified$' <<<"${fleet_output}"
+
 install_output=$(HOME="${temporary}/home" "${installer}" install "${config}")
 grep -q '^installed_source=true$' <<<"${install_output}"
 grep -q '^active_config=false$' <<<"${install_output}"

@@ -1,0 +1,21 @@
+# Paths only. Transport is private SSH over the Tailnet.
+version=4
+source_device=d
+profile=default
+snapshot_store=/home/d/.local/share/helium-sync/tab-snapshots/d-default
+state_root=/home/d/.local/state/helium-tab-ops
+helium_tabs=/home/d/.local/bin/helium-tabs
+exporter=/home/d/.local/libexec/helium-tab-exporter
+browser_export=/home/d/.local/state/helium-tab-export/latest.json
+browser_export_max_age_seconds=420
+browser_version=0.14.8
+chromium_version=150.0.7871.181
+interval_seconds=900
+ssh_user=d
+ssh_identity=/home/d/.ssh/helium_tabs_backup_ed25519
+ssh_known_hosts=/home/d/.ssh/helium_tabs_known_hosts
+destination_reserve_bytes=1073741824
+
+# The topology is fixed: d writes one archive to the NAS on lm and one to da.
+destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-tab-backups
+destination=da-copy|device|ssh|da|da|/home/d/.local/share/helium-tab-backups
