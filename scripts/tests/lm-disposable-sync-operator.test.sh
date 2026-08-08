@@ -41,6 +41,8 @@ grep -Fq 'service_scope=${HELIUM_SERVER_SERVICE_SCOPE:-system}' \
   "$repo_root/scripts/helium-sync-server-backup.sh"
 grep -Fq 'helium-sync-disposable.operator.lock' "$installer"
 grep -Fq -- "--noproxy '*' \"http://\$sync_listen/v2/health\"" "$installer"
+grep -Fq '"$manager_state" == running || "$manager_state" == degraded' \
+  "$installer"
 
 if grep -Fq 'sudo ' "$installer"; then
   echo "disposable installer unexpectedly requires root" >&2

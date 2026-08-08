@@ -45,11 +45,16 @@ require_synthetic_marker() {
 }
 
 verify_user_manager() {
+  local manager_state
   [[ -S "$XDG_RUNTIME_DIR/bus" ]] || {
     echo "the user systemd bus is unavailable: $XDG_RUNTIME_DIR/bus" >&2
     return 1
   }
-  systemctl --user is-system-running >/dev/null
+  manager_state=$(systemctl --user is-system-running 2>/dev/null || true)
+  [[ "$manager_state" == running || "$manager_state" == degraded ]] || {
+    echo "the user systemd manager is not operational: $manager_state" >&2
+    return 1
+  }
   [[ "$(loginctl show-user "$user_name" -p Linger --value)" == yes ]] || {
     echo "user lingering must be enabled for durable synthetic supervision" >&2
     return 1
