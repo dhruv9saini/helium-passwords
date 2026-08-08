@@ -138,7 +138,7 @@ scripts/chromiumer-job.sh logs JOB 120
 scripts/chromiumer-job.sh cancel JOB
 ```
 
-The wrapper caps the complete systemd cgroup at two jobs, 200% CPU, 5 GiB
+The wrapper caps the complete systemd cgroup at one build job, 200% CPU, 5 GiB
 memory, idle I/O priority, 256 tasks, the declared workspace budget, a 2 GiB
 root floor, and eight hours. Builds are detached, watched, journaled, and
 recorded exactly once in protected local terminal state on da. No terminal

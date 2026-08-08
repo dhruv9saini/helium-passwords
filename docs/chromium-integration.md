@@ -109,12 +109,12 @@ call and records the executing depot_tools commit plus update policy in
 packaged provenance. A returned artifact is rejected if those records differ
 from its lock.
 `apply-android-backbone.sh` applies the ordered Helium core series while
-omitting only the mandatory password-disable patch, then applies four public
-Passwords patches, eleven private Sync patches and overlay, Helium
+omitting only the mandatory password-disable patch, then applies seven public
+Passwords patches, thirteen private Sync patches and overlay, Helium
 transformations/resources, and shared plus Android GN args.
-The current plan contains 316 selected patches: 301 Helium core patches after
-deliberately omitting its password-disable patch, four public Passwords
-patches, and eleven private Sync patches. The single-acquisition contract is
+The current plan contains 321 selected patches: 301 Helium core patches after
+deliberately omitting its password-disable patch, seven public Passwords
+patches, and thirteen private Sync patches. The single-acquisition contract is
 source-tested, but the complete apply still needs a prepared checkout and
 compilation on chromiumer.
 

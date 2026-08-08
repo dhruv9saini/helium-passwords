@@ -152,7 +152,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 
 | Resource | Production bound |
 | --- | --- |
-| Compiler/build/source-sync jobs | exactly `1`; exported as `HELIUM_BUILD_JOBS`, `AUTONINJA_JOBS`, `NINJA_JOBS`, and `GCLIENT_JOBS`, with consumers rejecting every other value; GRIT multiprocessing is disabled inside the pinned environment so one Ninja edge cannot fork around the limit |
+| Compiler/build/source-sync jobs | exactly `1`; exported as `HELIUM_BUILD_JOBS`, `AUTONINJA_JOBS`, `NINJA_JOBS`, and `GCLIENT_JOBS`, with consumers rejecting every other value; GRIT multiprocessing and ThinLTO backends are serialized so one Ninja edge cannot fork around the limit |
 | CPU | hard `200%` quota, weight `10`, nice `15` |
 | Memory | `4G` high, `5G` hard max, `0` swap inside the unit |
 | I/O | weight `10`, Linux idle I/O scheduling class |
@@ -184,7 +184,14 @@ nominally serialized edge, sustained roughly 87% full cgroup memory pressure,
 and accumulated more than 57 million `memory.high` events without completing
 the edge for over two hours. The pinned Chromiumer environment therefore
 forces GRIT's upstream `GRIT_DISABLE_MULTIPROCESSING=1` switch for both Sync
-and control builds.
+and control builds. The retained Linux job `hs-node22-cont-e7be889` exposed the
+same hidden-parallelism class in LLD: one Ninja link selected
+`--thinlto-jobs=all`, launched eight backends, held the cgroup above its 4 GiB
+memory-high boundary, and reread more than 5.5 TiB without completing that edge
+for over seven hours. Sync patch
+`0013-helium-sync-cap-thinlto-backends.patch` keeps ThinLTO and CFI enabled but
+sets one ThinLTO backend. This is a compile-resource control, not a browser
+runtime or hardening reduction.
 
 The prepared Linux platform also passes GN bootstrap's built-in
 `--use-custom-libcxx` option. The platform deliberately selects Chromium's

@@ -1,0 +1,17 @@
+diff --git a/build/config/compiler/BUILD.gn b/build/config/compiler/BUILD.gn
+--- a/build/config/compiler/BUILD.gn
++++ b/build/config/compiler/BUILD.gn
+@@ -820,9 +820,8 @@ config("thinlto_optimize_default") {
+-      # In ThinLTO builds, we run at most one link process at a time,
+-      # and let it use all cores.
+-      # TODO(thakis): Check if '=0' (that is, number of cores, instead
+-      # of "all" which means number of hardware threads) is faster.
+-      ldflags += [ "-Wl,--thinlto-jobs=all" ]
++      # A single Ninja link edge can otherwise start one ThinLTO backend per
++      # hardware thread. Keep the link inside Helium's one-job memory policy
++      # without disabling ThinLTO or CFI.
++      ldflags += [ "-Wl,--thinlto-jobs=1" ]
+ 
+       if (is_chromeos) {
+         # ARM was originally set lower than x86 to keep the size
+         # bloat of ThinLTO to <10%, but that's potentially no longer true.

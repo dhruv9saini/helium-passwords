@@ -506,7 +506,10 @@ restores Chromium's native password manager.
   The pinned Chromiumer environment must export
   `GRIT_DISABLE_MULTIPROCESSING=1`; GRIT otherwise forks around the one-job
   policy inside a single Ninja edge and thrashes at the 4 GiB memory-high
-  boundary.
+  boundary. Keep `0013-helium-sync-cap-thinlto-backends.patch` in the direct
+  Android and desktop patch plans. It serializes LLD's ThinLTO backends while
+  retaining ThinLTO and CFI; otherwise one link edge selects every hardware
+  thread and reproduces the same reclaim loop.
 
 ## Patch Flow
 
