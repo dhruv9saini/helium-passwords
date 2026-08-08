@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import crypto from "node:crypto";
 import fsp from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -19,54 +18,13 @@ import {
   validateSyncAcceptance,
   verifySyncRun,
 } from "../password-runtime/sync-acceptance.mjs";
+import {writeLinuxArtifactReceipt} from "./linux-artifact-fixture.mjs";
 
 const credentialKey = `credential/v2/${"c".repeat(64)}`;
 const PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
-
-async function writeLinuxArtifactReceipt(root, artifact) {
-  const artifactHash = crypto.createHash("sha256")
-    .update(await fsp.readFile(artifact)).digest("hex");
-  const bundle = path.join(root, "helium-sync-linux-x86_64");
-  const runtime = path.join(bundle, "runtime");
-  const provenance = path.join(bundle, "provenance");
-  const browser = path.join(runtime, "helium");
-  await fsp.mkdir(runtime, {recursive: true});
-  await fsp.mkdir(provenance, {recursive: true});
-  await fsp.writeFile(browser, "synthetic browser binary", {mode: 0o700});
-  const inventory = path.join(provenance, "runtime.sha256");
-  const entries = [artifact, browser].sort();
-  const inventoryRaw = (await Promise.all(entries.map(async file => {
-    const digest = crypto.createHash("sha256")
-      .update(await fsp.readFile(file)).digest("hex");
-    return `${digest}  ${path.relative(bundle, file)}`;
-  }))).join("\n") + "\n";
-  await fsp.writeFile(inventory, inventoryRaw, {mode: 0o600});
-  const receipt = path.join(root, "artifact-receipt.env");
-  await fsp.writeFile(receipt, [
-    "schema_version=2",
-    "product=helium-sync",
-    "platform=linux",
-    "arch=x86_64",
-    `source_commit=${"1".repeat(40)}`,
-    `helium_core_commit=${"2".repeat(40)}`,
-    "chromium_version=150.0.7871.181",
-    `chromium_commit=${"3".repeat(40)}`,
-    `platform_commit=${"4".repeat(40)}`,
-    `bundle=${path.join(root, "bundle.tar.xz")}`,
-    `bundle_sha256=${"5".repeat(64)}`,
-    `provenance_manifest_sha256=${"6".repeat(64)}`,
-    `browser_executable=${path.relative(root, artifact)}`,
-    `browser_sha256=${artifactHash}`,
-    `runtime_inventory=${path.relative(root, inventory)}`,
-    `runtime_inventory_sha256=${crypto.createHash("sha256").update(inventoryRaw).digest("hex")}`,
-    "verified_at=synthetic-fixture",
-    "",
-  ].join("\n"), {mode: 0o600});
-  return receipt;
-}
 
 function state(revision, fingerprint, deleted, sequence = revision) {
   return {

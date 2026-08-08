@@ -23,13 +23,18 @@ import {
   validateServerEvidence,
   verifyThreeClientRun,
 } from "../sync-runtime/three-client-acceptance.mjs";
+import {
+  auditDeviceRuntimeEvidence,
+  auditServerRuntimeEvidence,
+} from "../sync-runtime/fleet-runtime-evidence.mjs";
+import {writeFullGraphFixture} from "./linux-artifact-fixture.mjs";
 
 const credentialKey = `credential/v2/${"c".repeat(64)}`;
 const cookieKey = "d".repeat(64);
 const keyID = "a1b2c3d4e5f60708";
 const TRAIN = Object.freeze({
   source_commit: "1".repeat(40),
-  passwords_commit: "4".repeat(40),
+  passwords_commit: "5".repeat(40),
   core_commit: "2".repeat(40),
   chromium_commit: "3".repeat(40),
   chromium_version: "150.0.7871.181",
@@ -45,6 +50,61 @@ function digest(data) {
 
 async function writeJSON(filePath, value) {
   await fsp.writeFile(filePath, `${JSON.stringify(value)}\n`, {mode: 0o600});
+}
+
+async function writeExecutionIdentity(root, device) {
+  const file = path.join(root, `${device}-execution-identity.env`);
+  let value;
+  if (device === "oneplus") {
+    value = {
+      schema_version: 1,
+      identity_schema: "helium-physical-oneplus-v1",
+      adb_serial: "ONEPLUS-USB",
+      adb_transport: "physical-usb",
+      adb_transport_id: "1",
+      adb_usb_path_sha256: "8".repeat(64),
+      android_model: "CPH2655",
+      android_device: "dodge",
+      android_product: "dodge",
+      android_manufacturer: "OnePlus",
+      build_fingerprint_sha256: "9".repeat(64),
+      physical_identity_sha256: "",
+      captured_at: "2026-07-23T08:00:00.000Z",
+    };
+    value.physical_identity_sha256 = digest([
+      "helium-physical-oneplus-v1",
+      value.adb_serial,
+      value.android_model,
+      value.android_device,
+      value.android_product,
+      value.android_manufacturer,
+      value.build_fingerprint_sha256,
+      "",
+    ].join("\n"));
+  } else {
+    value = {
+      schema_version: 1,
+      identity_schema: "helium-linux-host-v1",
+      host: device,
+      hostname: device,
+      machine_id_sha256: (device === "d" ? "a" : "b").repeat(64),
+      kernel_arch: "x64",
+      host_identity_sha256: "",
+      captured_at: "2026-07-23T08:00:00.000Z",
+    };
+    value.host_identity_sha256 = digest([
+      "helium-linux-host-v1",
+      value.host,
+      value.hostname,
+      value.machine_id_sha256,
+      value.kernel_arch,
+      "",
+    ].join("\n"));
+  }
+  await fsp.writeFile(file,
+    `${Object.entries(value).map(([key, item]) => `${key}=${item}`).join("\n")}\n`,
+    {mode: 0o600});
+  return file;
 }
 
 async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
@@ -75,8 +135,10 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
   }
   const archiveStat = await fsp.stat(archive);
   const archiveHash = digest(await fsp.readFile(archive));
+  const graph = await writeFullGraphFixture(
+    path.join(provenance, "full-graph"));
   const manifestRaw = [
-    "schema_version=3",
+    "schema_version=4",
     "product=helium-sync",
     "platform=linux",
     `arch=${arch}`,
@@ -88,7 +150,7 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
     `helium_core_commit=${TRAIN.core_commit}`,
     `chromium_version=${TRAIN.chromium_version}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
-    `build_job_id=synthetic-${arch}`,
+    "build_job_id=synthetic-linux-fixture",
     "platform_repository=https://github.com/helium-linux/helium-linux",
     `platform_commit=${"4".repeat(40)}`,
     "depot_tools_commit=980d6af16e06ff993a52029019dc0628c0a0e1f0",
@@ -96,6 +158,10 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
     `nix_provenance_sha256=${"9".repeat(64)}`,
     `patch_inventory_sha256=${"a".repeat(64)}`,
     `runtime_inventory_sha256=${digest(inventoryRaw)}`,
+    `packaging_tool_commit=${"6".repeat(40)}`,
+    `packaging_tool_sha256=${graph.packagingToolSha256}`,
+    `full_graph_receipt_sha256=${graph.receiptSha256}`,
+    `full_graph_inventory_sha256=${graph.inventorySha256}`,
     "",
   ].join("\n");
   await fsp.writeFile(path.join(provenance, "manifest.env"), manifestRaw,
@@ -103,7 +169,7 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
   const manifestHash = digest(manifestRaw);
   await fsp.writeFile(path.join(receiptRoot,
     "deployment-artifact-receipt.env"), [
-    "schema_version=1",
+    "schema_version=2",
     `artifact_sha256=${archiveHash}`,
     `artifact_size=${archiveStat.size}`,
     "target=linux-x86_64",
@@ -111,14 +177,16 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
     `helium_passwords_commit=${TRAIN.passwords_commit}`,
     `helium_core_commit=${TRAIN.core_commit}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
-    `build_job_id=synthetic-${arch}`,
+    "build_job_id=synthetic-linux-fixture",
     `provenance_sha256=${manifestHash}`,
+    `full_graph_receipt_sha256=${graph.receiptSha256}`,
+    `full_graph_inventory_sha256=${graph.inventorySha256}`,
     "created_at=2026-07-23T08:00:00Z",
     "",
   ].join("\n"), {mode: 0o600});
   const receipt = path.join(receiptRoot, "artifact-receipt.env");
   await fsp.writeFile(receipt, [
-    "schema_version=2",
+    "schema_version=3",
     "product=helium-sync",
     "platform=linux",
     `arch=${arch}`,
@@ -134,6 +202,10 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
     `browser_sha256=${artifactHash}`,
     `runtime_inventory=${path.relative(receiptRoot, inventory)}`,
     `runtime_inventory_sha256=${digest(inventoryRaw)}`,
+    `full_graph_receipt=helium-sync-linux-${arch}/provenance/full-graph/receipt.env`,
+    `full_graph_receipt_sha256=${graph.receiptSha256}`,
+    `full_graph_inventory=helium-sync-linux-${arch}/provenance/full-graph/SHA256SUMS`,
+    `full_graph_inventory_sha256=${graph.inventorySha256}`,
     `verified_at=synthetic-fixture-${label}`,
     "",
   ].join("\n"), {mode: 0o600});
@@ -203,10 +275,8 @@ async function writeAndroidAdmission(root) {
 
 function passwordState(revision, fingerprint, deleted) {
   return {
-    schema_version: 4,
+    schema_version: 6,
     identity_schema: "password-form-unique-key-v2",
-    migration_status: "complete",
-    legacy_credentials: {},
     verified_sequence: String(revision),
     credentials: {
       [credentialKey]: {
@@ -214,7 +284,6 @@ function passwordState(revision, fingerprint, deleted) {
         remote_seq: String(revision),
         revision: String(revision),
         deleted,
-        key_id: keyID,
       },
     },
   };
@@ -228,10 +297,259 @@ function journalRecord(sequence, revision, deleted, device) {
     revision: String(revision),
     deleted,
     device_id: device,
-    key_id: keyID,
-    nonce: `opaque-nonce-${sequence}`,
-    ciphertext: `opaque-ciphertext-${sequence}`,
+    payload: deleted ? {} : {
+      format: "chromium-password-specifics-v1",
+      password_specifics_data_b64: `synthetic-${sequence}`,
+    },
   });
+}
+
+const secondCookieKey = "e".repeat(64);
+const thirdCookieKey = "f".repeat(64);
+
+function fleetRecords() {
+  const passwordPayload = revision => ({
+    format: "chromium-password-specifics-v1",
+    password_specifics_data_b64: `synthetic-${revision}`,
+  });
+  const cookiePayload = key => ({
+    format: "chromium-cookie-specifics-v1",
+    canonical_cookie: key,
+  });
+  return [
+    {seq: "1", kind: "passwords", key: credentialKey, revision: "1",
+      deleted: false, device_id: "d", payload: passwordPayload("1")},
+    {seq: "2", kind: "cookies", key: cookieKey, revision: "1",
+      deleted: false, device_id: "d", payload: cookiePayload(cookieKey)},
+    {seq: "3", kind: "cookies", key: secondCookieKey, revision: "1",
+      deleted: false, device_id: "d", payload: cookiePayload(secondCookieKey)},
+    {seq: "4", kind: "cookies", key: thirdCookieKey, revision: "1",
+      deleted: false, device_id: "d", payload: cookiePayload(thirdCookieKey)},
+    {seq: "5", kind: "passwords", key: credentialKey, revision: "2",
+      deleted: false, device_id: "da", payload: passwordPayload("2")},
+    {seq: "6", kind: "passwords", key: credentialKey, revision: "3",
+      deleted: true, device_id: "da", payload: {}},
+    {seq: "7", kind: "cookies", key: cookieKey, revision: "2",
+      deleted: false, device_id: "d", payload: cookiePayload(cookieKey)},
+    {seq: "8", kind: "cookies", key: cookieKey, revision: "3",
+      deleted: false, device_id: "d", payload: cookiePayload(cookieKey)},
+    {seq: "9", kind: "cookies", key: cookieKey, revision: "4",
+      deleted: false, device_id: "d", payload: cookiePayload(cookieKey)},
+  ];
+}
+
+function runtimePasswordState(sequence, revision, deleted) {
+  return {
+    schema_version: 6,
+    identity_schema: "password-form-unique-key-v2",
+    verified_sequence: sequence,
+    credentials: {
+      [credentialKey]: {
+        fingerprint: deleted ? "" : revision.repeat(64),
+        remote_seq: revision === "1" ? "1" : revision === "2" ? "5" : "6",
+        revision,
+        deleted,
+      },
+    },
+  };
+}
+
+function runtimeCookieState(sequence, terminal = false) {
+  const record = (revision, key) => ({
+    remote_revision: revision,
+    device_id: "d",
+    remote_payload_fingerprint: digest(`remote-${key}-${revision}`),
+    baseline_cookie_fingerprint: digest(`baseline-${key}-${revision}`),
+    remote_deleted: false,
+  });
+  return {
+    schema_version: 5,
+    verified_sequence: sequence,
+    blocked_reason: "",
+    records: {
+      [cookieKey]: record(terminal ? "4" : "1", cookieKey),
+      [secondCookieKey]: record("1", secondCookieKey),
+      [thirdCookieKey]: record("1", thirdCookieKey),
+    },
+  };
+}
+
+function runtimeClient(device, sequence) {
+  return {
+    version: 2,
+    device_id: device,
+    role: device === "d" ? "seed" : "join",
+    phase: "active",
+    revisions: {
+      [`passwords\0${credentialKey}`]: sequence === "4" ? "1" : "3",
+      [`cookies\0${cookieKey}`]: sequence === "4" ? "1" : "4",
+    },
+    sequence,
+  };
+}
+
+async function writeEvidenceBundle(directory, files) {
+  await fsp.mkdir(directory, {mode: 0o700});
+  await fsp.chmod(directory, 0o700);
+  for (const [name, contents] of Object.entries(files)) {
+    await fsp.writeFile(path.join(directory, name), contents, {mode: 0o600});
+  }
+  const inventory = `${(await Promise.all(Object.keys(files).sort()
+    .map(async name =>
+      `${digest(await fsp.readFile(path.join(directory, name)))}  ${name}`)))
+    .join("\n")}\n`;
+  await fsp.writeFile(path.join(directory, "EVIDENCE_SHA256SUMS"), inventory,
+    {mode: 0o600});
+}
+
+async function writeDeviceRuntimeEvidence(root, device, identityFile) {
+  const directory = path.join(root, `runtime-${device}`);
+  const initialRecords = fleetRecords().slice(0, 4);
+  const journal = `${initialRecords.map(JSON.stringify).join("\n")}\n`;
+  const initialClient = `${JSON.stringify(runtimeClient(device, "4"))}\n`;
+  const initialPassword = `${JSON.stringify(
+    runtimePasswordState("4", "1", false))}\n`;
+  const initialCookie = `${JSON.stringify(runtimeCookieState("4"))}\n`;
+  const terminalClient = `${JSON.stringify(runtimeClient(device, "9"))}\n`;
+  const terminalPassword = `${JSON.stringify(
+    runtimePasswordState("9", "3", true))}\n`;
+  const terminalCookie = `${JSON.stringify(runtimeCookieState("9", true))}\n`;
+  const requests = device === "d" ? "\n" : `${JSON.stringify({
+    device,
+    origin: "https://session.fixture.invalid",
+    response_status: 200,
+    result: "authenticated",
+    evidence_ref: `${device}-authenticated-request`,
+    evidence_sha256: (device === "da" ? "7" : "8").repeat(64),
+    authorization_scheme: "Bearer",
+    authorization_sha256: digest(`authorization-${device}`),
+    completed_at: "2026-07-23T08:00:00.000Z",
+  })}\n`;
+  const collector = digest(await fsp.readFile(
+    new URL("../sync-runtime/fleet-runtime-evidence.mjs", import.meta.url)));
+  await writeEvidenceBundle(directory, {
+    "identity.env": await fsp.readFile(identityFile),
+    "client-initial.json": initialClient,
+    "client-restart.json": initialClient,
+    "client-terminal.json": terminalClient,
+    "password-initial.json": initialPassword,
+    "password-restart.json": initialPassword,
+    "password-terminal.json": terminalPassword,
+    "cookie-initial.json": initialCookie,
+    "cookie-restart.json": initialCookie,
+    "cookie-terminal.json": terminalCookie,
+    "journal-initial.jsonl": journal,
+    "journal-restart.jsonl": journal,
+    "authenticated-requests.jsonl": requests,
+    "browser.log": `synthetic ${device} metadata-only browser log\n`,
+    "capture.env": [
+      "schema_version=1",
+      `device=${device}`,
+      `collector_sha256=${collector}`,
+      "captured_at=2026-07-23T08:00:01.000Z",
+      "",
+    ].join("\n"),
+  });
+  return directory;
+}
+
+function conflictReceipt(kind, key, expected, current) {
+  const endpoint = "http://100.64.0.1:44719/";
+  return {
+    schema_version: 1,
+    device: "oneplus",
+    request: {
+      kind,
+      key,
+      expected_revision: expected,
+      deleted: false,
+      payload_sha256: digest(`stale-${kind}`),
+      endpoint,
+      authorization_scheme: "Bearer",
+      authorization_sha256: digest(`authorization-${kind}`),
+    },
+    response: {
+      http_status: 409,
+      body: {
+        code: "revision_conflict",
+        error: `revision conflict for ${kind}/${key}: expected ${expected}, current ${current}`,
+        kind,
+        key,
+        current_revision: current,
+      },
+    },
+    completed_at: "2026-07-23T08:00:00.000Z",
+  };
+}
+
+async function writeServerRuntimeEvidence(root) {
+  const directory = path.join(root, "runtime-server");
+  const collector = digest(await fsp.readFile(
+    new URL("../sync-runtime/fleet-runtime-evidence.mjs", import.meta.url)));
+  const records = `${fleetRecords().map(JSON.stringify).join("\n")}\n`;
+  await writeEvidenceBundle(directory, {
+    "records.jsonl": records,
+    "server.log": "synthetic metadata-only server log\n",
+    "password-conflict.json": `${JSON.stringify(
+      conflictReceipt("passwords", credentialKey, "1", "2"))}\n`,
+    "cookie-conflict.json": `${JSON.stringify(
+      conflictReceipt("cookies", cookieKey, "3", "4"))}\n`,
+    "capture.env": [
+      "schema_version=1",
+      "endpoint=http://100.64.0.1:44719/",
+      `collector_sha256=${collector}`,
+      "captured_at=2026-07-23T08:00:01.000Z",
+      "",
+    ].join("\n"),
+  });
+  return directory;
+}
+
+function syntheticRuntimeDevices() {
+  return Object.fromEntries(["d", "da", "oneplus"].map((device, index) => {
+    const stateHash = String(index + 1).repeat(64);
+    return [device, {
+      bundle_sha256: String(index + 4).repeat(64),
+      identity_sha256: String(index + 7).repeat(64),
+      initial: {client: {sequence: "4"}, state_sha256: stateHash},
+      restart: {client: {sequence: "4"}, state_sha256: stateHash},
+      terminal: {
+        client: {sequence: "9"},
+        password: {credentials: [{
+          key: credentialKey, revision: "3", deleted: true,
+        }]},
+        cookie: {records: {
+          [cookieKey]: {remote_revision: "4", device_id: "d"},
+        }},
+      },
+      initial_journal_sha256: "a".repeat(64),
+      restart_journal_sha256: "a".repeat(64),
+      initial_publications: {
+        passwords: device === "d" ? "1" : "0",
+        cookies: device === "d" ? "3" : "0",
+      },
+      requests: device === "d" ? [] : [{
+        origin: "https://session.fixture.invalid",
+        response_status: 200,
+        result: "authenticated",
+        evidence_ref: `${device}-authenticated-request`,
+        evidence_sha256: (device === "da" ? "7" : "8").repeat(64),
+      }],
+    }];
+  }));
+}
+
+function syntheticServerRuntime() {
+  return {
+    bundle_sha256: "b".repeat(64),
+    endpoint: "http://100.64.0.1:44719/",
+    journal_sha256: "9".repeat(64),
+    records: fleetRecords(),
+    max_sequence: "9",
+    password_conflict: conflictReceipt(
+      "passwords", credentialKey, "1", "2"),
+    cookie_conflict: conflictReceipt("cookies", cookieKey, "3", "4"),
+  };
 }
 
 function fixtureEvidence(runNonce) {
@@ -317,13 +635,14 @@ async function completeNativeUI(manifest, root, device) {
   });
 }
 
-function browserEvidence(manifest, nativeUIReceiptSHA256 = {
+function browserEvidence(manifest, runtimeEvidence, nativeUIReceiptSHA256 = {
   d: "6".repeat(64),
   da: "7".repeat(64),
   oneplus: "8".repeat(64),
 }) {
-  const restart = (device, sequence, hash) => {
+  const restart = device => {
     const admitted = manifest.devices[device];
+    const runtime = runtimeEvidence[device];
     return {
       device,
       platform: admitted.platform,
@@ -335,15 +654,18 @@ function browserEvidence(manifest, nativeUIReceiptSHA256 = {
         deployment_receipt: admitted.admission.deployment_receipt_sha256,
         provenance_manifest: admitted.admission.provenance_manifest_sha256,
         returned_archive: admitted.admission.returned_archive_sha256,
+        full_graph_receipt: admitted.admission.full_graph_receipt_sha256,
+        full_graph_inventory: admitted.admission.full_graph_inventory_sha256,
         inventory: admitted.admission.inventory_sha256,
       },
       profile_marker_sha256: admitted.profile_marker_sha256,
       native_ui_receipt_sha256: nativeUIReceiptSHA256[device],
+      execution_identity_sha256: runtime.identity_sha256,
       role: device === "d" ? "seed" : "join",
       phase_before: device === "d" ? "new" : "pending",
       phase_after: "active",
       initial_sync: {
-        server_sequence: device === "d" ? "3" : "4",
+        server_sequence: runtime.initial.client.sequence,
         password_revision: "1",
         cookie_revision: "1",
         password_apply: "verified",
@@ -351,17 +673,17 @@ function browserEvidence(manifest, nativeUIReceiptSHA256 = {
         password_readback: "exact",
         cookie_readback: "exact",
         initial_publications: {
-          passwords: device === "d" ? "1" : "0",
-          cookies: device === "d" ? "3" : "0",
+          passwords: runtime.initial_publications.passwords,
+          cookies: runtime.initial_publications.cookies,
         },
       },
       unchanged_restart: {
-        before_sequence: sequence,
-        after_sequence: sequence,
-        before_state_sha256: hash,
-        after_state_sha256: hash,
-        before_journal_sha256: "e".repeat(64),
-        after_journal_sha256: "e".repeat(64),
+        before_sequence: runtime.initial.client.sequence,
+        after_sequence: runtime.restart.client.sequence,
+        before_state_sha256: runtime.initial.state_sha256,
+        after_state_sha256: runtime.restart.state_sha256,
+        before_journal_sha256: runtime.initial_journal_sha256,
+        after_journal_sha256: runtime.restart_journal_sha256,
         password_publications: "0",
         cookie_publications: "0",
       },
@@ -409,15 +731,18 @@ function browserEvidence(manifest, nativeUIReceiptSHA256 = {
     })),
   });
   return {
-    schema_version: 1,
+    schema_version: 2,
     evidence_scope: "disposable-browser",
     writer: "native-password-store-and-cookie-manager",
     source_train: manifest.source_train,
     tabs_observed: false,
+    runtime_evidence_sha256: Object.fromEntries(
+      ["d", "da", "oneplus"].map(device =>
+        [device, runtimeEvidence[device].bundle_sha256])),
     devices: [
-      restart("d", "9", "a".repeat(64)),
-      restart("da", "10", "b".repeat(64)),
-      restart("oneplus", "10", "c".repeat(64)),
+      restart("d"),
+      restart("da"),
+      restart("oneplus"),
     ],
     password: {
       record_key: credentialKey,
@@ -489,9 +814,9 @@ function browserEvidence(manifest, nativeUIReceiptSHA256 = {
   };
 }
 
-function serverEvidence(manifest, browser) {
+function serverEvidence(manifest, browser, runtimeEvidence) {
   return {
-    schema_version: 1,
+    schema_version: 2,
     source_train: manifest.source_train,
     evidence_scope: "disposable-tailnet-http-service",
     transport: {
@@ -502,6 +827,7 @@ function serverEvidence(manifest, browser) {
     },
     enrollment_order: ["d", "da", "oneplus"],
     join_cursors: {da: "4", oneplus: "4"},
+    runtime_evidence_sha256: runtimeEvidence.bundle_sha256,
     initial_publications: Object.fromEntries(browser.devices.map(entry => [
       entry.device,
       structuredClone(entry.initial_sync.initial_publications),
@@ -551,7 +877,7 @@ function serverEvidence(manifest, browser) {
       overflow_rejected: true,
     },
     journal: {
-      sha256: "9".repeat(64),
+      sha256: runtimeEvidence.journal_sha256,
       schema_version: "2",
       tabs_records: "0",
       payload_storage: "readable",
@@ -633,6 +959,16 @@ function manifestFixture() {
       build_job_id: platform === "linux" ? "synthetic-x86_64" : null,
       depot_tools_commit: platform === "linux" ?
         "980d6af16e06ff993a52029019dc0628c0a0e1f0" : null,
+      full_graph_root_path: platform === "linux" ?
+        `/synthetic/${target}/full-graph` : null,
+      full_graph_receipt_path: platform === "linux" ?
+        `/synthetic/${target}/full-graph/receipt.env` : null,
+      full_graph_receipt_sha256: platform === "linux" ?
+        "6".repeat(64) : null,
+      full_graph_inventory_path: platform === "linux" ?
+        `/synthetic/${target}/full-graph/SHA256SUMS` : null,
+      full_graph_inventory_sha256: platform === "linux" ?
+        "7".repeat(64) : null,
       inventory_path: platform === "android" ?
         `/synthetic/${target}/inventory` : null,
       inventory_sha256: inventory,
@@ -691,12 +1027,19 @@ async function preparedInputs(root) {
   const daArtifactReceipt = await writeLinuxArtifactReceipt(
     root, daArtifact, "x86_64", "da");
   const oneplusArtifact = await writeAndroidAdmission(root);
+  const dExecutionIdentity = await writeExecutionIdentity(root, "d");
+  const daExecutionIdentity = await writeExecutionIdentity(root, "da");
+  const oneplusExecutionIdentity = await writeExecutionIdentity(
+    root, "oneplus");
   return {
     dArtifact,
     dArtifactReceipt,
     daArtifact,
     daArtifactReceipt,
     oneplusArtifact,
+    dExecutionIdentity,
+    daExecutionIdentity,
+    oneplusExecutionIdentity,
   };
 }
 
@@ -710,10 +1053,23 @@ async function preparedRun(root) {
   for (const device of ["d", "da", "oneplus"]) {
     await completeNativeUI(manifest, root, device);
   }
+  const runtimePaths = {};
+  const runtime = {};
+  for (const device of ["d", "da", "oneplus"]) {
+    const identity = inputs[`${device}ExecutionIdentity`];
+    runtimePaths[device] = await writeDeviceRuntimeEvidence(
+      root, device, identity);
+    runtime[device] = await auditDeviceRuntimeEvidence(
+      runtimePaths[device], device, manifest.devices[device].execution_identity);
+  }
+  runtimePaths.server = await writeServerRuntimeEvidence(root);
+  runtime.server = await auditServerRuntimeEvidence(runtimePaths.server);
   return {
     manifest,
     runRoot,
     inputs,
+    runtime,
+    runtimePaths,
   };
 }
 
@@ -734,7 +1090,7 @@ test("initialization rejects the wrong per-device target and a split source trai
     await assert.rejects(initializeThreeClientRun({
       ...wrongTarget,
       output: path.join(wrongTargetRoot, "run"),
-    }), /wrong architecture/);
+    }), /wrong architecture|does not admit this audited browser executable/);
 
     const splitTrain = await preparedInputs(splitTrainRoot);
     const receiptRaw = await fsp.readFile(
@@ -750,7 +1106,7 @@ test("initialization rejects the wrong per-device target and a split source trai
     await assert.rejects(initializeThreeClientRun({
       ...splitTrain,
       output: path.join(splitTrainRoot, "run"),
-    }), /deployment receipt or provenance|shared source train/);
+    }), /deployment receipt or provenance|shared source train|full-graph helium_sync_commit/);
   } finally {
     await fsp.rm(wrongTargetRoot, {recursive: true, force: true});
     await fsp.rm(splitTrainRoot, {recursive: true, force: true});
@@ -760,7 +1116,8 @@ test("initialization rejects the wrong per-device target and a split source trai
 test("three-client gate binds native UI, pull-only joins, conflicts, sessions, and int64 evidence", async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-three-client-"));
   try {
-    const {manifest, runRoot, inputs} = await preparedRun(root);
+    const {manifest, runRoot, inputs, runtime, runtimePaths} =
+      await preparedRun(root);
     assert.equal((await acceptanceStatus(runRoot)).state, "flow-evidence-required");
     for (const device of ["d", "da"]) {
       const profile = manifest.devices[device].profile_path;
@@ -795,8 +1152,8 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
           path.join(manifest.devices[device].native_run, "sync-receipt.json"))),
       ])),
     );
-    const browser = browserEvidence(manifest, nativeUIReceiptSHA256);
-    const server = serverEvidence(manifest, browser);
+    const browser = browserEvidence(manifest, runtime, nativeUIReceiptSHA256);
+    const server = serverEvidence(manifest, browser, runtime.server);
     const files = {
       browser: path.join(root, "browser-evidence.json"),
       server: path.join(root, "server-evidence.json"),
@@ -816,6 +1173,10 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
       runRoot,
       browserEvidence: wrongBrowser,
       serverEvidence: files.server,
+      dRuntimeEvidence: runtimePaths.d,
+      daRuntimeEvidence: runtimePaths.da,
+      oneplusRuntimeEvidence: runtimePaths.oneplus,
+      serverRuntimeEvidence: runtimePaths.server,
       daOriginAudit: files.da,
       oneplusOriginAudit: files.oneplus,
     }), /OnePlus|oneplus browser evidence is not bound/);
@@ -823,6 +1184,10 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
       runRoot,
       browserEvidence: files.browser,
       serverEvidence: files.server,
+      dRuntimeEvidence: runtimePaths.d,
+      daRuntimeEvidence: runtimePaths.da,
+      oneplusRuntimeEvidence: runtimePaths.oneplus,
+      serverRuntimeEvidence: runtimePaths.server,
       daOriginAudit: files.da,
       oneplusOriginAudit: files.oneplus,
     });
@@ -850,7 +1215,7 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
     changedServer.journal.sha256 = "0".repeat(64);
     await writeJSON(verifiedServer, changedServer);
     await assert.rejects(acceptanceStatus(runRoot),
-      /receipt no longer matches its evidence/);
+      /receipt no longer matches its evidence|server journal violates/);
     await fsp.writeFile(verifiedServer, verifiedServerRaw, {mode: 0o600});
     assert.equal((await acceptanceStatus(runRoot)).state, "passed");
     for (const device of ["d", "da", "oneplus"]) {
@@ -867,51 +1232,56 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
 
 test("browser evidence fails closed on join publication, stale overwrite, cookie gaps, loops, and tabs", async () => {
   const manifest = manifestFixture();
-  const baseline = browserEvidence(manifest);
-  validateBrowserEvidence(baseline, manifest);
+  const runtime = syntheticRuntimeDevices();
+  const baseline = browserEvidence(manifest, runtime);
+  validateBrowserEvidence(baseline, manifest, runtime);
 
   const wrongArtifact = structuredClone(baseline);
   wrongArtifact.devices.find(entry => entry.device === "d").artifact_sha256 =
     manifest.devices.da.artifact_sha256;
-  assert.throws(() => validateBrowserEvidence(wrongArtifact, manifest),
+  assert.throws(() => validateBrowserEvidence(wrongArtifact, manifest, runtime),
     /device identity/);
 
   const inventedOnePlusProfile = structuredClone(baseline);
   inventedOnePlusProfile.devices.find(entry => entry.device === "oneplus")
     .profile_marker_sha256 = "9".repeat(64);
-  assert.throws(() => validateBrowserEvidence(inventedOnePlusProfile, manifest),
+  assert.throws(() => validateBrowserEvidence(
+    inventedOnePlusProfile, manifest, runtime),
     /device identity|invented .*filesystem profile/);
 
   const joinPublished = structuredClone(baseline);
   joinPublished.devices.find(entry => entry.device === "da")
     .initial_sync.initial_publications.passwords = "1";
-  assert.throws(() => validateBrowserEvidence(joinPublished, manifest),
+  assert.throws(() => validateBrowserEvidence(joinPublished, manifest, runtime),
     /initial pull-only join published/);
 
   const staleWon = structuredClone(baseline);
   staleWon.password.stale_conflict.authoritative_preserved = false;
-  assert.throws(() => validateBrowserEvidence(staleWon, manifest),
+  assert.throws(() => validateBrowserEvidence(staleWon, manifest, runtime),
     /stale device password overwrite/);
 
   const restartPublished = structuredClone(baseline);
   restartPublished.devices[2].unchanged_restart.cookie_publications = "1";
-  assert.throws(() => validateBrowserEvidence(restartPublished, manifest),
+  assert.throws(() => validateBrowserEvidence(
+    restartPublished, manifest, runtime),
     /unchanged restart mutated or published/);
 
   const missingPartition = structuredClone(baseline);
   missingPartition.cookies.attribute_coverage.partitioned = false;
-  assert.throws(() => validateBrowserEvidence(missingPartition, manifest),
+  assert.throws(() => validateBrowserEvidence(
+    missingPartition, manifest, runtime),
     /canonical cookie attributes/);
 
   const noAuthentication = structuredClone(baseline);
   noAuthentication.cookies.imports[0].authenticated_request.result =
     "reauth-required";
-  assert.throws(() => validateBrowserEvidence(noAuthentication, manifest),
+  assert.throws(() => validateBrowserEvidence(
+    noAuthentication, manifest, runtime),
     /authenticated destination request/);
 
   const echo = structuredClone(baseline);
   echo.cookies.rotations[0].destinations[0].echo_publications = "1";
-  assert.throws(() => validateBrowserEvidence(echo, manifest),
+  assert.throws(() => validateBrowserEvidence(echo, manifest, runtime),
     /without an echo/);
 
   const vagueException = structuredClone(baseline);
@@ -927,49 +1297,56 @@ test("browser evidence fails closed on join publication, stale overwrite, cookie
     evidence_ref: "assumed",
     evidence_sha256: "d".repeat(64),
   });
-  assert.throws(() => validateBrowserEvidence(vagueException, manifest),
+  assert.throws(() => validateBrowserEvidence(
+    vagueException, manifest, runtime),
     /lacks exact destination rejection/);
 
   const tabs = structuredClone(baseline);
   tabs.tabs_observed = true;
-  assert.throws(() => validateBrowserEvidence(tabs, manifest),
+  assert.throws(() => validateBrowserEvidence(tabs, manifest, runtime),
     /browser evidence boundary/);
 });
 
 test("server evidence rejects reorder, stale writes, 32-bit counters, secret logs, and tabs", () => {
   const manifest = manifestFixture();
-  const browser = browserEvidence(manifest);
-  const baseline = serverEvidence(manifest, browser);
-  validateServerEvidence(baseline, manifest, browser);
+  const devices = syntheticRuntimeDevices();
+  const runtime = syntheticServerRuntime();
+  const browser = browserEvidence(manifest, devices);
+  const baseline = serverEvidence(manifest, browser, runtime);
+  validateServerEvidence(baseline, manifest, browser, runtime);
 
   const reordered = structuredClone(baseline);
   reordered.enrollment_order = ["d", "oneplus", "da"];
-  assert.throws(() => validateServerEvidence(reordered, manifest, browser),
+  assert.throws(() => validateServerEvidence(
+    reordered, manifest, browser, runtime),
     /enrollment order/);
 
   const wrongSource = structuredClone(baseline);
   wrongSource.source_train.core_commit = "9".repeat(40);
-  assert.throws(() => validateServerEvidence(wrongSource, manifest, browser),
+  assert.throws(() => validateServerEvidence(
+    wrongSource, manifest, browser, runtime),
     /identity or enrollment order/);
 
   const staleAccepted = structuredClone(baseline);
   staleAccepted.password.stale_conflict.accepted_publications = "1";
-  assert.throws(() => validateServerEvidence(staleAccepted, manifest, browser),
+  assert.throws(() => validateServerEvidence(
+    staleAccepted, manifest, browser, runtime),
     /stale password mutation/);
 
   const uint32 = structuredClone(baseline);
   uint32.counter_probe.uint32_plus_one = "4294967295";
-  assert.throws(() => validateServerEvidence(uint32, manifest, browser),
+  assert.throws(() => validateServerEvidence(uint32, manifest, browser, runtime),
     /64-bit sequence/);
 
   const secretLog = structuredClone(baseline);
   secretLog.logs.password_values_detected = true;
-  assert.throws(() => validateServerEvidence(secretLog, manifest, browser),
+  assert.throws(() => validateServerEvidence(
+    secretLog, manifest, browser, runtime),
     /password value/);
 
   const tabs = structuredClone(baseline);
   tabs.journal.tabs_records = "1";
-  assert.throws(() => validateServerEvidence(tabs, manifest, browser),
+  assert.throws(() => validateServerEvidence(tabs, manifest, browser, runtime),
     /schema-2 boundary/);
 });
 

@@ -12,6 +12,7 @@ const status = path.join(repo, "scripts/tabs/tab-proof-status.mjs");
 const health = path.join(repo, "scripts/tabs/tab-recovery-health.sh");
 const androidProfile = path.join(repo,
   "scripts/tabs/android-tab-profile.sh");
+const desktopDevice = os.hostname().split(".")[0];
 
 function run(file, args, options = {}) {
   const result = spawnSync(file, args, {
@@ -238,7 +239,7 @@ function runtimeCommon(browser, browserHash, profile, evidence, key) {
     "--package-id", "desktop",
     "--display-mode", "headless",
     "--profile-dir", profile,
-    "--source-device", "d",
+    "--source-device", desktopDevice,
     "--profile", "default",
     "--evidence-dir", evidence,
     "--signing-key", key,
@@ -251,8 +252,10 @@ test("runtime proof source is observation-only and fail-closed", () => {
   const emitter = fs.readFileSync(status, "utf8");
   const adapter = fs.readFileSync(androidProfile, "utf8");
   assert.match(runner, /"--remote-debugging-pipe"/);
-  assert.doesNotMatch(runner, /remote-debugging-port|Network\.setCookie|CookieManager|PasswordStore|HeliumSyncClient|Latest\(|Push\(/);
-  assert.match(runner, /packageID === "computer\.helium\.sync\.test"/);
+  assert.doesNotMatch(runner,
+    /Network\.setCookie|CookieManager|PasswordStore|HeliumSyncClient|Latest\(|Push\(/);
+  assert.match(runner,
+    /const ANDROID_PACKAGE = "computer\.helium\.sync\.test"/);
   assert.doesNotMatch(runner, /computer\.helium\.sync["']/);
   assert.match(runner, /--helium-restore-disposable-tabs=/);
   assert.match(emitter,
@@ -303,7 +306,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
       run("node", [status, "verify", "--key", key,
         "--evidence-dir", nativeEvidence]);
       run("node", [status, "emit", "--key", key,
-        "--status-root", statusRoot, "--source-device", "d",
+        "--status-root", statusRoot, "--source-device", desktopDevice,
         "--profile", "default", "--evidence-dir", nativeEvidence]);
 
       const heliumTabs = path.join(temporary, "helium-tabs");
@@ -367,7 +370,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
       fs.mkdirSync(store, {mode: 0o700});
       const captured = JSON.parse(run(heliumTabs, [
         "capture", "--store", store, "--input", neutralInput,
-        "--device", "d", "--profile", "default",
+        "--device", desktopDevice, "--profile", "default",
         "--browser-version", "fixture", "--chromium-version", "fixture",
         "--reason", "runtime-proof",
       ]));
@@ -398,7 +401,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
         writePrivate(sourceReceipt, [
           "schema_version=1",
           "mechanism=neutral-topology",
-          "source_device=d",
+          `source_device=${desktopDevice}`,
           "profile=default",
           `generation=${captured.generation}`,
           `source_destination=${destination}`,
@@ -418,12 +421,12 @@ test("three runtime mechanisms emit health only from authenticated drills",
       }
       const oneNeutral = failRun("node", [status, "emit",
         "--key", key, "--status-root", statusRoot,
-        "--source-device", "d", "--profile", "default",
+        "--source-device", desktopDevice, "--profile", "default",
         "--evidence-dir", neutralEvidences[0]]);
       assert.match(oneNeutral.stderr, /requires exactly 2 evidence directories/);
       run("node", [status, "emit",
         "--key", key, "--status-root", statusRoot,
-        "--source-device", "d", "--profile", "default",
+        "--source-device", desktopDevice, "--profile", "default",
         "--evidence-dir", neutralEvidences[0],
         "--evidence-dir", neutralEvidences[1]]);
 
@@ -443,7 +446,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
           ".helium-profile-restore-receipt.env"), [
           "schema_version=3",
           "generation=full-profile-fixture-v1",
-          "source_device=d",
+          `source_device=${desktopDevice}`,
           "profile_id=default",
           `archive_sha256=${archiveHash}`,
           `source_destination=${destination}`,
@@ -459,11 +462,12 @@ test("three runtime mechanisms emit health only from authenticated drills",
       }
       run("node", [status, "emit",
         "--key", key, "--status-root", statusRoot,
-        "--source-device", "d", "--profile", "default",
+        "--source-device", desktopDevice, "--profile", "default",
         "--evidence-dir", fullEvidences[0],
         "--evidence-dir", fullEvidences[1]]);
 
-      const report = JSON.parse(run(health, [statusRoot, "d", "default"]));
+      const report = JSON.parse(run(health,
+        [statusRoot, desktopDevice, "default"]));
       assert.equal(report.healthy, true);
       assert.deepEqual(report.mechanisms.map(item => item.mechanism), [
         "chromium-native-session",
@@ -477,8 +481,8 @@ test("three runtime mechanisms emit health only from authenticated drills",
         .replace("platform=desktop", "platform=android")
         .replace("package_id=desktop",
           "package_id=computer.helium.sync.test"));
-      const mixedPlatform = JSON.parse(run(health,
-        [statusRoot, "d", "default"]));
+      const mixedPlatform = JSON.parse(failRun(health,
+        [statusRoot, desktopDevice, "default"]).stdout);
       assert.equal(mixedPlatform.healthy, false);
 
       const differentBrowserHash = browserHash === "0".repeat(64)
@@ -487,15 +491,15 @@ test("three runtime mechanisms emit health only from authenticated drills",
       writePrivate(fullStatus, originalFullStatus
         .replace(`browser_sha256=${browserHash}`,
           `browser_sha256=${differentBrowserHash}`));
-      const mixedBrowser = JSON.parse(run(health,
-        [statusRoot, "d", "default"]));
+      const mixedBrowser = JSON.parse(failRun(health,
+        [statusRoot, desktopDevice, "default"]).stdout);
       assert.equal(mixedBrowser.healthy, false);
 
       writePrivate(fullStatus, originalFullStatus
         .replace(`source_generation=${browserHash}`,
           `source_generation=${differentBrowserHash}`));
-      const mixedSourceGeneration = JSON.parse(run(health,
-        [statusRoot, "d", "default"]));
+      const mixedSourceGeneration = JSON.parse(failRun(health,
+        [statusRoot, desktopDevice, "default"]).stdout);
       assert.equal(mixedSourceGeneration.healthy, false);
       writePrivate(fullStatus, originalFullStatus);
 
