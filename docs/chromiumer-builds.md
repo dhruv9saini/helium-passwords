@@ -182,10 +182,11 @@ direct shallow fetch rather than a Google Storage mirror bootstrap. Job
 bootstrap copies remained in TCP `CLOSE-WAIT` for 45--74 minutes, gclient
 emitted its five-minute stall diagnostic, and the otherwise healthy job was
 cancelled through the official wrapper with exit `130`. A follow-up serialized
-gsutil experiment avoided that deadlock but made a 19,862-object Perfetto
-snapshot incompatible with the eight-hour wall bound; it is diagnostic
-evidence, not the selected acquisition path. The returned source sentinels and
-retained wrapper journals are not browser artifacts.
+gsutil experiment avoided that deadlock and confirmed one dependency at a
+time. Direct shallow fetch remains the selected path because it removes the
+failed mirror-bootstrap mechanism instead of retaining another potentially
+unbounded per-object GCS transfer. The returned source sentinels and retained
+wrapper journals are diagnostic evidence, not browser artifacts.
 The same run proved that the former `TasksMax=256` process/thread ceiling was
 below source hydration's real helper-thread fan-out even with one gclient job;
 it failed at 256 and again at 512. `TasksMax=1024` is therefore the persisted
