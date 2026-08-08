@@ -8,6 +8,8 @@ import {fileURLToPath, pathToFileURL} from "node:url";
 
 import {auditVerifiedThreeClientRun} from
   "../sync-runtime/three-client-acceptance.mjs";
+import {auditDeviceFinal as auditNativeRecoveryDevice} from
+  "../native-recovery/acceptance.mjs";
 import {auditProbePair} from "../android-media/audit-probe-pair.mjs";
 import {auditLinuxFullGraphEvidence} from "../linux-full-graph-audit.mjs";
 import {validatePhysicalDeviceIdentity} from
@@ -1508,6 +1510,8 @@ function requireOptions(options) {
     "--da-tab-signing-key", "--da-tab-evidence", "--da-tab-status",
     "--da-tab-fault-evidence", "--da-fault-tab-evidence",
     "--da-fault-operation-receipt", "--da-profile-backup-receipt",
+    "--d-native-recovery-receipt", "--da-native-recovery-receipt",
+    "--oneplus-native-recovery-receipt",
     "--phase-reset-receipt", "--tab-signing-key", "--tab-evidence",
     "--tab-status",
     "--tab-fault-evidence", "--fault-tab-evidence",
@@ -1534,6 +1538,9 @@ function usage() {
     --da-fault-tab-evidence DIR [two total] \\
     --da-fault-operation-receipt DIR [four total] \\
     --da-profile-backup-receipt FILE \\
+    --d-native-recovery-receipt FILE \\
+    --da-native-recovery-receipt FILE \\
+    --oneplus-native-recovery-receipt FILE \\
     --sync-archive FILE --sync-acceptance DIR --sync-evidence DIR \\
     --control-archive FILE --control-acceptance DIR --control-evidence DIR \\
     --media-pair-receipt FILE \\
@@ -1621,6 +1628,22 @@ export async function verifyFullE2E(options) {
     options.get("--tab-signing-key"), sync, phaseResets.adb_serial, tabs);
   const profileBackup = await auditProfileBackupReceipt(
     options.get("--profile-backup-receipt"), tabs, "oneplus", "tar-stream-v1");
+  const nativeRecovery = {};
+  for (const device of ["d", "da", "oneplus"]) {
+    nativeRecovery[device] = await auditNativeRecoveryDevice(
+      options.get(`--${device}-native-recovery-receipt`), device);
+    const expectedArtifact = device === "oneplus"
+      ? sync.apk_sha256 : threeClient.linux[device].browser_sha256;
+    if (nativeRecovery[device].artifact_sha256 !== expectedArtifact) {
+      fail(`${device} native password/cookie recovery used the wrong browser artifact`);
+    }
+  }
+  for (const field of ["passwords_state_sha256", "cookies_state_sha256"]) {
+    if (new Set(["d", "da", "oneplus"].map(
+      device => nativeRecovery[device][field])).size !== 1) {
+      fail(`native recovery ${field} does not converge across the fleet`);
+    }
+  }
   if (desktopTabs.d.execution_identity.host_identity_sha256 !==
         threeClient.execution_identity.d.host_identity_sha256 ||
       desktopTabs.da.execution_identity.host_identity_sha256 !==
@@ -1673,14 +1696,26 @@ export async function verifyFullE2E(options) {
       "d fault recovery must precede final Serve verification"],
     [desktopFaults.da.completed_at, serve.verified_at,
       "da fault recovery must precede final Serve verification"],
+    [threeClient.verified_at, nativeRecovery.d.verified_at,
+      "three-client Sync must precede d native password/cookie recovery"],
+    [threeClient.verified_at, nativeRecovery.da.verified_at,
+      "three-client Sync must precede da native password/cookie recovery"],
+    [threeClient.verified_at, nativeRecovery.oneplus.verified_at,
+      "three-client Sync must precede OnePlus native password/cookie recovery"],
+    [nativeRecovery.d.verified_at, serve.verified_at,
+      "d native password/cookie recovery must precede final Serve verification"],
+    [nativeRecovery.da.verified_at, serve.verified_at,
+      "da native password/cookie recovery must precede final Serve verification"],
+    [nativeRecovery.oneplus.verified_at, serve.verified_at,
+      "OnePlus native password/cookie recovery must precede final Serve verification"],
   ];
   for (const [before, after, message] of chronology) {
     if (Date.parse(before) > Date.parse(after)) fail(message);
   }
   const verifier = fileURLToPath(import.meta.url);
   const receipt = {
-    schema_version: 3,
-    evidence_type: "helium-sync-fleet-full-e2e-v3",
+    schema_version: 4,
+    evidence_type: "helium-sync-fleet-full-e2e-v4",
     result: "passed",
     source_train: {
       helium_sync_commit: sourceCommit,
@@ -1737,11 +1772,26 @@ export async function verifyFullE2E(options) {
         fault_operation_set: desktopFaults[device].operation_receipt_set_sha256,
         profile_backup: desktopProfiles[device].receipt_sha256,
       }])),
+      browser_native_neutral_recovery: Object.fromEntries(
+        ["d", "da", "oneplus"].map(device => [device, {
+          receipt: nativeRecovery[device].receipt_sha256,
+          generation: nativeRecovery[device].generation,
+          archive_sha256: nativeRecovery[device].archive_sha256,
+          artifact_sha256: nativeRecovery[device].artifact_sha256,
+          passwords_state_sha256:
+            nativeRecovery[device].passwords_state_sha256,
+          cookies_state_sha256: nativeRecovery[device].cookies_state_sha256,
+        }])),
       tailnet_serve: serve.receipt_sha256,
     },
     requirements: {
       native_password_lifecycle: "passed",
       three_client_password_cookie_convergence: "passed",
+      d_browser_native_password_cookie_restore_from_two_destinations: "passed",
+      da_browser_native_password_cookie_restore_from_two_destinations: "passed",
+      oneplus_browser_native_password_cookie_restore_from_two_destinations:
+        "passed",
+      browser_native_password_cookie_state_converged_across_fleet: "passed",
       media_streaming_matched_control: "passed",
       background_foreground_and_wifi_cellular_handoff: "passed",
       d_native_clean_crash_second_restart: "passed",

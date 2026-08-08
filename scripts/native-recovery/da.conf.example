@@ -1,0 +1,11 @@
+version=3
+source_device=da
+profile_id=native-recovery-default
+source_path=/home/d/.local/share/helium-native-recovery/da/default
+ssh_user=d
+ssh_identity=/home/d/.ssh/helium_profile_backup_ed25519
+ssh_known_hosts=/home/d/.ssh/helium_profile_backup_known_hosts
+retention_keep=12
+destination_reserve_bytes=1073741824
+destination=nas-on-lm|nas|ssh|lm|lm|/srv/nas/helium-profile-backups
+destination=d-copy|device|ssh|d|d|/home/d/.local/share/helium-profile-backups

@@ -80,7 +80,11 @@ restores Chromium's native password manager.
   derives their fixed DevTools sockets, and restores the two global Android
   Chromium command-line files and debug-app selection on every exit. Never add
   normal package identities, caller-supplied flags, package clearing, or
-  uninstall behavior to it.
+  uninstall behavior to it. Its structured browser-native recovery mode derives
+  exactly one password-or-cookie restore switch from a fixed app-private
+  `drill-*` profile and input namespace. It admits only
+  `computer.helium.sync.test`; the caller cannot supply an arbitrary switch,
+  user-data root, package, or production profile.
   The only package-data reset is the separate
   `scripts/android-acceptance/reset-disposable-package.sh` boundary between
   Android phases of one fleet full E2E run. It admits only the inventoried

@@ -52,6 +52,36 @@ base_url=$(tr -d '\r\n' <"$sync_config_dir/base_url")
   exit 1
 }
 
+device_id=$(jq -r '.device_id // empty' "$sync_config_dir/client.json")
+case "$device_id" in
+  d|da) ;;
+  *) echo "Helium desktop enrollment has an invalid device identity" >&2; exit 1 ;;
+esac
+recovery_root=$home_dir/.local/share/helium-native-recovery/$device_id/default
+recovery_marker=$recovery_root/.helium-native-recovery-root-v1
+mkdir -p "$recovery_root"
+chmod 0700 "$recovery_root"
+if [[ ! -e "$recovery_marker" ]]; then
+  (umask 077; printf 'helium-native-recovery-root-v1\n' >"$recovery_marker")
+fi
+[[ -f "$recovery_marker" && ! -L "$recovery_marker" &&
+  "$(stat -c %a "$recovery_marker")" == 600 &&
+  "$(cat "$recovery_marker")" == helium-native-recovery-root-v1 ]] || {
+  echo "Helium native recovery root marker is invalid" >&2
+  exit 1
+}
+if [[ -e "$sync_config_dir/native_recovery_root" ]]; then
+  [[ -f "$sync_config_dir/native_recovery_root" &&
+    ! -L "$sync_config_dir/native_recovery_root" &&
+    "$(tr -d '\r\n' <"$sync_config_dir/native_recovery_root")" == "$recovery_root" ]] || {
+    echo "Helium native recovery configuration changed unexpectedly" >&2
+    exit 1
+  }
+else
+  (umask 077; printf '%s\n' "$recovery_root" >"$sync_config_dir/native_recovery_root")
+fi
+chmod 0600 "$sync_config_dir/native_recovery_root"
+
 if [[ "$services_only" -eq 1 ]]; then
   exit 0
 fi

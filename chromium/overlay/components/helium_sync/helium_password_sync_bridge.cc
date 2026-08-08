@@ -55,18 +55,24 @@ void AndroidStatusLog(const std::string &message) {
 void AndroidStatusLog(const std::string &) {}
 #endif
 
-using Credential = password_manager::PasswordForm;
+using Credential = password_manager::StoredCredential;
 
 const Credential &
 ChangeCredential(const password_manager::PasswordStoreChange &change) {
-  return change.form();
+  return change.credential();
 }
 
 Credential
 CredentialFromSpecifics(const sync_pb::PasswordSpecificsData &specifics) {
-  Credential credential = password_manager::PasswordFromSpecifics(specifics);
+  Credential credential =
+      password_manager::StoredCredentialFromSpecifics(specifics);
   credential.in_store = password_manager::PasswordForm::Store::kProfileStore;
   return credential;
+}
+
+Credential CloneCredential(const Credential &credential) {
+  return CredentialFromSpecifics(
+      password_manager::SpecificsDataFromStoredCredential(credential));
 }
 
 void AppendU32(uint32_t value, std::string *out) {
@@ -105,15 +111,10 @@ std::string PasswordRecordKey(const Credential &credential) {
              crypto::SHA256HashString(PasswordIdentityMaterial(credential)));
 }
 
-std::string
-PasswordRecordKeyForForm(const password_manager::PasswordForm &credential) {
-  return PasswordRecordKey(credential);
-}
-
 std::optional<std::string> PasswordPayloadJSON(const Credential &credential) {
   sync_pb::PasswordSpecificsData specifics =
-      password_manager::SpecificsDataFromPassword(credential,
-                                                  /*base_password_data=*/{});
+      password_manager::SpecificsDataFromStoredCredential(
+          credential, /*base_password_data=*/{});
   std::string serialized;
   if (!specifics.SerializeToString(&serialized)) {
     return std::nullopt;
@@ -279,14 +280,15 @@ void HeliumPasswordSyncBridge::OnLoginsChanged(
 
 void HeliumPasswordSyncBridge::OnLoginsRetained(
     password_manager::PasswordStoreInterface *store,
-    const std::vector<password_manager::PasswordForm> &retained_passwords) {
+    const std::vector<password_manager::StoredCredential>
+        &retained_passwords) {
   if (store != profile_store_.get() || applying_remote_) {
     return;
   }
 
   std::set<std::string> retained_keys;
   for (const auto &credential : retained_passwords) {
-    retained_keys.insert(PasswordRecordKeyForForm(credential));
+    retained_keys.insert(PasswordRecordKey(credential));
   }
   for (const std::string &key : known_keys_) {
     if (retained_keys.contains(key)) {
@@ -549,7 +551,7 @@ void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
       pending_verification_[record.key] = remote;
       pending_remote_writes_++;
       profile_store_->RemoveLogin(
-          *existing->second,
+          CloneCredential(*existing->second),
           base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
                          weak_factory_.GetWeakPtr()));
       continue;
@@ -591,12 +593,12 @@ void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
     pending_remote_writes_++;
     if (existing == local_by_key.end()) {
       profile_store_->AddLogin(
-          *credential,
+          std::move(*credential),
           base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
                          weak_factory_.GetWeakPtr()));
     } else {
       profile_store_->UpdateLogin(
-          *credential,
+          std::move(*credential),
           base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
                          weak_factory_.GetWeakPtr()));
     }

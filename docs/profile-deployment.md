@@ -158,6 +158,14 @@ profile, imports a copy on another device, or opens tabs. A full-profile
 backup contains that source device's local session files only as
 disaster-recovery data; it is not tab synchronization.
 
+The browser-native password/cookie neutral mechanism uses the same authenticated
+backup format for its independent API-produced snapshot directory, then uses
+`scripts/native-recovery/runtime-drill.sh` for exact browser readback. That
+runner admits only a fresh marked desktop profile or the checksum-admitted
+`computer.helium.sync.test` sandbox; it cannot target the production Android
+package. See [nine-path-recovery.md](nine-path-recovery.md) for its two-replica
+drill and terminal fleet receipt.
+
 After restoring the same synthetic generation independently from both
 destinations, use the authenticated first/second-start gate in
 [tab-runtime-proof.md](tab-runtime-proof.md). It consumes each restore's
@@ -225,7 +233,10 @@ directory containing exactly `base_url`, `client.json`, and `token`. It
 receipt, and two valid backup copies. It
 force-stops the app, installs only
 `<dataDir>/app_chrome/Default/helium-sync`, and preserves the old enrollment
-under `helium-sync-rollbacks/`. It does not guess config paths, copy anything
+under `helium-sync-rollbacks/`. It also creates the marked app-private
+`<dataDir>/files/helium-native-recovery/oneplus/default` directory and writes
+that exact path to `native_recovery_root`; it never places neutral recovery
+snapshots inside `app_chrome`. It does not guess config paths, copy anything
 from the phone chroot, create an HTTP loopback URL, or rewrite first-run state.
 
 Immediately before changing enrollment, the configurator streams and hashes

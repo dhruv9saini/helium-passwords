@@ -15,6 +15,7 @@
 #include "base/values.h"
 #include "build/build_config.h"
 #include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
+#include "chrome/browser/helium_sync/helium_native_recovery_bridge.h"
 #include "chrome/browser/helium_sync/helium_tab_restore_bridge.h"
 #include "chrome/browser/helium_sync/helium_tab_snapshot_bridge.h"
 #include "chrome/browser/profiles/profile.h"
@@ -50,6 +51,7 @@ constexpr char kCookieStateFile[] = "cookie-state.json";
 constexpr char kCookieRollbackFile[] = "cookie-rollback.json";
 constexpr char kCookieReauthSignalFile[] = "cookie-reauth-required.json";
 constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
+constexpr char kNativeRecoveryRootFile[] = "native_recovery_root";
 
 #if BUILDFLAG(IS_ANDROID)
 void AndroidStatusLog(const std::string &message) {
@@ -141,6 +143,24 @@ HeliumSyncService::HeliumSyncService(Profile *profile) {
     return;
   }
 
+  if (helium_sync::HeliumNativeRecoveryBridge::IsRestoreRequested()) {
+    scoped_refptr<password_manager::PasswordStoreInterface> password_store =
+        ProfilePasswordStoreFactory::GetForProfile(
+            profile, ServiceAccessType::EXPLICIT_ACCESS);
+    if (!password_store) {
+      LOG(ERROR) << "Helium native recovery refused: password store "
+                    "unavailable";
+      return;
+    }
+    recovery_bridge_ =
+        std::make_unique<helium_sync::HeliumNativeRecoveryBridge>(
+            profile, std::move(password_store), base::FilePath(), "");
+    recovery_bridge_->Start();
+    // Restore switches always select a dedicated disposable process. Invalid
+    // requests fail closed and never reach sync or tab export.
+    return;
+  }
+
   if (helium_sync::HeliumTabRestoreBridge::IsRequested()) {
     tab_restore_bridge_ =
         std::make_unique<helium_sync::HeliumTabRestoreBridge>(profile);
@@ -214,12 +234,29 @@ HeliumSyncService::HeliumSyncService(Profile *profile) {
       config_dir.AppendASCII(kPasswordStateFile),
       std::move(password_baseline_callback));
   password_bridge_->Start();
+
+  if (std::optional<std::string> recovery_root =
+          ReadConfigValue(config_dir, kNativeRecoveryRootFile)) {
+    recovery_bridge_ =
+        std::make_unique<helium_sync::HeliumNativeRecoveryBridge>(
+            profile, password_store,
+            base::FilePath::FromUTF8Unsafe(*recovery_root),
+            enrollment->device_id);
+    recovery_bridge_->Start();
+  } else {
+    LOG(WARNING) << "Helium native recovery snapshots inactive: "
+                    "profile-local root is missing";
+  }
 }
 
 HeliumSyncService::~HeliumSyncService() = default;
 
 void HeliumSyncService::Shutdown() {
   weak_factory_.InvalidateWeakPtrs();
+  if (recovery_bridge_) {
+    recovery_bridge_->Stop();
+    recovery_bridge_.reset();
+  }
   if (cookie_acceptance_fixture_) {
     cookie_acceptance_fixture_->Stop();
     cookie_acceptance_fixture_.reset();

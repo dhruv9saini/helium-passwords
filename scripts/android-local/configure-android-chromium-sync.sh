@@ -100,6 +100,7 @@ BUNDLE=/data/local/tmp/'"'"$bundle_name"'"'
 TARGET=\"\$DATA/app_chrome/Default/helium-sync\"
 INCOMING=\"\$DATA/app_chrome/Default/.helium-sync.incoming.\$\$\"
 ROLLBACK_ROOT=\"\$DATA/app_chrome/Default/helium-sync-rollbacks\"
+RECOVERY_ROOT=\"\$DATA/files/helium-native-recovery/oneplus/default\"
 test ! -e \"\$INCOMING\"
 mkdir -p \"\$DATA/app_chrome/Default\" \"\$ROLLBACK_ROOT\" \"\$INCOMING\"
 /system/bin/tar -xf \"\$BUNDLE\" -C \"\$INCOMING\"
@@ -116,7 +117,20 @@ if [ -e \"\$TARGET\" ]; then
   mv \"\$TARGET\" \"\$ROLLBACK_ROOT/\$STAMP\"
 fi
 mv \"\$INCOMING\" \"\$TARGET\"
+mkdir -p \"\$RECOVERY_ROOT\"
+chmod 0700 \"\$RECOVERY_ROOT\"
+if [ ! -e \"\$RECOVERY_ROOT/.helium-native-recovery-root-v1\" ]; then
+  printf \"helium-native-recovery-root-v1\\n\" >\"\$RECOVERY_ROOT/.helium-native-recovery-root-v1\"
+fi
+test -f \"\$RECOVERY_ROOT/.helium-native-recovery-root-v1\"
+test ! -L \"\$RECOVERY_ROOT/.helium-native-recovery-root-v1\"
+test \"\$(cat \"\$RECOVERY_ROOT/.helium-native-recovery-root-v1\")\" = helium-native-recovery-root-v1
+chmod 0600 \"\$RECOVERY_ROOT/.helium-native-recovery-root-v1\"
+printf \"%s\\n\" \"\$RECOVERY_ROOT\" >\"\$TARGET/native_recovery_root\"
+chmod 0600 \"\$TARGET/native_recovery_root\"
+chown -R \"\$UID_NUMBER:\$UID_NUMBER\" \"\$DATA/files/helium-native-recovery\" \"\$TARGET\"
 restorecon -R \"\$TARGET\" >/dev/null 2>&1 || true
+restorecon -R \"\$DATA/files/helium-native-recovery\" >/dev/null 2>&1 || true
 "'
 
 printf 'android_enrollment=installed\npackage=%s\nprofile_config=%s\nbackup_generation=%s\n' \

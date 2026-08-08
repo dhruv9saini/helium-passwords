@@ -34,6 +34,10 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
   routes may coexist and Helium operators leave them unchanged.
 - Tabs never enter sync. They remain device-local and are protected by local
   recovery, atomic versioned snapshots, and two private off-source copies.
+- Passwords, cookies, and tabs each have exactly three materially different
+  recovery mechanisms. Replica destinations strengthen one mechanism and do
+  not inflate that count; the nine-path matrix and exact storage locations are
+  defined in [docs/nine-path-recovery.md](docs/nine-path-recovery.md).
 - No personal profile is touched until all compiled disposable gates pass and
   that profile has a verified recoverable backup.
 - Chromium is never built on lm. Every large build uses the isolated
@@ -66,9 +70,14 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
   and UI receipt plus the private Sync state/journal receipt extension.
 - `scripts/cookie-runtime/`: private two-desktop native CookieManager transport
   fixture and immutable receipt gate.
+- `scripts/native-recovery/`: browser-API password/cookie neutral snapshots,
+  fixed NAS-plus-peer backup scheduling, fresh marked desktop and
+  checksum-admitted `.test`-only Android restore drills, and the per-device
+  two-destination receipt gate.
 - `scripts/android-acceptance/`: the guarded `.test`-only phase reset, exact
   backup configuration template, and create-new fleet E2E receipt that also
-  binds the Linux artifact and independent d/da tab-recovery gates.
+  binds the Linux/Android artifacts, native password/cookie recovery, and
+  independent d/da/OnePlus tab-recovery gates.
 - `systemd/helium-syncd.service`: least-privilege HTTP service bound only to
   lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;

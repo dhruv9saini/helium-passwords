@@ -4,6 +4,8 @@ source_set("helium_sync") {
   sources = [
     "helium_cookie_sync_bridge.cc",
     "helium_cookie_sync_bridge.h",
+    "helium_native_recovery_bridge.cc",
+    "helium_native_recovery_bridge.h",
     "helium_sync_service.cc",
     "helium_sync_service.h",
     "helium_sync_service_factory.cc",
@@ -28,6 +30,8 @@ source_set("helium_sync") {
     "//components/helium_sync",
     "//components/keyed_service/core",
     "//components/password_manager/core/browser/password_store:password_store_interface",
+    "//components/password_manager/core/browser/sync",
+    "//components/sync/protocol",
     "//components/sessions",
     "//components/sessions:session_id",
     "//components/tab_groups",

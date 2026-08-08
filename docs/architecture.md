@@ -70,6 +70,8 @@ The browser reads exactly one enrollment directory:
   base_url
   token
   client.json
+  native_recovery_root
+  tab_snapshot_export_path
   password-state.json
   cookie-state.json
   cookie-rollback.json
@@ -82,6 +84,12 @@ on port 44719 and must not contain user information. `token` and
 fingerprints, revisions, and a global `verified_sequence`; they do not contain
 password or cookie payloads. The mode-0600 cookie rollback journal contains the
 parsed readable payload required for an exact local rollback.
+`native_recovery_root` points outside the profile at one marked private
+directory where Chromium atomically publishes the independent
+PasswordStore/CookieManager neutral snapshots described in
+[`nine-path-recovery.md`](nine-path-recovery.md).
+`tab_snapshot_export_path` points outside the profile at the independently
+scheduled neutral tab export.
 
 ## Bounded record transport
 

@@ -35,7 +35,7 @@ test("native records emit Chromium's complete password specifics schema", () => 
     source.indexOf("std::optional<std::string> PasswordPayloadJSON"),
     source.indexOf("std::optional<Credential> PayloadToCredential"),
   );
-  assert.match(serialize, /SpecificsDataFromPassword/);
+  assert.match(serialize, /SpecificsDataFromStoredCredential/);
   assert.match(serialize, /SerializeToString/);
   assert.match(source, /chromium-password-specifics-data-v1/);
   assert.match(serialize, /password_specifics_data_b64/);
@@ -50,14 +50,15 @@ test("greenfield records reject legacy simple payloads", () => {
   );
   assert.match(parse, /PasswordSpecificsData specifics/);
   assert.match(parse, /CredentialFromSpecifics/);
-  assert.match(source, /PasswordFromSpecifics/);
+  assert.match(source, /StoredCredentialFromSpecifics/);
   assert.doesNotMatch(source, /kLegacySimplePayloadFormat|helium-password-v1/);
 });
 
-test("pinned Chromium PasswordForm APIs are used without version fallbacks", () => {
-  assert.match(source, /using Credential = password_manager::PasswordForm/);
-  assert.match(source, /return change\.form\(\)/);
-  assert.doesNotMatch(source, /__has_include|StoredCredential|ToPasswordForm/);
+test("pinned Chromium StoredCredential APIs are used without version fallbacks", () => {
+  assert.match(source, /using Credential = password_manager::StoredCredential/);
+  assert.match(source, /return change\.credential\(\)/);
+  assert.match(source, /SpecificsDataFromStoredCredential/);
+  assert.doesNotMatch(source, /__has_include|ToPasswordForm/);
 });
 
 test("remote writes validate identity and choose one add-or-update operation", () => {

@@ -8,6 +8,8 @@ usage:
   disposable-browser.sh launch ACCEPTANCE_DIRECTORY ADB_SERIAL [--fixture-receipt FILE]
     [--tab-runtime-profile DRILL-SLUG --tab-runtime-mode native|neutral|full-profile
      --tab-runtime-restore none|native|neutral]
+    [--native-recovery-profile DRILL-SLUG --native-recovery-kind passwords|cookies
+     --native-recovery-source ABSOLUTE-DEVICE-FILE]
 
 Install or launch only a checksum-admitted computer.helium.sync.test or
 computer.helium.control.test APK. The launch command temporarily owns Android's
@@ -42,6 +44,9 @@ fixture_receipt=
 tab_runtime_profile=
 tab_runtime_mode=
 tab_runtime_restore=
+native_recovery_profile=
+native_recovery_kind=
+native_recovery_source=
 if [[ "$operation" == launch ]]; then
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -65,9 +70,43 @@ if [[ "$operation" == launch ]]; then
         tab_runtime_restore=$2
         shift 2
         ;;
+      --native-recovery-profile)
+        [[ $# -ge 2 && -z "$native_recovery_profile" ]] || { usage; exit 64; }
+        native_recovery_profile=$2
+        shift 2
+        ;;
+      --native-recovery-kind)
+        [[ $# -ge 2 && -z "$native_recovery_kind" ]] || { usage; exit 64; }
+        native_recovery_kind=$2
+        shift 2
+        ;;
+      --native-recovery-source)
+        [[ $# -ge 2 && -z "$native_recovery_source" ]] || { usage; exit 64; }
+        native_recovery_source=$2
+        shift 2
+        ;;
       *) usage; exit 64 ;;
     esac
   done
+fi
+if [[ -n "$native_recovery_profile" || -n "$native_recovery_kind" ||
+      -n "$native_recovery_source" ]]; then
+  [[ "$native_recovery_profile" =~ ^drill-[a-z0-9][a-z0-9._-]{0,57}$ ]] || {
+    echo "native recovery profile must be a drill-* slug" >&2
+    exit 64
+  }
+  case "$native_recovery_kind" in passwords|cookies) ;; *) usage; exit 64 ;; esac
+  [[ "$native_recovery_source" =~ ^/[A-Za-z0-9._/-]+$ &&
+      "$native_recovery_source" != *"/../"* &&
+      "$native_recovery_source" != *"//"* ]] || {
+    echo "native recovery source path is unsafe" >&2
+    exit 64
+  }
+  [[ -z "$fixture_receipt" && -z "$tab_runtime_profile" &&
+      -z "$tab_runtime_mode" && -z "$tab_runtime_restore" ]] || {
+    echo "native recovery cannot be combined with another launch mode" >&2
+    exit 64
+  }
 fi
 if [[ -n "$tab_runtime_profile" || -n "$tab_runtime_mode" ||
       -n "$tab_runtime_restore" ]]; then
@@ -385,6 +424,27 @@ if [[ -n "$tab_runtime_profile" ]]; then
   }
 fi
 
+native_recovery_user_data_dir=
+if [[ -n "$native_recovery_profile" ]]; then
+  [[ "$package" == computer.helium.sync.test ]] || {
+    echo "native recovery admits only computer.helium.sync.test" >&2
+    exit 1
+  }
+  native_recovery_parent=$installed_data_dir/helium-native-recovery-drills
+  native_recovery_user_data_dir=$native_recovery_parent/$native_recovery_profile
+  native_recovery_expected_source=$installed_data_dir/helium-native-recovery-drill-inputs/$native_recovery_profile/$native_recovery_kind.current.json
+  [[ "$native_recovery_source" == "$native_recovery_expected_source" ]] || {
+    echo "native recovery source does not use its fixed disposable namespace" >&2
+    exit 1
+  }
+  "${adb_command[@]}" exec-out run-as "$package" sh -c \
+    "test -d '$native_recovery_parent' && test ! -L '$native_recovery_parent' && test \"\$(readlink -f '$native_recovery_parent')\" = '$native_recovery_parent' && test -d '$native_recovery_user_data_dir' && test ! -L '$native_recovery_user_data_dir' && test \"\$(readlink -f '$native_recovery_user_data_dir')\" = '$native_recovery_user_data_dir' && test -d '$native_recovery_user_data_dir/Default' && test ! -L '$native_recovery_user_data_dir/Default' && test \"\$(readlink -f '$native_recovery_user_data_dir/Default')\" = '$native_recovery_user_data_dir/Default' && test -f '$native_recovery_user_data_dir/Default/.helium-native-recovery-disposable-profile-v1' && test ! -L '$native_recovery_user_data_dir/Default/.helium-native-recovery-disposable-profile-v1' && test \"\$(cat '$native_recovery_user_data_dir/Default/.helium-native-recovery-disposable-profile-v1')\" = helium-native-recovery-disposable-profile-v1 && test -d '$(dirname "$native_recovery_source")' && test ! -L '$(dirname "$native_recovery_source")' && test \"\$(readlink -f '$(dirname "$native_recovery_source")')\" = '$(dirname "$native_recovery_source")' && test -f '$native_recovery_source' && test ! -L '$native_recovery_source' && test \"\$(readlink -f '$native_recovery_source')\" = '$native_recovery_source' && test \"\$(stat -c %a '$native_recovery_user_data_dir')\" = 700 && test \"\$(stat -c %a '$native_recovery_user_data_dir/Default')\" = 700 && test \"\$(stat -c %a '$native_recovery_user_data_dir/Default/.helium-native-recovery-disposable-profile-v1')\" = 600 && test \"\$(stat -c %a '$native_recovery_source')\" = 600" \
+    >/dev/null || {
+    echo "native recovery profile or snapshot was not safely staged" >&2
+    exit 1
+  }
+fi
+
 debug_app=$(
   "${adb_command[@]}" shell settings get global debug_app | tr -d '\r'
 )
@@ -556,6 +616,12 @@ command_line_file="$temporary/admitted-command-line"
       neutral) printf ' --helium-restore-disposable-tabs=oneplus' ;;
     esac
   fi
+  if [[ -n "$native_recovery_user_data_dir" ]]; then
+    printf ' --user-data-dir=%s --no-first-run --no-default-browser-check' \
+      "$native_recovery_user_data_dir"
+    printf ' --helium-restore-disposable-native-%s=%s' \
+      "$native_recovery_kind" "$native_recovery_source"
+  fi
   printf '\n'
 } > "$command_line_file"
 command_line_sha256=$(sha256sum "$command_line_file" | awk '{print $1}')
@@ -609,4 +675,9 @@ if [[ -n "$tab_runtime_user_data_dir" ]]; then
   printf 'tab_runtime_mode=%s\ntab_runtime_user_data_dir=%s\n' \
     "$tab_runtime_mode" "$tab_runtime_user_data_dir"
   printf 'tab_runtime_restore=%s\n' "$tab_runtime_restore"
+fi
+if [[ -n "$native_recovery_user_data_dir" ]]; then
+  printf 'native_recovery_kind=%s\nnative_recovery_user_data_dir=%s\n' \
+    "$native_recovery_kind" "$native_recovery_user_data_dir"
+  printf 'native_recovery_source=%s\n' "$native_recovery_source"
 fi

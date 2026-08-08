@@ -73,16 +73,24 @@ runtime kit, build tooling, `flags.gn`, and locked GN args.
    Each content-free `helium-desktop-tab-fault-matrix-v1` records the device,
    artifact hash, two cases, unchanged sibling mechanisms, and false for live
    or personal-profile access.
-7. Clear only the Sync `.test` package from `password-sync` to `tab-recovery`.
-8. On OnePlus, run one native, two neutral, and two full-profile proofs against
+7. For d, da, and OnePlus, back up the browser-native neutral password and
+   cookie snapshots as one stopped-profile generation to NAS and the fixed
+   peer. Restore each kind from each destination into a fresh marked disposable
+   profile and retain each device's final native-recovery receipt. These are
+   four recovery drills per device and twelve fleet-wide; both desktop receipts
+   must bind the admitted Linux browser executable and OnePlus must bind the
+   prepared Sync APK. The finalizer also requires password and normalized
+   cookie state to converge across all three devices.
+8. Clear only the Sync `.test` package from `password-sync` to `tab-recovery`.
+9. On OnePlus, run one native, two neutral, and two full-profile proofs against
    the exact Sync APK and one physical USB serial. Back up only the stopped
    synthetic `app_chrome` tree to NAS plus da, emit all three status receipts,
    and retain its schema-3 receipt.
-9. Corrupt and recover the OnePlus neutral and full-profile inputs as described
+10. Corrupt and recover the OnePlus neutral and full-profile inputs as described
    in the two-case `helium-android-tab-fault-matrix-v2`. Retain both fallback
    proofs and all four operation receipts. Production and personal data remain
    untouched.
-10. Run `scripts/tailnet-serve-acceptance.sh verify STATE_DIR`; its before and
+11. Run `scripts/tailnet-serve-acceptance.sh verify STATE_DIR`; its before and
     after configuration hashes must be identical.
 
 The desktop and Android fault matrices use the same two case names:
@@ -150,6 +158,9 @@ node scripts/android-acceptance/full-e2e.mjs verify \
   --da-fault-operation-receipt "$da_full_rejection" \
   --da-fault-operation-receipt "$da_full_quarantine" \
   --da-profile-backup-receipt "$da_profile_backup" \
+  --d-native-recovery-receipt "$d_native_recovery_receipt" \
+  --da-native-recovery-receipt "$da_native_recovery_receipt" \
+  --oneplus-native-recovery-receipt "$oneplus_native_recovery_receipt" \
   --sync-archive "$sync_archive" \
   --sync-acceptance "$sync_acceptance" \
   --sync-evidence "$sync_evidence" \
@@ -189,6 +200,7 @@ The finalizer enforces phase chronology, independent d and da machine
 identities, one physical OnePlus USB serial/model/fingerprint across every
 Android phase,
 fresh authenticated tab statuses, the complete d/da/OnePlus device matrix,
-both replica restores and both corruption fallbacks per device. It never
-overwrites an output. Only its schema-3
-`helium-sync-fleet-full-e2e-v3` receipt is a complete fleet pass.
+both tab replica restores and both corruption fallbacks per device, and the
+browser-native password/cookie restore from NAS and peer for every device. It
+never overwrites an output. Only its schema-4
+`helium-sync-fleet-full-e2e-v4` receipt is a complete fleet pass.
