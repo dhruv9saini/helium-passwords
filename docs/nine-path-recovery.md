@@ -138,3 +138,29 @@ and OnePlus, on exact returned and checksum-admitted artifacts. A row stays
 open when only its source exists, its archive exists without a readback, only
 one replica restored, the receipt belongs to a different artifact or device,
 or any personal profile was used for the drill.
+
+## Live deployment state (2026-08-08)
+
+The fixed backup topology and its fail-closed schedulers are installed, but the
+nine-path runtime gate is not being reported as complete prematurely:
+
+- lm's disposable Tailnet journal service is live only on
+  `100.100.105.47:44719`; its stopped archive/restore drill passes against
+  `/srv/nas/helium-sync-server-disposable`.
+- The P3/C3 six-hour native-recovery schedulers are installed on d, da, and lm
+  for OnePlus, but remain disabled until the returned browser artifacts create
+  both fresh neutral snapshots. Enabling a scheduler first requires one
+  checksum-verified generation at both of its fixed destinations.
+- The T2 scheduler and current `helium-tabs` producer are staged on all three
+  sources. d and da use inactive systemd user timers. OnePlus has only the
+  disabled Arch-chroot source, config template, and Magisk-runner template: no
+  active config, enable marker, or `service.d` runner exists.
+- OnePlus is reachable through its Tailnet address and authorized rooted ADB.
+  Its installed production packages are outside this disposable gate and have
+  not been opened or changed. Device execution must use a newly built,
+  checksum-admitted `computer.helium.sync.test` package.
+
+These installed-but-disabled states are deliberate. The timers become active
+only after the current Linux and Android test artifacts pass native
+password/cookie/tab capture and restore on newly marked disposable profiles;
+production profiles and the production Android package are not gate inputs.
