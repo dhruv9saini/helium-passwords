@@ -83,6 +83,8 @@ assert.match(androidBackup,
   /CHROMIUM_ANDROID_PACKAGE:-computer\.helium\.sync\.test/);
 assert.match(androidBackup,
   /\[\[ "\$package" == computer\.helium\.sync\.test \]\]/);
+assert.match(androidBackup, /verify-snapshot-stream/);
+assert.match(androidBackup, /--max-age-seconds 600/);
 assert.doesNotMatch(scheduler,
   /\/data\/user\/0\/computer\.helium\.sync\/\*/);
 

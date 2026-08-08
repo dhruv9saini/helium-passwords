@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 backup_tool=${HELIUM_PROFILE_BACKUP_TOOL:-$repo_root/scripts/profile-backup/helium-profile-backup.sh}
+acceptance=${HELIUM_NATIVE_RECOVERY_ACCEPTANCE:-$repo_root/scripts/native-recovery/acceptance.mjs}
 adb_bin=${ADB:-adb}
 package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync.test}
 
@@ -68,6 +69,12 @@ find \"\$ROOT\" -mindepth 1 -maxdepth 1 -printf \"%f\\n\" | sort
   echo "Android native recovery snapshot inventory is invalid" >&2
   exit 1
 }
+for kind in passwords cookies; do
+  "$adb_bin" exec-out /debug_ramdisk/su -c \
+    "cat '$recovery_path/$kind.current.json'" |
+    node "$acceptance" verify-snapshot-stream --kind "$kind" \
+      --device oneplus --max-age-seconds 600 >/dev/null
+done
 
 archive_parent=${recovery_path%/*}
 archive_root=${recovery_path##*/}

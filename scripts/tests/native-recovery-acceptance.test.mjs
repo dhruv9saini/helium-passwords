@@ -12,6 +12,7 @@ import {
   finalizeDevice,
   verifyRestore,
   verifySnapshot,
+  verifySnapshotBytes,
 } from "../native-recovery/acceptance.mjs";
 
 const sha256 = value =>
@@ -157,4 +158,11 @@ test("native recovery evidence binds both browser APIs and both destinations",
       verifySnapshot(corruptedFile, "passwords", "d"),
       /records checksum changed/,
     );
+    const streamSnapshot = makeSnapshot("cookies", cookieRecords);
+    const streamed = verifySnapshotBytes(
+      Buffer.from(JSON.stringify(streamSnapshot)), "cookies", "d");
+    assert.equal(streamed.state_sha256, streamSnapshot.state_sha256);
+    assert.throws(() => verifySnapshotBytes(
+      Buffer.from(JSON.stringify(corrupted)), "passwords", "d"),
+    /records checksum changed/);
   });

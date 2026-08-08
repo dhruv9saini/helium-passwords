@@ -127,10 +127,9 @@ function validateCookie(cookie, label) {
   }
 }
 
-export async function verifySnapshot(file, expectedKind, expectedDevice,
+function validateSnapshot(snapshot, expectedKind, expectedDevice,
   maxAgeSeconds) {
   if (!KINDS.has(expectedKind)) fail("snapshot kind is invalid");
-  const snapshot = await privateJSON(file, `${expectedKind} snapshot`);
   exactKeys(snapshot.value, [
     "schema_version", "kind", "format", "source_device",
     "captured_at_windows_us", "record_count", "records",
@@ -205,6 +204,39 @@ export async function verifySnapshot(file, expectedKind, expectedDevice,
     records_sha256: snapshot.value.records_sha256,
     state_sha256: snapshot.value.state_sha256,
   };
+}
+
+export async function verifySnapshot(file, expectedKind, expectedDevice,
+  maxAgeSeconds) {
+  const snapshot = await privateJSON(file, `${expectedKind} snapshot`);
+  return validateSnapshot(
+    snapshot, expectedKind, expectedDevice, maxAgeSeconds);
+}
+
+export function verifySnapshotBytes(raw, expectedKind, expectedDevice,
+  maxAgeSeconds) {
+  if (!Buffer.isBuffer(raw) || raw.length < 1 || raw.length > MAX_SNAPSHOT) {
+    fail(`${expectedKind} snapshot stream is empty or exceeds its size limit`);
+  }
+  let value;
+  try {
+    value = JSON.parse(raw.toString("utf8"));
+  } catch {
+    fail(`${expectedKind} snapshot stream is not valid JSON`);
+  }
+  return validateSnapshot({resolved: null, raw, value}, expectedKind,
+    expectedDevice, maxAgeSeconds);
+}
+
+async function readSnapshotStdin() {
+  const chunks = [];
+  let size = 0;
+  for await (const chunk of process.stdin) {
+    size += chunk.length;
+    if (size > MAX_SNAPSHOT) fail("snapshot stream exceeds its size limit");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks, size);
 }
 
 async function verifyBrowserReceipt(file, snapshot) {
@@ -451,6 +483,18 @@ async function main(argv) {
     process.stdout.write(`snapshot=verified\nkind=${result.kind}\ndevice=${result.device}\ncount=${result.count}\nsnapshot_sha256=${result.file_sha256}\n`);
     return;
   }
+  if (command === "verify-snapshot-stream") {
+    const allowed = new Set(["kind", "device", "max-age-seconds"]);
+    if (!args.kind || Object.keys(args).some(name => !allowed.has(name))) {
+      fail("usage: acceptance.mjs verify-snapshot-stream --kind passwords|cookies [--device DEVICE] [--max-age-seconds 600]");
+    }
+    const maxAge = args["max-age-seconds"] === undefined
+      ? undefined : Number(args["max-age-seconds"]);
+    const result = verifySnapshotBytes(
+      await readSnapshotStdin(), args.kind, args.device, maxAge);
+    process.stdout.write(`snapshot=verified\nkind=${result.kind}\ndevice=${result.device}\ncount=${result.count}\nsnapshot_sha256=${result.file_sha256}\n`);
+    return;
+  }
   if (command === "verify-restore") {
     for (const name of ["kind", "device", "destination", "snapshot",
       "browser-receipt", "profile-receipt", "artifact", "output"]) {
@@ -481,7 +525,7 @@ async function main(argv) {
     process.stdout.write(`native_recovery=verified\ndevice=${result.device}\ngeneration=${result.generation}\n`);
     return;
   }
-  fail("usage: acceptance.mjs <verify-snapshot|verify-restore|finalize-device> [options]");
+  fail("usage: acceptance.mjs <verify-snapshot|verify-snapshot-stream|verify-restore|finalize-device> [options]");
 }
 
 if (process.argv[1] &&
