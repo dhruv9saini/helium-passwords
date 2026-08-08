@@ -21,6 +21,20 @@ validate_job() {
     }
 }
 
+validate_owner() {
+    [[ "$1" =~ ^/[a-z0-9][a-z0-9_/-]{0,94}$ ]] || {
+        echo "invalid job owner: $1" >&2
+        exit 2
+    }
+}
+
+validate_generation() {
+    [[ "$1" =~ ^[a-z0-9][a-z0-9._-]{7,127}$ ]] || {
+        echo "invalid job generation: $1" >&2
+        exit 2
+    }
+}
+
 gib() {
     printf '%s\n' "$(( $1 * 1024 * 1024 * 1024 ))"
 }
@@ -33,7 +47,7 @@ profile() {
             cpu_weight=10
             memory_high=4G
             memory_max=5G
-            tasks_max=256
+            tasks_max=1024
             min_mem_total_bytes=$(gib 7)
             min_mem_available_bytes=$(gib 2)
             watchdog_mem_floor_bytes=$(gib 1)
@@ -138,6 +152,64 @@ exact_value() {
             print value
         }
     ' "${file}"
+}
+
+require_job_ownership() {
+    local job=$1
+    local owner=${2:-}
+    local generation=${3:-}
+    local lease="${state_root}/${job}/owner.env"
+    [ -e "${lease}" ] || [ -L "${lease}" ] || return 0
+    [ -f "${lease}" ] && [ ! -L "${lease}" ] || {
+        echo "invalid job ownership record: ${job}" >&2
+        exit 1
+    }
+    local expected_job expected_owner expected_generation
+    expected_job=$(exact_value "${lease}" job)
+    expected_owner=$(exact_value "${lease}" owner)
+    expected_generation=$(exact_value "${lease}" generation)
+    [ "${expected_job}" = "${job}" ] || {
+        echo "job ownership record targets another job: ${job}" >&2
+        exit 1
+    }
+    validate_owner "${expected_owner}"
+    validate_generation "${expected_generation}"
+    [ "${owner}" = "${expected_owner}" ] && \
+        [ "${generation}" = "${expected_generation}" ] || {
+        echo "job ownership mismatch: ${job}" >&2
+        exit 1
+    }
+}
+
+claim_job_ownership() {
+    local job=$1
+    local owner=$2
+    local generation=$3
+    validate_job "${job}"
+    validate_owner "${owner}"
+    validate_generation "${generation}"
+    local state_dir="${state_root}/${job}"
+    [ -d "${state_dir}" ] && [ ! -L "${state_dir}" ] || {
+        echo "unknown or unsafe job state: ${job}" >&2
+        exit 1
+    }
+    local lease="${state_dir}/owner.env"
+    if [ -e "${lease}" ]; then
+        require_job_ownership "${job}" "${owner}" "${generation}"
+        printf 'claimed=%s\nexisting=true\nowner=%s\ngeneration=%s\n' \
+            "${job}" "${owner}" "${generation}"
+        return
+    fi
+    local temp="${lease}.tmp.$$"
+    {
+        printf 'job=%s\n' "${job}"
+        printf 'owner=%s\n' "${owner}"
+        printf 'generation=%s\n' "${generation}"
+        printf 'claimed_at=%s\n' "$(date --iso-8601=seconds)"
+    } >"${temp}"
+    mv "${temp}" "${lease}"
+    printf 'claimed=%s\nexisting=false\nowner=%s\ngeneration=%s\n' \
+        "${job}" "${owner}" "${generation}"
 }
 
 command_text() {
@@ -1406,8 +1478,11 @@ logs_job() {
 
 cancel_job() {
     local job=$1
+    local owner=${2:-}
+    local generation=${3:-}
     validate_job "${job}"
     local state_dir="${state_root}/${job}"
+    require_job_ownership "${job}" "${owner}" "${generation}"
     [ -d "${state_dir}" ] || {
         echo "unknown job: ${job}" >&2
         exit 1
@@ -1474,7 +1549,10 @@ source_info() {
 artifact_info() {
     local job=$1
     local relative=$2
+    local owner_id=${3:-}
+    local generation=${4:-}
     validate_job "${job}"
+    require_job_ownership "${job}" "${owner_id}" "${generation}"
     [[ "${relative}" != /* && "${relative}" != *..* ]] || {
         echo "artifact path must be a contained relative path" >&2
         exit 2
@@ -1500,15 +1578,21 @@ artifact_info() {
 mark_returned() {
     local job=$1
     local sha=$2
+    local owner=${3:-}
+    local generation=${4:-}
     validate_job "${job}"
+    require_job_ownership "${job}" "${owner}" "${generation}"
     printf 'returned_at=%s\nsha256=%s\n' "$(date --iso-8601=seconds)" "${sha}" \
         >"${state_root}/${job}/artifact-returned.env"
 }
 
 cleanup_job() {
     local job=$1
+    local owner_id=${2:-}
+    local generation=${3:-}
     validate_job "${job}"
     local state_dir="${state_root}/${job}"
+    require_job_ownership "${job}" "${owner_id}" "${generation}"
     local owner
     owner=$(workspace_owner "${job}") || {
         echo "job has invalid workspace ownership: ${job}" >&2
@@ -1583,6 +1667,7 @@ case "${command}" in
     status) status_job "$@" ;;
     limits) limits_job "$@" ;;
     logs) logs_job "$@" ;;
+    claim) claim_job_ownership "$@" ;;
     cancel) cancel_job "$@" ;;
     terminal) terminal_job "$@" ;;
     source-info) source_info "$@" ;;

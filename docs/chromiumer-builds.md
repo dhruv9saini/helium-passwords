@@ -156,7 +156,7 @@ systemd service in its own cgroup plus a separate health-watchdog service.
 | CPU | hard `200%` quota, weight `10`, nice `15` |
 | Memory | `4G` high, `5G` hard max, `0` swap inside the unit |
 | I/O | weight `10`, Linux idle I/O scheduling class |
-| Processes/threads | `TasksMax=256` |
+| Processes/threads | `TasksMax=1024`; compilation remains one-job, while Chromium source hydration may create many lightweight Git/Python helper threads inside that one job |
 | Job tree | explicit per-job allocated-block budget; the current full-target measurement uses `80 GiB`, while `100 GiB` is an optional larger ceiling only after a new capacity decision |
 | Root free space | `2 GiB` unprivileged floor, independent of the job budget and checked on `/` |
 | Host available memory | `2 GiB` required at start; watchdog stops after two readings below `1 GiB` |
@@ -183,6 +183,18 @@ TCP `CLOSE-WAIT` for 45--74 minutes, gclient emitted its five-minute stall
 diagnostic, and the otherwise healthy job was cancelled through the official
 wrapper with exit `130`. The returned source sentinel and retained wrapper
 journal are diagnostic evidence only, not a browser artifact.
+The same run proved that the former `TasksMax=256` process/thread ceiling was
+below source hydration's real helper-thread fan-out even with one gclient job;
+it failed at 256 and again at 512. `TasksMax=1024` is therefore the persisted
+production ceiling. This does not increase Ninja, Gclient, ThinLTO, GRIT, or
+Mojom job counts: those remain serialized independently.
+
+Claimed jobs also carry a durable, non-secret owner and generation lease in
+both the local management state and remote job state. A claimed job's manual
+cancel, artifact read/receipt, and cleanup transitions fail closed unless both
+identifiers match. Automatic dual-path-loss cancellation loads and forwards
+the same lease; stale task controllers cannot reuse an old job name to perform
+a destructive transition.
 Chromium's Mojom parser normally creates its own process pool independently of
 Ninja. The Sync patch series caps that pool with the existing
 `AUTONINJA_JOBS` value, so a serialized Android continuation cannot silently

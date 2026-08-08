@@ -5,14 +5,29 @@ umask 077
 config_path=${HELIUM_CHROMIUMER_MANAGEMENT_CONFIG:-/home/d/.config/helium/chromiumer-management.conf}
 state_root=${HELIUM_CHROMIUMER_MANAGEMENT_STATE_ROOT:-/home/d/.local/state/helium-chromiumer-management}
 jobs_dir="${state_root}/jobs"
+leases_dir="${state_root}/leases"
 
 usage() {
-    echo "usage: chromiumer-management <register|unregister|poll-one|status|cancel> <job-id>" >&2
+    echo "usage: chromiumer-management <register|unregister|poll-one|status|claim|authorize|cancel> <job-id>" >&2
 }
 
 validate_job() {
     [[ "$1" =~ ^[a-z0-9][a-z0-9-]{0,47}$ ]] || {
         echo "invalid job id: $1" >&2
+        exit 2
+    }
+}
+
+validate_owner() {
+    [[ "$1" =~ ^/[a-z0-9][a-z0-9_/-]{0,94}$ ]] || {
+        echo "invalid job owner: $1" >&2
+        exit 2
+    }
+}
+
+validate_generation() {
+    [[ "$1" =~ ^[a-z0-9][a-z0-9._-]{7,127}$ ]] || {
+        echo "invalid job generation: $1" >&2
         exit 2
     }
 }
@@ -97,6 +112,94 @@ print_probe() {
 
 state_path() {
     printf '%s/%s.env\n' "${jobs_dir}" "$1"
+}
+
+lease_path() {
+    printf '%s/%s.env\n' "${leases_dir}" "$1"
+}
+
+lease_exists() {
+    local file
+    file=$(lease_path "$1")
+    [ -e "${file}" ] || [ -L "${file}" ]
+}
+
+load_lease() {
+    local expected=$1
+    local file
+    file=$(lease_path "${expected}")
+    [ -f "${file}" ] && [ ! -L "${file}" ] || return 1
+    unset lease_job lease_owner lease_generation lease_claimed_at
+    # The file is generated atomically by claim_job below.
+    # shellcheck disable=SC1090
+    source "${file}"
+    [ "${lease_job:-}" = "${expected}" ] || return 1
+    [[ "${lease_owner:-}" =~ ^/[a-z0-9][a-z0-9_/-]{0,94}$ ]] || return 1
+    [[ "${lease_generation:-}" =~ ^[a-z0-9][a-z0-9._-]{7,127}$ ]] || \
+        return 1
+    [[ "${lease_claimed_at:-}" =~ ^[0-9]+$ ]] || return 1
+}
+
+require_caller_lease() {
+    local job=$1
+    if lease_exists "${job}"; then
+        load_lease "${job}" || {
+            echo "invalid job ownership lease: ${job}" >&2
+            exit 1
+        }
+        [ "${HELIUM_JOB_OWNER_ID:-}" = "${lease_owner}" ] && \
+            [ "${HELIUM_JOB_GENERATION:-}" = "${lease_generation}" ] || {
+            echo "job ownership mismatch: ${job}" >&2
+            exit 1
+        }
+    else
+        lease_owner=
+        lease_generation=
+    fi
+}
+
+claim_job() {
+    local job=$1
+    validate_job "${job}"
+    validate_owner "${HELIUM_JOB_OWNER_ID:-}"
+    validate_generation "${HELIUM_JOB_GENERATION:-}"
+    lock_state
+    load_state "${job}"
+    local file temp
+    file=$(lease_path "${job}")
+    if lease_exists "${job}"; then
+        load_lease "${job}" || {
+            echo "invalid job ownership lease: ${job}" >&2
+            exit 1
+        }
+        [ "${lease_owner}" = "${HELIUM_JOB_OWNER_ID}" ] && \
+            [ "${lease_generation}" = "${HELIUM_JOB_GENERATION}" ] || {
+            echo "job already has a different owner or generation: ${job}" >&2
+            exit 1
+        }
+        printf 'claimed=%s\nexisting=true\nowner=%s\ngeneration=%s\n' \
+            "${job}" "${lease_owner}" "${lease_generation}"
+        return
+    fi
+    temp="${file}.tmp.$$"
+    {
+        printf 'lease_job=%q\n' "${job}"
+        printf 'lease_owner=%q\n' "${HELIUM_JOB_OWNER_ID}"
+        printf 'lease_generation=%q\n' "${HELIUM_JOB_GENERATION}"
+        printf 'lease_claimed_at=%q\n' "$(date +%s)"
+    } >"${temp}"
+    mv "${temp}" "${file}"
+    printf 'claimed=%s\nexisting=false\nowner=%s\ngeneration=%s\n' \
+        "${job}" "${HELIUM_JOB_OWNER_ID}" "${HELIUM_JOB_GENERATION}"
+}
+
+authorize_job() {
+    local job=$1
+    validate_job "${job}"
+    load_state "${job}"
+    require_caller_lease "${job}"
+    printf 'authorized=%s\nowner=%s\ngeneration=%s\n' \
+        "${job}" "${lease_owner}" "${lease_generation}"
 }
 
 timer_unit() {
@@ -285,12 +388,22 @@ poll_job() {
             state_cancel_pending=no
         elif [[ "${remote_state}" =~ ^(running|finishing|staged)$ ]] && \
             [ "${state_cancel_pending}" = yes ] && \
-            [ "${state_cancel_delivered}" = no ] && \
-            remote_worker_call "${selected_path}" cancel "${job}" \
-                >/dev/null 2>&1; then
-            state_cancel_pending=no
-            state_cancel_delivered=yes
-            echo "CANCEL job=${job} path=${selected_path} origin=${state_cancel_origin}" >&2
+            [ "${state_cancel_delivered}" = no ]; then
+            if lease_exists "${job}"; then
+                load_lease "${job}" || {
+                    echo "invalid job ownership lease: ${job}" >&2
+                    exit 1
+                }
+                cancel_args=("${job}" "${lease_owner}" "${lease_generation}")
+            else
+                cancel_args=("${job}")
+            fi
+            if remote_worker_call "${selected_path}" cancel \
+                "${cancel_args[@]}" >/dev/null 2>&1; then
+                state_cancel_pending=no
+                state_cancel_delivered=yes
+                echo "CANCEL job=${job} path=${selected_path} origin=${state_cancel_origin}" >&2
+            fi
         fi
     fi
     save_state
@@ -315,6 +428,7 @@ cancel_job() {
     validate_job "${job}"
     lock_state
     load_state "${job}"
+    require_caller_lease "${job}"
     [ "${state_status}${state_cancel_delivered}" = watchingno ] || {
         echo "job is terminal or cancellation was delivered: ${job}" >&2
         exit 1
@@ -339,8 +453,8 @@ status_job() {
 }
 
 load_config
-mkdir -p "${jobs_dir}"
-chmod 700 "${state_root}" "${jobs_dir}"
+mkdir -p "${jobs_dir}" "${leases_dir}"
+chmod 700 "${state_root}" "${jobs_dir}" "${leases_dir}"
 command=${1:-}
 shift || true
 [ "$#" -eq 1 ] || { usage; exit 2; }
@@ -349,6 +463,8 @@ case "${command}" in
     unregister) unregister_job "$1" ;;
     poll-one) poll_one "$1" ;;
     status) status_job "$1" ;;
+    claim) claim_job "$1" ;;
+    authorize) authorize_job "$1" ;;
     cancel) cancel_job "$1" ;;
     *) usage; exit 2 ;;
 esac

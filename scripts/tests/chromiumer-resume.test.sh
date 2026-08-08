@@ -206,7 +206,7 @@ exec 9>&-
 grep -Fq -- '--property=RuntimeMaxSec=28800' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--property=CPUQuota=200%' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--property=MemoryMax=5G' "${RESUME_TEST_SYSTEMD_RUNS}"
-grep -Fq -- '--property=TasksMax=256' "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--property=TasksMax=1024' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--setenv=HELIUM_BUILD_JOBS=1' \
     "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--setenv=AUTONINJA_JOBS=1' \

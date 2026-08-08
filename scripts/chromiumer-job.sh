@@ -27,6 +27,7 @@ Commands:
   terminal <job-id>
   limits <job-id>
   logs <job-id> [line-count]
+  claim <job-id>
   cancel <job-id>
   management-status <job-id>
   fetch <job-id> <relative-artifact> [lm-or-NAS-directory]
@@ -403,6 +404,22 @@ logs() {
     remote_exec "${remote_worker}" logs "$@"
 }
 
+claim() {
+    local job=$1
+    validate_job "${job}"
+    : "${HELIUM_JOB_OWNER_ID:?set HELIUM_JOB_OWNER_ID to claim a job}"
+    : "${HELIUM_JOB_GENERATION:?set HELIUM_JOB_GENERATION to claim a job}"
+    "${local_management}" claim "${job}"
+    install_worker
+    remote_exec "${remote_worker}" claim "${job}" \
+        "${HELIUM_JOB_OWNER_ID}" "${HELIUM_JOB_GENERATION}"
+}
+
+ownership_info() {
+    local job=$1
+    "${local_management}" authorize "${job}"
+}
+
 cancel() {
     [ -x "${local_management}" ] || {
         echo "Chromiumer management monitor is not installed: ${local_management}" >&2
@@ -428,10 +445,17 @@ fetch_artifact() {
         echo "artifact path must be a contained relative path" >&2
         exit 2
     }
+    local authorization owner_id generation
+    authorization=$(ownership_info "${job}")
+    owner_id=$(awk -F= '$1 == "owner" { print substr($0, 7) }' \
+        <<<"${authorization}")
+    generation=$(awk -F= '$1 == "generation" { print substr($0, 12) }' \
+        <<<"${authorization}")
     install_worker
 
     local info remote_path remote_sha local_path local_sha
-    info=$(remote_exec "${remote_worker}" artifact-info "${job}" "${relative}")
+    info=$(remote_exec "${remote_worker}" artifact-info "${job}" \
+        "${relative}" "${owner_id}" "${generation}")
     remote_path=$(awk -F= '$1 == "path" { print substr($0, 6) }' <<<"${info}")
     remote_sha=$(awk -F= '$1 == "sha256" { print $2 }' <<<"${info}")
     [ -n "${remote_path}" ] && [ -n "${remote_sha}" ] || {
@@ -461,13 +485,21 @@ fetch_artifact() {
         printf 'received_at=%s\n' "$(date --iso-8601=seconds)"
         printf 'received_on=%s\n' "$(uname -n)"
     } >"${destination}/artifact-receipt.env"
-    remote_exec "${remote_worker}" mark-returned "${job}" "${local_sha}"
+    remote_exec "${remote_worker}" mark-returned "${job}" "${local_sha}" \
+        "${owner_id}" "${generation}"
     printf 'artifact=%s\nsha256=%s\n' "${local_path}" "${local_sha}"
 }
 
 cleanup() {
+    local authorization owner_id generation
+    authorization=$(ownership_info "$1")
+    owner_id=$(awk -F= '$1 == "owner" { print substr($0, 7) }' \
+        <<<"${authorization}")
+    generation=$(awk -F= '$1 == "generation" { print substr($0, 12) }' \
+        <<<"${authorization}")
     install_worker
-    remote_exec "${remote_worker}" cleanup "$1"
+    remote_exec "${remote_worker}" cleanup "$1" \
+        "${owner_id}" "${generation}"
 }
 
 test_wrapper() {
@@ -511,6 +543,7 @@ case "${command}" in
     terminal) [ "$#" -eq 1 ] || exit 2; terminal "$@" ;;
     limits) [ "$#" -eq 1 ] || exit 2; limits "$@" ;;
     logs) [ "$#" -ge 1 ] && [ "$#" -le 2 ] || exit 2; logs "$@" ;;
+    claim) [ "$#" -eq 1 ] || exit 2; claim "$@" ;;
     cancel) [ "$#" -eq 1 ] || exit 2; cancel "$@" ;;
     management-status) [ "$#" -eq 1 ] || exit 2; management_status "$@" ;;
     fetch) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; fetch_artifact "$@" ;;

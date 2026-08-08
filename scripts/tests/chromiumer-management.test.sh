@@ -228,6 +228,55 @@ grep -Fqx 'tailscale' "${MGMT_CANCEL_PATH}"
 grep -Fqx 'state_cancel_origin=manual' \
     "${test_root}/state/jobs/${manual_job}.env"
 
+# A claimed job rejects a stale controller with no or mismatched generation.
+# The owner and generation are coordination identifiers, not secrets.
+guarded_job='management-guarded'
+guarded_owner='/root/helium_sync'
+guarded_generation='management-guarded-20260808-r1'
+"${management}" register "${guarded_job}" >/dev/null
+HELIUM_JOB_OWNER_ID="${guarded_owner}" \
+HELIUM_JOB_GENERATION="${guarded_generation}" \
+    "${management}" claim "${guarded_job}" >"${test_root}/claim.out"
+grep -Fqx "lease_owner=${guarded_owner}" \
+    "${test_root}/state/leases/${guarded_job}.env"
+grep -Fqx "lease_generation=${guarded_generation}" \
+    "${test_root}/state/leases/${guarded_job}.env"
+if "${management}" cancel "${guarded_job}" \
+    >"${test_root}/stale-cancel.out" 2>"${test_root}/stale-cancel.error"; then
+    echo "unowned controller cancelled a claimed job" >&2
+    exit 1
+fi
+grep -Fq 'job ownership mismatch' "${test_root}/stale-cancel.error"
+if HELIUM_JOB_OWNER_ID="${guarded_owner}" \
+    HELIUM_JOB_GENERATION='management-guarded-wrong-r1' \
+    "${management}" cancel "${guarded_job}" \
+    >"${test_root}/wrong-cancel.out" 2>"${test_root}/wrong-cancel.error"; then
+    echo "wrong job generation cancelled a claimed job" >&2
+    exit 1
+fi
+grep -Fq 'job ownership mismatch' "${test_root}/wrong-cancel.error"
+cp "${test_root}/state/leases/${guarded_job}.env" \
+    "${test_root}/guarded-lease.valid"
+printf 'lease_job=%s\n' "${guarded_job}" \
+    >"${test_root}/state/leases/${guarded_job}.env"
+if HELIUM_JOB_OWNER_ID="${guarded_owner}" \
+    HELIUM_JOB_GENERATION="${guarded_generation}" \
+    "${management}" authorize "${guarded_job}" \
+    >"${test_root}/malformed-authorize.out" \
+    2>"${test_root}/malformed-authorize.error"; then
+    echo "malformed ownership lease failed open" >&2
+    exit 1
+fi
+grep -Fq 'invalid job ownership lease' \
+    "${test_root}/malformed-authorize.error"
+cp "${test_root}/guarded-lease.valid" \
+    "${test_root}/state/leases/${guarded_job}.env"
+find "${MGMT_CANCEL_PATH}" -delete 2>/dev/null || true
+HELIUM_JOB_OWNER_ID="${guarded_owner}" \
+HELIUM_JOB_GENERATION="${guarded_generation}" \
+    "${management}" cancel "${guarded_job}" >/dev/null
+grep -Fqx 'tailscale' "${MGMT_CANCEL_PATH}"
+
 service="${repo_root}/systemd/helium-chromiumer-management@.service"
 timer="${repo_root}/systemd/helium-chromiumer-management@.timer"
 grep -Fq 'poll-one %i' "${service}"
@@ -245,6 +294,7 @@ remote_start_line=$(grep -n 'start production "${job}"' "${wrapper}" |
     head -1 | cut -d: -f1)
 [ "${registration_line}" -lt "${remote_start_line}" ]
 grep -Fq '"${local_management}" cancel "$1"' "${wrapper}"
+grep -Fq '"${local_management}" authorize "${job}"' "${wrapper}"
 
 printf 'chromiumer_management=passed\n'
 printf 'admission_successes=%s\ndual_failure_cycles=%s\n' 3 3
