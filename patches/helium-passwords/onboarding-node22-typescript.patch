@@ -1,0 +1,11 @@
+diff --git a/components/helium_onboarding/BUILD.gn b/components/helium_onboarding/BUILD.gn
+--- a/components/helium_onboarding/BUILD.gn
++++ b/components/helium_onboarding/BUILD.gn
+@@ -12,6 +12,7 @@ action("localized_strings") {
+     outputs = [ localized_strings_header ]
+ 
+     args = [
++        "--experimental-strip-types",
+         rebase_path("util/generate-i18n.mts", root_build_dir),
+         rebase_path(localized_strings_header, root_build_dir),
+     ]
