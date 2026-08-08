@@ -1246,6 +1246,10 @@ watch_job() {
     }
 
     while systemctl --user --quiet is-active "${unit}"; do
+        if [ "${HELIUM_WATCH_EXITED_IS_TERMINAL:-false}" = true ] &&
+            [ "$(systemctl --user show "${unit}" -p SubState --value)" = exited ]; then
+            break
+        fi
         local available root_available memory_available load used result
         if ! available=$(df -PB1 "${work_dir}" | awk 'NR == 2 { print $4 }') || \
             [[ ! "${available}" =~ ^[0-9]+$ ]]; then
