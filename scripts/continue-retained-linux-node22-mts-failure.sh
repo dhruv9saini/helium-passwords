@@ -161,12 +161,19 @@ first_completed=$(env_value "$first_failure" build_completed_at)
   echo "retained Node repair requires the untouched failed action and incomplete targets" >&2
   exit 1
 }
-grep -Fq 'rebase_path("util/generate-i18n.mts", root_build_dir)' \
-  "$onboarding_build" || {
+localized_action=$(awk '
+  /^action\("localized_strings"\) \{/ {capture=1}
+  capture {print}
+  capture && /^}/ {exit}
+' "$onboarding_build")
+if ! grep -Fq 'script = "//third_party/node/node.py"' \
+    <<<"$localized_action" ||
+    ! grep -Fq 'rebase_path("util/generate-i18n.mts", root_build_dir)' \
+      <<<"$localized_action"; then
   echo "retained onboarding action no longer names generate-i18n.mts" >&2
   exit 1
-}
-if grep -Fq -- '--experimental-strip-types' "$onboarding_build"; then
+fi
+if grep -Fq -- '--experimental-strip-types' <<<"$localized_action"; then
   echo "retained source already contains an unrecorded Node repair" >&2
   exit 1
 fi
