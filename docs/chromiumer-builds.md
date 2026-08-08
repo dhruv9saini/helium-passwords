@@ -174,6 +174,15 @@ measured reclaim loop. It does not change the CPU, memory, I/O, task, disk,
 root-space, watchdog, or eight-hour bounds. The worker exports all four
 job-count variables as `1`; the pinned environment and platform entry points
 reject missing or different values instead of choosing their own defaults.
+The prepared Linux core also passes `--jobs=1` to its actual `gclient sync`
+invocation. Its pinned depot_tools bootstrap patch removes gsutil's internal
+`-m` fan-out, so one gclient dependency cannot create another parallel worker
+pool behind the job-count boundary. Job `hs-sync-current-c82231f` established
+this second boundary: three concurrent git-cache bootstrap copies remained in
+TCP `CLOSE-WAIT` for 45--74 minutes, gclient emitted its five-minute stall
+diagnostic, and the otherwise healthy job was cancelled through the official
+wrapper with exit `130`. The returned source sentinel and retained wrapper
+journal are diagnostic evidence only, not a browser artifact.
 Chromium's Mojom parser normally creates its own process pool independently of
 Ninja. The Sync patch series caps that pool with the existing
 `AUTONINJA_JOBS` value, so a serialized Android continuation cannot silently

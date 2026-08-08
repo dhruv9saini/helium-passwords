@@ -141,6 +141,31 @@ if [ "${skip_submodules}" != true ]; then
         "${clone_helper}"
     grep -Fq "'git', 'fetch', '--depth=1', 'origin', '${expected_depot_tools_commit}'" \
         "${clone_helper}"
+
+    if [ "${platform}" = linux ]; then
+        grep -Fq "str(gcpath), 'sync', '-f', '-D', '-R', '--no-history', '--nohooks'," \
+            "${clone_helper}" || {
+            echo "Linux Helium core no longer has the expected gclient sync command" >&2
+            exit 1
+        }
+        sed -i.bak \
+            "s/str(gcpath), 'sync', '-f', '-D', '-R', '--no-history', '--nohooks',/str(gcpath), 'sync', '--jobs=1', '-f', '-D', '-R', '--no-history', '--nohooks',/" \
+            "${clone_helper}"
+        rm -f -- "${clone_helper}.bak"
+        grep -Fq "str(gcpath), 'sync', '--jobs=1', '-f', '-D', '-R', '--no-history', '--nohooks'," \
+            "${clone_helper}"
+
+        depot_tools_patch="${destination}/helium-chromium/utils/depot_tools.patch"
+        serial_git_cache_patch="${root_dir}/chromium/tooling/serialize-depot-tools-git-cache.patch"
+        [ -f "${depot_tools_patch}" ] && [ -f "${serial_git_cache_patch}" ] || {
+            echo "missing Linux depot_tools serialization patch input" >&2
+            exit 1
+        }
+        printf '\n' >>"${depot_tools_patch}"
+        cat "${serial_git_cache_patch}" >>"${depot_tools_patch}"
+        grep -Fq "code = gsutil.call('cp', '-r', latest_dir + \"/*\"," \
+            "${depot_tools_patch}"
+    fi
 fi
 
 core_series="${destination}/helium-chromium/patches/series"

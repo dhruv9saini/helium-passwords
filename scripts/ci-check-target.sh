@@ -67,6 +67,19 @@ git -C "${depot_tools_checkout}" fetch --quiet --depth=1 origin \
 git -C "${depot_tools_checkout}" checkout --quiet --detach FETCH_HEAD
 git -C "${depot_tools_checkout}" apply --check --ignore-whitespace \
     "${checkout}/helium-chromium/utils/depot_tools.patch"
+if [ "${platform}" = linux ]; then
+    grep -Fq "str(gcpath), 'sync', '--jobs=1', '-f', '-D', '-R', '--no-history', '--nohooks'," \
+        "${checkout}/helium-chromium/utils/clone.py"
+    git -C "${depot_tools_checkout}" apply --ignore-whitespace \
+        "${checkout}/helium-chromium/utils/depot_tools.patch"
+    grep -Fq "code = gsutil.call('cp', '-r', latest_dir + \"/*\"," \
+        "${depot_tools_checkout}/git_cache.py"
+    if grep -Fq "code = gsutil.call('-m', 'cp', '-r', latest_dir + \"/*\"," \
+        "${depot_tools_checkout}/git_cache.py"; then
+        echo "Linux depot_tools retained parallel git-cache bootstrap copies" >&2
+        exit 1
+    fi
+fi
 
 while IFS= read -r patch_path || [ -n "${patch_path}" ]; do
     patch_path="${patch_path%$'\r'}"

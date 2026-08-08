@@ -1,0 +1,17 @@
+diff --git a/git_cache.py b/git_cache.py
+--- a/git_cache.py
++++ b/git_cache.py
+@@ -363,10 +363,12 @@ class Mirror:
+             self.RunGit(['init', '-b', 'main', '--bare'], cwd=tempdir)
+             self.print('Downloading files in %s/* into %s.' %
+                        (latest_dir, tempdir))
+             with self.print_duration_of('download'):
+                 with GSUTIL_CP_SEMAPHORE:
+-                    code = gsutil.call('-m', 'cp', '-r', latest_dir + "/*",
++                    # A parallel gsutil copy can strand worker sockets in
++                    # CLOSE-WAIT inside a resource-bounded build cgroup.
++                    code = gsutil.call('cp', '-r', latest_dir + "/*",
+                                        tempdir)
+             if code:
+                 return False
+             # A quick validation that all references are valid.
