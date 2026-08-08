@@ -227,6 +227,17 @@ incoming directory and authenticated da SSH incoming directory. Both copies
 must match the local archive-stream hash before either generation becomes
 active.
 
+Disposable Android gates set
+`CHROMIUM_ANDROID_PACKAGE=computer.helium.sync.test` and
+`ANDROID_ADB_SERIAL=oneplus:5555`. For that exact debuggable package, both the
+full-profile producer and enrollment installer reconnect and bind the fixed
+serial, then use Android `run-as` instead of Magisk. The profile archive and
+enrollment tar stream directly across ADB; the enrollment bundle is never
+published under `/data/local/tmp`. This rootless path cannot name the
+production package. The production `computer.helium.sync` boundary remains a
+separate stopped-profile, rooted operation and still requires explicit review
+of its admitted two-copy backup before any mutation.
+
 `configure-android-chromium-sync.sh` accepts one explicit oneplus join
 directory containing exactly `base_url`, `client.json`, and `token`. It
   requires direct private-Tailnet HTTP, a pending or active oneplus join state, a path-bound

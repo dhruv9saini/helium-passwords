@@ -25,6 +25,9 @@ const android = read(
 const androidBackup = read(
   "scripts/android-local/backup-android-native-recovery.sh",
 );
+const androidProfileBackup = read(
+  "scripts/android-local/backup-android-chromium-profile.sh",
+);
 const scheduler = read("scripts/native-recovery/install-scheduler.sh");
 const fleetFinalizer = read("scripts/android-acceptance/full-e2e.mjs");
 const runtimeDrill = read("scripts/native-recovery/runtime-drill.sh");
@@ -79,6 +82,10 @@ assert.match(desktop, /\.local\/share\/helium-native-recovery\/\$device_id\/defa
 assert.match(desktop, /native_recovery_root/);
 assert.match(android, /files\/helium-native-recovery\/oneplus\/default/);
 assert.match(android, /native_recovery_root/);
+assert.match(android, /computer\.helium\.sync\.test/);
+assert.match(android, /exec-out run-as "\$package"/);
+assert.match(android, /disposable package is not available through its debuggable sandbox/);
+assert.match(android, /else\n[\s\S]*debug_ramdisk\/su -c/);
 assert.match(androidBackup,
   /CHROMIUM_ANDROID_PACKAGE:-computer\.helium\.sync\.test/);
 assert.match(androidBackup,
@@ -92,6 +99,12 @@ assert.match(androidBackup, /disposable package is not available through its deb
 assert.doesNotMatch(androidBackup, /debug_ramdisk|\bsu\s+-c\b/);
 assert.match(androidBackup, /verify-snapshot-stream/);
 assert.match(androidBackup, /--max-age-seconds 600/);
+assert.match(androidProfileBackup, /ANDROID_ADB_SERIAL/);
+assert.match(androidProfileBackup, /oneplus:5555/);
+assert.match(androidProfileBackup,
+  /computer\.helium\.sync\.test[\s\S]*exec-out run-as "\$package"/);
+assert.match(androidProfileBackup,
+  /else\n[\s\S]*exec-out \/debug_ramdisk\/su -c/);
 assert.doesNotMatch(scheduler,
   /\/data\/user\/0\/computer\.helium\.sync\/\*/);
 
