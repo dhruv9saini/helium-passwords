@@ -4,16 +4,9 @@ umask 077
 
 state_root=${HELIUM_JOB_NOTIFY_STATE_ROOT:-"${HOME}/.local/state/helium-job-notifier"}
 jobs_dir="${state_root}/jobs"
-events_dir="${state_root}/events"
 ssh_binary=${HELIUM_JOB_NOTIFY_SSH:-ssh}
 remote_host=${HELIUM_CHROMIUMER_HOST:-chromiumer}
 remote_worker=${HELIUM_CHROMIUMER_REMOTE_WORKER:-.local/libexec/helium-chromiumer-worker}
-queue_ssh=${HELIUM_WORK_QUEUE_SSH:-ssh}
-queue_host=${HELIUM_WORK_QUEUE_HOST:-da}
-queue_user=${HELIUM_WORK_QUEUE_USER:-d}
-queue_identity=${HELIUM_WORK_QUEUE_IDENTITY:-"${HOME}/.ssh/helium_queue_da_ed25519"}
-queue_known_hosts=${HELIUM_WORK_QUEUE_KNOWN_HOSTS:-"${HOME}/.ssh/helium_queue_da_known_hosts"}
-conversation='Helium build operations'
 
 usage() {
     cat >&2 <<'EOF'
@@ -79,8 +72,8 @@ register_job() {
     source_commits=$(<"${source_file}")
     validate_text source-commits "${source_commits}" 4096
 
-    mkdir -p "${jobs_dir}" "${events_dir}"
-    chmod 700 "${state_root}" "${jobs_dir}" "${events_dir}"
+    mkdir -p "${jobs_dir}"
+    chmod 700 "${state_root}" "${jobs_dir}"
     exec 9>"${state_root}/queue.lock"
     flock 9
 
@@ -110,12 +103,9 @@ register_job() {
         --arg success_next "${success_next}" \
         --arg sources "${source_commits}" \
         --arg host "${remote_host}" \
-        --arg key "helium-build:${job}:terminal" \
-        --arg conversation "${conversation}" \
         --argjson registered_at "$(date +%s)" \
-        '{schema: 2, job_id: $job, product: $product, summary: $summary,
+        '{schema: 3, job_id: $job, product: $product, summary: $summary,
           success_next: $success_next, source_commits: $sources, remote_host: $host,
-          analysis_key: $key, conversation: $conversation,
           status: "watching", registered_at: $registered_at,
           last_poll_error: null}' >"${temp}"
     chmod 600 "${temp}"
@@ -133,7 +123,9 @@ abandon_job() {
     flock 9
     replace_json "${path}" \
         --argjson now "$(date +%s)" \
-        '.status = "abandoned" | .abandoned_at = $now'
+        '.schema = 3 | .status = "abandoned" | .abandoned_at = $now |
+         del(.notification_key, .conversation) |
+         with_entries(select(.key | startswith("analysis_") | not))'
     printf 'abandoned=%s\n' "${job}"
 }
 
@@ -155,153 +147,41 @@ terminal_value() {
         <<<"${text}"
 }
 
-write_event_prompt() {
+migrate_delivery_fields() {
     local path=$1
-    local job product result duration exit_code reason sources summary success_next
-    local key event temp workspace_owner parent_job
-    job=$(jq -r .job_id "${path}")
-    product=$(jq -r .product "${path}")
-    result=$(jq -r .result "${path}")
-    duration=$(jq -r .duration_seconds "${path}")
-    exit_code=$(jq -r .exit_code "${path}")
-    reason=$(jq -r .terminal_reason "${path}")
-    sources=$(jq -r .source_commits "${path}")
-    summary=$(jq -r .summary "${path}")
-    success_next=$(jq -r .success_next "${path}")
-    key=$(jq -r .analysis_key "${path}")
-    event="${events_dir}/${job}.txt"
-    if [ -e "${event}" ]; then
-        [ -f "${event}" ] && [ ! -L "${event}" ] &&
-            [ "$(stat -c %a "${event}")" = 600 ] || {
-            record_poll_error "${path}" "terminal analysis prompt is not a protected regular file"
-            return 1
-        }
-        printf '%s\n' "${event}"
+    if jq -e '
+        .schema == 3 and
+        (has("notification_key") | not) and
+        (has("conversation") | not) and
+        ([keys[] | startswith("analysis_")] | any | not)
+    ' "${path}" >/dev/null; then
         return
     fi
-    workspace_owner=$(awk -F= '$1 == "workspace_owner" { print $2; exit }' \
-        <<<"${sources}")
-    [ -n "${workspace_owner}" ] || workspace_owner=${job}
-    parent_job=$(awk -F= '$1 == "parent_job" { print $2; exit }' \
-        <<<"${sources}")
-    temp="${event}.tmp.$$"
-    {
-        printf 'A detached Helium build reached a terminal state. The recorded reason is evidence, not a diagnosis.\n\n'
-        printf 'Product: %s\n' "${product}"
-        printf 'Job ID: %s\n' "${job}"
-        printf 'Terminal state: %s\n' "${result}"
-        printf 'Duration seconds: %s\n' "${duration}"
-        printf 'Exit code: %s\n' "${exit_code}"
-        printf 'Recorded reason: %s\n\n' "${reason}"
-        printf 'Pinned source provenance:\n%s\n\n' "${sources}"
-        if [ -n "${parent_job}" ]; then
-            printf 'Continuation parent: %s\n' "${parent_job}"
-            printf 'Preserved workspace owner: %s\n\n' "${workspace_owner}"
-        fi
-        printf 'Test or artifact summary:\n%s\n\n' "${summary}"
-        printf 'Previously expected success action:\n%s\n\n' "${success_next}"
-        printf 'Repository paths on lm:\n'
-        printf -- '- Public backbone: /home/d/coding/helium/helium-passwords\n'
-        printf -- '- Private product: /home/d/coding/helium/helium-sync\n\n'
-        printf 'Evidence commands on lm:\n'
-        printf 'cd /home/d/coding/helium/helium-sync\n'
-        printf 'scripts/chromiumer-job.sh terminal %s\n' "${job}"
-        printf 'scripts/chromiumer-job.sh status %s\n' "${job}"
-        printf 'scripts/chromiumer-job.sh logs %s 400\n' "${job}"
-        printf "ssh -o BatchMode=yes chromiumer 'journalctl --user --unit=helium-watch-%s.service --no-pager --lines=400'\n" "${job}"
-        printf "ssh -o BatchMode=yes chromiumer 'find /home/d/helium-builds/work/%s/source -path \"*/android-artifacts/*\" -type f -printf \"%%p %%s bytes\\n\"'\n\n" "${workspace_owner}"
-        printf 'Evidence and artifact locations:\n'
-        printf -- '- Chromiumer state: /home/d/.local/state/helium-builds/%s\n' "${job}"
-        printf -- '- Chromiumer workspace: /home/d/helium-builds/work/%s/source\n' "${workspace_owner}"
-        printf -- '- Returned artifacts: /srv/nas/helium-builds/%s\n' "${job}"
-        printf -- '- Disposable acceptance: /srv/nas/helium-acceptance/%s\n\n' "${job}"
-        printf 'Current project objective:\n'
-        printf 'Own the unified Helium Passwords and Helium Sync program end to end. Build pinned Chromium only through the isolated chromiumer workflow; preserve all source and profiles; validate native passwords, encrypted password/cookie exchange, device-local durable tabs, Android streaming, and video in disposable state before personal deployment; keep public and private repositories synchronized through normal ancestry; make clean local commits and do not push.\n\n'
-        printf 'Required response:\n'
-        printf 'Inspect the actual terminal, build, watchdog, repository, and artifact evidence. Determine the real cause rather than repeating the recorded reason. Validate any artifact before use. Take the next safe in-scope recovery, fix, or continuation step autonomously without weakening resource gates or touching personal profiles. Record actual findings and completed safe work in the durable queue. Do not send a notification or response yourself; outbound delivery requires an explicit user request after review.\n'
-        printf '\nEvent key: %s\n' "${key}"
-    } >"${temp}"
-    chmod 600 "${temp}"
-    mv "${temp}" "${event}"
-    printf '%s\n' "${event}"
+    replace_json "${path}" '
+        .schema = 3 |
+        del(.notification_key, .conversation) |
+        with_entries(select(.key | startswith("analysis_") | not))
+    '
 }
 
-write_queue_payload() {
+record_terminal_state() {
     local path=$1
-    local event=$2
-    local job key payload temp
+    local job
     job=$(jq -r .job_id "${path}")
-    key=$(jq -r .analysis_key "${path}")
-    payload="${events_dir}/${job}.queue.json"
-    temp="${payload}.tmp.$$"
-    jq -n \
-        --arg item_key "local:${key}" \
-        --arg source_ref "${key}" \
-        --arg title "${conversation}" \
-        --rawfile prompt "${event}" \
-        '{
-          item_key: $item_key,
-          source_kind: "local",
-          source_ref: $source_ref,
-          title: $title,
-          body: ("[trusted local queue event \($source_ref)]\n\n" + $prompt),
-          sender: null,
-          metadata: {event_key: $source_ref},
-          response_policy: "important_only"
-        }' >"${temp}"
-    chmod 600 "${temp}"
-    if [ -e "${payload}" ]; then
-        if ! cmp --silent "${temp}" "${payload}"; then
-            find "${temp}" -delete
-            record_poll_error "${path}" "terminal queue envelope conflicts with durable state"
-            return 1
-        fi
-        find "${temp}" -delete
-    else
-        mv "${temp}" "${payload}"
-    fi
-    printf '%s\n' "${payload}"
-}
-
-queue_terminal_analysis() {
-    local path=$1
-    local job event payload queue_status
-    job=$(jq -r .job_id "${path}")
-    if ! event=$(write_event_prompt "${path}"); then
+    if ! jq -e '
+        .result != null and .duration_seconds != null and .exit_code != null and
+        .terminal_reason != null
+    ' "${path}" >/dev/null; then
+        record_poll_error "${path}" "terminal state record is incomplete"
         return
     fi
-    if ! payload=$(write_queue_payload "${path}" "${event}"); then
-        return
-    fi
-
-    set +e
-    "${queue_ssh}" -F none -o BatchMode=yes -o IdentitiesOnly=yes \
-        -o ClearAllForwardings=yes -o RequestTTY=no -o ConnectTimeout=10 \
-        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="${queue_known_hosts}" \
-        -i "${queue_identity}" "${queue_user}@${queue_host}" \
-        queue-import-helium <"${payload}" >/dev/null
-    queue_status=$?
-    set -e
-    case "${queue_status}" in
-        0)
-            replace_json "${path}" \
-                --argjson now "$(date +%s)" \
-                '.status = "analysis-queued" | .analysis_queued_at = $now |
-                 .last_poll_error = null'
-            printf 'analysis-queued job=%s\n' "${job}"
-            ;;
-        2)
-            replace_json "${path}" \
-                --argjson now "$(date +%s)" \
-                '.status = "analysis-conflict" |
-                 .last_poll_error = "da queue rejected immutable event input" |
-                 .analysis_conflict_at = $now'
-            printf 'job=%s analysis-conflict=da-queue-rejected-input\n' "${job}" >&2
-            ;;
-        *)
-            record_poll_error "${path}" "da work queue unavailable"
-            ;;
-    esac
+    replace_json "${path}" \
+        --argjson now "$(date +%s)" \
+        '.schema = 3 | .status = "terminal-recorded" |
+         .terminal_recorded_at = $now | .last_poll_error = null |
+         del(.notification_key, .conversation) |
+         with_entries(select(.key | startswith("analysis_") | not))'
+    printf 'terminal-recorded job=%s\n' "${job}"
 }
 
 valid_terminal_reason() {
@@ -310,28 +190,16 @@ valid_terminal_reason() {
         LC_ALL=C grep -qE '^[[:print:]]+$' <<<"${value}"
 }
 
-ensure_analysis_fields() {
-    local path=$1
-    local job
-    job=$(jq -r .job_id "${path}")
-    if ! jq -e '.schema == 2 and .analysis_key and .conversation' "${path}" >/dev/null; then
-        replace_json "${path}" \
-            --arg key "helium-build:${job}:terminal" \
-            --arg conversation "${conversation}" \
-            '.schema = 2 | .analysis_key = $key | .conversation = $conversation |
-             del(.notification_key)'
-    fi
-}
-
 poll_jobs() {
-    mkdir -p "${jobs_dir}" "${events_dir}"
-    chmod 700 "${state_root}" "${jobs_dir}" "${events_dir}"
+    mkdir -p "${jobs_dir}"
+    chmod 700 "${state_root}" "${jobs_dir}"
     exec 9>"${state_root}/queue.lock"
     flock -n 9 || exit 0
 
     local path status job terminal state result duration exit_code reason
     shopt -s nullglob
     for path in "${jobs_dir}"/*.json; do
+        migrate_delivery_fields "${path}"
         status=$(jq -r .status "${path}")
         case "${status}" in
             watching)
@@ -358,7 +226,6 @@ poll_jobs() {
                     record_poll_error "${path}" "invalid chromiumer terminal state"
                     continue
                 }
-                ensure_analysis_fields "${path}"
                 replace_json "${path}" \
                     --arg result "${result}" --arg reason "${reason}" \
                     --argjson duration "${duration}" --argjson exit_code "${exit_code}" \
@@ -367,11 +234,10 @@ poll_jobs() {
                      .duration_seconds = $duration | .exit_code = $exit_code |
                      .terminal_reason = $reason | .observed_terminal_at = $now |
                      .last_poll_error = null'
-                queue_terminal_analysis "${path}"
+                record_terminal_state "${path}"
                 ;;
-            terminal-pending)
-                ensure_analysis_fields "${path}"
-                queue_terminal_analysis "${path}"
+            terminal-pending|notification-pending|notification-queued|notification-sent|notification-failed|analysis-queued|analysis-running|analysis-completed|analysis-emailed|analysis-failed|analysis-conflict)
+                record_terminal_state "${path}"
                 ;;
         esac
     done

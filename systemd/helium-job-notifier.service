@@ -1,5 +1,5 @@
 [Unit]
-Description=Import terminal Helium jobs into the da live Codex queue
+Description=Record terminal Helium job state
 After=network-online.target
 Wants=network-online.target
 

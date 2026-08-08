@@ -4,11 +4,11 @@ set -euo pipefail
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)"
 test_root=$(mktemp -d "${TMPDIR:-/tmp}/helium-job-notifier-test.XXXXXX")
 trap 'find "${test_root}" -depth -delete' EXIT
-mkdir -p "${test_root}/remote" "${test_root}/queue-items"
+mkdir -p "${test_root}/remote"
 
 source_info="${test_root}/source.env"
 cat >"${source_info}" <<'EOF'
-repository=helium-sync
+repository=helium-passwords
 commit=abc123
 tree=tree123
 helium_submodule=def456
@@ -30,69 +30,17 @@ cat "${FAKE_REMOTE_ROOT}/${job}.env"
 EOF
 chmod 700 "${fake_chromium_ssh}"
 
-fake_queue_ssh="${test_root}/queue-ssh"
-cat >"${fake_queue_ssh}" <<'EOF'
-#!/usr/bin/env bash
-set -euo pipefail
-[ "${!#}" = queue-import-helium ]
-payload=$(mktemp "${FAKE_QUEUE_ROOT}/incoming.XXXXXX")
-trap 'find "${payload}" -delete' EXIT
-cat >"${payload}"
-jq -e '
-  . as $item |
-  ($item.source_ref | test("^helium-build:[a-z0-9][a-z0-9-]{0,47}:terminal$")) and
-  $item.item_key == ("local:" + $item.source_ref) and
-  $item.source_kind == "local" and
-  $item.title == "Helium build operations" and
-  $item.sender == null and
-  $item.metadata == {event_key: $item.source_ref} and
-  $item.response_policy == "important_only" and
-  ($item.body | startswith("[trusted local queue event " + $item.source_ref + "]\n\n"))
-' "${payload}" >/dev/null
-key=$(jq -r .source_ref "${payload}")
-printf '%s\n' "${key}" >>"${FAKE_QUEUE_ATTEMPTS}"
-if [ "${key}" = "${FAKE_QUEUE_CONFLICT_KEY:-}" ]; then
-    exit 2
-fi
-if [ -n "${FAKE_QUEUE_FAIL_ONCE:-}" ] && [ ! -e "${FAKE_QUEUE_FAIL_ONCE}" ]; then
-    touch "${FAKE_QUEUE_FAIL_ONCE}"
-    exit 75
-fi
-record="${FAKE_QUEUE_ROOT}/${key}.json"
-if [ -e "${record}" ]; then
-    cmp --silent "${payload}" "${record}" || exit 2
-else
-    cp "${payload}" "${record}"
-    chmod 600 "${record}"
-fi
-printf '%s\n' "${key}" >>"${FAKE_QUEUE_SUCCESSES}"
-printf '{"item_key":"local:%s","status":"queued"}\n' "${key}"
-EOF
-chmod 700 "${fake_queue_ssh}"
-
-queue_identity="${test_root}/queue-identity"
-queue_known_hosts="${test_root}/queue-known-hosts"
-touch "${queue_identity}" "${queue_known_hosts}"
-chmod 600 "${queue_identity}" "${queue_known_hosts}"
-
 export HELIUM_JOB_NOTIFY_STATE_ROOT="${test_root}/state"
 export HELIUM_JOB_NOTIFY_SSH="${fake_chromium_ssh}"
-export HELIUM_WORK_QUEUE_SSH="${fake_queue_ssh}"
-export HELIUM_WORK_QUEUE_IDENTITY="${queue_identity}"
-export HELIUM_WORK_QUEUE_KNOWN_HOSTS="${queue_known_hosts}"
-export HELIUM_JOB_NOTIFY_RECIPIENT=attacker@example.invalid
 export FAKE_REMOTE_ROOT="${test_root}/remote"
-export FAKE_QUEUE_ROOT="${test_root}/queue-items"
-export FAKE_QUEUE_ATTEMPTS="${test_root}/queue-attempts"
-export FAKE_QUEUE_SUCCESSES="${test_root}/queue-successes"
 notifier="${root_dir}/scripts/helium-job-notifier.sh"
 
-! grep -q '/home/d/coding/codex-mailbridge' "${notifier}"
-! grep -Eq 'queue-(event|notification)|event-status' "${notifier}"
-! grep -q 'HELIUM_JOB_NOTIFY_RECIPIENT' "${notifier}"
+legacy_bridge=/home/d/coding/codex-"mail""bridge"
+for retired_token in "${legacy_bridge}" queue-"import-helium" HELIUM_WORK_"QUEUE" \
+    HELIUM_"MAIL""BRIDGE" queue-"event" event-"status"; do
+    ! grep -Fq "${retired_token}" "${notifier}"
+done
 ! grep -Eq '[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}' "${notifier}"
-grep -q 'queue-import-helium' "${notifier}"
-grep -q 'response_policy: "important_only"' "${notifier}"
 
 declare -A exit_codes=(
     [success]=0
@@ -102,7 +50,7 @@ declare -A exit_codes=(
 )
 for result in success failure timeout cancellation; do
     job="test-${result}"
-    "${notifier}" register "${job}" "Helium Sync" "Synthetic ${result} proof" \
+    "${notifier}" register "${job}" "Helium Passwords" "Synthetic ${result} proof" \
         "Fetch and validate the synthetic artifact." "${source_info}" >/dev/null
     cat >"${FAKE_REMOTE_ROOT}/${job}.env" <<EOF
 state=terminal
@@ -116,101 +64,80 @@ EOF
 done
 
 "${notifier}" poll
-[ "$(wc -l <"${FAKE_QUEUE_SUCCESSES}")" -eq 4 ]
 for result in success failure timeout cancellation; do
     job="test-${result}"
-    key="helium-build:${job}:terminal"
     state="${HELIUM_JOB_NOTIFY_STATE_ROOT}/jobs/${job}.json"
-    event="${HELIUM_JOB_NOTIFY_STATE_ROOT}/events/${job}.txt"
-    payload="${HELIUM_JOB_NOTIFY_STATE_ROOT}/events/${job}.queue.json"
-    jq -e --arg result "${result}" \
-        '.schema == 2 and .status == "analysis-queued" and .result == $result and
-         .analysis_key == ("helium-build:" + .job_id + ":terminal") and
-         .conversation == "Helium build operations" and
-         .last_poll_error == null' "${state}" >/dev/null
-    [ "$(stat -c %a "${event}")" = 600 ]
-    [ "$(stat -c %a "${payload}")" = 600 ]
-    grep -q "Terminal state: ${result}" "${event}"
-    grep -q "Exit code: ${exit_codes[${result}]}" "${event}"
-    grep -q "Recorded reason: synthetic ${result} evidence" "${event}"
-    grep -q 'HELIUM_ANDROID_CHROMIUM_COMMIT=chromium123' "${event}"
-    grep -q "scripts/chromiumer-job.sh logs ${job} 400" "${event}"
-    grep -q 'Continuation parent: timed-out-parent' "${event}"
-    grep -q 'Preserved workspace owner: preserved-owner' "${event}"
-    grep -q 'outbound delivery requires an explicit user request after review' "${event}"
-    jq -e --arg key "${key}" \
-        '.item_key == ("local:" + $key) and .source_ref == $key and
-         .source_kind == "local" and .response_policy == "important_only" and
-         .metadata == {event_key: $key}' "${payload}" >/dev/null
-    cmp --silent "${payload}" "${FAKE_QUEUE_ROOT}/${key}.json"
+    jq -e --arg result "${result}" --argjson exit_code "${exit_codes[${result}]}" '
+        .schema == 3 and .status == "terminal-recorded" and .result == $result and
+        .exit_code == $exit_code and .duration_seconds == 61 and
+        .terminal_reason == ("synthetic " + $result + " evidence") and
+        .last_poll_error == null and
+        (has("analysis_key") | not) and (has("conversation") | not) and
+        ([keys[] | startswith("analysis_")] | any | not)
+    ' "${state}" >/dev/null
 done
+[ ! -e "${HELIUM_JOB_NOTIFY_STATE_ROOT}/events" ]
 
-# Repeated, concurrent, and restart-style polls do not import another item.
+# Repeated and concurrent polls preserve each locally recorded terminal result.
+before_digest=$(find "${HELIUM_JOB_NOTIFY_STATE_ROOT}/jobs" -type f -name '*.json' \
+    -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
 "${notifier}" poll
 ("${notifier}" poll) &
 ("${notifier}" poll) &
 wait
-[ "$(wc -l <"${FAKE_QUEUE_SUCCESSES}")" -eq 4 ]
+after_digest=$(find "${HELIUM_JOB_NOTIFY_STATE_ROOT}/jobs" -type f -name '*.json' \
+    -print0 | LC_ALL=C sort -z | xargs -0 sha256sum | sha256sum | awk '{print $1}')
+[ "${before_digest}" = "${after_digest}" ]
 
-# A temporary queue failure retains byte-identical evidence and envelope, then
-# a fresh notifier process retries the immutable item successfully.
-retry_job=test-retry
-retry_key="helium-build:${retry_job}:terminal"
-"${notifier}" register "${retry_job}" "Helium Passwords" \
-    "Synthetic temporary da queue failure" "Inspect the synthetic artifact." \
+# A transient Chromiumer failure leaves a job watched and the next poll records
+# the real terminal result without requiring a delivery adapter.
+delayed_job=test-delayed
+"${notifier}" register "${delayed_job}" "Helium Passwords" \
+    "Synthetic delayed terminal proof" "Inspect the synthetic artifact." \
     "${source_info}" >/dev/null
-cat >"${FAKE_REMOTE_ROOT}/${retry_job}.env" <<'EOF'
+"${notifier}" poll
+delayed_state="${HELIUM_JOB_NOTIFY_STATE_ROOT}/jobs/${delayed_job}.json"
+jq -e '.schema == 3 and .status == "watching" and
+       .last_poll_error == "chromiumer unavailable"' "${delayed_state}" >/dev/null
+cat >"${FAKE_REMOTE_ROOT}/${delayed_job}.env" <<'EOF'
 state=terminal
 result=success
 exit_code=0
 started_at_epoch=1
 finished_at_epoch=62
 duration_seconds=61
-reason=synthetic retry evidence
+reason=synthetic delayed evidence
 EOF
-export FAKE_QUEUE_FAIL_ONCE="${test_root}/queue-failed-once"
 "${notifier}" poll
-retry_state="${HELIUM_JOB_NOTIFY_STATE_ROOT}/jobs/${retry_job}.json"
-retry_event="${HELIUM_JOB_NOTIFY_STATE_ROOT}/events/${retry_job}.txt"
-retry_payload="${HELIUM_JOB_NOTIFY_STATE_ROOT}/events/${retry_job}.queue.json"
-jq -e '.status == "terminal-pending" and
-       .last_poll_error == "da work queue unavailable"' "${retry_state}" >/dev/null
-event_digest=$(sha256sum "${retry_event}" | awk '{print $1}')
-payload_digest=$(sha256sum "${retry_payload}" | awk '{print $1}')
-"${notifier}" poll
-jq -e '.status == "analysis-queued" and .result == "success" and
-       .last_poll_error == null' "${retry_state}" >/dev/null
-[ "$(sha256sum "${retry_event}" | awk '{print $1}')" = "${event_digest}" ]
-[ "$(sha256sum "${retry_payload}" | awk '{print $1}')" = "${payload_digest}" ]
-[ "$(grep -cFx "${retry_key}" "${FAKE_QUEUE_ATTEMPTS}")" -eq 2 ]
-[ "$(grep -cFx "${retry_key}" "${FAKE_QUEUE_SUCCESSES}")" -eq 1 ]
-"${notifier}" poll
-[ "$(grep -cFx "${retry_key}" "${FAKE_QUEUE_ATTEMPTS}")" -eq 2 ]
+jq -e '.schema == 3 and .status == "terminal-recorded" and .result == "success" and
+       .last_poll_error == null' "${delayed_state}" >/dev/null
 
-# A changed immutable binding fails closed and never invents another key.
-conflict_job=test-conflict
-conflict_key="helium-build:${conflict_job}:terminal"
-"${notifier}" register "${conflict_job}" "Helium Sync" \
-    "Synthetic immutable queue conflict" "Inspect the conflict." \
-    "${source_info}" >/dev/null
-cat >"${FAKE_REMOTE_ROOT}/${conflict_job}.env" <<'EOF'
-state=terminal
-result=failure
-exit_code=125
-started_at_epoch=1
-finished_at_epoch=62
-duration_seconds=61
-reason=synthetic immutable conflict
+# Delivery-era terminal state migrates to an ordinary locally recorded result
+# without contacting a former queue or retaining its key fields.
+legacy_state="${HELIUM_JOB_NOTIFY_STATE_ROOT}/jobs/test-legacy.json"
+cat >"${legacy_state}" <<'EOF'
+{
+  "schema": 1,
+  "job_id": "test-legacy",
+  "product": "Helium Passwords",
+  "summary": "Synthetic legacy record",
+  "success_next": "Inspect it.",
+  "source_commits": "repository=helium-passwords",
+  "remote_host": "chromiumer",
+  "notification_key": "helium-build:test-legacy:terminal",
+  "status": "notification-queued",
+  "result": "failure",
+  "duration_seconds": 31,
+  "exit_code": 1,
+  "terminal_reason": "synthetic legacy evidence",
+  "last_poll_error": null
+}
 EOF
-export FAKE_QUEUE_CONFLICT_KEY="${conflict_key}"
+chmod 600 "${legacy_state}"
 "${notifier}" poll
-conflict_state="${HELIUM_JOB_NOTIFY_STATE_ROOT}/jobs/${conflict_job}.json"
-jq -e '.status == "analysis-conflict" and
-       .last_poll_error == "da queue rejected immutable event input"' \
-    "${conflict_state}" >/dev/null
-[ "$(grep -cFx "${conflict_key}" "${FAKE_QUEUE_ATTEMPTS}")" -eq 1 ]
-"${notifier}" poll
-[ "$(grep -cFx "${conflict_key}" "${FAKE_QUEUE_ATTEMPTS}")" -eq 1 ]
+jq -e '.schema == 3 and .status == "terminal-recorded" and .result == "failure" and
+       (has("notification_key") | not) and (has("analysis_key") | not) and
+       (has("conversation") | not) and
+       ([keys[] | startswith("analysis_")] | any | not)' "${legacy_state}" >/dev/null
 
-! grep -R -q 'attacker@example.invalid' "${HELIUM_JOB_NOTIFY_STATE_ROOT}"
-echo "helium job notifier da-queue, retry, conflict, and restart simulations passed"
+echo "helium job notifier terminal-state monitoring simulations passed"
