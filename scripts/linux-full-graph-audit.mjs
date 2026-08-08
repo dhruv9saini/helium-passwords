@@ -138,10 +138,15 @@ const NODE_REPAIR_BOUNDARY_FIELDS = Object.freeze([
   "first_repair_build_completed_at",
   "first_repair_build_exit_code",
   "node_failure_log_sha256",
+  "first_continuation_log_sha256",
+  "previous_node_repair_action_output_sha256",
   "node_failure_root_cause",
   "node_repair_action",
   "node_repair_action_output",
   "node_repair_action_output_sha256",
+  "node_repair_python_wrapper_sha256",
+  "node_repair_ninja_log_before_sha256",
+  "node_repair_ninja_log_after_sha256",
   "node_repair_started_at",
   "node_repair_completed_at",
 ]);
@@ -482,17 +487,24 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
         "helium-retained-full-graph-node-repair-boundary-v1") {
       for (const field of [
         "first_repair_preflight_sha256", "first_repair_failure_sha256",
-        "node_failure_log_sha256", "node_repair_action_output_sha256",
+        "node_failure_log_sha256", "first_continuation_log_sha256",
+        "previous_node_repair_action_output_sha256",
+        "node_repair_action_output_sha256",
+        "node_repair_python_wrapper_sha256",
+        "node_repair_ninja_log_before_sha256",
+        "node_repair_ninja_log_after_sha256",
       ]) requireHash(boundary.get(field), `retained Node repair ${field}`);
       if (boundary.get("first_repair_build_exit_code") !== "1" ||
           boundary.get("node_failure_root_cause") !==
             "node22_unknown_mts_extension_in_helium_onboarding_localized_strings" ||
           boundary.get("node_repair_action") !==
-            "third_party_node_with_experimental_strip_types" ||
+            "unchanged_ninja_action_with_scoped_python_injection" ||
           boundary.get("node_repair_action_output") !==
             "gen/components/helium_onboarding/helium_onboarding_localized_strings.h" ||
           boundary.get("recovery_mode") !==
             "retained-workspace-after-node22-mts-terminal-failure" ||
+          boundary.get("node_repair_ninja_log_before_sha256") ===
+            boundary.get("node_repair_ninja_log_after_sha256") ||
           !TIMESTAMP.test(boundary.get("first_repair_build_started_at") || "") ||
           !TIMESTAMP.test(boundary.get("first_repair_build_completed_at") || "") ||
           !TIMESTAMP.test(boundary.get("node_repair_started_at") || "") ||

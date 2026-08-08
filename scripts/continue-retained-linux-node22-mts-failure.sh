@@ -22,6 +22,12 @@ node_failure_log=$(realpath -e "${13}")
 expected_node_failure_log_sha=${14}
 artifact=$(realpath -m "${15}")
 receipt=$(realpath -m "${16}")
+first_continuation_log=$(realpath -e \
+  "${HELIUM_NODE22_FIRST_CONTINUATION_LOG:?missing first continuation log}")
+expected_first_continuation_log_sha=\
+${HELIUM_NODE22_FIRST_CONTINUATION_LOG_SHA256:?missing first continuation log SHA-256}
+expected_previous_action_output_sha=\
+${HELIUM_NODE22_PREVIOUS_ACTION_OUTPUT_SHA256:?missing previous action output SHA-256}
 tool_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 source_root="$checkout/build/src"
 out="$source_root/out/Default"
@@ -41,7 +47,9 @@ onboarding_build="$source_root/components/helium_onboarding/BUILD.gn"
   exit 64
 }
 for value in "$expected_graph_failure_sha" "$expected_first_preflight_sha" \
-  "$expected_first_failure_sha" "$expected_node_failure_log_sha"; do
+  "$expected_first_failure_sha" "$expected_node_failure_log_sha" \
+  "$expected_first_continuation_log_sha" \
+  "$expected_previous_action_output_sha"; do
   [[ "$value" =~ ^[0-9a-f]{64}$ ]] || {
     echo "retained Node repair requires every approved SHA-256 value" >&2
     exit 64
@@ -56,7 +64,7 @@ done
   exit 1
 }
 for input in "$graph_failure" "$first_preflight" "$first_failure" \
-  "$node_failure_log"; do
+  "$node_failure_log" "$first_continuation_log"; do
   [[ -f "$input" && ! -L "$input" && "$(stat -c %a "$input")" == 400 ]] || {
     echo "retained Node repair input is not an immutable private receipt: $input" >&2
     exit 1
@@ -69,7 +77,9 @@ done
     "$(sha256sum "$first_failure" | awk '{print $1}')" == \
       "$expected_first_failure_sha" &&
     "$(sha256sum "$node_failure_log" | awk '{print $1}')" == \
-      "$expected_node_failure_log_sha" ]] || {
+      "$expected_node_failure_log_sha" &&
+    "$(sha256sum "$first_continuation_log" | awk '{print $1}')" == \
+      "$expected_first_continuation_log_sha" ]] || {
   echo "retained Node repair input changed after operator approval" >&2
   exit 1
 }
@@ -156,9 +166,12 @@ first_completed=$(env_value "$first_failure" build_completed_at)
 }
 [[ -f "$action_source" && ! -L "$action_source" &&
     -f "$onboarding_build" && ! -L "$onboarding_build" &&
-    ! -e "$action_output" && ! -e "$out/helium" &&
+    -f "$action_output" && ! -L "$action_output" &&
+    "$(sha256sum "$action_output" | awk '{print $1}')" == \
+      "$expected_previous_action_output_sha" &&
+    ! -e "$out/helium" &&
     ! -e "$out/chromedriver" ]] || {
-  echo "retained Node repair requires the untouched failed action and incomplete targets" >&2
+  echo "retained Node repair requires the admitted first output and incomplete targets" >&2
   exit 1
 }
 localized_action=$(awk '
@@ -194,6 +207,14 @@ if grep -F 'python3 ../../third_party/node/node.py' "$node_failure_log" |
   echo "retained failure log unexpectedly contains the repaired action" >&2
   exit 1
 fi
+for pattern in \
+  'manual Node repair output is not clean in the unchanged Ninja graph' \
+  "helium-job-hs-node22-cont-31ef9aa.service: Failed with result 'exit-code'."; do
+  grep -Fq "$pattern" "$first_continuation_log" || {
+    echo "first retained continuation log is missing: $pattern" >&2
+    exit 1
+  }
+done
 
 temporary=$(mktemp -d "$output_parent/.retained-node22-repair.XXXXXX")
 cleanup() { find "$temporary" -depth -delete; }
@@ -238,26 +259,51 @@ case "${HELIUM_NODE22_REPAIR_PREFLIGHT_ONLY:-false}" in
     ;;
 esac
 
+python_wrapper_dir="$temporary/python-wrapper"
+mkdir "$python_wrapper_dir"
+chmod 700 "$python_wrapper_dir"
+python_wrapper="$python_wrapper_dir/python3"
+wrapper_proof="$temporary/python-wrapper-proof.txt"
+cat >"$python_wrapper" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+if [[ $# -eq 3 && "$1" == ../../third_party/node/node.py &&
+    "$2" == ../../components/helium_onboarding/util/generate-i18n.mts &&
+    "$3" == gen/components/helium_onboarding/helium_onboarding_localized_strings.h ]]; then
+  printf '%s\n' scoped-node22-strip-types-injection >"$HELIUM_NODE22_WRAPPER_PROOF"
+  exec "$HELIUM_NODE22_REAL_PYTHON3" "$1" --experimental-strip-types "$2" "$3"
+fi
+exec "$HELIUM_NODE22_REAL_PYTHON3" "$@"
+EOF
+chmod 700 "$python_wrapper"
+python_wrapper_sha=$(sha256sum "$python_wrapper" | awk '{print $1}')
+real_python=$(realpath -e "$(command -v python3)")
+ninja_log="$out/.ninja_log"
+[[ -f "$ninja_log" && ! -L "$ninja_log" ]] || {
+  echo "retained Node repair requires the existing Ninja build log" >&2
+  exit 1
+}
+ninja_log_before_sha=$(sha256sum "$ninja_log" | awk '{print $1}')
 node_repair_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 set +e
-(
-  cd "$out"
-  python3 ../../third_party/node/node.py --experimental-strip-types \
-    ../../components/helium_onboarding/util/generate-i18n.mts \
-    "$action_output_relative"
-)
+PATH="$python_wrapper_dir:$PATH" \
+HELIUM_NODE22_REAL_PYTHON3="$real_python" \
+HELIUM_NODE22_WRAPPER_PROOF="$wrapper_proof" \
+  "$real_ninja" -C "$out" "$action_output_relative"
 action_status=$?
 set -e
 node_repair_completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 if [[ "$action_status" -ne 0 || ! -f "$action_output" ||
-    -L "$action_output" ]]; then
+    -L "$action_output" || ! -f "$wrapper_proof" ||
+    "$(<"$wrapper_proof")" != scoped-node22-strip-types-injection ]]; then
   cat >"$repair_failure" <<EOF
 schema=helium-retained-node22-repair-failure-v1
 job=$job
-stage=manual-node-action
+stage=scoped-ninja-node-action
 source_commit=$source_commit
 first_repair_failure_sha256=$expected_first_failure_sha
 node_failure_log_sha256=$expected_node_failure_log_sha
+first_continuation_log_sha256=$expected_first_continuation_log_sha
 node_repair_started_at=$node_repair_started_at
 node_repair_completed_at=$node_repair_completed_at
 exit_code=$action_status
@@ -270,10 +316,16 @@ EOF
   exit "$action_status"
 fi
 action_output_sha=$(sha256sum "$action_output" | awk '{print $1}')
+ninja_log_after_sha=$(sha256sum "$ninja_log" | awk '{print $1}')
+[[ "$ninja_log_after_sha" != "$ninja_log_before_sha" &&
+    -z "$(git -C "$product_root" status --porcelain --untracked-files=all)" ]] || {
+  echo "scoped Node action did not advance the Ninja build log" >&2
+  exit 1
+}
 dry_run="$temporary/action-dry-run.txt"
 "$real_ninja" -C "$out" -n "$action_output_relative" >"$dry_run"
 grep -Fq 'ninja: no work to do.' "$dry_run" || {
-  echo "manual Node repair output is not clean in the unchanged Ninja graph" >&2
+  echo "scoped Node repair output is not clean in the unchanged Ninja graph" >&2
   exit 1
 }
 
@@ -288,13 +340,18 @@ graph_failure_sha256=$expected_graph_failure_sha
 first_repair_preflight_sha256=$expected_first_preflight_sha
 first_repair_failure_sha256=$expected_first_failure_sha
 node_failure_log_sha256=$expected_node_failure_log_sha
+first_continuation_log_sha256=$expected_first_continuation_log_sha
+previous_node_repair_action_output_sha256=$expected_previous_action_output_sha
 build_ninja_sha256=$(env_value "$graph_failure" build_ninja_sha256)
 toolchain_ninja_sha256=$(env_value "$graph_failure" toolchain_ninja_sha256)
 node_version=$(node --version)
-node_repair_action=third_party_node_with_experimental_strip_types
+node_repair_action=unchanged_ninja_action_with_scoped_python_injection
 node_repair_action_source_sha256=$(sha256sum "$action_source" | awk '{print $1}')
 node_repair_action_output=$action_output_relative
 node_repair_action_output_sha256=$action_output_sha
+node_repair_python_wrapper_sha256=$python_wrapper_sha
+node_repair_ninja_log_before_sha256=$ninja_log_before_sha
+node_repair_ninja_log_after_sha256=$ninja_log_after_sha
 node_repair_started_at=$node_repair_started_at
 node_repair_completed_at=$node_repair_completed_at
 ninja_query_sha256=$(sha256sum "$query" | awk '{print $1}')
@@ -318,6 +375,7 @@ stage=continued-full-build
 source_commit=$source_commit
 first_repair_failure_sha256=$expected_first_failure_sha
 node_failure_log_sha256=$expected_node_failure_log_sha
+first_continuation_log_sha256=$expected_first_continuation_log_sha
 repair_preflight_sha256=$preflight_sha
 build_started_at=$build_started_at
 build_completed_at=$build_completed_at
@@ -390,10 +448,15 @@ first_repair_build_started_at=$first_started
 first_repair_build_completed_at=$first_completed
 first_repair_build_exit_code=1
 node_failure_log_sha256=$expected_node_failure_log_sha
+first_continuation_log_sha256=$expected_first_continuation_log_sha
+previous_node_repair_action_output_sha256=$expected_previous_action_output_sha
 node_failure_root_cause=node22_unknown_mts_extension_in_helium_onboarding_localized_strings
-node_repair_action=third_party_node_with_experimental_strip_types
+node_repair_action=unchanged_ninja_action_with_scoped_python_injection
 node_repair_action_output=$action_output_relative
 node_repair_action_output_sha256=$action_output_sha
+node_repair_python_wrapper_sha256=$python_wrapper_sha
+node_repair_ninja_log_before_sha256=$ninja_log_before_sha
+node_repair_ninja_log_after_sha256=$ninja_log_after_sha
 node_repair_started_at=$node_repair_started_at
 node_repair_completed_at=$node_repair_completed_at
 EOF
