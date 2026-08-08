@@ -58,7 +58,8 @@ boundary_value() {
 }
 boundary_schema=$(boundary_value schema)
 [[ "$boundary_schema" == helium-fresh-full-graph-boundary-v1 ||
-    "$boundary_schema" == helium-retained-full-graph-repair-boundary-v1 ]] || {
+    "$boundary_schema" == helium-retained-full-graph-repair-boundary-v1 ||
+    "$boundary_schema" == helium-retained-full-graph-node-repair-boundary-v1 ]] || {
   echo "unsupported graph boundary receipt" >&2
   exit 1
 }
@@ -83,6 +84,21 @@ boundary_schema=$(boundary_value schema)
   echo "completed build graph changed after its boundary validation" >&2
   exit 1
 }
+if [[ "$boundary_schema" ==
+    helium-retained-full-graph-node-repair-boundary-v1 ]]; then
+  node_repair_output=
+  if [[ "$(boundary_value node_repair_action_output)" ==
+      gen/components/helium_onboarding/helium_onboarding_localized_strings.h ]]; then
+    node_repair_output="$out/$(boundary_value node_repair_action_output)"
+  fi
+  [[ -n "$node_repair_output" && -f "$node_repair_output" &&
+      ! -L "$node_repair_output" &&
+      "$(sha256sum "$node_repair_output" | awk '{print $1}')" ==
+        "$(boundary_value node_repair_action_output_sha256)" ]] || {
+    echo "completed Node repair output changed after boundary validation" >&2
+    exit 1
+  }
+fi
 
 parent=$(dirname "$output")
 [[ -d "$parent" && ! -L "$parent" ]] || { echo "evidence parent is invalid" >&2; exit 1; }
@@ -107,7 +123,12 @@ install_file "$tool_root/scripts/package-linux-runtime.sh" packaging-tool.sh
 install_file "$tool_root/scripts/write-deployment-artifact-receipt.sh" deployment-receipt-tool.sh
 install_file "$tool_root/scripts/finalize-retained-linux-full-graph.sh" finalizer-tool.sh
 install_file "$tool_root/scripts/linux-full-graph-audit.mjs" full-graph-audit-tool.mjs
-install_file "$tool_root/scripts/continue-retained-linux-full-graph-failure.sh" repair-tool.sh
+repair_tool=${HELIUM_REPAIR_TOOL:-"$tool_root/scripts/continue-retained-linux-full-graph-failure.sh"}
+[[ -x "$repair_tool" && ! -L "$repair_tool" ]] || {
+  echo "full-graph repair tool is unsafe" >&2
+  exit 1
+}
+install_file "$repair_tool" repair-tool.sh
 "$real_ninja" --version >"$temporary/ninja-version.txt"
 chmod 600 "$temporary/ninja-version.txt"
 "$real_ninja" -C "$out" -t query \

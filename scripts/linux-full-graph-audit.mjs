@@ -130,6 +130,22 @@ const REPAIR_BOUNDARY_FIELDS = Object.freeze([
   "repair_tool_sha256",
 ]);
 
+const NODE_REPAIR_BOUNDARY_FIELDS = Object.freeze([
+  ...REPAIR_BOUNDARY_FIELDS,
+  "first_repair_preflight_sha256",
+  "first_repair_failure_sha256",
+  "first_repair_build_started_at",
+  "first_repair_build_completed_at",
+  "first_repair_build_exit_code",
+  "node_failure_log_sha256",
+  "node_failure_root_cause",
+  "node_repair_action",
+  "node_repair_action_output",
+  "node_repair_action_output_sha256",
+  "node_repair_started_at",
+  "node_repair_completed_at",
+]);
+
 const HASH_BINDINGS = Object.freeze({
   build_ninja_sha256: "build.ninja",
   toolchain_ninja_sha256: "toolchain.ninja",
@@ -394,6 +410,8 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
     ? FRESH_BOUNDARY_FIELDS
     : boundarySchema === "helium-retained-full-graph-repair-boundary-v1"
       ? REPAIR_BOUNDARY_FIELDS
+      : boundarySchema === "helium-retained-full-graph-node-repair-boundary-v1"
+        ? NODE_REPAIR_BOUNDARY_FIELDS
       : null;
   if (!boundaryFields) throw new Error("Linux full-graph boundary schema is unsupported");
   const boundary = parseEnv(boundaryRaw, boundaryFields,
@@ -416,7 +434,9 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
       throw new Error(`boundary and captured Linux full-graph receipts disagree on ${field}`);
     }
   }
-  if (boundarySchema === "helium-retained-full-graph-repair-boundary-v1") {
+  if (boundarySchema === "helium-retained-full-graph-repair-boundary-v1" ||
+      boundarySchema ===
+        "helium-retained-full-graph-node-repair-boundary-v1") {
     for (const field of [
       "failure_receipt_sha256", "failure_operator_sha256",
       "failure_ninja_shim_sha256", "failure_build_ninja_sha256",
@@ -446,8 +466,9 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
         boundary.get("failure_artifact_published") !== "false" ||
         boundary.get("failure_result") !== "failure" ||
         boundary.get("failure_exit_code") !== "1" ||
-        boundary.get("recovery_mode") !==
-          "retained-workspace-after-pre-ninja-graph-gate-failure" ||
+        !["retained-workspace-after-pre-ninja-graph-gate-failure",
+          "retained-workspace-after-node22-mts-terminal-failure"]
+          .includes(boundary.get("recovery_mode")) ||
         boundary.get("build_exit_code") !== "0" ||
         !/^[1-9][0-9]*$/.test(boundary.get("failure_duration_seconds") || "") ||
         !Number.isFinite(Date.parse(boundary.get("failure_finished_at"))) ||
@@ -456,6 +477,34 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
         Date.parse(boundary.get("build_started_at")) >=
           Date.parse(boundary.get("build_completed_at"))) {
       throw new Error("retained Linux graph repair provenance is invalid");
+    }
+    if (boundarySchema ===
+        "helium-retained-full-graph-node-repair-boundary-v1") {
+      for (const field of [
+        "first_repair_preflight_sha256", "first_repair_failure_sha256",
+        "node_failure_log_sha256", "node_repair_action_output_sha256",
+      ]) requireHash(boundary.get(field), `retained Node repair ${field}`);
+      if (boundary.get("first_repair_build_exit_code") !== "1" ||
+          boundary.get("node_failure_root_cause") !==
+            "node22_unknown_mts_extension_in_helium_onboarding_localized_strings" ||
+          boundary.get("node_repair_action") !==
+            "third_party_node_with_experimental_strip_types" ||
+          boundary.get("node_repair_action_output") !==
+            "gen/components/helium_onboarding/helium_onboarding_localized_strings.h" ||
+          boundary.get("recovery_mode") !==
+            "retained-workspace-after-node22-mts-terminal-failure" ||
+          !TIMESTAMP.test(boundary.get("first_repair_build_started_at") || "") ||
+          !TIMESTAMP.test(boundary.get("first_repair_build_completed_at") || "") ||
+          !TIMESTAMP.test(boundary.get("node_repair_started_at") || "") ||
+          !TIMESTAMP.test(boundary.get("node_repair_completed_at") || "") ||
+          Date.parse(boundary.get("first_repair_build_started_at")) >=
+            Date.parse(boundary.get("first_repair_build_completed_at")) ||
+          Date.parse(boundary.get("node_repair_started_at")) >
+            Date.parse(boundary.get("node_repair_completed_at")) ||
+          Date.parse(boundary.get("node_repair_completed_at")) >
+            Date.parse(boundary.get("build_started_at"))) {
+        throw new Error("retained Linux Node repair provenance is invalid");
+      }
     }
   }
   const query = await fsp.readFile(path.join(root, "ninja-query.txt"), "utf8");

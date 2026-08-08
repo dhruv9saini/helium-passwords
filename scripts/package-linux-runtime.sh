@@ -198,7 +198,9 @@ graph_value() {
     echo "full-graph receipt is not bound to this build" >&2
     exit 1
 }
-[ "$(<"${full_graph}/product-commit.txt")" = "${source_commit}" ] && \
+repair_tool=${HELIUM_REPAIR_TOOL:-"${tool_root}/scripts/continue-retained-linux-full-graph-failure.sh"}
+[ -x "${repair_tool}" ] && [ ! -L "${repair_tool}" ] && \
+    [ "$(<"${full_graph}/product-commit.txt")" = "${source_commit}" ] && \
     [ "$(<"${full_graph}/chromium-commit.txt")" = "${chromium_commit}" ] && \
     [ "$(<"${full_graph}/platform-commit.txt")" = "${platform_commit}" ] && \
     [ "$(sha256sum "${full_graph}/packaging-tool.sh" | awk '{print $1}')" = \
@@ -212,7 +214,7 @@ graph_value() {
     [ "$(sha256sum "${full_graph}/full-graph-audit-tool.mjs" | awk '{print $1}')" = \
         "$(sha256sum "${tool_root}/scripts/linux-full-graph-audit.mjs" | awk '{print $1}')" ] && \
     [ "$(sha256sum "${full_graph}/repair-tool.sh" | awk '{print $1}')" = \
-        "$(sha256sum "${tool_root}/scripts/continue-retained-linux-full-graph-failure.sh" | awk '{print $1}')" ] || {
+        "$(sha256sum "${repair_tool}" | awk '{print $1}')" ] || {
     echo "full-graph concrete source or tooling binding changed" >&2
     exit 1
 }
