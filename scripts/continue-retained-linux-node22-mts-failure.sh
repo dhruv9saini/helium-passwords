@@ -212,6 +212,21 @@ generated_value() { env_value "$first_preflight" "$1"; }
   exit 1
 }
 
+case "${HELIUM_NODE22_REPAIR_PREFLIGHT_ONLY:-false}" in
+  true)
+    printf 'retained_node22_repair_preflight=passed\njob=%s\nsource_commit=%s\n' \
+      "$job" "$source_commit"
+    printf 'graph_failure_sha256=%s\nfirst_repair_failure_sha256=%s\n' \
+      "$expected_graph_failure_sha" "$expected_first_failure_sha"
+    exit 0
+    ;;
+  false) ;;
+  *)
+    echo "HELIUM_NODE22_REPAIR_PREFLIGHT_ONLY must be true or false" >&2
+    exit 64
+    ;;
+esac
+
 node_repair_started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 set +e
 (
