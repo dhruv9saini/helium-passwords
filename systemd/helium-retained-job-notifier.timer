@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll retained chromiumer Helium units for terminal state
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=helium-retained-job-notifier.service
+
+[Install]
+WantedBy=timers.target
