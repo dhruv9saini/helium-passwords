@@ -18,9 +18,13 @@ mechanisms=(
 )
 for mechanism in "${mechanisms[@]}"; do
 	cat >"$temporary/status/$mechanism.status" <<EOF
-version=1
+version=2
 mechanism=$mechanism
 state=healthy
+platform=desktop
+package_id=desktop
+browser_sha256=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+source_generation=abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
 source_device=d
 profile=default
 completed_unix=$(date +%s)

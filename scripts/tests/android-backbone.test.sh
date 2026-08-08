@@ -120,8 +120,18 @@ if GITHUB_WORKSPACE="$test_root" HELIUM_SYNC_REPO="$repo_root" CHROMIUM_REF=main
 fi
 grep -q 'CHROMIUM_REF must be the immutable commit' "$test_root/moving.out"
 
+mkdir -p "$test_root/runtime-kit"
+cat > "$test_root/runtime-kit-verifier" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+chmod +x "$test_root/runtime-kit-verifier"
 if GITHUB_WORKSPACE="$test_root" HELIUM_SYNC_REPO="$repo_root" \
   HELIUM_BUILD_JOBS=1 \
+  HELIUM_ANDROID_RUNTIME_KIT_VERIFIER="$test_root/runtime-kit-verifier" \
+  HELIUM_ANDROID_RUNTIME_KIT_ROOT="$test_root/runtime-kit" \
+  HELIUM_ANDROID_RUNTIME_KIT_COMMIT=1111111111111111111111111111111111111111 \
+  HELIUM_ANDROID_RUNTIME_KIT_SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
   CHROMIUM_REF="$HELIUM_ANDROID_CHROMIUM_COMMIT" \
   "$repo_root/scripts/chromium/build-android-ci.sh" \
   >"$test_root/unpinned-environment.out" 2>&1; then
@@ -149,7 +159,7 @@ gn_line=$(grep -n 'gn gen "$out_dir" --fail-on-unused-args' \
   "$repo_root/scripts/chromium/build-android-ci.sh" | cut -d: -f1)
 graph_validation_line=$(grep -n 'validate-android-pruned-build-graph.sh' \
   "$repo_root/scripts/chromium/build-android-ci.sh" | cut -d: -f1)
-media_validation_line=$(grep -n 'verify-android-media-config.sh' \
+media_validation_line=$(grep -n '"$media_config_verifier" \\' \
   "$repo_root/scripts/chromium/build-android-ci.sh" | cut -d: -f1)
 [[ "$gn_line" -lt "$graph_validation_line" ]]
 [[ "$graph_validation_line" -lt "$media_validation_line" ]]

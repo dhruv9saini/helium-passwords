@@ -8,7 +8,20 @@ trap cleanup EXIT
 
 chromium_commit=2222222222222222222222222222222222222222
 sync_commit=1111111111111111111111111111111111111111
-fixture='{"schema_version":1,"disposable_only":true,"hostname":"lm.tail0168aa.ts.net"}'
+fixture_spki=$(printf 'A%.0s' {1..43})=
+fixture_cert=$(printf 'f%.0s' {1..64})
+adb_usb_path_sha256=$(printf '8%.0s' {1..64})
+build_fingerprint_sha256=$(printf '9%.0s' {1..64})
+physical_identity_sha256=$(
+  printf '%s\n' helium-physical-oneplus-v1 ONEPLUS-USB CPH2655 dodge \
+    dodge OnePlus "$build_fingerprint_sha256" | sha256sum | cut -d' ' -f1
+)
+fixture=$(jq -cn \
+  --arg spki "$fixture_spki" --arg cert "$fixture_cert" \
+  '{schema_version:1,disposable_only:true,tls_mode:"private-ca-spki",
+    hostname:"lm.tail0168aa.ts.net",h2_port:44723,h3_port:44724,
+    leaf_spki_sha256_base64:$spki,leaf_cert_sha256:$cert,
+    required_chromium_switch:("--ignore-certificate-errors-spki-list=" + $spki)}')
 
 make_generation() {
   local role=$1
@@ -38,7 +51,7 @@ make_generation() {
     > "$acceptance/build-provenance/locked-gn-args-resolved.txt"
   for name in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-    run-device-probe.sh verify-probe-pair.sh; do
+    run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh; do
     cp "$repo_root/scripts/android-media/$name" "$acceptance/runtime-acceptance/$name"
   done
   printf 'package=%s\n' "$package" > "$acceptance/runtime-acceptance/kit.env"
@@ -46,7 +59,8 @@ make_generation() {
     cd "$acceptance/runtime-acceptance"
     sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
       disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-      run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+      run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh \
+      kit.env > SHA256SUMS
   )
   local runtime_sha
   runtime_sha=$(sha256sum "$acceptance/runtime-acceptance/SHA256SUMS" | cut -d' ' -f1)
@@ -73,8 +87,20 @@ EOF
   local fixture_sha
   fixture_sha=$(sha256sum "$evidence/fixture-provenance.json" | cut -d' ' -f1)
   cat > "$evidence/actions.env" <<EOF
-schema_version=1
+schema_version=2
 package=$package
+identity_schema=helium-physical-oneplus-v1
+adb_serial=ONEPLUS-USB
+adb_transport=physical-usb
+adb_transport_id=1
+adb_usb_path_sha256=$adb_usb_path_sha256
+android_model=CPH2655
+android_device=dodge
+android_product=dodge
+android_manufacturer=OnePlus
+build_fingerprint_sha256=$build_fingerprint_sha256
+physical_identity_sha256=$physical_identity_sha256
+physical_identity_captured_at=2026-07-22T00:00:00Z
 background_foreground=true
 network_handoff=wifi-to-cellular
 version_code=787500005
@@ -84,23 +110,76 @@ package_uid=10123
 logcat_scope=package-uid
 cookie_acceptance=$([[ "$role" == sync ]] && echo true || echo false)
 device_socket=$socket
+fixture_spki_sha256_base64=$fixture_spki
+fixture_cert_sha256=$fixture_cert
 fixture_receipt_sha256=$fixture_sha
+started_at=2026-07-22T00:01:00Z
+completed_at=2026-07-22T00:02:00Z
 EOF
   jq -n \
     --arg package "$package" --arg apk "$apk_sha" --arg chromium "$chromium_commit" \
-    --arg sync "$sync_commit" --arg socket "$socket" '
+    --arg sync "$sync_commit" --arg socket "$socket" --arg spki "$fixture_spki" '
+      def stream: {
+        text:"chunk-01\nchunk-02\nchunk-03\nchunk-04\n",
+        arrivals:[10,110,210,310],interaction_ticks:3,
+        chunk_milestones:[
+          {count:1,at_ms:10},{count:2,at_ms:110},
+          {count:3,at_ms:210},{count:4,at_ms:310}],
+        headers_ms:1,completed_ms:350};
+      def played($name): {name:$name,ok:true,duration:2,width:320,height:180,
+        audio_decoded_bytes:10,total_frames:60,dropped_frames:0};
       {
-        runtime:{android_package:$package,artifact_sha256:$apk,chromium_commit:$chromium,
-          helium_sync_commit:$sync,device_socket:$socket},
+        schema_version:1,expected_chunks:4,expected_delay_ms:100,
+        finished_at:"2026-07-22T00:02:00Z",
+        fetch_identity:stream,fetch_gzip:stream,fetch_br:stream,
+        fetch_h2:(stream + {protocol:"h2"}),
+        fetch_h3:(stream + {protocol:"h3"}),
+        transport_warmup_h3:{status:200,completed_ms:100,protocol:"h2"},
         required_transport_protocols:["h2","h3"],
         required_lifecycle:{background_foreground:true,network_handoff:true},
-        service_worker:{supported:true,controlled:true,script_url:"/service-worker.js"},
-        media_diagnostics:{source:"CDP Media domain",enabled:true,event_count:1,
-          player_count:1,method_counts:{"Media.playerEventsAdded":1}},
+        service_worker:{supported:true,controlled:true,script_url:"/service-worker.js",
+          stream:stream},
+        sse:{values:["chunk-01","chunk-02","chunk-03","chunk-04"],
+          arrivals:[10,110,210,310],interaction_ticks:3},
+        capabilities:{mp4_h264_aac:"probably",mp4_h264_high_aac:"",
+          webm_vp9_opus:"probably",webm_av1_opus:"",hls:"probably",
+          mse_mp4_h264_aac:true},
+        media_capabilities:{mp4_file:{supported:true},mp4_high_file:{supported:false},
+          webm_file:{supported:true},av1_file:{supported:false},
+          mp4_mse:{supported:true}},
+        runtime:{browser_product:"Chrome/150",browser_protocol_version:"1.3",
+          browser_webkit_version:"537.36 (@synthetic)",
+          fixture_origin:"http://127.0.0.1:44721",android_package:$package,
+          artifact_sha256:$apk,chromium_commit:$chromium,
+          helium_sync_commit:$sync,device_socket:$socket,
+          fixture_spki_sha256_base64:$spki},
         drm:{widevine:{api_available:true,key_system_available:false,
           key_system:"com.widevine.alpha"}},
-        media_manifest:{schema_version:1,files:{mp4:{name:"h264-aac.mp4",bytes:10,
-          sha256:("e" * 64)}}}
+        media_manifest:{schema_version:1,files:{
+          mp4:{name:"h264-aac.mp4",bytes:10,sha256:("a"*64)},
+          mp4_high:{name:"h264-high-aac.mp4",bytes:10,sha256:("b"*64)},
+          webm:{name:"vp9-opus.webm",bytes:10,sha256:("c"*64)},
+          av1:{name:"av1-opus.webm",bytes:10,sha256:("d"*64)},
+          mse:{name:"h264-aac-fragmented.mp4",bytes:10,sha256:("e"*64)},
+          hls_manifest:{name:"hls/stream.m3u8",bytes:10,sha256:("f"*64)},
+          hls_init:{name:"hls/init.mp4",bytes:10,sha256:("0"*64)},
+          hls_segment_0:{name:"hls/segment-000.m4s",bytes:10,sha256:("1"*64)},
+          hls_segment_1:{name:"hls/segment-001.m4s",bytes:10,sha256:("2"*64)},
+          dash_manifest:{name:"dash/stream.mpd",bytes:10,sha256:("3"*64)},
+          dash_media:{name:"dash/h264-aac-fragmented.mp4",bytes:10,
+            sha256:("4"*64)}}},
+        playback:[played("mp4"),
+          {name:"mp4_high",ok:false,error:"synthetic unsupported"},
+          played("webm"),{name:"av1",ok:false,error:"synthetic unsupported"},
+          played("mse"),played("hls"),played("dash")],
+        lifecycle:{events:[
+          {event:"started",at_ms:1,visibility:"visible",online:true},
+          {event:"visibilitychange",at_ms:100,visibility:"hidden",online:true},
+          {event:"connectionchange",at_ms:200,visibility:"hidden",online:true},
+          {event:"visibilitychange",at_ms:300,visibility:"visible",online:true},
+          {event:"completed",at_ms:1000,visibility:"visible",online:true}]},
+        media_diagnostics:{source:"CDP Media domain",enabled:true,event_count:1,
+          player_count:1,method_counts:{"Media.playerEventsAdded":1}}
       }
     ' > "$evidence/result.json"
   jq -n '{
@@ -110,6 +189,8 @@ EOF
     events:[{method:"Media.playerEventsAdded",params:{playerId:"synthetic"}}]
   }' > "$evidence/media-diagnostics.json"
   printf 'synthetic package-scoped logcat\n' > "$evidence/package-logcat.txt"
+  printf 'synthetic probe runner log\n' > "$evidence/probe-runner.log"
+  printf 'synthetic fixture server log\n' > "$evidence/fixture-server.log"
   if [[ "$role" == sync ]]; then
     jq -n '{
       schema_version:1,fixture:"helium-cookie-manager-disposable-v1",

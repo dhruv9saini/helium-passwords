@@ -131,6 +131,7 @@ case "$command" in
         [[ "$1" == package && $# -eq 2 &&
             "$(<"$installed_package_file")" == "$2" ]]
         printf '  userId=10123\n'
+        printf '  dataDir=/data/user/0/%s\n' "$2"
         printf '  versionCode=787500005 minSdk=29 targetSdk=36\n'
         printf '  versionName=150.0.7871.181\n'
         ;;

@@ -9,7 +9,18 @@ trap cleanup EXIT
 mkdir -p "$test_root/etc/systemd/system" \
   "$test_root/usr/local/libexec/helium-sync-releases/current" \
   "$test_root/usr/bin" "$test_root/usr/lib/systemd"
-cp -a /usr/lib/systemd/system "$test_root/usr/lib/systemd/"
+system_unit_dir=
+while IFS= read -r candidate; do
+  if [[ -f "$candidate/basic.target" ]]; then
+    system_unit_dir=$candidate
+    break
+  fi
+done < <(systemctl show --property=UnitPath --value | tr ' ' '\n')
+if [[ -z "$system_unit_dir" ]]; then
+  echo 'could not locate the systemd system unit directory' >&2
+  exit 1
+fi
+cp -a "$system_unit_dir" "$test_root/usr/lib/systemd/system"
 cp "$repo_root"/systemd/helium-syncd.service \
   "$repo_root"/systemd/helium-sync-server-backup.service \
   "$repo_root"/systemd/helium-sync-server-backup-archive.service \

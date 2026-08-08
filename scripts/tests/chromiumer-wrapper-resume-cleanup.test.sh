@@ -4,6 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." >/dev/null 2>&1 && pwd)
 wrapper="${repo_root}/scripts/chromiumer-job.sh"
 runtime_root=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+export WRAPPER_RESUME_REAL_MKTEMP=$(command -v mktemp)
 test_root=$(mktemp -d "${runtime_root}/helium-wrapper-resume.XXXXXX")
 trap 'find "${test_root}" -depth -delete' EXIT
 mkdir -p "${test_root}/bin"
@@ -33,10 +34,10 @@ if [[ "$*" == *helium-notification.XXXXXX* ]]; then
         printf '%s\n' "${directory}"
         exit 0
     fi
-    exec /usr/bin/mktemp -d \
+    exec "$WRAPPER_RESUME_REAL_MKTEMP" -d \
         "${WRAPPER_RESUME_TEST_ROOT}/notification.XXXXXX"
 fi
-exec /usr/bin/mktemp "$@"
+exec "$WRAPPER_RESUME_REAL_MKTEMP" "$@"
 EOF
 chmod 700 "${test_root}/bin/mktemp"
 

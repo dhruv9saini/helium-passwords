@@ -101,7 +101,7 @@ checksum_provenance "$test_root/input/build-provenance"
 
 for source in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
   disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-  run-device-probe.sh verify-probe-pair.sh; do
+  run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh; do
   git -C "$repo_root" show \
     "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT:scripts/android-media/$source" \
     > "$test_root/input/runtime-acceptance/$source"
@@ -124,7 +124,8 @@ EOF
   cd "$test_root/input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+    run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh \
+    kit.env > SHA256SUMS
 )
 tar -C "$test_root/input" -caf "$test_root/artifact.tar.xz" .
 
@@ -161,7 +162,7 @@ find "$test_root/missing-boundary-input/runtime-acceptance/disposable-browser.sh
   cd "$test_root/missing-boundary-input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     prepare-cookie-acceptance-profile.sh run-device-probe.sh \
-    verify-probe-pair.sh kit.env > SHA256SUMS
+    audit-probe-pair.mjs verify-probe-pair.sh kit.env > SHA256SUMS
 )
 tar -C "$test_root/missing-boundary-input" \
   -caf "$test_root/missing-boundary-artifact.tar.xz" .
@@ -186,7 +187,8 @@ checksum_provenance "$test_root/production-input/build-provenance"
   cd "$test_root/production-input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+    run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh \
+    kit.env > SHA256SUMS
 )
 tar -C "$test_root/production-input" -caf "$test_root/production-artifact.tar.xz" .
 cat > "$test_root/production-aapt2" <<'EOF'
@@ -262,7 +264,8 @@ checksum_provenance "$test_root/control-input/build-provenance"
   cd "$test_root/control-input/runtime-acceptance"
   sha256sum fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     disposable-browser.sh prepare-cookie-acceptance-profile.sh \
-    run-device-probe.sh verify-probe-pair.sh kit.env > SHA256SUMS
+    run-device-probe.sh audit-probe-pair.mjs verify-probe-pair.sh \
+    kit.env > SHA256SUMS
 )
 tar -C "$test_root/control-input" -caf "$test_root/control-artifact.tar.xz" .
 cat > "$test_root/control-aapt2" <<'EOF'

@@ -319,11 +319,11 @@ for kit_file in fixture-server.mjs generate-fixtures.sh run-cdp-probe.mjs \
     exit 1
   }
 done
-[[ "$(find "$runtime_kit" -mindepth 1 -maxdepth 1 | wc -l)" -eq 9 ]] || {
+[[ "$(find "$runtime_kit" -mindepth 1 -maxdepth 1 | wc -l)" -eq 10 ]] || {
   echo "runtime acceptance kit contains an unexpected file inventory" >&2
   exit 1
 }
-[[ "$(wc -l < "$runtime_kit/SHA256SUMS")" -eq 8 ]] || {
+[[ "$(wc -l < "$runtime_kit/SHA256SUMS")" -eq 9 ]] || {
   echo "runtime acceptance kit checksum inventory is invalid" >&2
   exit 1
 }
