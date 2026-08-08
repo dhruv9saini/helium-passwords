@@ -169,7 +169,7 @@ poll_terminal() {
         exit 1
     }
     duration=$(((exit_mono - start_mono) / 1000000))
-    if [ "${result}" = success ] && [ "${code}" = exited ] &&
+    if [ "${result}" = success ] && [[ "${code}" =~ ^(exited|1)$ ]] &&
         [ "${exit_status}" = 0 ]; then
         result_name=success
         reason='systemd unit completed successfully'

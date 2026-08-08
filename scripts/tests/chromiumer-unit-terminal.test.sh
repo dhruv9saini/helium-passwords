@@ -17,7 +17,7 @@ case "${UNIT_TEST_PHASE:-absent}" in
     printf 'LoadState=loaded\nActiveState=active\nSubState=running\nResult=success\nExecMainCode=exited\nExecMainStatus=0\nExecMainStartTimestampMonotonic=1000000\nExecMainExitTimestampMonotonic=0\n'
     ;;
   success)
-    printf 'LoadState=loaded\nActiveState=active\nSubState=exited\nResult=success\nExecMainCode=exited\nExecMainStatus=0\nExecMainStartTimestampMonotonic=1000000\nExecMainExitTimestampMonotonic=62000000\n'
+    printf 'LoadState=loaded\nActiveState=active\nSubState=exited\nResult=success\nExecMainCode=1\nExecMainStatus=0\nExecMainStartTimestampMonotonic=1000000\nExecMainExitTimestampMonotonic=62000000\n'
     ;;
   failure)
     printf 'LoadState=loaded\nActiveState=failed\nSubState=failed\nResult=exit-code\nExecMainCode=exited\nExecMainStatus=7\nExecMainStartTimestampMonotonic=1000000\nExecMainExitTimestampMonotonic=3000000\n'

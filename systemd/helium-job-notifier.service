@@ -6,7 +6,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 Environment=HOME=/home/d
-Environment=PATH=/home/d/.local/bin:/usr/local/bin:/usr/bin
+Environment=PATH=/home/d/.local/bin:/run/current-system/sw/bin:/usr/local/bin:/usr/bin
 ExecStart=/home/d/.local/libexec/helium-job-notifier poll
 UMask=0077
 Nice=10
