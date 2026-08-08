@@ -71,3 +71,19 @@ test("remote writes validate identity and choose one add-or-update operation", (
   assert.match(reconcile, /profile_store_->UpdateLogin/);
   assert.doesNotMatch(source, /AddRemoteLoginAfterUpdate/);
 });
+
+test("remote deletion completes from Chromium's retained inventory", () => {
+  const retained = source.slice(
+    source.indexOf("void HeliumPasswordSyncBridge::OnLoginsRetained"),
+    source.indexOf("void HeliumPasswordSyncBridge::OnGetPasswordStoreResultsOrErrorFrom"),
+  );
+  const reconcile = source.slice(
+    source.indexOf("void HeliumPasswordSyncBridge::ReconcileRemotePasswords"),
+    source.indexOf("bool HeliumPasswordSyncBridge::VerifyRemoteWrites"),
+  );
+  assert.match(reconcile, /pending_remote_delete_keys_\.insert\(record\.key\)/);
+  assert.match(reconcile, /RemoveLogin\(FROM_HERE,/);
+  assert.match(retained, /if \(applying_remote_\)/);
+  assert.match(retained, /pending_remote_delete_keys_\.erase\(it\)/);
+  assert.match(retained, /OnRemoteRecordComplete\(\)/);
+});
