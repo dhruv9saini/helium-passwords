@@ -5,6 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 backup_tool=${HELIUM_PROFILE_BACKUP_TOOL:-$repo_root/scripts/profile-backup/helium-profile-backup.sh}
 acceptance=${HELIUM_NATIVE_RECOVERY_ACCEPTANCE:-$repo_root/scripts/native-recovery/acceptance.mjs}
 adb_bin=${ADB:-adb}
+adb_serial=${ANDROID_ADB_SERIAL:-}
 package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync.test}
 
 usage() {
@@ -24,6 +25,20 @@ EOF
   echo "native recovery backup is disposable .test-package only" >&2
   exit 64
 }
+adb_device=("$adb_bin")
+if [[ -n "$adb_serial" ]]; then
+  [[ "$adb_serial" == oneplus:5555 ]] || {
+    echo "native recovery backup requires the fixed oneplus ADB endpoint" >&2
+    exit 64
+  }
+  command -v timeout >/dev/null
+  timeout 20s "$adb_bin" connect "$adb_serial" >/dev/null
+  adb_device+=(-s "$adb_serial")
+  [[ "$(timeout 20s "${adb_device[@]}" get-state)" == device ]] || {
+    echo "fixed oneplus ADB endpoint is not ready" >&2
+    exit 1
+  }
+fi
 config=$(realpath -e -- "$1")
 generation=${2:-"$(date -u +%Y%m%dT%H%M%SZ)-$(tr -d - </proc/sys/kernel/random/uuid | cut -c1-16)"}
 [[ "$generation" =~ ^[0-9]{8}T[0-9]{6}Z-[a-f0-9]{16}$ ]] || {
@@ -31,7 +46,7 @@ generation=${2:-"$(date -u +%Y%m%dT%H%M%SZ)-$(tr -d - </proc/sys/kernel/random/u
   exit 64
 }
 
-data_dir=$("$adb_bin" shell "dumpsys package '$package'" | tr -d '\r' |
+data_dir=$("${adb_device[@]}" shell "dumpsys package '$package'" | tr -d '\r' |
   sed -n 's/.*dataDir=//p' | head -n1)
 [[ "$data_dir" =~ ^/data/(user/[0-9]+|data)/[A-Za-z0-9._]+$ ]] || {
   echo "could not resolve a safe installed package dataDir" >&2
@@ -45,7 +60,7 @@ config_source=$(awk -F= '$1 == "source_path" {print substr($0,13)}' "$config")
   exit 1
 }
 
-inventory=$("$adb_bin" shell "/debug_ramdisk/su -c '
+inventory=$("${adb_device[@]}" shell "/debug_ramdisk/su -c '
 set -eu
 ROOT=\"$recovery_path\"
 test -d \"\$ROOT\"
@@ -70,7 +85,7 @@ find \"\$ROOT\" -mindepth 1 -maxdepth 1 -printf \"%f\\n\" | sort
   exit 1
 }
 for kind in passwords cookies; do
-  "$adb_bin" exec-out /debug_ramdisk/su -c \
+  "${adb_device[@]}" exec-out /debug_ramdisk/su -c \
     "cat '$recovery_path/$kind.current.json'" |
     node "$acceptance" verify-snapshot-stream --kind "$kind" \
       --device oneplus --max-age-seconds 600 >/dev/null
@@ -79,7 +94,7 @@ done
 archive_parent=${recovery_path%/*}
 archive_root=${recovery_path##*/}
 stream_recovery() {
-  "$adb_bin" exec-out /debug_ramdisk/su -c \
+  "${adb_device[@]}" exec-out /debug_ramdisk/su -c \
     "cd '$archive_parent' && /system/bin/tar -cf - '$archive_root'"
 }
 

@@ -73,7 +73,7 @@ install_scheduler() {
       /data/user/0/computer.helium.sync.test/*) package=computer.helium.sync.test ;;
       *) echo "OnePlus scheduler is disposable .test-package only" >&2; exit 1 ;;
     esac
-    exec_line="Environment=CHROMIUM_ANDROID_PACKAGE=$package HELIUM_PROFILE_BACKUP_TOOL=$release/helium-profile-backup HELIUM_NATIVE_RECOVERY_ACCEPTANCE=$release/acceptance.mjs
+    exec_line="Environment=CHROMIUM_ANDROID_PACKAGE=$package ANDROID_ADB_SERIAL=oneplus:5555 HELIUM_PROFILE_BACKUP_TOOL=$release/helium-profile-backup HELIUM_NATIVE_RECOVERY_ACCEPTANCE=$release/acceptance.mjs
 ExecStart=$release/backup-android-native-recovery $config_root/backup.conf"
   else
     exec_line="Environment=HELIUM_PROFILE_BACKUP_TOOL=$release/helium-profile-backup HELIUM_NATIVE_RECOVERY_ACCEPTANCE=$release/acceptance.mjs
