@@ -84,16 +84,15 @@ boundary_schema=$(boundary_value schema)
   echo "completed build graph changed after its boundary validation" >&2
   exit 1
 }
-if [[ "$boundary_schema" ==
-    helium-retained-full-graph-node-repair-boundary-v1 ]]; then
+if [[ "$boundary_schema" == helium-retained-full-graph-node-repair-boundary-v1 ]]; then
   node_repair_output=
-  if [[ "$(boundary_value node_repair_action_output)" ==
+  if [[ "$(boundary_value node_repair_action_output)" == \
       gen/components/helium_onboarding/helium_onboarding_localized_strings.h ]]; then
     node_repair_output="$out/$(boundary_value node_repair_action_output)"
   fi
   [[ -n "$node_repair_output" && -f "$node_repair_output" &&
       ! -L "$node_repair_output" &&
-      "$(sha256sum "$node_repair_output" | awk '{print $1}')" ==
+      "$(sha256sum "$node_repair_output" | awk '{print $1}')" == \
         "$(boundary_value node_repair_action_output_sha256)" ]] || {
     echo "completed Node repair output changed after boundary validation" >&2
     exit 1
