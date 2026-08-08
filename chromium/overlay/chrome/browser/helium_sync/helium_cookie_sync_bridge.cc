@@ -37,6 +37,7 @@
 #include "net/cookies/cookie_constants.h"
 #include "net/cookies/cookie_options.h"
 #include "net/cookies/cookie_partition_key.h"
+#include "net/device_bound_sessions/session_key.h"
 #include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "services/network/public/mojom/device_bound_sessions.mojom.h"
 #include "url/gurl.h"
@@ -68,8 +69,10 @@ constexpr base::TimeDelta kReconcileInterval = base::Minutes(1);
 
 constexpr char kDeletedFingerprint[] = "deleted";
 constexpr char kAcceptanceMarker[] = ".helium-cookie-disposable-profile-v1";
+#if BUILDFLAG(IS_ANDROID)
 constexpr char kAcceptanceMarkerContents[] =
     "helium-cookie-disposable-profile-v1\n";
+#endif
 constexpr char kAcceptanceReport[] =
     "helium-sync/cookie-native-acceptance.json";
 constexpr char kAcceptanceRollback[] =
@@ -352,6 +355,11 @@ BuildSnapshot(std::vector<net::CanonicalCookie> cookies,
   }
   out.fingerprint = Sha256(fingerprint_input);
   return out;
+}
+
+CookieSnapshot CloneSnapshot(const CookieSnapshot &snapshot) {
+  return CookieSnapshot{snapshot.cookies, snapshot.cookie_fingerprints,
+                        snapshot.serialized.Clone(), snapshot.fingerprint};
 }
 
 GURL SourceUrlForCookie(const net::CanonicalCookie &cookie) {
@@ -814,8 +822,8 @@ private:
     return BuildSnapshot(std::move(cookies));
   }
 
-  void OnInitialCookies(std::vector<net::CanonicalCookie> cookies) {
-    std::optional<CookieSnapshot> initial = BuildSnapshot(std::move(cookies));
+  void OnInitialCookies(const std::vector<net::CanonicalCookie> &cookies) {
+    std::optional<CookieSnapshot> initial = BuildSnapshot(cookies);
     if (!initial || !initial->cookies.empty()) {
       Fail("fixture-profile-must-start-with-empty-cookie-store");
       return;
@@ -893,8 +901,8 @@ private:
     StartNextOperation();
   }
 
-  void OnPhaseCookies(std::vector<net::CanonicalCookie> cookies) {
-    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
+  void OnPhaseCookies(const std::vector<net::CanonicalCookie> &cookies) {
+    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
     if (!current) {
       Fail("native-cookie-readback-invalid");
       return;
@@ -993,8 +1001,9 @@ private:
         base::BindOnce(&Impl::OnCookieSet, weak_factory_.GetWeakPtr()));
   }
 
-  void OnPreRollbackCookies(std::vector<net::CanonicalCookie> cookies) {
-    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
+  void OnPreRollbackCookies(
+      const std::vector<net::CanonicalCookie> &cookies) {
+    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
     if (!current || current->fingerprint != import_.fingerprint) {
       Fail("rejected-operation-mutated-cookie-store");
       return;
@@ -1298,8 +1307,8 @@ private:
   }
 
   void OnCookies(std::map<std::string, RemoteCookie> remote,
-                 std::vector<net::CanonicalCookie> cookies) {
-    std::optional<CookieSnapshot> local = BuildSnapshot(std::move(cookies));
+                 const std::vector<net::CanonicalCookie> &cookies) {
+    std::optional<CookieSnapshot> local = BuildSnapshot(cookies);
     if (!local) {
       Block("local-cookie-snapshot-not-fully-serializable");
       return;
@@ -1318,13 +1327,13 @@ private:
 
   void OnDeviceBoundSessions(
       std::map<std::string, RemoteCookie> remote, CookieSnapshot local,
-      std::vector<network::mojom::DeviceBoundSessionKeyPtr> sessions) {
+      const std::vector<net::device_bound_sessions::SessionKey> &sessions) {
     DeviceBoundSessionInventory inventory;
     for (const auto &session : sessions) {
-      if (!session || session->site.opaque() || session->id.empty()) {
+      if (session.site.opaque() || session.id.value().empty()) {
         continue;
       }
-      inventory[session->site.Serialize()].insert(session->id);
+      inventory[session.site.Serialize()].insert(session.id.value());
     }
     ReconcileSnapshots(std::move(remote), std::move(local),
                        std::move(inventory));
@@ -1565,7 +1574,7 @@ private:
 
   void BeginRemoteApply(CookieSnapshot before,
                         std::map<std::string, RemoteCookie> updates) {
-    CookieSnapshot target = before;
+    CookieSnapshot target = CloneSnapshot(before);
     std::set<std::string> keys;
     for (const auto &[key, remote] : updates) {
       keys.insert(key);
@@ -1772,8 +1781,8 @@ private:
                                        weak_factory_.GetWeakPtr()));
   }
 
-  void OnRecoveryCookies(std::vector<net::CanonicalCookie> cookies) {
-    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
+  void OnRecoveryCookies(const std::vector<net::CanonicalCookie> &cookies) {
+    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
     if (!current) {
       Block("cookie-rollback-current-snapshot-invalid");
       return;
@@ -1878,8 +1887,9 @@ private:
                                        weak_factory_.GetWeakPtr()));
   }
 
-  void OnFailedApplyCookies(std::vector<net::CanonicalCookie> cookies) {
-    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
+  void OnFailedApplyCookies(
+      const std::vector<net::CanonicalCookie> &cookies) {
+    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
     if (!current) {
       Block("cookie-failed-apply-snapshot-invalid");
       return;
@@ -1894,8 +1904,8 @@ private:
                                        weak_factory_.GetWeakPtr()));
   }
 
-  void OnVerifiedCookies(std::vector<net::CanonicalCookie> cookies) {
-    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
+  void OnVerifiedCookies(const std::vector<net::CanonicalCookie> &cookies) {
+    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
     if (!current) {
       Block("cookie-post-apply-snapshot-invalid");
       return;

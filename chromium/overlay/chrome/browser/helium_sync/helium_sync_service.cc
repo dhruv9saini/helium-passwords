@@ -119,7 +119,7 @@ bool IsPrivateSyncEndpoint(const GURL &endpoint) {
   if (!endpoint.is_valid() || !endpoint.SchemeIs(url::kHttpScheme) ||
       endpoint.host().empty() || endpoint.has_username() ||
       endpoint.has_password() || endpoint.has_query() || endpoint.has_ref() ||
-      endpoint.path_piece() != "/") {
+      endpoint.path() != "/") {
     return false;
   }
   net::IPAddress address;

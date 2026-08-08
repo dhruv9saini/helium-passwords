@@ -128,6 +128,7 @@ private:
   std::map<std::string, CredentialState> credential_state_;
   std::vector<RemotePasswordRecord> pending_remote_records_;
   std::map<std::string, RemotePasswordRecord> pending_verification_;
+  std::set<std::string> pending_remote_delete_keys_;
   int initial_empty_read_retries_ = 0;
   int post_apply_empty_read_retries_ = 0;
   int64_t pending_next_seq_ = 0;

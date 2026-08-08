@@ -401,6 +401,7 @@ bool ParseSession(std::string_view raw, RestorePlan* plan, std::string* error) {
   std::set<std::string> global_group_ids;
   int tab_count = 0;
   int group_count = 0;
+  int navigation_count = 0;
   for (const base::Value& window_value : *windows) {
     const base::DictValue* window_dict = window_value.GetIfDict();
     if (!window_dict ||
@@ -560,6 +561,7 @@ bool ParseSession(std::string_view raw, RestorePlan* plan, std::string* error) {
   plan->window_count = static_cast<int>(plan->windows.size());
   plan->tab_count = tab_count;
   plan->group_count = group_count;
+  plan->navigation_count = navigation_count;
   return true;
 }
 
@@ -832,7 +834,7 @@ struct HeliumTabRestoreBridge::Impl {
       Fail("initial-window-not-empty", false);
       return;
     }
-    if (!RestoreWindow(0, windows[0], true)) {
+    if (!RestoreWindowAt(0, windows[0], true)) {
       return;
     }
     ContinueWithWindow(1);
@@ -865,15 +867,15 @@ struct HeliumTabRestoreBridge::Impl {
       Fail("window-creation-result", true);
       return;
     }
-    if (!RestoreWindow(index, browser, false)) {
+    if (!RestoreWindowAt(index, browser, false)) {
       return;
     }
     ContinueWithWindow(index + 1);
   }
 
-  bool RestoreWindow(size_t index,
-                     BrowserWindowInterface* browser,
-                     bool is_initial) {
+  bool RestoreWindowAt(size_t index,
+                       BrowserWindowInterface* browser,
+                       bool is_initial) {
     if (index >= plan_.windows.size() || !browser) {
       Fail("window-index", true);
       return false;

@@ -146,11 +146,11 @@ bool IsValidDevice(std::string_view value) {
 
 bool PrivateRegularFile(const base::FilePath &path, size_t maximum,
                         std::string *contents) {
-  int64_t size = 0;
+  const std::optional<int64_t> size = base::GetFileSize(path);
   if (!path.IsAbsolute() || base::MakeAbsoluteFilePath(path) != path ||
       base::IsLink(path) || !base::PathExists(path) ||
-      !base::GetFileSize(path, &size) || size < 1 ||
-      size > base::checked_cast<int64_t>(maximum) ||
+      !size || *size < 1 ||
+      *size > base::checked_cast<int64_t>(maximum) ||
       !base::ReadFileToString(path, contents)) {
     return false;
   }
@@ -857,10 +857,11 @@ private:
                                             weak_factory_.GetWeakPtr()));
   }
 
-  void OnCapturedCookies(std::vector<net::CanonicalCookie> cookies) {
+  void OnCapturedCookies(
+      const std::vector<net::CanonicalCookie> &cookies) {
     cookie_read_in_flight_ = false;
     std::optional<CookieSnapshot> snapshot =
-        BuildCookieSnapshot(std::move(cookies));
+        BuildCookieSnapshot(cookies);
     if (!snapshot) {
       Fail("native recovery CookieManager snapshot is invalid");
       return;
@@ -953,9 +954,10 @@ private:
     password_store_->GetAllLogins(weak_factory_.GetWeakPtr());
   }
 
-  void OnInitialRestoreCookies(std::vector<net::CanonicalCookie> cookies) {
+  void OnInitialRestoreCookies(
+      const std::vector<net::CanonicalCookie> &cookies) {
     std::optional<CookieSnapshot> empty =
-        BuildCookieSnapshot(std::move(cookies));
+        BuildCookieSnapshot(cookies);
     if (!empty || !empty->cookies.empty()) {
       Fail("native cookie restore requires an empty disposable store");
       return;
@@ -998,9 +1000,10 @@ private:
     RestoreNextCookie();
   }
 
-  void OnRestoredCookies(std::vector<net::CanonicalCookie> cookies) {
+  void OnRestoredCookies(
+      const std::vector<net::CanonicalCookie> &cookies) {
     std::optional<CookieSnapshot> restored =
-        BuildCookieSnapshot(std::move(cookies));
+        BuildCookieSnapshot(cookies);
     if (!restored || !expected_cookies_ ||
         restored->records_sha256 != expected_cookies_->records_sha256 ||
         restored->state_sha256 != expected_cookies_->state_sha256 ||

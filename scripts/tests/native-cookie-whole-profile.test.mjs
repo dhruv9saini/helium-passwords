@@ -403,7 +403,10 @@ test("native source is whole-profile, partition-complete, rollback-first, and na
   assert.match(cookie, /canonical_cookie_record_key/);
   assert.match(cookie, /remote_revision/);
   assert.match(cookie, /observed_site_sessions/);
-  assert.match(cookie, /session->id/);
+  assert.match(cookie, /net::device_bound_sessions::SessionKey/);
+  assert.match(cookie, /session\.id\.value\(\)/);
+  assert.match(cookie,
+    /OnCookies\([\s\S]*const std::vector<net::CanonicalCookie> &cookies\)/);
   assert.match(cookie, /blocked-no-exact-origin-or-login-entry-evidence/);
   assert.match(cookie, /navigation_allowed", false/);
   assert.match(cookie, /automatic_form_submission_allowed", false/);
@@ -427,6 +430,7 @@ test("native source is whole-profile, partition-complete, rollback-first, and na
   assert.doesNotMatch(service, /cookie-policies/);
   assert.match(client, /kMaxSyncRequestBytes = 4 \* 1024 \* 1024/);
   assert.match(client, /body_json\.size\(\) > kMaxSyncRequestBytes/);
+  assert.match(client, /url_response_head\.mojom\.h/);
 });
 
 test("normal composition contains only the native password and cookie path", () => {
@@ -470,6 +474,7 @@ test("native sync has one fail-closed profile-local enrollment source", () => {
   assert.match(service, /profile->GetPath\(\)\.AppendASCII\(kConfigDir\)/);
   assert.match(service, /SchemeIs\(url::kHttpScheme\)/);
   assert.match(service, /IPAddressMatchesPrefix/);
+  assert.match(service, /endpoint\.path\(\) != "\/"/);
   assert.match(service, /kClientStateFile/);
   assert.match(service, /phase != "pending".*phase != "active"/s);
   assert.doesNotMatch(service, /CandidateConfigPaths|kDefaultBaseUrl|ReadDeviceName/);

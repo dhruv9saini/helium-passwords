@@ -282,13 +282,30 @@ void HeliumPasswordSyncBridge::OnLoginsRetained(
     password_manager::PasswordStoreInterface *store,
     const std::vector<password_manager::StoredCredential>
         &retained_passwords) {
-  if (store != profile_store_.get() || applying_remote_) {
+  if (store != profile_store_.get()) {
     return;
   }
 
   std::set<std::string> retained_keys;
   for (const auto &credential : retained_passwords) {
     retained_keys.insert(PasswordRecordKey(credential));
+  }
+  if (applying_remote_) {
+    size_t completed_deletions = 0;
+    for (auto it = pending_remote_delete_keys_.begin();
+         it != pending_remote_delete_keys_.end();) {
+      if (retained_keys.contains(*it)) {
+        ++it;
+        continue;
+      }
+      it = pending_remote_delete_keys_.erase(it);
+      ++completed_deletions;
+    }
+    while (completed_deletions > 0) {
+      --completed_deletions;
+      OnRemoteRecordComplete();
+    }
+    return;
   }
   for (const std::string &key : known_keys_) {
     if (retained_keys.contains(key)) {
@@ -549,11 +566,10 @@ void HeliumPasswordSyncBridge::ReconcileRemotePasswords(
         continue;
       }
       pending_verification_[record.key] = remote;
+      pending_remote_delete_keys_.insert(record.key);
       pending_remote_writes_++;
-      profile_store_->RemoveLogin(
-          CloneCredential(*existing->second),
-          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
-                         weak_factory_.GetWeakPtr()));
+      profile_store_->RemoveLogin(FROM_HERE,
+                                  CloneCredential(*existing->second));
       continue;
     }
     std::optional<base::Value> parsed =

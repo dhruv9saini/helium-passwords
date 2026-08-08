@@ -53,10 +53,10 @@ index 0000000..14882cc
 +}
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
 new file mode 100644
-index 0000000..5e32f16
+index 0000000..0b9cb4a
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
-@@ -0,0 +1,2098 @@
+@@ -0,0 +1,2108 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_cookie_sync_bridge.h"
@@ -96,6 +96,7 @@ index 0000000..5e32f16
 +#include "net/cookies/cookie_constants.h"
 +#include "net/cookies/cookie_options.h"
 +#include "net/cookies/cookie_partition_key.h"
++#include "net/device_bound_sessions/session_key.h"
 +#include "services/network/public/mojom/cookie_manager.mojom.h"
 +#include "services/network/public/mojom/device_bound_sessions.mojom.h"
 +#include "url/gurl.h"
@@ -127,8 +128,10 @@ index 0000000..5e32f16
 +
 +constexpr char kDeletedFingerprint[] = "deleted";
 +constexpr char kAcceptanceMarker[] = ".helium-cookie-disposable-profile-v1";
++#if BUILDFLAG(IS_ANDROID)
 +constexpr char kAcceptanceMarkerContents[] =
 +    "helium-cookie-disposable-profile-v1\n";
++#endif
 +constexpr char kAcceptanceReport[] =
 +    "helium-sync/cookie-native-acceptance.json";
 +constexpr char kAcceptanceRollback[] =
@@ -411,6 +414,11 @@ index 0000000..5e32f16
 +  }
 +  out.fingerprint = Sha256(fingerprint_input);
 +  return out;
++}
++
++CookieSnapshot CloneSnapshot(const CookieSnapshot &snapshot) {
++  return CookieSnapshot{snapshot.cookies, snapshot.cookie_fingerprints,
++                        snapshot.serialized.Clone(), snapshot.fingerprint};
 +}
 +
 +GURL SourceUrlForCookie(const net::CanonicalCookie &cookie) {
@@ -873,8 +881,8 @@ index 0000000..5e32f16
 +    return BuildSnapshot(std::move(cookies));
 +  }
 +
-+  void OnInitialCookies(std::vector<net::CanonicalCookie> cookies) {
-+    std::optional<CookieSnapshot> initial = BuildSnapshot(std::move(cookies));
++  void OnInitialCookies(const std::vector<net::CanonicalCookie> &cookies) {
++    std::optional<CookieSnapshot> initial = BuildSnapshot(cookies);
 +    if (!initial || !initial->cookies.empty()) {
 +      Fail("fixture-profile-must-start-with-empty-cookie-store");
 +      return;
@@ -952,8 +960,8 @@ index 0000000..5e32f16
 +    StartNextOperation();
 +  }
 +
-+  void OnPhaseCookies(std::vector<net::CanonicalCookie> cookies) {
-+    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
++  void OnPhaseCookies(const std::vector<net::CanonicalCookie> &cookies) {
++    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
 +    if (!current) {
 +      Fail("native-cookie-readback-invalid");
 +      return;
@@ -1052,8 +1060,9 @@ index 0000000..5e32f16
 +        base::BindOnce(&Impl::OnCookieSet, weak_factory_.GetWeakPtr()));
 +  }
 +
-+  void OnPreRollbackCookies(std::vector<net::CanonicalCookie> cookies) {
-+    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
++  void OnPreRollbackCookies(
++      const std::vector<net::CanonicalCookie> &cookies) {
++    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
 +    if (!current || current->fingerprint != import_.fingerprint) {
 +      Fail("rejected-operation-mutated-cookie-store");
 +      return;
@@ -1357,8 +1366,8 @@ index 0000000..5e32f16
 +  }
 +
 +  void OnCookies(std::map<std::string, RemoteCookie> remote,
-+                 std::vector<net::CanonicalCookie> cookies) {
-+    std::optional<CookieSnapshot> local = BuildSnapshot(std::move(cookies));
++                 const std::vector<net::CanonicalCookie> &cookies) {
++    std::optional<CookieSnapshot> local = BuildSnapshot(cookies);
 +    if (!local) {
 +      Block("local-cookie-snapshot-not-fully-serializable");
 +      return;
@@ -1377,13 +1386,13 @@ index 0000000..5e32f16
 +
 +  void OnDeviceBoundSessions(
 +      std::map<std::string, RemoteCookie> remote, CookieSnapshot local,
-+      std::vector<network::mojom::DeviceBoundSessionKeyPtr> sessions) {
++      const std::vector<net::device_bound_sessions::SessionKey> &sessions) {
 +    DeviceBoundSessionInventory inventory;
 +    for (const auto &session : sessions) {
-+      if (!session || session->site.opaque() || session->id.empty()) {
++      if (session.site.opaque() || session.id.value().empty()) {
 +        continue;
 +      }
-+      inventory[session->site.Serialize()].insert(session->id);
++      inventory[session.site.Serialize()].insert(session.id.value());
 +    }
 +    ReconcileSnapshots(std::move(remote), std::move(local),
 +                       std::move(inventory));
@@ -1624,7 +1633,7 @@ index 0000000..5e32f16
 +
 +  void BeginRemoteApply(CookieSnapshot before,
 +                        std::map<std::string, RemoteCookie> updates) {
-+    CookieSnapshot target = before;
++    CookieSnapshot target = CloneSnapshot(before);
 +    std::set<std::string> keys;
 +    for (const auto &[key, remote] : updates) {
 +      keys.insert(key);
@@ -1831,8 +1840,8 @@ index 0000000..5e32f16
 +                                       weak_factory_.GetWeakPtr()));
 +  }
 +
-+  void OnRecoveryCookies(std::vector<net::CanonicalCookie> cookies) {
-+    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
++  void OnRecoveryCookies(const std::vector<net::CanonicalCookie> &cookies) {
++    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
 +    if (!current) {
 +      Block("cookie-rollback-current-snapshot-invalid");
 +      return;
@@ -1937,8 +1946,9 @@ index 0000000..5e32f16
 +                                       weak_factory_.GetWeakPtr()));
 +  }
 +
-+  void OnFailedApplyCookies(std::vector<net::CanonicalCookie> cookies) {
-+    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
++  void OnFailedApplyCookies(
++      const std::vector<net::CanonicalCookie> &cookies) {
++    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
 +    if (!current) {
 +      Block("cookie-failed-apply-snapshot-invalid");
 +      return;
@@ -1953,8 +1963,8 @@ index 0000000..5e32f16
 +                                       weak_factory_.GetWeakPtr()));
 +  }
 +
-+  void OnVerifiedCookies(std::vector<net::CanonicalCookie> cookies) {
-+    std::optional<CookieSnapshot> current = BuildSnapshot(std::move(cookies));
++  void OnVerifiedCookies(const std::vector<net::CanonicalCookie> &cookies) {
++    std::optional<CookieSnapshot> current = BuildSnapshot(cookies);
 +    if (!current) {
 +      Block("cookie-post-apply-snapshot-invalid");
 +      return;
@@ -2228,10 +2238,10 @@ index 0000000..0d24071
 +#endif // CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 diff --git a/chrome/browser/helium_sync/helium_native_recovery_bridge.cc b/chrome/browser/helium_sync/helium_native_recovery_bridge.cc
 new file mode 100644
-index 0000000..b72c929
+index 0000000..ef08f52
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_native_recovery_bridge.cc
-@@ -0,0 +1,1112 @@
+@@ -0,0 +1,1115 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_native_recovery_bridge.h"
@@ -2380,11 +2390,11 @@ index 0000000..b72c929
 +
 +bool PrivateRegularFile(const base::FilePath &path, size_t maximum,
 +                        std::string *contents) {
-+  int64_t size = 0;
++  const std::optional<int64_t> size = base::GetFileSize(path);
 +  if (!path.IsAbsolute() || base::MakeAbsoluteFilePath(path) != path ||
 +      base::IsLink(path) || !base::PathExists(path) ||
-+      !base::GetFileSize(path, &size) || size < 1 ||
-+      size > base::checked_cast<int64_t>(maximum) ||
++      !size || *size < 1 ||
++      *size > base::checked_cast<int64_t>(maximum) ||
 +      !base::ReadFileToString(path, contents)) {
 +    return false;
 +  }
@@ -3091,10 +3101,11 @@ index 0000000..b72c929
 +                                            weak_factory_.GetWeakPtr()));
 +  }
 +
-+  void OnCapturedCookies(std::vector<net::CanonicalCookie> cookies) {
++  void OnCapturedCookies(
++      const std::vector<net::CanonicalCookie> &cookies) {
 +    cookie_read_in_flight_ = false;
 +    std::optional<CookieSnapshot> snapshot =
-+        BuildCookieSnapshot(std::move(cookies));
++        BuildCookieSnapshot(cookies);
 +    if (!snapshot) {
 +      Fail("native recovery CookieManager snapshot is invalid");
 +      return;
@@ -3187,9 +3198,10 @@ index 0000000..b72c929
 +    password_store_->GetAllLogins(weak_factory_.GetWeakPtr());
 +  }
 +
-+  void OnInitialRestoreCookies(std::vector<net::CanonicalCookie> cookies) {
++  void OnInitialRestoreCookies(
++      const std::vector<net::CanonicalCookie> &cookies) {
 +    std::optional<CookieSnapshot> empty =
-+        BuildCookieSnapshot(std::move(cookies));
++        BuildCookieSnapshot(cookies);
 +    if (!empty || !empty->cookies.empty()) {
 +      Fail("native cookie restore requires an empty disposable store");
 +      return;
@@ -3232,9 +3244,10 @@ index 0000000..b72c929
 +    RestoreNextCookie();
 +  }
 +
-+  void OnRestoredCookies(std::vector<net::CanonicalCookie> cookies) {
++  void OnRestoredCookies(
++      const std::vector<net::CanonicalCookie> &cookies) {
 +    std::optional<CookieSnapshot> restored =
-+        BuildCookieSnapshot(std::move(cookies));
++        BuildCookieSnapshot(cookies);
 +    if (!restored || !expected_cookies_ ||
 +        restored->records_sha256 != expected_cookies_->records_sha256 ||
 +        restored->state_sha256 != expected_cookies_->state_sha256 ||
@@ -3403,7 +3416,7 @@ index 0000000..3d66efb
 +#endif // CHROME_BROWSER_HELIUM_SYNC_HELIUM_NATIVE_RECOVERY_BRIDGE_H_
 diff --git a/chrome/browser/helium_sync/helium_sync_service.cc b/chrome/browser/helium_sync/helium_sync_service.cc
 new file mode 100644
-index 0000000..5736945
+index 0000000..4f1b7fb
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_sync_service.cc
 @@ -0,0 +1,361 @@
@@ -3528,7 +3541,7 @@ index 0000000..5736945
 +  if (!endpoint.is_valid() || !endpoint.SchemeIs(url::kHttpScheme) ||
 +      endpoint.host().empty() || endpoint.has_username() ||
 +      endpoint.has_password() || endpoint.has_query() || endpoint.has_ref() ||
-+      endpoint.path_piece() != "/") {
++      endpoint.path() != "/") {
 +    return false;
 +  }
 +  net::IPAddress address;
@@ -3931,10 +3944,10 @@ index 0000000..8e56fda
 +#endif  // CHROME_BROWSER_HELIUM_SYNC_HELIUM_SYNC_SERVICE_FACTORY_H_
 diff --git a/chrome/browser/helium_sync/helium_tab_restore_bridge.cc b/chrome/browser/helium_sync/helium_tab_restore_bridge.cc
 new file mode 100644
-index 0000000..0ecba1e
+index 0000000..335ff3a
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_tab_restore_bridge.cc
-@@ -0,0 +1,1306 @@
+@@ -0,0 +1,1308 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "chrome/browser/helium_sync/helium_tab_restore_bridge.h"
@@ -4338,6 +4351,7 @@ index 0000000..0ecba1e
 +  std::set<std::string> global_group_ids;
 +  int tab_count = 0;
 +  int group_count = 0;
++  int navigation_count = 0;
 +  for (const base::Value& window_value : *windows) {
 +    const base::DictValue* window_dict = window_value.GetIfDict();
 +    if (!window_dict ||
@@ -4497,6 +4511,7 @@ index 0000000..0ecba1e
 +  plan->window_count = static_cast<int>(plan->windows.size());
 +  plan->tab_count = tab_count;
 +  plan->group_count = group_count;
++  plan->navigation_count = navigation_count;
 +  return true;
 +}
 +
@@ -4769,7 +4784,7 @@ index 0000000..0ecba1e
 +      Fail("initial-window-not-empty", false);
 +      return;
 +    }
-+    if (!RestoreWindow(0, windows[0], true)) {
++    if (!RestoreWindowAt(0, windows[0], true)) {
 +      return;
 +    }
 +    ContinueWithWindow(1);
@@ -4802,15 +4817,15 @@ index 0000000..0ecba1e
 +      Fail("window-creation-result", true);
 +      return;
 +    }
-+    if (!RestoreWindow(index, browser, false)) {
++    if (!RestoreWindowAt(index, browser, false)) {
 +      return;
 +    }
 +    ContinueWithWindow(index + 1);
 +  }
 +
-+  bool RestoreWindow(size_t index,
-+                     BrowserWindowInterface* browser,
-+                     bool is_initial) {
++  bool RestoreWindowAt(size_t index,
++                       BrowserWindowInterface* browser,
++                       bool is_initial) {
 +    if (index >= plan_.windows.size() || !browser) {
 +      Fail("window-index", true);
 +      return false;
@@ -5726,10 +5741,10 @@ index 0000000..9747ead
 +}
 diff --git a/components/helium_sync/helium_password_sync_bridge.cc b/components/helium_sync/helium_password_sync_bridge.cc
 new file mode 100644
-index 0000000..80d6ae1
+index 0000000..487f00b
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.cc
-@@ -0,0 +1,1150 @@
+@@ -0,0 +1,1166 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_password_sync_bridge.h"
@@ -6014,13 +6029,30 @@ index 0000000..80d6ae1
 +    password_manager::PasswordStoreInterface *store,
 +    const std::vector<password_manager::StoredCredential>
 +        &retained_passwords) {
-+  if (store != profile_store_.get() || applying_remote_) {
++  if (store != profile_store_.get()) {
 +    return;
 +  }
 +
 +  std::set<std::string> retained_keys;
 +  for (const auto &credential : retained_passwords) {
 +    retained_keys.insert(PasswordRecordKey(credential));
++  }
++  if (applying_remote_) {
++    size_t completed_deletions = 0;
++    for (auto it = pending_remote_delete_keys_.begin();
++         it != pending_remote_delete_keys_.end();) {
++      if (retained_keys.contains(*it)) {
++        ++it;
++        continue;
++      }
++      it = pending_remote_delete_keys_.erase(it);
++      ++completed_deletions;
++    }
++    while (completed_deletions > 0) {
++      --completed_deletions;
++      OnRemoteRecordComplete();
++    }
++    return;
 +  }
 +  for (const std::string &key : known_keys_) {
 +    if (retained_keys.contains(key)) {
@@ -6281,11 +6313,10 @@ index 0000000..80d6ae1
 +        continue;
 +      }
 +      pending_verification_[record.key] = remote;
++      pending_remote_delete_keys_.insert(record.key);
 +      pending_remote_writes_++;
-+      profile_store_->RemoveLogin(
-+          CloneCredential(*existing->second),
-+          base::BindOnce(&HeliumPasswordSyncBridge::OnRemoteRecordComplete,
-+                         weak_factory_.GetWeakPtr()));
++      profile_store_->RemoveLogin(FROM_HERE,
++                                  CloneCredential(*existing->second));
 +      continue;
 +    }
 +    std::optional<base::Value> parsed =
@@ -6882,10 +6913,10 @@ index 0000000..80d6ae1
 +} // namespace helium_sync
 diff --git a/components/helium_sync/helium_password_sync_bridge.h b/components/helium_sync/helium_password_sync_bridge.h
 new file mode 100644
-index 0000000..b5ac286
+index 0000000..a0e5d5b
 --- /dev/null
 +++ b/components/helium_sync/helium_password_sync_bridge.h
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,143 @@
 +// Copyright 2026 The Helium Authors
 +
 +#ifndef COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
@@ -7016,6 +7047,7 @@ index 0000000..b5ac286
 +  std::map<std::string, CredentialState> credential_state_;
 +  std::vector<RemotePasswordRecord> pending_remote_records_;
 +  std::map<std::string, RemotePasswordRecord> pending_verification_;
++  std::set<std::string> pending_remote_delete_keys_;
 +  int initial_empty_read_retries_ = 0;
 +  int post_apply_empty_read_retries_ = 0;
 +  int64_t pending_next_seq_ = 0;
@@ -7030,10 +7062,10 @@ index 0000000..b5ac286
 +#endif // COMPONENTS_HELIUM_SYNC_HELIUM_PASSWORD_SYNC_BRIDGE_H_
 diff --git a/components/helium_sync/helium_sync_client.cc b/components/helium_sync/helium_sync_client.cc
 new file mode 100644
-index 0000000..d0076bf
+index 0000000..65c1e21
 --- /dev/null
 +++ b/components/helium_sync/helium_sync_client.cc
-@@ -0,0 +1,690 @@
+@@ -0,0 +1,691 @@
 +// Copyright 2026 The Helium Authors
 +
 +#include "components/helium_sync/helium_sync_client.h"
@@ -7062,6 +7094,7 @@ index 0000000..d0076bf
 +#include "services/network/public/cpp/resource_request.h"
 +#include "services/network/public/cpp/shared_url_loader_factory.h"
 +#include "services/network/public/cpp/simple_url_loader.h"
++#include "services/network/public/mojom/url_response_head.mojom.h"
 +
 +namespace helium_sync {
 +namespace {

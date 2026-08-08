@@ -49,7 +49,8 @@ test("password startup reconciles before observing or publishing", () => {
   assert.ok(start >= 0 && pull > start && observe > pull);
   assert.match(passwords, /enrollment_phase\(\) == "pending"/);
   assert.match(passwords, /expected_revision/);
-  assert.match(passwords, /RemoveLogin/);
+  assert.match(passwords, /RemoveLogin\(FROM_HERE,/);
+  assert.match(passwords, /pending_remote_delete_keys_/);
   assert.match(passwords, /VerifyRemoteWrites/);
   assert.match(passwords, /AcknowledgeApplied/);
   assert.match(passwords, /verified_sequence/);

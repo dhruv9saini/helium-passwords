@@ -35,6 +35,9 @@ test("explicit topology importer is unreachable from normal launch", () => {
   assert.match(restoreMode, /tab_restore_bridge_->Start\(\);[\s\S]*return;/);
   assert.doesNotMatch(restoreMode, /tab_snapshot_bridge_|HeliumSyncClient/);
   assert.match(importer, /kMaxTotalNavigations/);
+  assert.match(importer, /int navigation_count = 0/);
+  assert.match(importer, /plan->navigation_count = navigation_count/);
+  assert.match(importer, /RestoreWindowAt\(/);
   assert.match(importer, /O_NOFOLLOW/);
   assert.match(importer, /BUILDFLAG\(IS_ANDROID\)[\s\S]*st_mtime_nsec/);
   assert.match(importer, /BUILDFLAG\(IS_APPLE\)[\s\S]*st_mtimespec/);
