@@ -123,6 +123,18 @@ EOF
 if [ "${skip_submodules}" != true ]; then
     git -C "${destination}" submodule update --init --recursive helium-chromium >&2
 
+    if [ "${platform}" = linux ]; then
+        linux_direct_source_patch="${root_dir}/chromium/tooling/linux-direct-source.patch"
+        [ -f "${linux_direct_source_patch}" ] || {
+            echo "missing Linux direct-source patch" >&2
+            exit 1
+        }
+        git -C "${destination}/helium-chromium" apply --check --ignore-whitespace \
+            "${linux_direct_source_patch}"
+        git -C "${destination}/helium-chromium" apply --ignore-whitespace \
+            "${linux_direct_source_patch}"
+    fi
+
     clone_helper="${destination}/helium-chromium/utils/clone.py"
     grep -Fq "get_logger().info('Cloning latest depot_tools')" "${clone_helper}" || {
         echo "${platform} Helium core no longer has the expected depot_tools clone path" >&2
@@ -143,28 +155,10 @@ if [ "${skip_submodules}" != true ]; then
         "${clone_helper}"
 
     if [ "${platform}" = linux ]; then
-        grep -Fq "str(gcpath), 'sync', '-f', '-D', '-R', '--no-history', '--nohooks'," \
-            "${clone_helper}" || {
-            echo "Linux Helium core no longer has the expected gclient sync command" >&2
-            exit 1
-        }
-        sed -i.bak \
-            "s/str(gcpath), 'sync', '-f', '-D', '-R', '--no-history', '--nohooks',/str(gcpath), 'sync', '--jobs=1', '-f', '-D', '-R', '--no-history', '--nohooks',/" \
-            "${clone_helper}"
-        rm -f -- "${clone_helper}.bak"
         grep -Fq "str(gcpath), 'sync', '--jobs=1', '-f', '-D', '-R', '--no-history', '--nohooks'," \
             "${clone_helper}"
-
-        depot_tools_patch="${destination}/helium-chromium/utils/depot_tools.patch"
-        serial_git_cache_patch="${root_dir}/chromium/tooling/serialize-depot-tools-git-cache.patch"
-        [ -f "${depot_tools_patch}" ] && [ -f "${serial_git_cache_patch}" ] || {
-            echo "missing Linux depot_tools serialization patch input" >&2
-            exit 1
-        }
-        printf '\n' >>"${depot_tools_patch}"
-        cat "${serial_git_cache_patch}" >>"${depot_tools_patch}"
-        grep -Fq "code = gsutil.call('cp', '-r', latest_dir + \"/*\"," \
-            "${depot_tools_patch}"
+        grep -Fqx 'cache_dir = None;' "${clone_helper}"
+        grep -Fq "environ.pop('GIT_CACHE_PATH', None)" "${clone_helper}"
     fi
 fi
 

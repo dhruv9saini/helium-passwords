@@ -55,11 +55,11 @@ grep -Fq 'sed -i.bak' "$prepare"
 grep -Fq 'rm -f -- "${clone_helper}.bak"' "$prepare"
 grep -Fq "str(gcpath), 'sync', '--jobs=1', '-f', '-D', '-R', '--no-history', '--nohooks'," \
   "$prepare"
-grep -Fq 'serialize-depot-tools-git-cache.patch' "$prepare"
-grep -Fq "+                    code = gsutil.call('cp', '-r', latest_dir + \"/*\"," \
-  "$repo_root/chromium/tooling/serialize-depot-tools-git-cache.patch"
-grep -Fq -- "-                    code = gsutil.call('-m', 'cp', '-r', latest_dir + \"/*\"," \
-  "$repo_root/chromium/tooling/serialize-depot-tools-git-cache.patch"
+grep -Fq 'linux-direct-source.patch' "$prepare"
+grep -Fq '+cache_dir = None;' \
+  "$repo_root/chromium/tooling/linux-direct-source.patch"
+grep -Fq "+    environ.pop('GIT_CACHE_PATH', None)" \
+  "$repo_root/chromium/tooling/linux-direct-source.patch"
 grep -Fq 'helium-passwords/android-search-engine-api-compat.patch' "$prepare"
 grep -Fq 'helium-passwords/disable-android-safe-browsing-bridges.patch' "$prepare"
 grep -Fq 'platform_commit=${actual_platform_commit}' "$prepare"

@@ -1,0 +1,27 @@
+diff --git a/utils/clone.py b/utils/clone.py
+--- a/utils/clone.py
++++ b/utils/clone.py
+@@ -43,3 +43,4 @@ target_os_only = True;
+ target_cpu = ['x64'];
+ target_cpu_only = True;
++cache_dir = None;
+ """
+@@ -56,6 +57,9 @@ def clone(args): # pylint: disable=too-many-branches, too-many-locals, too-many-
+     gnpath = ucstaging / 'gn'
+     environ['GCLIENT_FILE'] = str(ucstaging / '.gclient')
+     environ['PATH'] += pathsep + str(dtpath)
++    # The bounded Linux build uses direct, shallow source fetches. Do not let
++    # the worker's job-local mirror setting override the explicit config.
++    environ.pop('GIT_CACHE_PATH', None)
+     environ['PYTHONPATH'] = str(dtpath)
+     # Prevent gclient from auto updating depot_tools
+     environ['DEPOT_TOOLS_UPDATE'] = '0'
+@@ -156,7 +160,7 @@ def clone(args): # pylint: disable=too-many-branches, too-many-locals, too-many-
+         gcpath = gcpath.with_suffix('.bat')
+     # -f, -D, and -R forces a hard reset on changes and deletes deps that have been removed
+     run([
+-        str(gcpath), 'sync', '-f', '-D', '-R', '--no-history', '--nohooks',
++        str(gcpath), 'sync', '--jobs=1', '-f', '-D', '-R', '--no-history', '--nohooks',
+         f'--sysroot={args.sysroot}'
+     ],
+         check=True)
