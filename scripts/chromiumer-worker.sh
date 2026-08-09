@@ -238,12 +238,22 @@ continuation_command_mode() {
 
     marker='CHROMIUM_ANDROID_PHASE=all '
     suffix=${parent_command#*"${marker}"}
+    if [ "${suffix}" != "${parent_command}" ] && \
+        [[ "${suffix}" != *"${marker}"* ]] && \
+        [ "${requested_command}" = \
+            "${parent_command/"${marker}"/CHROMIUM_ANDROID_PHASE=build }" ]; then
+        printf 'retained-build\n'
+        return
+    fi
+
+    marker='HELIUM_LINUX_PHASE=fresh '
+    suffix=${parent_command#*"${marker}"}
     [ "${suffix}" != "${parent_command}" ] && \
         [[ "${suffix}" != *"${marker}"* ]] && \
         [ "${requested_command}" = \
-            "${parent_command/"${marker}"/CHROMIUM_ANDROID_PHASE=build }" ] ||
+            "${parent_command/"${marker}"/HELIUM_LINUX_PHASE=retained }" ] ||
         return 1
-    printf 'retained-build\n'
+    printf 'retained-linux-build\n'
 }
 
 workspace_owner() {
@@ -586,7 +596,7 @@ validate_resume_parent() {
     requested_command=$(command_text "$@")
     command_mode=$(continuation_command_mode \
         "${expected_command}" "${requested_command}") || {
-        echo "continuation command must match its parent, only reduce AUTONINJA_JOBS from 2 to 1, or change CHROMIUM_ANDROID_PHASE from all to build" >&2
+        echo "continuation command must match its parent, only reduce AUTONINJA_JOBS from 2 to 1, change CHROMIUM_ANDROID_PHASE from all to build, or change HELIUM_LINUX_PHASE from fresh to retained" >&2
         return 1
     }
 

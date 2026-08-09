@@ -451,8 +451,14 @@ changes before Ninja could reuse its state. The other admitted adjustment is
 changing one exact `AUTONINJA_JOBS=2` argument to `AUTONINJA_JOBS=1`. This
 lets a retained build serialize a linker/compiler pair that reached the
 unchanged cgroup memory-high boundary. Any other token change fails admission.
+Linux full-browser jobs explicitly start with `HELIUM_LINUX_PHASE=fresh`.
+After an exact wall timeout, the continuation changes only that token to
+`HELIUM_LINUX_PHASE=retained`. The retained phase verifies the immutable
+pre-Ninja full-graph boundary, skips platform preparation and source hydration,
+and resumes the existing `chrome` and `chromedriver` Ninja graph with one job.
 The child records both commands and either `command_mode=retained-build` or
-`command_mode=reduced-parallelism`.
+`command_mode=reduced-parallelism`; Linux records
+`command_mode=retained-linux-build`.
 
 This keeps the executable build plan explicit while letting Ninja reuse its
 dependency log and completed objects. The continuation is not a longer unit:
@@ -564,7 +570,7 @@ Start the job with:
 scripts/chromiumer-job.sh start "$job" \
     --summary "Linux x86_64 browser artifact and password acceptance input" \
     --next "Fetch and verify the packaged artifact, then run the disposable password gate." -- \
-    scripts/chromiumer-nix.sh run -- \
+    scripts/chromiumer-nix.sh run -- env HELIUM_LINUX_PHASE=fresh \
       bash scripts/build-chromiumer-linux.sh \
         helium-sync x86_64 linux-x86_64 "$job"
 ```
@@ -600,7 +606,7 @@ with the same wrapper limits and explicit inputs:
 scripts/chromiumer-job.sh start "$arm_job" \
     --summary "Linux arm64 Helium Sync chroot artifact" \
     --next "Fetch both files and verify the arm64 runtime receipt." -- \
-    scripts/chromiumer-nix.sh run -- \
+    scripts/chromiumer-nix.sh run -- env HELIUM_LINUX_PHASE=fresh \
       bash scripts/build-chromiumer-linux.sh \
         helium-sync arm64 linux-arm64-chroot "$arm_job"
 ```

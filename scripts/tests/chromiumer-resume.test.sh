@@ -321,6 +321,26 @@ grep -Fqx 'command_mode=retained-build' \
 grep -Fqx 'parent_terminal_mode=timeout' \
     "${state_root}/${phase_timeout_child}/resume.env"
 
+# A retained Linux timeout skips destructive platform/source preparation and
+# resumes only the already validated Ninja graph.
+linux_fresh_command=(env HELIUM_LINUX_PHASE=fresh AUTONINJA_JOBS=1 \
+    sh -c 'printf "Linux phase fixture\n"')
+linux_retained_command=(env HELIUM_LINUX_PHASE=retained AUTONINJA_JOBS=1 \
+    sh -c 'printf "Linux phase fixture\n"')
+linux_timeout_parent=resume-linux-timeout-parent
+linux_timeout_child=resume-linux-timeout-child
+write_parent "${linux_timeout_parent}" \
+    "$(command_text "${linux_fresh_command[@]}")"
+resume_init "${linux_timeout_parent}" "${linux_timeout_child}" -- \
+    "${linux_retained_command[@]}" >"${test_root}/linux-timeout-child.out"
+exec 9>&-
+grep -Fqx 'command_mode=retained-linux-build' \
+    "${state_root}/${linux_timeout_child}/resume.env"
+grep -Fqx 'parent_terminal_mode=timeout' \
+    "${state_root}/${linux_timeout_child}/resume.env"
+grep -Fqx 'source_build_jobs=1' \
+    "${state_root}/${linux_timeout_child}/resume.env"
+
 # Older exact continuations re-entered source preparation and failed at the
 # expected dirty-worktree gate. Admit the same all-to-build transition only
 # when that exact child came directly from a timeout and failed within thirty

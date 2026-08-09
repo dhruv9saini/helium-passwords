@@ -316,6 +316,11 @@ grep -q 'bash scripts/build.sh -c' \
     "${repo_root}/scripts/build-chromiumer-linux.sh"
 # shellcheck disable=SC2016
 grep -q 'ARCH="${arch}"' "${repo_root}/scripts/build-chromiumer-linux.sh"
+grep -q 'HELIUM_LINUX_PHASE' "${repo_root}/scripts/build-chromiumer-linux.sh"
+grep -q 'HELIUM_FULL_GRAPH_AUDIT_TOOL=' \
+    "${repo_root}/scripts/build-chromiumer-linux.sh"
+grep -q '"${checkout}" "${full_graph}" "${artifact}" "${receipt}"' \
+    "${repo_root}/scripts/build-chromiumer-linux.sh"
 grep -q 'write-deployment-artifact-receipt.sh' \
     "${repo_root}/scripts/package-linux-runtime.sh"
 if grep -q '^schema_version=1' \

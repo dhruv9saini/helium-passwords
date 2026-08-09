@@ -56,4 +56,144 @@ while [ "$#" -gt 0 ]; do
     job_override_seen=true
 done
 
+full_build=false
+if [ "${#arguments[@]}" -eq 4 ] && \
+    [ "${arguments[0]}" = -C ] && \
+    [ "${arguments[1]}" = out/Default ] && \
+    [ "${arguments[2]}" = chrome ] && \
+    [ "${arguments[3]}" = chromedriver ]; then
+    full_build=true
+fi
+
+# Fresh Linux builds provide an explicit receipt path. Capture the generated
+# graph before the first real edge can materialize an output. Other Ninja uses
+# retain the serialization boundary without creating or replacing a receipt.
+if [ "${full_build}" = true ] && \
+    [ -n "${HELIUM_FULL_GRAPH_RECEIPT:-}" ]; then
+    job=${HELIUM_FULL_GRAPH_JOB:-}
+    [[ "${job}" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$ ]] || {
+        echo "full-graph Ninja boundary has an invalid job" >&2
+        exit 1
+    }
+    [[ "${HELIUM_FULL_GRAPH_BOUNDARY_EPOCH:-}" =~ ^[1-9][0-9]*$ ]] || {
+        echo "full-graph Ninja boundary is missing its start epoch" >&2
+        exit 1
+    }
+    source_root=$(pwd -P)
+    [ "${source_root}" = "${HELIUM_FULL_GRAPH_SOURCE_ROOT:-}" ] || {
+        echo "full-graph Ninja boundary reached an unexpected source root" >&2
+        exit 1
+    }
+    receipt=${HELIUM_FULL_GRAPH_RECEIPT}
+    [ "${receipt}" = \
+        "/home/d/.local/state/helium-builds/${job}/full-graph-boundary.env" ] || {
+        echo "full-graph Ninja boundary has an unexpected receipt path" >&2
+        exit 1
+    }
+    [ ! -e "${receipt}" ] && [ ! -L "${receipt}" ] || {
+        echo "full-graph Ninja build boundary was already consumed" >&2
+        exit 1
+    }
+    [ "$(node --version)" = v22.14.0 ] || {
+        echo "full-graph Ninja boundary requires Node 22.14.0" >&2
+        exit 1
+    }
+
+    out=${source_root}/out/Default
+    build_ninja=${out}/build.ninja
+    toolchain_ninja=${out}/toolchain.ninja
+    gni=${source_root}/third_party/devtools-frontend/src/scripts/build/ninja/generate_css.gni
+    generator=${source_root}/third_party/devtools-frontend/src/scripts/build/generate_css_js_files.js
+    ai_skills=${source_root}/third_party/devtools-frontend/src/scripts/build/build_ai_skills.mjs
+    for input in "${build_ninja}" "${toolchain_ninja}" "${gni}" \
+        "${generator}" "${ai_skills}"; do
+        [ -f "${input}" ] && [ ! -L "${input}" ] || {
+            echo "fresh full generated Ninja graph input is missing or unsafe" >&2
+            exit 1
+        }
+    done
+    [ "$(stat -c %Y "${build_ninja}")" -ge \
+        "${HELIUM_FULL_GRAPH_BOUNDARY_EPOCH}" ] && \
+        [ "$(stat -c %Y "${toolchain_ninja}")" -ge \
+            "${HELIUM_FULL_GRAPH_BOUNDARY_EPOCH}" ] || {
+        echo "full Ninja graph predates this clean generation boundary" >&2
+        exit 1
+    }
+
+    ui_prefix=gen/third_party/devtools-frontend/src/front_end/ui/kit
+    ui_phony=phony/third_party/devtools-frontend/src/front_end/ui/kit/css_files
+    query=$(mktemp)
+    generated=$(mktemp)
+    cleanup_query() {
+        find "${query}" "${generated}" -maxdepth 0 -type f -delete
+    }
+    trap cleanup_query EXIT
+    "${HELIUM_REAL_NINJA}" -C "${out}" -t query \
+        "${ui_prefix}/css_files-tsconfig.json" \
+        "${ui_prefix}/devtools_entrypoint-bundle-tsconfig-tsconfig.json" \
+        >"${query}"
+    audit_tool=${HELIUM_FULL_GRAPH_AUDIT_TOOL:-}
+    [ -f "${audit_tool}" ] && [ ! -L "${audit_tool}" ] && \
+        [ -x "${audit_tool}" ] || {
+        echo "full-graph Ninja boundary requires its concrete graph audit tool" >&2
+        exit 1
+    }
+    node "${audit_tool}" generated-prebuild \
+        "${toolchain_ninja}" "${query}" "${out}" >"${generated}"
+    generated_value() {
+        awk -F= -v key="$1" \
+            '$1 == key { count++; value=substr($0,length(key)+2) }
+             END { if (count == 1 && value != "") print value; else exit 1 }' \
+            "${generated}"
+    }
+    css_edges=$(generated_value css_action_edges)
+    css_edges_without_tsconfig=$(generated_value css_action_edges_without_tsconfig)
+    [ "${css_edges}" -gt 0 ] && [ "${css_edges_without_tsconfig}" -eq 0 ] && \
+        [ "$(generated_value ui_css_outputs_materialized_before_full_build)" = false ] && \
+        [ "$(generated_value ui_css_phony_orders_all_outputs)" = true ] && \
+        [ "$(generated_value ui_downstream_orders_css_phony)" = true ] && \
+        [ "$(generated_value ai_skill_action_present)" = true ] && \
+        [ "$(generated_value graph_validation)" = passed ] || {
+        echo "generated graph failed its pre-build audit" >&2
+        exit 1
+    }
+
+    temporary=${receipt}.tmp.$$
+    [ ! -e "${temporary}" ] && [ ! -L "${temporary}" ]
+    {
+        printf 'schema=helium-fresh-full-graph-boundary-v1\n'
+        printf 'job=%s\n' "${job}"
+        printf 'source_root=%s\n' "${source_root}"
+        printf 'boundary_epoch=%s\n' "${HELIUM_FULL_GRAPH_BOUNDARY_EPOCH}"
+        printf 'validated_at=%s\n' "$(date --iso-8601=seconds)"
+        printf 'node_version=v22.14.0\n'
+        printf 'full_targets=chrome,chromedriver\n'
+        printf 'build_ninja_sha256=%s\n' \
+            "$(sha256sum "${build_ninja}" | awk '{print $1}')"
+        printf 'toolchain_ninja_sha256=%s\n' \
+            "$(sha256sum "${toolchain_ninja}" | awk '{print $1}')"
+        printf 'generate_css_gni_sha256=%s\n' \
+            "$(sha256sum "${gni}" | awk '{print $1}')"
+        printf 'generate_css_js_sha256=%s\n' \
+            "$(sha256sum "${generator}" | awk '{print $1}')"
+        printf 'build_ai_skills_sha256=%s\n' \
+            "$(sha256sum "${ai_skills}" | awk '{print $1}')"
+        printf 'css_action_edges=%s\n' "${css_edges}"
+        printf 'css_action_edges_without_tsconfig=%s\n' \
+            "${css_edges_without_tsconfig}"
+        printf 'ui_css_outputs_materialized_before_full_build=false\n'
+        printf 'ui_css_phony_orders_all_outputs=true\n'
+        printf 'ui_downstream_orders_css_phony=true\n'
+        printf 'ai_skill_action_present=true\n'
+        printf 'ninja_query_sha256=%s\n' \
+            "$(sha256sum "${query}" | awk '{print $1}')"
+        printf 'graph_validation=passed\n'
+    } >"${temporary}"
+    chmod 0400 "${temporary}"
+    mv "${temporary}" "${receipt}"
+    trap - EXIT
+    cleanup_query
+    printf 'full_graph_boundary=passed\n'
+fi
+
 exec "${HELIUM_REAL_NINJA}" -j 1 "${arguments[@]}"
