@@ -80,7 +80,6 @@ done
 }
 
 build_config="${product_root}/helium-passwords.conf"
-[ ! -f "${product_root}/go.mod" ] || build_config="${product_root}/helium-sync.conf"
 # shellcheck source=/dev/null
 . "${build_config}"
 platform_commit=$(git -C "${checkout}" rev-parse HEAD)

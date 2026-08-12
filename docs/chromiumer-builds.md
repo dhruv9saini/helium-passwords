@@ -586,8 +586,8 @@ before source preparation.
 The driver writes one archive and its build-produced deployment receipt:
 
 ```text
-.build/artifacts/helium-sync-linux-x86_64.tar.xz
-.build/artifacts/helium-sync-linux-x86_64.receipt.env
+.build/artifacts/helium-passwords-linux-x86_64.tar.xz
+.build/artifacts/helium-passwords-linux-x86_64.receipt.env
 ```
 
 The archive contains the raw runtime plus the source/tree, public/private/core/
@@ -647,7 +647,7 @@ isolated job; never reuse a terminal Sync workspace as the control.
 
 After the focused compile proof passes, stage two fresh jobs from the same
 clean private commit. The Sync job must explicitly select the disposable
-package; production `computer.helium.sync` is not an acceptance input. Both
+package; production `computer.helium.passwords` is not an acceptance input. Both
 builders record the realized Nix closure and exact command inside their
 artifact provenance, so invoke them through `chromiumer-nix.sh run`:
 
@@ -675,7 +675,7 @@ scripts/chromiumer-job.sh start "$sync_job" \
       HELIUM_ANDROID_RUNTIME_KIT_COMMIT="$runtime_kit_commit" \
       HELIUM_ANDROID_RUNTIME_KIT_SHA256="$runtime_kit_sha" \
       HELIUM_ANDROID_RUNTIME_KIT_VERIFIER=/home/d/.local/libexec/helium-android-tooling/verify-android-runtime-kit-source.sh \
-      CHROMIUM_ANDROID_MANIFEST_PACKAGE=computer.helium.sync.test \
+      CHROMIUM_ANDROID_MANIFEST_PACKAGE=computer.helium.passwords.test \
       CHROMIUM_ANDROID_PHASE=all \
       bash scripts/chromium/build-android-ci.sh
 
@@ -746,11 +746,11 @@ scripts/chromiumer-job.sh fetch "$sync_job" \
 sync_archive=/srv/nas/helium-builds/$sync_job/chrome_public_apk-arm64.tar.xz
 AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
   scripts/chromium/verify-android-artifact.sh \
-    "$sync_archive" computer.helium.sync.test "$sync_commit" \
+    "$sync_archive" computer.helium.passwords.test "$sync_commit" \
     "$runtime_kit_commit"
 AAPT2=/home/d/Android/Sdk/build-tools/36.0.0/aapt2 \
   scripts/android-media/prepare-disposable-acceptance.sh \
-    "$sync_archive" computer.helium.sync.test "$sync_commit" \
+    "$sync_archive" computer.helium.passwords.test "$sync_commit" \
     "$runtime_kit_commit" \
     /home/d/.local/state/helium-acceptance/$sync_job
 scripts/chromiumer-job.sh cleanup "$sync_job"
@@ -857,12 +857,12 @@ scripts/finalize-retained-linux-full-graph.sh \
   "$frozen_product_checkout" \
   "$frozen_product_checkout/build/platforms/linux" \
   "/home/d/.local/state/helium-builds/$job/full-graph-boundary.env" \
-  "/srv/nas/helium-builds/$job/final/helium-sync-linux-x86_64.tar.xz" \
-  "/srv/nas/helium-builds/$job/final/helium-sync-linux-x86_64.receipt.env"
+  "/srv/nas/helium-builds/$job/final/helium-passwords-linux-x86_64.tar.xz" \
+  "/srv/nas/helium-builds/$job/final/helium-passwords-linux-x86_64.receipt.env"
 ```
 
 The output parent must already exist and all three outputs must be new. The
-sibling `helium-sync-linux-x86_64.full-graph/` directory contains its schema-3
+sibling `helium-passwords-linux-x86_64.full-graph/` directory contains its schema-3
 `receipt.env`, `SHA256SUMS`, concrete graph and target query, DevTools and
 platform sources, graph boundary, operator, shim, recovery tool, and
 finalization tools. The
@@ -892,8 +892,8 @@ scripts/continue-retained-linux-full-graph-failure.sh \
   "$frozen_product_checkout/build/platforms/linux" \
   /home/d/.local/state/helium-builds/hs-linux-x64-eac8a57-20/graph-gate-failure.env \
   e3d6316545b45d4f4a8ac4525642f664a6f01f3954a374407e019446362c02ae \
-  /srv/nas/helium-builds/hs-linux-x64-eac8a57-20/final/helium-sync-linux-x86_64.tar.xz \
-  /srv/nas/helium-builds/hs-linux-x64-eac8a57-20/final/helium-sync-linux-x86_64.receipt.env
+  /srv/nas/helium-builds/hs-linux-x64-eac8a57-20/final/helium-passwords-linux-x86_64.tar.xz \
+  /srv/nas/helium-builds/hs-linux-x64-eac8a57-20/final/helium-passwords-linux-x86_64.receipt.env
 ```
 
 The entry point writes a mode-0400 preflight receipt before Ninja. A failed
@@ -910,9 +910,9 @@ when intentionally returning to another `lm` directory:
 
 ```sh
 scripts/chromiumer-job.sh fetch "$job" \
-    .build/artifacts/helium-sync-linux-x86_64.receipt.env
+    .build/artifacts/helium-passwords-linux-x86_64.receipt.env
 scripts/chromiumer-job.sh fetch "$job" \
-    .build/artifacts/helium-sync-linux-x86_64.tar.xz
+    .build/artifacts/helium-passwords-linux-x86_64.tar.xz
 
 scripts/chromiumer-job.sh fetch "$job" \
     .build/android-artifacts/chrome_public_apk-arm64.tar.xz \
@@ -931,8 +931,8 @@ from the same public commit that was staged:
 ```sh
 scripts/verify-linux-runtime.sh \
   helium-sync x86_64 linux-x86_64 \
-  /srv/nas/helium-builds/"$job"/helium-sync-linux-x86_64.tar.xz \
-  /srv/nas/helium-builds/"$job"/helium-sync-linux-x86_64.receipt.env \
+  /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.tar.xz \
+  /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.receipt.env \
   /srv/nas/helium-builds/"$job"/verified
 ```
 

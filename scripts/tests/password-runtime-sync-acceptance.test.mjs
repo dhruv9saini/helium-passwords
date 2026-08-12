@@ -80,7 +80,7 @@ test("private receipt binds public UI evidence to exact revisions, tombstone, an
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-sync-run-"));
   try {
     const artifact = path.join(
-      root, "helium-sync-linux-x86_64", "runtime", "helium-wrapper");
+      root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
     const screenshot = path.join(root, "screen.png");
     const runRoot = path.join(root, "acceptance");
     const statePath = path.join(root, "password-state.json");
@@ -177,7 +177,7 @@ test("Sync metadata must be captured at its matching public UI step", async () =
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-sync-binding-"));
   try {
     const artifact = path.join(
-      root, "helium-sync-linux-x86_64", "runtime", "helium-wrapper");
+      root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
     const screenshot = path.join(root, "screen.png");
     const runRoot = path.join(root, "acceptance");
     const statePath = path.join(root, "password-state.json");

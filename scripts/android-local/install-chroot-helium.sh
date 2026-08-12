@@ -83,7 +83,7 @@ install_release() {
 
   work_dir=$(mktemp -d)
   trap 'rm -rf -- "$work_dir"; "$adb_bin" shell "rm -f /data/local/tmp/${tmp_name:-missing} /data/local/tmp/${receipt_name:-missing}" >/dev/null 2>&1 || true' EXIT
-  bundle_root=helium-sync-linux-arm64
+  bundle_root=helium-passwords-linux-arm64
   tar -tf "$artifact" >"$work_dir/members.txt"
   while IFS= read -r member; do
     case "$member" in /*|..|../*|*/../*|*/..) echo "unsafe artifact member: $member" >&2; exit 1 ;; esac

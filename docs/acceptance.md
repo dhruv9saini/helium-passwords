@@ -34,13 +34,13 @@ replace the browser gates below.
   cgroup limits and a healthy watchdog.
 - The returned artifact hash matches chromiumer's hash and an artifact receipt
   exists before its build workspace is eligible for cleanup.
-- Android disposable evidence uses `computer.helium.sync.test`; manifest and GN
+- Android disposable evidence uses `computer.helium.passwords.test`; manifest and GN
   provenance must agree. It must coexist with, and never upgrade or read, the
-  existing `computer.helium.sync` app data.
+  existing `computer.helium.passwords` app data.
 - The disposable Sync and control packages are non-debug Chromium builds with
   DCHECKs disabled but have `debuggable_apks = true` for rootless test-only
   command-line selection and synthetic bridge inspection. Production
-  `computer.helium.sync` has `debuggable_apks = false`. Artifact admission
+  `computer.helium.passwords` has `debuggable_apks = false`. Artifact admission
   requires the GN value and manifest flag to agree with the package role.
 - The returned Android archive must carry a checksum-verified runtime acceptance
   kit bound to the same Helium Sync commit, Chromium commit, package, arm64 CPU,
@@ -93,13 +93,13 @@ loopback fixture attestation; a checklist alone cannot pass this gate.
 - Guest and incognito sessions do not persist credentials.
 - Browser restart and upgrade do not corrupt the native store.
 - The runtime harness receipt binds all public evidence to the unchanged
-  artifact and Linux synthetic profile or `computer.helium.sync.test` package.
+  artifact and Linux synthetic profile or `computer.helium.passwords.test` package.
 
 ## Gate 2: Password Sync
 
 Use separate disposable targets: the `d` and `da` Linux x86_64 profiles and the
 separately installed
-`computer.helium.sync.test` OnePlus package. The OnePlus target is package
+`computer.helium.passwords.test` OnePlus package. The OnePlus target is package
 admission, not a fabricated Linux profile directory.
 For the native lifecycle, run the private extension in
 [`password-runtime-sync-acceptance.md`](password-runtime-sync-acceptance.md).
@@ -156,7 +156,7 @@ returned-browser disposable profiles; it does not substitute for the Android
 transaction fixture or the broader attribute and partition matrix below.
 Before the networked three-client cases, the Android Sync test package must
 pass its browser-native CookieManager fixture. Prepare only a stopped,
-hash-admitted `computer.helium.sync.test` package with the artifact-carried
+hash-admitted `computer.helium.passwords.test` package with the artifact-carried
 `prepare-cookie-acceptance-profile.sh`. It refuses an existing `Default`
 directory, writes one mode-0600 marker, and never clears or force-stops an app.
 On the next launch the native service sees that marker before enrollment,
@@ -259,7 +259,7 @@ destination is authenticated or that any site session is portable.
 - A restore drill into a disposable profile checks counts and representative
   state, restarts a second time, and records success.
 - Android runs the same three mechanisms only in the checksum-admitted
-  `computer.helium.sync.test` package. Its native proof uses a fresh synthetic
+  `computer.helium.passwords.test` package. Its native proof uses a fresh synthetic
   `app_chrome` tree so the current stopped Android profile producer can stream
   that exact generation to NAS plus da. Neutral and full-profile restores are
   round-trip fingerprinted into new fixed package-private `drill-*` paths.
@@ -393,7 +393,7 @@ The admitted process receives exactly one `--enable-automation` switch and its
 derived command-line override:
 
 ```text
-computer.helium.sync.test     --remote-debugging-socket-name=helium_sync_test_devtools_remote
+computer.helium.passwords.test     --remote-debugging-socket-name=helium_sync_test_devtools_remote
 computer.helium.control.test  --remote-debugging-socket-name=helium_control_test_devtools_remote
 ```
 

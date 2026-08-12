@@ -31,7 +31,7 @@ proprietary_codecs = true
 is_debug = false
 dcheck_always_on = false
 debuggable_apks = true
-chrome_public_manifest_package = "computer.helium.sync.test"
+chrome_public_manifest_package = "computer.helium.passwords.test"
 android_override_version_code = "$HELIUM_ANDROID_VERSION_CODE"
 android_override_version_name = "$HELIUM_ANDROID_VERSION_NAME"
 target_cpu = "arm64"
@@ -67,7 +67,7 @@ PATH="$test_root/bin:$PATH" GN="$test_root/bin/gn" \
   "$HELIUM_ANDROID_CHROMIUM_COMMIT" "$HELIUM_ANDROID_DEPOT_TOOLS_COMMIT"
 
 grep -qx 'proprietary_codecs = true' "$test_root/provenance/gn-args-resolved.txt"
-grep -qx 'chrome_public_manifest_package = "computer.helium.sync.test"' \
+grep -qx 'chrome_public_manifest_package = "computer.helium.passwords.test"' \
   "$test_root/provenance/gn-args-resolved.txt"
 grep -qx 'debuggable_apks = true' \
   "$test_root/provenance/gn-args-resolved.txt"
@@ -198,14 +198,14 @@ if GITHUB_WORKSPACE="$test_root" HELIUM_SYNC_REPO="$repo_root" \
   echo 'arbitrary Android package unexpectedly passed' >&2
   exit 1
 fi
-grep -q 'must be computer.helium.sync or computer.helium.sync.test' \
+grep -q 'must be computer.helium.passwords or computer.helium.passwords.test' \
   "$test_root/arbitrary-package.out"
 
-grep -Fq 'CHROMIUM_ANDROID_MANIFEST_PACKAGE:-computer.helium.sync' \
+grep -Fq 'CHROMIUM_ANDROID_MANIFEST_PACKAGE:-computer.helium.passwords' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'computer.helium.sync)' \
+grep -Fq 'computer.helium.passwords)' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
-grep -Fq 'computer.helium.sync.test)' \
+grep -Fq 'computer.helium.passwords.test)' \
   "$repo_root/scripts/chromium/build-android-ci.sh"
 
 echo 'Android media build configuration contract passed'

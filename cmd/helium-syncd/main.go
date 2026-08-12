@@ -15,7 +15,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/dhruv9saini/helium-sync/internal/syncstore"
+	"github.com/dhruv9saini/helium-passwords/internal/syncstore"
 )
 
 func main() {

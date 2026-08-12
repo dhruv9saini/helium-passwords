@@ -1,7 +1,7 @@
 version=3
 source_device=oneplus
 profile_id=default
-source_path=/data/user/0/computer.helium.sync.test/app_chrome
+source_path=/data/user/0/computer.helium.passwords.test/app_chrome
 ssh_user=d
 ssh_identity=/home/d/.ssh/helium_profile_backup_ed25519
 ssh_known_hosts=/home/d/.ssh/helium_profile_backup_known_hosts

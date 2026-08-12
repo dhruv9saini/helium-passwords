@@ -44,7 +44,7 @@ const DEVICE_SPECS = Object.freeze({
     platform: "android",
     target: "android-arm64",
     arch: "arm64",
-    packageName: "computer.helium.sync.test",
+    packageName: "computer.helium.passwords.test",
   }),
 });
 const HASH = /^[0-9a-f]{64}$/;
@@ -275,7 +275,7 @@ async function describeAdmittedDevice(run, device, executionIdentity) {
     const manifest = await readEnv(
       path.join(
         verifiedRoot,
-        `helium-sync-linux-${spec.arch}`,
+        `helium-passwords-linux-${spec.arch}`,
         "provenance",
         "manifest.env",
       ),
@@ -315,7 +315,7 @@ async function describeAdmittedDevice(run, device, executionIdentity) {
     const bundleSHA256 = await sha256File(bundle.resolved);
     const manifestSHA256 = sha256(manifest.raw);
     const graphRoot = path.join(
-      verifiedRoot, `helium-sync-linux-${spec.arch}`, "provenance", "full-graph");
+      verifiedRoot, `helium-passwords-linux-${spec.arch}`, "provenance", "full-graph");
     const graph = await auditLinuxFullGraphEvidence(graphRoot, {
       job: deployment.values.get("build_job_id"),
       sourceCommit,
@@ -328,9 +328,9 @@ async function describeAdmittedDevice(run, device, executionIdentity) {
         receipt.values.get("product") !== "helium-sync" ||
         receipt.values.get("platform") !== "linux" ||
         receipt.values.get("full_graph_receipt") !==
-          `helium-sync-linux-${spec.arch}/provenance/full-graph/receipt.env` ||
+          `helium-passwords-linux-${spec.arch}/provenance/full-graph/receipt.env` ||
         receipt.values.get("full_graph_inventory") !==
-          `helium-sync-linux-${spec.arch}/provenance/full-graph/SHA256SUMS` ||
+          `helium-passwords-linux-${spec.arch}/provenance/full-graph/SHA256SUMS` ||
         receipt.values.get("full_graph_receipt_sha256") !== graph.receiptSha256 ||
         receipt.values.get("full_graph_inventory_sha256") !==
           graph.inventorySha256 ||

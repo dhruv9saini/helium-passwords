@@ -16,11 +16,11 @@ const cdpProbe = repoFile("scripts/android-media/run-cdp-probe.mjs");
 
 const fixture = cookie.slice(
   cookie.indexOf("class HeliumCookieAcceptanceFixture::Impl"),
-  cookie.indexOf("class HeliumCookieSyncBridge::Impl"),
+  cookie.indexOf("HeliumCookieAcceptanceFixture::HeliumCookieAcceptanceFixture"),
 );
 
 test("native cookie fixture is disposable-only and suppresses normal sync", () => {
-  assert.match(fixture, /computer\.helium\.sync\.test/);
+  assert.match(fixture, /computer\.helium\.passwords\.test/);
   assert.match(fixture, /apk_info::is_debug_app/);
   assert.match(fixture, /BaseName\(\)\.AsUTF8Unsafe\(\) != "Default"/);
   assert.match(fixture, /permissions != 0600/);
@@ -118,12 +118,12 @@ test("fixture evidence is content-free and reports unsupported origin state hone
 });
 
 test("profile preparation cannot target an existing or non-test profile", () => {
-  assert.match(prepare, /package=computer\.helium\.sync\.test/);
+  assert.match(prepare, /package=computer\.helium\.passwords\.test/);
   assert.match(prepare, /test ! -e app_chrome\/Default/);
   assert.match(prepare, /pidof "\$package"/);
   assert.match(prepare, /sha256sum/);
   assert.match(prepare, /chmod 600/);
-  assert.doesNotMatch(prepare, /pm clear|rm -|force-stop|computer\.helium\.sync["']/);
+  assert.doesNotMatch(prepare, /pm clear|rm -|force-stop|computer\.helium\.passwords["']/);
 });
 
 test("device probe captures package-only logs, CDP Media events, and native evidence", () => {

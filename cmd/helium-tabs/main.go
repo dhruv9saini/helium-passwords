@@ -8,7 +8,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/dhruv9saini/helium-sync/internal/tabsnapshot"
+	"github.com/dhruv9saini/helium-passwords/internal/tabsnapshot"
 )
 
 func main() {

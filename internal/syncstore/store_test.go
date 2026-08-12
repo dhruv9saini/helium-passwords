@@ -158,10 +158,44 @@ func TestPendingEnrollmentIsPullOnlyUntilCurrentCursorAcknowledged(
 		t.Fatal(err)
 	}
 	if _, err := join.Push(context.Background(), []PlainMutation{{
-		Kind: KindCookie, Key: "cookie/a",
+		Kind: KindPassword, Key: "credential/v2/active",
 		Payload: json.RawMessage(`{"value":"active"}`),
 	}}); err != nil {
 		t.Fatalf("active join could not publish: %v", err)
+	}
+}
+
+func TestHTTPServerRejectsCookieSynchronization(t *testing.T) {
+	root := t.TempDir()
+	statePath := filepath.Join(root, "seed.json")
+	if _, err := CreateSeedState(statePath); err != nil {
+		t.Fatal(err)
+	}
+	store, err := OpenStore(filepath.Join(root, "server"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry, err := CreateDeviceRegistry(
+		filepath.Join(root, "server", "devices.json"), seedToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(NewHandler(store, registry))
+	defer server.Close()
+	client, err := NewClient(server.URL, seedToken, statePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Push(context.Background(), []PlainMutation{{
+		Kind: KindCookie, Key: "cookie/forbidden",
+		Payload: json.RawMessage(`{"value":"must-not-sync"}`),
+	}}); err == nil || !strings.Contains(err.Error(),
+		"only password records can be synchronized") {
+		t.Fatalf("cookie mutation did not fail closed: %v", err)
+	}
+	if _, err := client.Pull(context.Background(), []string{"cookies"}); err == nil || !strings.Contains(err.Error(),
+		"only password records can be synchronized") {
+		t.Fatalf("cookie pull did not fail closed: %v", err)
 	}
 }
 

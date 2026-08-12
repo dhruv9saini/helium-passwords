@@ -91,7 +91,7 @@ node scripts/cookie-runtime/acceptance.mjs verify \
   --sync-receipt "$run/sync-receipt.json" \
   --sync-run "$run/sync-run.json" \
   --da-admission-run "$run/da-admission-run.json" \
-  --artifact "$verified/helium-sync-linux-x86_64/runtime/helium-wrapper" \
+  --artifact "$verified/helium-passwords-linux-x86_64/runtime/helium-wrapper" \
   --artifact-receipt "$verified/artifact-receipt.env" \
   --fixture-evidence "$run/cookie-fixture-evidence.json" \
   --d-cookie-state "$run/d-cookie-state.json" \

@@ -1,20 +1,18 @@
-# Helium Sync
+# Helium Passwords
 
-Helium Sync is the private personal-browser layer on top of the public
-[Helium Passwords](https://github.com/dhruv9saini/helium-passwords) backbone.
-The two repositories share normal Git ancestry, patch tooling, the pinned
-Chromium environment, and the chromiumer build workflow. This repository adds
-native password and login-session convergence across the private Tailnet plus
-device-local tab durability for d, da, and oneplus.
+Helium Passwords restores Chromium's native password manager in Helium and
+adds private-Tailnet password convergence. It also supplies independent
+password, cookie, and local-tab recovery. This public repository is the sole
+product source and build-provenance authority.
 
 The product contract and current implementation boundary are
 [docs/architecture.md](docs/architecture.md). The executable release gates are
 [docs/acceptance.md](docs/acceptance.md), and [TODO.md](TODO.md) is the
 canonical private issue ledger. The shared artifact-bound native password
 protocol is [docs/password-runtime-acceptance.md](docs/password-runtime-acceptance.md);
-its private Sync evidence extension is
+its password-convergence evidence extension is
 [docs/password-runtime-sync-acceptance.md](docs/password-runtime-sync-acceptance.md),
-and the d/da native cookie transport gate is
+and the disposable native cookie backup and restore gate is
 [docs/cookie-runtime-acceptance.md](docs/cookie-runtime-acceptance.md).
 The sole complete d/da/OnePlus fleet launch and terminal receipt are specified in
 [docs/android-full-e2e-acceptance.md](docs/android-full-e2e-acceptance.md).
@@ -24,9 +22,12 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
 - d is the only initial password seed.
 - da and oneplus join pending and pull-only. They cannot bulk-publish their
   initial state.
-- Passwords use Chromium's native password store. Cookies use Chromium's native
-  `CookieManager`. Normal installs and launches do not use CDP writers,
-  CookieCloud, a phone-local server, or copied profile databases.
+- Passwords use Chromium's native password store. Browserpass, Bitwarden,
+  extension vaults, CDP writers, and raw password-database mutation are not
+  product paths.
+- Cookies are backup and restore data only. Normal browsing never publishes,
+  pulls, or reconciles cookies through the Tailnet. Cookie drills use synthetic
+  accounts and disposable profiles through Chromium's native `CookieManager`.
 - The Tailnet is the confidentiality boundary. The lm server stores readable
   authenticated JSON records and only hashed device bearer credentials. Do not
   add content encryption, a private inner TLS CA, a public Funnel, or a
@@ -50,7 +51,7 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
 
 ## Repository map
 
-- `chromium/overlay/`: native password, cookie, enrollment, and local tab
+- `chromium/overlay/`: native password sync, cookie recovery, enrollment, and local tab
   snapshot integration.
 - `chromium/patches/`: generated overlay plus desktop/Android wiring.
 - `internal/syncstore/`: readable record server, hash-only bearer enrollment,
@@ -58,7 +59,7 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
 - `internal/tabsnapshot/` and `scripts/tabs/`: device-local generations,
   validation, retention, private two-destination backup, quarantine, and
   disposable restore. The runtime proof adapter supports marked desktop drills
-  and only the checksum-admitted `computer.helium.sync.test` Android sandbox;
+  and only the checksum-admitted `computer.helium.passwords.test` Android sandbox;
   Android profile bytes are round-trip fingerprinted and every launch remains
   inside the guarded disposable browser boundary.
 - `scripts/chromium/`: pinned Android composition, codec/streaming provenance,
@@ -68,8 +69,8 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
   acceptance files implicitly.
 - `scripts/password-runtime/`: shared artifact-bound native password fixture
   and UI receipt plus the private Sync state/journal receipt extension.
-- `scripts/cookie-runtime/`: private two-desktop native CookieManager transport
-  fixture and immutable receipt gate.
+- `scripts/cookie-runtime/`: disposable native CookieManager backup, restore,
+  rollback, and immutable receipt gate.
 - `scripts/native-recovery/`: browser-API password/cookie neutral snapshots,
   fixed NAS-plus-peer backup scheduling, fresh marked desktop and
   checksum-admitted `.test`-only Android restore drills, and the per-device
@@ -107,8 +108,8 @@ These checks are safe on lm and use only synthetic data:
 scripts/dev.sh check
 ```
 
-The command validates patch composition, Go protocol and recovery tests,
-password/cookie/tab state-machine tests, media/streaming fixtures, Chromiumer
+The command validates patch composition, Go password protocol and recovery tests,
+password/cookie/tab recovery tests, media/streaming fixtures, Chromiumer
 isolation arithmetic, terminal monitoring, and shared public ancestry. It is not a
 substitute for a native compile or disposable browser run.
 
@@ -163,7 +164,7 @@ artifact, the enrollment client, local tab tool, and launcher. It does not
 create enrollment state or start a daemon. `scripts/android-local/install-phone-sync.sh`
 does not install CookieCloud, CDP writers, or a server into the phone chroot.
 
-Actual enrollment is deliberately separate from binary installation. Follow
+Password enrollment is deliberately separate from binary installation. Follow
 [docs/deployment.md](docs/deployment.md) only after the artifact and disposable
 acceptance gates pass.
 

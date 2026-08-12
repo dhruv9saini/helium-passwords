@@ -40,7 +40,7 @@ official_build=${CHROMIUM_ANDROID_OFFICIAL_BUILD:-false}
 use_siso=${CHROMIUM_ANDROID_USE_SISO:-auto}
 siso_gomemlimit=${CHROMIUM_ANDROID_SISO_GOMEMLIMIT:-1536MiB}
 siso_flags=${CHROMIUM_ANDROID_SISO_FLAGS:-}
-manifest_package=${CHROMIUM_ANDROID_MANIFEST_PACKAGE:-computer.helium.sync}
+manifest_package=${CHROMIUM_ANDROID_MANIFEST_PACKAGE:-computer.helium.passwords}
 build_driver=$(realpath -e "${BASH_SOURCE[0]}")
 media_config_verifier=${HELIUM_ANDROID_MEDIA_CONFIG_VERIFIER:-"$repo_root/scripts/chromium/verify-android-media-config.sh"}
 media_config_verifier=$(realpath -e "$media_config_verifier")
@@ -94,14 +94,14 @@ case "$use_siso" in
 esac
 
 case "$manifest_package" in
-  computer.helium.sync)
+  computer.helium.passwords)
     android_debuggable_apks=false
     ;;
-  computer.helium.sync.test)
+  computer.helium.passwords.test)
     android_debuggable_apks=true
     ;;
   *)
-    echo "CHROMIUM_ANDROID_MANIFEST_PACKAGE must be computer.helium.sync or computer.helium.sync.test" >&2
+    echo "CHROMIUM_ANDROID_MANIFEST_PACKAGE must be computer.helium.passwords or computer.helium.passwords.test" >&2
     exit 64
     ;;
 esac

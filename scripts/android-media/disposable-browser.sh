@@ -11,7 +11,7 @@ usage:
     [--native-recovery-profile DRILL-SLUG --native-recovery-kind passwords|cookies
      --native-recovery-source ABSOLUTE-DEVICE-FILE]
 
-Install or launch only a checksum-admitted computer.helium.sync.test or
+Install or launch only a checksum-admitted computer.helium.passwords.test or
 computer.helium.control.test APK. The launch command temporarily owns Android's
 two Chromium command-line files and debug-app selection, verifies the expected
 package-specific DevTools socket, and restores all temporary global state
@@ -216,7 +216,7 @@ done
 
 package=${metadata[package]}
 case "$package" in
-  computer.helium.sync.test)
+  computer.helium.passwords.test)
     device_socket=helium_sync_test_devtools_remote
     ;;
   computer.helium.control.test)
@@ -375,8 +375,8 @@ verify_installed
 
 tab_runtime_user_data_dir=
 if [[ -n "$tab_runtime_profile" ]]; then
-  [[ "$package" == computer.helium.sync.test ]] || {
-    echo "tab runtime launch admits only computer.helium.sync.test" >&2
+  [[ "$package" == computer.helium.passwords.test ]] || {
+    echo "tab runtime launch admits only computer.helium.passwords.test" >&2
     exit 1
   }
   if [[ "$tab_runtime_mode" == native ]]; then
@@ -426,8 +426,8 @@ fi
 
 native_recovery_user_data_dir=
 if [[ -n "$native_recovery_profile" ]]; then
-  [[ "$package" == computer.helium.sync.test ]] || {
-    echo "native recovery admits only computer.helium.sync.test" >&2
+  [[ "$package" == computer.helium.passwords.test ]] || {
+    echo "native recovery admits only computer.helium.passwords.test" >&2
     exit 1
   }
   native_recovery_parent=$installed_data_dir/helium-native-recovery-drills

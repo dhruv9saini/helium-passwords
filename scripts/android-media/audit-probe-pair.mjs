@@ -10,7 +10,7 @@ const HASH = /^[0-9a-f]{64}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
 const PACKAGES = Object.freeze({
   sync: Object.freeze({
-    package: "computer.helium.sync.test",
+    package: "computer.helium.passwords.test",
     socket: "helium_sync_test_devtools_remote",
     cookie: true,
   }),

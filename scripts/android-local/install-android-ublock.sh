@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 adb_bin=${ADB:-adb}
-package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync}
+package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.passwords}
 restart=${HELIUM_ANDROID_UBLOCK_RESTART:-true}
 allow_unstable=${HELIUM_ANDROID_UBLOCK_UNSTABLE_EXPERIMENT:-false}
 default_ai_overview_filters=$(cat <<'EOF'

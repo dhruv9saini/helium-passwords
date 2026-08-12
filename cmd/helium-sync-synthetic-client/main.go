@@ -18,7 +18,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/dhruv9saini/helium-sync/internal/syncstore"
+	"github.com/dhruv9saini/helium-passwords/internal/syncstore"
 )
 
 const syntheticMarker = "synthetic-only-v1"
@@ -202,7 +202,7 @@ func (expected expectedInventory) validate() error {
 	seen := make(map[string]struct{}, len(expected.Records))
 	for _, record := range expected.Records {
 		identity := string(record.Kind) + "\x00" + record.Key
-		if (record.Kind != syncstore.KindPassword && record.Kind != syncstore.KindCookie) ||
+		if record.Kind != syncstore.KindPassword ||
 			strings.TrimSpace(record.Key) == "" ||
 			record.Revision <= 0 || strings.TrimSpace(record.DeviceID) == "" ||
 			len(record.PayloadSHA256) != sha256.Size*2 {

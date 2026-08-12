@@ -96,6 +96,13 @@ func (server server) push(
 			fmt.Errorf("decode request: %w", err))
 		return
 	}
+	for _, mutation := range request.Mutations {
+		if mutation.Kind != KindPassword {
+			writeError(w, http.StatusBadRequest, "invalid_mutation",
+				errors.New("only password records can be synchronized"))
+			return
+		}
+	}
 	response, err := server.registry.PutAuthorized(
 		server.store, principal, request.Mutations)
 	if err != nil {
@@ -135,6 +142,11 @@ func (server server) pull(
 		writeError(w, http.StatusBadRequest, "invalid_query", err)
 		return
 	}
+	kinds, err = passwordKindsOnly(kinds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err)
+		return
+	}
 	response, err := server.store.PullPage(since, cursor, limit, kinds)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_page", err)
@@ -155,12 +167,30 @@ func (server server) latest(
 		writeError(w, http.StatusBadRequest, "invalid_query", err)
 		return
 	}
+	kinds, err = passwordKindsOnly(kinds)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_query", err)
+		return
+	}
 	response, err := server.store.LatestPage(cursor, limit, kinds)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "invalid_page", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
+}
+
+func passwordKindsOnly(kinds map[Kind]struct{}) (map[Kind]struct{}, error) {
+	if len(kinds) == 0 {
+		return map[Kind]struct{}{KindPassword: {}}, nil
+	}
+	if len(kinds) != 1 {
+		return nil, errors.New("only password records can be synchronized")
+	}
+	if _, ok := kinds[KindPassword]; !ok {
+		return nil, errors.New("only password records can be synchronized")
+	}
+	return kinds, nil
 }
 
 func (server server) stageCredential(

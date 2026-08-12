@@ -47,9 +47,6 @@ constexpr char kTokenFile[] = "token";
 constexpr char kBaseUrlFile[] = "base_url";
 constexpr char kClientStateFile[] = "client.json";
 constexpr char kPasswordStateFile[] = "password-state.json";
-constexpr char kCookieStateFile[] = "cookie-state.json";
-constexpr char kCookieRollbackFile[] = "cookie-rollback.json";
-constexpr char kCookieReauthSignalFile[] = "cookie-reauth-required.json";
 constexpr char kTabSnapshotExportPathFile[] = "tab_snapshot_export_path";
 constexpr char kNativeRecoveryRootFile[] = "native_recovery_root";
 
@@ -196,27 +193,14 @@ HeliumSyncService::HeliumSyncService(Profile *profile) {
 
   LOG(WARNING) << "Helium sync starting from profile-local enrollment";
   AndroidStatusLog("starting from profile-local enrollment");
-  base::RepeatingCallback<void(int64_t)> cookie_baseline_callback;
   base::RepeatingCallback<void(int64_t)> password_baseline_callback;
   if (enrollment->phase == "pending") {
     enrollment_client_ = std::make_unique<helium_sync::HeliumSyncClient>(
         profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
-    cookie_baseline_callback =
-        base::BindRepeating(&HeliumSyncService::OnCookieBaselineVerified,
-                            weak_factory_.GetWeakPtr());
     password_baseline_callback =
         base::BindRepeating(&HeliumSyncService::OnPasswordBaselineVerified,
                             weak_factory_.GetWeakPtr());
   }
-  auto cookie_client = std::make_unique<helium_sync::HeliumSyncClient>(
-      profile->GetURLLoaderFactory(), base_url, *token, client_state_path);
-  cookie_bridge_ = std::make_unique<helium_sync::HeliumCookieSyncBridge>(
-      profile, std::move(cookie_client),
-      config_dir.AppendASCII(kCookieStateFile),
-      config_dir.AppendASCII(kCookieRollbackFile),
-      config_dir.AppendASCII(kCookieReauthSignalFile),
-      std::move(cookie_baseline_callback));
-  cookie_bridge_->Start();
 
   scoped_refptr<password_manager::PasswordStoreInterface> password_store =
       ProfilePasswordStoreFactory::GetForProfile(
@@ -261,10 +245,6 @@ void HeliumSyncService::Shutdown() {
     cookie_acceptance_fixture_->Stop();
     cookie_acceptance_fixture_.reset();
   }
-  if (cookie_bridge_) {
-    cookie_bridge_->Stop();
-    cookie_bridge_.reset();
-  }
   if (password_bridge_) {
     password_bridge_->Stop();
     password_bridge_.reset();
@@ -280,14 +260,6 @@ void HeliumSyncService::Shutdown() {
   enrollment_client_.reset();
 }
 
-void HeliumSyncService::OnCookieBaselineVerified(int64_t sequence) {
-  if (enrollment_complete_) {
-    return;
-  }
-  cookie_verified_sequence_ = sequence;
-  MaybeCompleteEnrollment();
-}
-
 void HeliumSyncService::OnPasswordBaselineVerified(int64_t sequence) {
   if (enrollment_complete_) {
     return;
@@ -297,27 +269,18 @@ void HeliumSyncService::OnPasswordBaselineVerified(int64_t sequence) {
 }
 
 void HeliumSyncService::MaybeCompleteEnrollment() {
-  if (!enrollment_client_ || !cookie_bridge_ || !password_bridge_ ||
-      enrollment_completion_in_flight_ || !cookie_verified_sequence_ ||
-      !password_verified_sequence_) {
-    return;
-  }
-  if (*cookie_verified_sequence_ != *password_verified_sequence_) {
-    cookie_verified_sequence_.reset();
-    password_verified_sequence_.reset();
-    cookie_bridge_->PullAndApply();
-    password_bridge_->PullAndApply();
+  if (!enrollment_client_ || !password_bridge_ ||
+      enrollment_completion_in_flight_ || !password_verified_sequence_) {
     return;
   }
 
-  const int64_t verified_sequence = *cookie_verified_sequence_;
+  const int64_t verified_sequence = *password_verified_sequence_;
   std::string error;
   if (!enrollment_client_->AcknowledgeApplied(verified_sequence, &error)) {
     LOG(WARNING) << "Helium enrollment coordinator could not acknowledge the "
                     "joint verified cursor: "
                  << error;
     AndroidStatusLog("enrollment joint cursor acknowledgement failed");
-    cookie_verified_sequence_.reset();
     password_verified_sequence_.reset();
     return;
   }
@@ -333,29 +296,24 @@ void HeliumSyncService::OnEnrollmentComplete(bool ok, std::string error) {
   if (!ok) {
     LOG(WARNING) << "Helium joint enrollment completion failed: " << error;
     AndroidStatusLog("joint enrollment completion failed");
-    cookie_verified_sequence_.reset();
     password_verified_sequence_.reset();
     return;
   }
 
-  std::string cookie_error;
   std::string password_error;
-  const bool cookie_active = cookie_bridge_->EnrollmentActivated(&cookie_error);
   const bool password_active =
       password_bridge_->EnrollmentActivated(&password_error);
-  if (!cookie_active || !password_active) {
-    LOG(WARNING) << "Helium enrollment activated but bridge state reload "
-                    "failed closed: cookie="
-                 << cookie_error << " password=" << password_error;
+  if (!password_active) {
+    LOG(WARNING) << "Helium enrollment activated but password bridge state "
+                    "reload failed closed: "
+                 << password_error;
     AndroidStatusLog("enrollment bridge state reload failed closed");
     return;
   }
 
   enrollment_complete_ = true;
-  LOG(WARNING) << "Helium password and cookie enrollment activated at joint "
-                  "verified cursor "
-               << *cookie_verified_sequence_;
-  AndroidStatusLog("password and cookie enrollment activated");
-  cookie_bridge_->PullAndApply();
+  LOG(WARNING) << "Helium password enrollment activated at verified cursor "
+               << *password_verified_sequence_;
+  AndroidStatusLog("password enrollment activated");
   password_bridge_->PullAndApply();
 }

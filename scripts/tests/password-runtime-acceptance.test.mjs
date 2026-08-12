@@ -114,7 +114,7 @@ test("native fixture attests restart, update, and deletion without emitting subm
 test("artifact-bound receipt requires the complete ordered native UI lifecycle", async () => {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), "helium-password-native-run-"));
   const artifact = path.join(
-    root, "helium-sync-linux-x86_64", "runtime", "helium-wrapper");
+    root, "helium-passwords-linux-x86_64", "runtime", "helium-wrapper");
   const screenshot = path.join(root, "screen.png");
   const invalidScreenshot = path.join(root, "invalid-screen.png");
   const runRoot = path.join(root, "acceptance");
@@ -168,7 +168,7 @@ test("artifact-bound receipt requires the complete ordered native UI lifecycle",
       fixtureEvidence: wrongEvidence,
     }), /different acceptance run/);
     const browser = path.join(
-      root, "helium-sync-linux-x86_64", "runtime", "helium");
+      root, "helium-passwords-linux-x86_64", "runtime", "helium");
     await fsp.appendFile(browser, "tampered");
     await assert.rejects(auditRun({
       runRoot,
@@ -204,7 +204,7 @@ test("Android admission requires a prepared artifact and matching non-production
     const apkHash = crypto.createHash("sha256").update("synthetic test apk").digest("hex");
     await fsp.writeFile(path.join(prepared, "acceptance.env"), [
       "schema_version=2",
-      "package=computer.helium.sync.test",
+      "package=computer.helium.passwords.test",
       `helium_sync_commit=${"1".repeat(40)}`,
       `chromium_commit=${"2".repeat(40)}`,
       "version_code=787500005",
@@ -245,7 +245,7 @@ test("Android admission requires a prepared artifact and matching non-production
       artifact: apk,
       output: path.join(root, "admitted"),
       platform: "android",
-      packageName: "computer.helium.sync.test",
+      packageName: "computer.helium.passwords.test",
     });
     assert.equal(run.artifact_sha256, apkHash);
     assert.equal(run.profile_path, null);
@@ -255,7 +255,7 @@ test("Android admission requires a prepared artifact and matching non-production
       artifact: apk,
       output: path.join(root, "tampered-inventory-member"),
       platform: "android",
-      packageName: "computer.helium.sync.test",
+      packageName: "computer.helium.passwords.test",
     }), /changed after preparation/);
   } finally {
     await fsp.rm(root, {recursive: true, force: true});

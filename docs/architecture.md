@@ -1,18 +1,19 @@
-# Helium Sync Architecture
+# Helium Passwords Architecture
 
 ## Product boundary
 
-Helium Sync has one native browser path. Chromium's password store is the
-password authority and Chromium's `CookieManager` is the cookie authority.
+Helium Passwords has one native password path. Chromium's password store is
+the password authority. Chromium's `CookieManager` is used only for guarded
+cookie backup and restore.
 There is no alternate password/cookie writer, CookieCloud bridge,
 phone-local sync daemon, domain-policy replica model, or raw SQLite/profile
 copy path in the product repository. Normal launch, installation, shutdown,
 and CI composition tests fail if one is reintroduced. The Android media CDP
 probe is read-only acceptance instrumentation and is outside sync composition.
 
-Tabs are not sync data. The wire kinds are exactly `passwords` and `cookies`;
-the server rejects every other kind. No endpoint, credential, or record schema
-can carry a tab. Each device keeps its own Chromium session recovery and local
+Cookies and tabs are not sync data. The server accepts and returns only
+`passwords`. No endpoint, credential, or record schema can carry cookies or
+tabs. Each device keeps its own Chromium session recovery and local
 tab snapshot repository. The neutral snapshot preserves bounded local
 window/tab/group/navigation topology, but preparation writes no startup URLs
 and can target only a new, explicitly marked disposable directory. No sync
@@ -36,7 +37,7 @@ payload.
 
 ```text
 d / da / oneplus browser
-  Chromium PasswordStore + CookieManager
+  Chromium PasswordStore
        |
        | readable JSON record payload
        v
@@ -49,14 +50,14 @@ d / da / oneplus browser
        +-- /var/lib/helium-sync/devices.json
        |     device IDs, roles, scopes, revocation, credential hashes
        +-- /var/lib/helium-sync/records.jsonl
-       |     kind/key/revision/device/payload
+       |     password-key/revision/device/payload
        +-- /var/lib/helium-sync/snapshots/
              atomic readable journal generations
 ```
 
 The Tailnet is the confidentiality boundary. Tailscale authenticates peers and
 encrypts transport, so lm intentionally sees record identity metadata and
-readable password/cookie payloads. Do not add a second content-encryption
+readable password payloads. Do not add a second content-encryption
 protocol, encrypted recovery wrappers, or an inner TLS CA. The daemon binds
 only lm's literal Tailscale IPv4 address, accepts hashed per-device bearer
 credentials, and must not be exposed with Tailscale Serve or Funnel. Private
@@ -73,17 +74,13 @@ The browser reads exactly one enrollment directory:
   native_recovery_root
   tab_snapshot_export_path
   password-state.json
-  cookie-state.json
-  cookie-rollback.json
-  cookie-reauth-required.json
 ```
 
 `base_url` must be exact HTTP on loopback or a literal Tailscale IPv4 address
 on port 44719 and must not contain user information. `token` and
-`client.json` are per-profile secrets. The two bridge state files contain
-fingerprints, revisions, and a global `verified_sequence`; they do not contain
-password or cookie payloads. The mode-0600 cookie rollback journal contains the
-parsed readable payload required for an exact local rollback.
+`client.json` are per-profile secrets. The password state file contains
+fingerprints, revisions, and a global `verified_sequence`; it does not contain
+password payloads.
 `native_recovery_root` points outside the profile at one marked private
 directory where Chromium atomically publishes the independent
 PasswordStore/CookieManager neutral snapshots described in
@@ -138,26 +135,22 @@ A join is explicit:
    the daemon, and waits for private-Tailnet HTTP health. Offline registry commands are
    never run against the active daemon because it keeps a validated in-memory
    registry.
-3. The native password and cookie bridges pull, validate, apply, read back, and
-   persist the same global verified cursor. Pending bridges baseline unrelated
-   local data and cannot publish.
-4. The native profile coordinator accepts readiness only after both bridges
-   have durably acknowledged the same global cursor. It then completes that
-   exact server cursor once and requires both bridge clients to reload the
-   activated state before either resumes. A missing password store, failed
-   readback, cursor mismatch, stale server cursor, or reload failure leaves the
-   flow fail-closed. The offline `enrollment-complete` command performs the
+3. The native password bridge pulls, validates, applies, reads back, and
+   persists the verified cursor. Pending clients baseline unrelated local data
+   and cannot publish.
+4. The native profile coordinator accepts readiness only after the password
+   bridge durably acknowledges that cursor. It completes the exact server
+   cursor once and requires the bridge to reload activated state before it
+   resumes. A missing password store, failed readback, stale server cursor, or
+   reload failure leaves the flow fail-closed. The offline `enrollment-complete` command performs the
    same schema/cursor gate with a stopped profile for recovery and diagnosis.
 5. An unchanged active restart emits no records.
 
 The synthetic-only protocol client follows the same global-cursor boundary by
-requesting the unfiltered password-and-cookie inventory and verifying the
-complete expected set before acknowledgement. Kind-filtered fixture admission
-is forbidden: page filters affect returned records but not the global snapshot
-cursor, so acknowledging a cookie-only response could otherwise advance past
-an unseen password record. Its schema-2 receipt binds every hashed key to its
-record kind. This is fixture protocol evidence and never substitutes for the
-native two-bridge readback gate.
+requesting the complete password inventory and verifying the expected set
+before acknowledgement. A cookie filter is rejected. Its schema-2 receipt
+binds every hashed password key to its record kind. This protocol evidence
+never substitutes for native PasswordStore readback.
 
 Credentials are per-device, hash-verified, scoped, independently rotatable
 with an overlap/confirm/retire sequence, and revocable. Tokens exist only in
@@ -428,7 +421,7 @@ evidence.
 | Passwords | Pull/apply/readback before observe/publish; full native specifics; complete `PasswordForm` unique-key identity; single schema-6 state; durable one-at-a-time publication and pull-verified ambiguous outcomes; artifact-bound native fixture/capture/receipt gate | Compile the bridge, then run the gate on returned browser artifacts for prompts, save/update/generation/settings/suggestions/autofill/delete, rapid observer events, ambiguous-success restarts, and three-device stale conflicts |
 | Cookies | Whole-profile canonical identity, readable private rollback journal, authoritative pull-only join replacement, bounded publication batches, preview/apply/readback/rollback, exact revision-scoped rejection evidence, unchanged-revision suppression, unverified-local-rotation hold, and a fixed marker-gated native CookieManager transaction fixture restricted to an empty debuggable Sync test profile | Compile the bridge and fixture; pass native snapshot/import/apply/readback/rejection/rollback, then prove colliding join replacement, multi-batch publication, later-revision retry, DBSC evidence scope, and authenticated-site behavior in disposable browsers; collect exact origin/login-entry evidence before adding a native password reauth flow |
 | Origin state | Strict metadata-only, artifact-bound synthetic/disposable classifier; explicit preview/apply/readback/rollback contract; empty source-registered adapter set; no state values accepted | Disposable-browser evidence collector and one reviewed exact-origin adapter only where observed necessary |
-| Tabs | Three-mechanism architecture: native Chromium clean/crash recovery; schema-2 all-valid-URL neutral exporter/store with explicit marked-disposable full-topology importer, live readback, restart-state validation and verified-rollback fail closure; stopped compressed full-profile generations with independent two-copy receipts, retention and disposable restore; exact-three health report; desktop and checksum-bound `computer.helium.sync.test` app-sandbox CDP orchestration plus HMAC-authenticated evidence/status adapters require both replica drills | Compile the neutral exporter/importer; provision source-local schedules; run exact returned desktop and Android artifacts through all three mechanisms and independent damaged-generation drills before any personal health claim |
+| Tabs | Three-mechanism architecture: native Chromium clean/crash recovery; schema-2 all-valid-URL neutral exporter/store with explicit marked-disposable full-topology importer, live readback, restart-state validation and verified-rollback fail closure; stopped compressed full-profile generations with independent two-copy receipts, retention and disposable restore; exact-three health report; desktop and checksum-bound `computer.helium.passwords.test` app-sandbox CDP orchestration plus HMAC-authenticated evidence/status adapters require both replica drills | Compile the neutral exporter/importer; provision source-local schedules; run exact returned desktop and Android artifacts through all three mechanisms and independent damaged-generation drills before any personal health claim |
 | Media/streaming | Reproducible fixtures, strict codec GN provenance, separate no-patch upstream-control builder, progressive Fetch/SSE and Service Worker streaming gates, explicit codec-versus-Widevine evidence, automatic target-scoped CDP Media-domain events plus Android package-UID logcat, immutable failure bundles, artifact-carried fail-closed device orchestration, source/fixture/media-bound A/B pair receipts, and live rootless tailnet-only H2/H3 origins with exact private-leaf SPKI admission; pinned Caddy starts QUIC at a 1200-byte payload so the complete Initial flight fits Tailscale's 1280-byte interface MTU, with direct H3 proven from lm and da | Run same-source control/Sync APK A/B on oneplus for negotiated protocols, lifecycle, video/audio, and content-free ChatGPT timing; CDM provisioning remains separate |
 | Android source/build | Exact Chromium `150.0.7871.181`/Helium `0.14.8` lock; shared one-request immutable source helper; exact-HEAD, depot pin, cache-disable, monotonic version, and private single-entry contracts | Fresh isolated chromiumer source preparation, 321 selected patches (301 core + 7 Passwords + 13 Sync), GN generation, focused compile, then APK |
 | Deployment | Hash-only bearer credential cutover, exact Tailnet endpoint/start gates, source unit/install gate, rollback-preserving installers, and fixed-topology compressed full-profile backup streaming to one NAS plus one authenticated peer without source-local staging | Prove live Tailnet HTTP, authorize the d SSH routes, build artifacts, run real two-copy profile backup/restore drills, then enroll sequentially only after explicit approval |

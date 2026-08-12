@@ -15,7 +15,7 @@ methods.
 
 ## Android app profile
 
-The native app package is `computer.helium.sync`. Its sync enrollment belongs
+The native app package is `computer.helium.passwords`. Its sync enrollment belongs
 only in:
 
 ```text
@@ -71,7 +71,7 @@ The Sync test APK also contains one explicit browser-native acceptance fixture.
 It activates only when a new empty `Default` profile carries the exact
 mode-0600 marker created by the artifact's
 `prepare-cookie-acceptance-profile.sh`, and only in debuggable
-`computer.helium.sync.test`. The service returns before normal sync, uses the
+`computer.helium.passwords.test`. The service returns before normal sync, uses the
 same native snapshot and canonical-identity helpers plus CookieManager to prove
 destination snapshot, synthetic import/apply/readback, partition identity,
 native rejection, rollback, and cleanup, then writes a content-free fixed-path
@@ -115,7 +115,7 @@ handoff.
 Both disposable packages use `is_debug = false` and disable DCHECKs, but set
 `debuggable_apks = true` so a rootless Android shell can select only the
 `.test` app for its isolated command line and inspect synthetic bridge state.
-The later `computer.helium.sync` build explicitly sets
+The later `computer.helium.passwords` build explicitly sets
 `debuggable_apks = false`. Artifact admission rejects a package whose manifest
 debuggable bit and GN role do not match.
 The carried probe records EME and `com.widevine.alpha` availability separately;

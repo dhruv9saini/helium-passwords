@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/dhruv9saini/helium-sync/internal/syncstore"
+	"github.com/dhruv9saini/helium-passwords/internal/syncstore"
 )
 
 const (
@@ -19,26 +19,26 @@ const (
 )
 
 func TestVerifyResponseMatchesAuthenticatedMetadataAndPayloadHash(t *testing.T) {
-	payload := json.RawMessage(`{"cookies":[{"name":"fixture","value":"rotated"}]}`)
+	payload := json.RawMessage(`{"credential":"fixture"}`)
 	payloadHash := sha256.Sum256(payload)
 	expected := expectedInventory{SchemaVersion: 1, Records: []expectedRecord{{
-		Kind: syncstore.KindCookie, Key: "fixture-key", Revision: 2,
+		Kind: syncstore.KindPassword, Key: "fixture-key", Revision: 2,
 		DeviceID: "da-fixture", PayloadSHA256: hex.EncodeToString(payloadHash[:]),
 	}}}
 	response := syncstore.PlainPullResponse{NextSeq: 4, Records: []syncstore.PlainRecord{{
-		Seq: 4, Kind: syncstore.KindCookie, Key: "fixture-key", Revision: 2,
+		Seq: 4, Kind: syncstore.KindPassword, Key: "fixture-key", Revision: 2,
 		DeviceID: "da-fixture", Payload: payload,
 	}}}
 	receipt, err := verifyResponse(response, expected)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(receipt) != 1 || receipt[0].Kind != syncstore.KindCookie ||
+	if len(receipt) != 1 || receipt[0].Kind != syncstore.KindPassword ||
 		receipt[0].Revision != 2 || receipt[0].DeviceID != "da-fixture" {
 		t.Fatalf("unexpected receipt: %+v", receipt)
 	}
 
-	response.Records[0].Payload = json.RawMessage(`{"cookies":[]}`)
+	response.Records[0].Payload = json.RawMessage(`{"credential":"changed"}`)
 	if _, err := verifyResponse(response, expected); err == nil {
 		t.Fatal("payload substitution passed synthetic readback")
 	}
@@ -49,9 +49,9 @@ func TestVerifyResponseMatchesAuthenticatedMetadataAndPayloadHash(t *testing.T) 
 	}
 }
 
-func TestExpectedInventoryAcceptsBothKindsAndRejectsUnknownAndDuplicateRecords(t *testing.T) {
+func TestExpectedInventoryAcceptsPasswordsAndRejectsCookiesUnknownAndDuplicates(t *testing.T) {
 	hash := sha256.Sum256([]byte(`{}`))
-	record := expectedRecord{Kind: syncstore.KindCookie, Key: "fixture", Revision: 1,
+	record := expectedRecord{Kind: syncstore.KindPassword, Key: "fixture", Revision: 1,
 		DeviceID: "d", PayloadSHA256: hex.EncodeToString(hash[:])}
 	expected := expectedInventory{SchemaVersion: 1, Records: []expectedRecord{record}}
 	if err := expected.validate(); err != nil {
@@ -62,9 +62,9 @@ func TestExpectedInventoryAcceptsBothKindsAndRejectsUnknownAndDuplicateRecords(t
 		t.Fatal("duplicate expected record passed validation")
 	}
 	expected.Records = []expectedRecord{record}
-	expected.Records[0].Kind = syncstore.KindPassword
-	if err := expected.validate(); err != nil {
-		t.Fatalf("password record was rejected: %v", err)
+	expected.Records[0].Kind = syncstore.KindCookie
+	if err := expected.validate(); err == nil {
+		t.Fatal("cookie record passed password-only validation")
 	}
 	expected.Records[0].Kind = syncstore.Kind("unknown")
 	if err := expected.validate(); err == nil {
@@ -72,7 +72,7 @@ func TestExpectedInventoryAcceptsBothKindsAndRejectsUnknownAndDuplicateRecords(t
 	}
 }
 
-func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testing.T) {
+func TestRunVerifiesCompletePasswordInventoryBeforeEnrollmentCompletion(t *testing.T) {
 	root := t.TempDir()
 	seedPath := filepath.Join(root, "d.json")
 	_, err := syncstore.CreateSeedState(seedPath)
@@ -95,10 +95,8 @@ func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testin
 		t.Fatal(err)
 	}
 	passwordPayload := json.RawMessage(`{"credential":"synthetic"}`)
-	cookiePayload := json.RawMessage(`{"cookie":"synthetic"}`)
 	if _, err := seedClient.Push(context.Background(), []syncstore.PlainMutation{
 		{Kind: syncstore.KindPassword, Key: "credential/v2/fixture", Payload: passwordPayload},
-		{Kind: syncstore.KindCookie, Key: "cookie/fixture", Payload: cookiePayload},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -109,12 +107,9 @@ func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testin
 	}
 	expectedPath := filepath.Join(root, "expected.json")
 	passwordHash := sha256.Sum256(passwordPayload)
-	cookieHash := sha256.Sum256(cookiePayload)
 	expected := expectedInventory{SchemaVersion: 1, Records: []expectedRecord{
 		{Kind: syncstore.KindPassword, Key: "credential/v2/fixture", Revision: 1,
 			DeviceID: "d", PayloadSHA256: hex.EncodeToString(passwordHash[:])},
-		{Kind: syncstore.KindCookie, Key: "cookie/fixture", Revision: 1,
-			DeviceID: "d", PayloadSHA256: hex.EncodeToString(cookieHash[:])},
 	}}
 	rawExpected, err := json.Marshal(expected)
 	if err != nil {
@@ -154,11 +149,11 @@ func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testin
 	}
 	principal, err := registry.Authenticate(testJoinToken)
 	if err != nil || principal.Phase != syncstore.PhaseActive {
-		t.Fatalf("verified mixed inventory did not activate da: principal=%+v err=%v", principal, err)
+		t.Fatalf("verified password inventory did not activate da: principal=%+v err=%v", principal, err)
 	}
 
 	partialPath := filepath.Join(root, "partial.json")
-	partial := expectedInventory{SchemaVersion: 1, Records: expected.Records[1:]}
+	partial := expectedInventory{SchemaVersion: 1, Records: []expectedRecord{}}
 	rawPartial, err := json.Marshal(partial)
 	if err != nil {
 		t.Fatal(err)
@@ -177,7 +172,7 @@ func TestRunVerifiesUnfilteredMixedInventoryBeforeEnrollmentCompletion(t *testin
 		"--latest",
 		"--complete-enrollment",
 	}); err == nil {
-		t.Fatal("partial cookie-only inventory activated a mixed-record enrollment")
+		t.Fatal("incomplete password inventory activated enrollment")
 	}
 	principal, err = registry.Authenticate(oneplusToken)
 	if err != nil || principal.Phase != syncstore.PhasePending {

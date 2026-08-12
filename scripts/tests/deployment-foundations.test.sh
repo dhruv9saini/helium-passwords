@@ -8,7 +8,7 @@ shm_destination=$(mktemp -d /dev/shm/helium-deploy-backup-b.XXXXXX)
 cleanup() { find "$test_root" "$tmp_destination" "$shm_destination" -depth -delete; }
 trap cleanup EXIT
 mkdir -p "$test_root/bin" "$test_root/home/.config/net.imput.helium/Default" \
-  "$test_root/artifact/helium-sync-linux-x86_64/runtime"
+  "$test_root/artifact/helium-passwords-linux-x86_64/runtime"
 printf 'SYNTHETIC-SSH-PRIVATE-KEY\n' >"$test_root/ssh-identity"
 printf 'fixture-peer ssh-ed25519 SYNTHETIC\n' >"$test_root/known-hosts"
 chmod 600 "$test_root/ssh-identity" "$test_root/known-hosts"
@@ -107,9 +107,9 @@ set -euo pipefail
 printf '%s\n' "\$*" >>'$test_root/adb.log'
 if [[ \${1:-} == shell ]]; then
   case \${2:-} in
-    *'dumpsys package'*) echo '  dataDir=/data/user/0/computer.helium.sync' ;;
-    *'cmd package list packages'*) echo 'package:computer.helium.sync uid:10234' ;;
-    *'pidof computer.helium.sync'*) exit 1 ;;
+    *'dumpsys package'*) echo '  dataDir=/data/user/0/computer.helium.passwords' ;;
+    *'cmd package list packages'*) echo 'package:computer.helium.passwords uid:10234' ;;
+    *'pidof computer.helium.passwords'*) exit 1 ;;
     *'uname -m'*) echo x86_64 ;;
   esac
 elif [[ \${1:-} == exec-out ]]; then
@@ -179,21 +179,21 @@ export PATH
 export DEPLOY_TEST_SSH_IDENTITY="$test_root/ssh-identity"
 export DEPLOY_TEST_PEER_ROOT="$shm_destination"
 
-cat >"$test_root/artifact/helium-sync-linux-x86_64/runtime/helium" <<'EOF'
+cat >"$test_root/artifact/helium-passwords-linux-x86_64/runtime/helium" <<'EOF'
 #!/usr/bin/env sh
 echo 'Helium fixture 1'
 EOF
-cat >"$test_root/artifact/helium-sync-linux-x86_64/runtime/helium_crashpad_handler" <<'EOF'
+cat >"$test_root/artifact/helium-passwords-linux-x86_64/runtime/helium_crashpad_handler" <<'EOF'
 #!/usr/bin/env sh
 exit 0
 EOF
 chmod 755 \
-  "$test_root/artifact/helium-sync-linux-x86_64/runtime/helium" \
-  "$test_root/artifact/helium-sync-linux-x86_64/runtime/helium_crashpad_handler"
-printf icu >"$test_root/artifact/helium-sync-linux-x86_64/runtime/icudtl.dat"
-printf resources >"$test_root/artifact/helium-sync-linux-x86_64/runtime/resources.pak"
+  "$test_root/artifact/helium-passwords-linux-x86_64/runtime/helium" \
+  "$test_root/artifact/helium-passwords-linux-x86_64/runtime/helium_crashpad_handler"
+printf icu >"$test_root/artifact/helium-passwords-linux-x86_64/runtime/icudtl.dat"
+printf resources >"$test_root/artifact/helium-passwords-linux-x86_64/runtime/resources.pak"
 tar -C "$test_root/artifact" -cJf "$test_root/helium-linux.tar.xz" \
-  helium-sync-linux-x86_64
+  helium-passwords-linux-x86_64
 artifact_sha=$(sha256sum "$test_root/helium-linux.tar.xz" | awk '{print $1}')
 write_artifact_receipt() {
   local target=$1 output=$2
@@ -237,7 +237,7 @@ EOF
 chmod 600 "$test_root/enrollment/token" "$test_root/enrollment/client.json"
 android_config=$test_root/android-backup.conf
 android_generation=20260722T120100Z-bbbbbbbbbbbbbbbb
-android_receipt=$(make_backup_receipt /data/user/0/computer.helium.sync/app_chrome \
+android_receipt=$(make_backup_receipt /data/user/0/computer.helium.passwords/app_chrome \
   "$android_config" "$android_generation" android)
 ADB="$test_root/bin/adb" "$repo_root/scripts/android-local/configure-android-chromium-sync.sh" \
   install "$test_root/enrollment" "$android_config" "$android_receipt" \

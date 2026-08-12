@@ -71,7 +71,7 @@ require_arg '^is_debug = false$' 'Android APKs must be non-debug Chromium builds
 require_arg '^dcheck_always_on = false$' 'Android APKs must disable always-on DCHECKs'
 require_arg '^chrome_public_manifest_package = "computer\.helium\.sync(\.test)?"$' \
   'manifest package must be the fixed production or disposable Helium Sync identity'
-if grep -qx 'chrome_public_manifest_package = "computer.helium.sync.test"' \
+if grep -qx 'chrome_public_manifest_package = "computer.helium.passwords.test"' \
     "$resolved_args"; then
   require_arg '^debuggable_apks = true$' \
     'the disposable package must explicitly permit rootless test instrumentation'

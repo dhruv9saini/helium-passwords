@@ -110,7 +110,7 @@ async function writeExecutionIdentity(root, device) {
 async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
   const artifactHash = digest(await fsp.readFile(artifact));
   const receiptRoot = path.join(root, `${label}-admission`);
-  const bundle = path.join(receiptRoot, `helium-sync-linux-${arch}`);
+  const bundle = path.join(receiptRoot, `helium-passwords-linux-${arch}`);
   const runtime = path.join(bundle, "runtime");
   const provenance = path.join(bundle, "provenance");
   const browser = path.join(runtime, "helium");
@@ -124,7 +124,7 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
     return `${hash}  ${path.relative(bundle, file)}`;
   }))).join("\n")}\n`;
   await fsp.writeFile(inventory, inventoryRaw, {mode: 0o600});
-  const archive = path.join(root, `helium-sync-linux-${arch}.tar.xz`);
+  const archive = path.join(root, `helium-passwords-linux-${arch}.tar.xz`);
   try {
     await fsp.writeFile(archive, `synthetic-${arch}-archive`, {
       mode: 0o600,
@@ -202,9 +202,9 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
     `browser_sha256=${artifactHash}`,
     `runtime_inventory=${path.relative(receiptRoot, inventory)}`,
     `runtime_inventory_sha256=${digest(inventoryRaw)}`,
-    `full_graph_receipt=helium-sync-linux-${arch}/provenance/full-graph/receipt.env`,
+    `full_graph_receipt=helium-passwords-linux-${arch}/provenance/full-graph/receipt.env`,
     `full_graph_receipt_sha256=${graph.receiptSha256}`,
-    `full_graph_inventory=helium-sync-linux-${arch}/provenance/full-graph/SHA256SUMS`,
+    `full_graph_inventory=helium-passwords-linux-${arch}/provenance/full-graph/SHA256SUMS`,
     `full_graph_inventory_sha256=${graph.inventorySha256}`,
     `verified_at=synthetic-fixture-${label}`,
     "",
@@ -229,7 +229,7 @@ async function writeAndroidAdmission(root) {
     `runtime_kit_commit=${"7".repeat(40)}`,
     `runtime_kit_source_sha256=${"8".repeat(64)}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
-    "manifest_package=computer.helium.sync.test",
+    "manifest_package=computer.helium.passwords.test",
     "version_code=787500005",
     `version_name=${TRAIN.chromium_version}`,
     "target_cpu=arm64",
@@ -245,7 +245,7 @@ async function writeAndroidAdmission(root) {
   const artifactHash = digest(await fsp.readFile(artifact));
   await fsp.writeFile(path.join(prepared, "acceptance.env"), [
     "schema_version=2",
-    "package=computer.helium.sync.test",
+    "package=computer.helium.passwords.test",
     `helium_sync_commit=${TRAIN.source_commit}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
     "version_code=787500005",
@@ -954,7 +954,7 @@ function manifestFixture() {
         `/synthetic/${target}/manifest` : null,
       provenance_manifest_sha256: platform === "linux" ? "4".repeat(64) : null,
       returned_archive_path: platform === "linux" ?
-        "/synthetic/helium-sync-linux-x86_64.tar.xz" : null,
+        "/synthetic/helium-passwords-linux-x86_64.tar.xz" : null,
       returned_archive_sha256: platform === "linux" ? "5".repeat(64) : null,
       build_job_id: platform === "linux" ? "synthetic-x86_64" : null,
       depot_tools_commit: platform === "linux" ?
@@ -1001,7 +1001,7 @@ function manifestFixture() {
       oneplus: device({
         platform: "android",
         target: "android-arm64",
-        packageName: "computer.helium.sync.test",
+        packageName: "computer.helium.passwords.test",
         artifact: "0".repeat(64),
         receipt: "1".repeat(64),
         inventory: "2".repeat(64),
@@ -1013,10 +1013,10 @@ function manifestFixture() {
 
 async function preparedInputs(root) {
   const dArtifact = path.join(
-    root, "d-admission", "helium-sync-linux-x86_64", "runtime",
+    root, "d-admission", "helium-passwords-linux-x86_64", "runtime",
     "helium-wrapper");
   const daArtifact = path.join(
-    root, "da-admission", "helium-sync-linux-x86_64", "runtime",
+    root, "da-admission", "helium-passwords-linux-x86_64", "runtime",
     "helium-wrapper");
   await fsp.mkdir(path.dirname(dArtifact), {recursive: true});
   await fsp.mkdir(path.dirname(daArtifact), {recursive: true});
@@ -1134,7 +1134,7 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
     assert.equal(manifest.devices.d.target, "linux-x86_64");
     assert.equal(manifest.devices.da.target, "linux-x86_64");
     assert.equal(manifest.devices.oneplus.target, "android-arm64");
-    assert.equal(manifest.devices.oneplus.package, "computer.helium.sync.test");
+    assert.equal(manifest.devices.oneplus.package, "computer.helium.passwords.test");
     assert.equal(manifest.devices.oneplus.profile_path, null);
     assert.equal(manifest.devices.oneplus.profile_marker_sha256, null);
     assert.match(manifest.devices.oneplus.admission.inventory_sha256,

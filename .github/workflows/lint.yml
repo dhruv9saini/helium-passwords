@@ -35,7 +35,7 @@ jobs:
       - name: Smoke-test overlay injection
         shell: bash
         run: |
-          checkout="$(bash scripts/prepare-platform.sh --skip-submodules linux /tmp/helium-sync-linux-smoke)"
+          checkout="$(bash scripts/prepare-platform.sh --skip-submodules linux /tmp/helium-passwords-linux-smoke)"
           grep -qx 'helium/passwords/restore-password-autofill.patch' "$checkout/patches/series"
           grep -qx 'helium/passwords/restore-password-ui.patch' "$checkout/patches/series"
           grep -qx 'helium/sync/0001-helium-sync-overlay-files.patch' "$checkout/patches/series"

@@ -53,13 +53,13 @@ source device/profile, and explicit display mode. Desktop uses
 `--package-id desktop`; `headless` is useful for automation, and the final gate
 must also run `headed` when validating normal desktop window behavior.
 
-The only recognized Android identity is `computer.helium.sync.test`, with
+The only recognized Android identity is `computer.helium.passwords.test`, with
 `--source-device oneplus` and `--display-mode device`. `--browser` is the exact
 prepared `Browser-test.apk`; `--acceptance-dir` and `--adb-serial` are also
 required. The runner validates the local APK metadata before device access,
 then `android-tab-profile.sh` revalidates the full prepared inventory and the
 installed monolithic APK before touching a synthetic sandbox path. Production
-`computer.helium.sync` and every other package identity are rejected.
+`computer.helium.passwords` and every other package identity are rejected.
 
 ## 1. Chromium native recovery
 
@@ -236,7 +236,7 @@ scripts/android-media/disposable-browser.sh install "$acceptance" "$serial"
 node scripts/tabs/tab-runtime-proof.mjs native \
   --browser "$apk" --browser-sha256 "$apk_sha256" \
   --acceptance-dir "$acceptance" --adb-serial "$serial" \
-  --package-id computer.helium.sync.test --display-mode device \
+  --package-id computer.helium.passwords.test --display-mode device \
   --profile-dir /secure/helium-tab-proof/native/drill-oneplus-native \
   --source-device oneplus --profile default \
   --evidence-dir /secure/helium-tab-proof/evidence/proof-oneplus-native \
@@ -256,7 +256,7 @@ package's exact resolved `<dataDir>/app_chrome`; selecting the `.test` package
 does not weaken any topology, receipt, or restore rule.
 
 ```sh
-ANDROID_SERIAL="$serial" CHROMIUM_ANDROID_PACKAGE=computer.helium.sync.test \
+ANDROID_SERIAL="$serial" CHROMIUM_ANDROID_PACKAGE=computer.helium.passwords.test \
   scripts/android-local/backup-android-chromium-profile.sh \
     /secure/oneplus-test-app-profile.conf
 ```

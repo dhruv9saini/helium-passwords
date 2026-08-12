@@ -31,9 +31,9 @@ drift. The two full-graph hashes bind the deployment to the private concrete
 graph evidence copied into `provenance/full-graph/`; the internal schema-4
 manifest repeats both hashes and binds the packaging tool source and commit.
 There is one accepted schema and no legacy verifier fallback.
-`linux-product.conf` binds desktop Sync to `helium-sync-linux-x86_64` and
+`linux-product.conf` binds desktop Sync to `helium-passwords-linux-x86_64` and
 `linux-x86_64`, and binds the cross-built OnePlus chroot artifact to
-`helium-sync-linux-arm64` and `linux-arm64-chroot`. It also records the exact
+`helium-passwords-linux-arm64` and `linux-arm64-chroot`. It also records the exact
 public Passwords ancestor and requires the private Sync commit to come from
 this repository. Installers require the recorded private source commit in
 their normal Git ancestry. Only `scripts/package-linux-runtime.sh` may create
@@ -162,7 +162,7 @@ The browser-native password/cookie neutral mechanism uses the same authenticated
 backup format for its independent API-produced snapshot directory, then uses
 `scripts/native-recovery/runtime-drill.sh` for exact browser readback. That
 runner admits only a fresh marked desktop profile or the checksum-admitted
-`computer.helium.sync.test` sandbox; it cannot target the production Android
+`computer.helium.passwords.test` sandbox; it cannot target the production Android
 package. See [nine-path-recovery.md](nine-path-recovery.md) for its two-replica
 drill and terminal fleet receipt.
 
@@ -179,8 +179,8 @@ After disposable browser acceptance and the exact-profile backup gate:
 
 ```sh
 scripts/laptop/install-laptop-sync.sh install \
-  /artifacts/helium-sync-linux-x86_64.tar.xz \
-  /artifacts/helium-sync-linux-x86_64.receipt.env \
+  /artifacts/helium-passwords-linux-x86_64.tar.xz \
+  /artifacts/helium-passwords-linux-x86_64.receipt.env \
   /secure/d-profile.conf /secure/receipts/d-default-GENERATION.env
 ```
 
@@ -198,8 +198,8 @@ For the OnePlus Arch chroot:
 
 ```sh
 scripts/android-local/install-chroot-helium.sh install \
-  /artifacts/helium-sync-linux-arm64.tar.xz \
-  /artifacts/helium-sync-linux-arm64.receipt.env \
+  /artifacts/helium-passwords-linux-arm64.tar.xz \
+  /artifacts/helium-passwords-linux-arm64.receipt.env \
   /secure/oneplus-chroot-profile.conf /secure/receipts/oneplus-chroot-GENERATION.env
 scripts/android-local/install-chroot-helium.sh rollback ARTIFACT_SHA256
 ```
@@ -228,13 +228,13 @@ must match the local archive-stream hash before either generation becomes
 active.
 
 Disposable Android gates set
-`CHROMIUM_ANDROID_PACKAGE=computer.helium.sync.test` and
+`CHROMIUM_ANDROID_PACKAGE=computer.helium.passwords.test` and
 `ANDROID_ADB_SERIAL=oneplus:5555`. For that exact debuggable package, both the
 full-profile producer and enrollment installer reconnect and bind the fixed
 serial, then use Android `run-as` instead of Magisk. The profile archive and
 enrollment tar stream directly across ADB; the enrollment bundle is never
 published under `/data/local/tmp`. This rootless path cannot name the
-production package. The production `computer.helium.sync` boundary remains a
+production package. The production `computer.helium.passwords` boundary remains a
 separate stopped-profile, rooted operation and still requires explicit review
 of its admitted two-copy backup before any mutation.
 

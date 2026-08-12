@@ -82,7 +82,7 @@ export function createContentFreeChatGPTTiming(options) {
   if (!new Set(["completed", "failed", "timeout"]).has(status)) {
     throw new Error("ChatGPT timing status must be completed, failed, or timeout");
   }
-  if (!new Set(["computer.helium.sync.test", "computer.helium.control.test"]).has(options.package)) {
+  if (!new Set(["computer.helium.passwords.test", "computer.helium.control.test"]).has(options.package)) {
     throw new Error("ChatGPT timing evidence requires a disposable browser package");
   }
   if (!SHA256_PATTERN.test(options.artifactSha256 || "")) {

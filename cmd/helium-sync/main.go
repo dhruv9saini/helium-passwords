@@ -15,7 +15,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dhruv9saini/helium-sync/internal/syncstore"
+	"github.com/dhruv9saini/helium-passwords/internal/syncstore"
 )
 
 const cookieBridgeStateSchema = 5

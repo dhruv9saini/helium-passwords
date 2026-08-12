@@ -30,7 +30,7 @@ Use the exact artifact for each execution environment:
 - `d` and `da`: separate verifications and executions of the same returned
   Linux x86_64 archive and build-produced deployment receipt; and
 - `oneplus`: `Browser-test.apk` from the prepared
-  `computer.helium.sync.test` directory. Its `acceptance.env`,
+  `computer.helium.passwords.test` directory. Its `acceptance.env`,
   `PACKAGE_SHA256SUMS`, and every inventoried runtime/provenance member are the
   Android admission.
 
@@ -66,10 +66,10 @@ OnePlus; transfer only those private receipts to the initializer.
   --adb-serial "$oneplus_usb_serial" > /secure/oneplus-execution-identity.env)
 
 node scripts/sync-runtime/three-client-acceptance.mjs init \
-  --d-artifact "$d_verified_linux/helium-sync-linux-x86_64/runtime/helium-wrapper" \
+  --d-artifact "$d_verified_linux/helium-passwords-linux-x86_64/runtime/helium-wrapper" \
   --d-artifact-receipt "$d_verified_linux/artifact-receipt.env" \
   --d-execution-identity /secure/d-execution-identity.env \
-  --da-artifact "$da_verified_linux/helium-sync-linux-x86_64/runtime/helium-wrapper" \
+  --da-artifact "$da_verified_linux/helium-passwords-linux-x86_64/runtime/helium-wrapper" \
   --da-artifact-receipt "$da_verified_linux/artifact-receipt.env" \
   --da-execution-identity /secure/da-execution-identity.env \
   --oneplus-artifact /absolute/oneplus-prepared/Browser-test.apk \

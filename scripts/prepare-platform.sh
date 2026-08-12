@@ -12,8 +12,8 @@ EOF
 }
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." >/dev/null 2>&1 && pwd)"
-# shellcheck source=../helium-sync.conf
-. "${root_dir}/helium-sync.conf"
+# shellcheck source=../helium-passwords.conf
+. "${root_dir}/helium-passwords.conf"
 
 skip_submodules=false
 while [ "$#" -gt 0 ]; do

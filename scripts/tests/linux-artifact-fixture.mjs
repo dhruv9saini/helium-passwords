@@ -167,7 +167,7 @@ export async function writeFullGraphFixture(graph) {
 
 export async function writeLinuxArtifactReceipt(root, artifact) {
   const artifactHash = await sha256File(artifact);
-  const bundle = path.join(root, "helium-sync-linux-x86_64");
+  const bundle = path.join(root, "helium-passwords-linux-x86_64");
   const runtime = path.join(bundle, "runtime");
   const provenance = path.join(bundle, "provenance");
   const browser = path.join(runtime, "helium");
@@ -181,7 +181,7 @@ export async function writeLinuxArtifactReceipt(root, artifact) {
   await writePrivate(inventory, inventoryRaw);
   const graph = await writeFullGraphFixture(path.join(provenance, "full-graph"));
   const receipt = path.join(root, "artifact-receipt.env");
-  const graphRelative = "helium-sync-linux-x86_64/provenance/full-graph";
+  const graphRelative = "helium-passwords-linux-x86_64/provenance/full-graph";
   await writePrivate(receipt, [
     "schema_version=3",
     "product=helium-sync",

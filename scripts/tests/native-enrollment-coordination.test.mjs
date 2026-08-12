@@ -14,79 +14,33 @@ const passwords = repoFile(
 const cookies = repoFile(
   "chromium/overlay/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc");
 
-class EnrollmentCoordinatorModel {
-  cookie = null;
-  password = null;
-  completions = [];
-  refreshes = 0;
-
-  verified(kind, sequence) {
-    this[kind] = sequence;
-    if (this.cookie === null || this.password === null) return;
-    if (this.cookie !== this.password) {
-      this.cookie = null;
-      this.password = null;
-      this.refreshes += 1;
-      return;
-    }
-    this.completions.push(this.cookie);
-  }
-}
-
-test("pending enrollment promotes only a joint password and cookie cursor", () => {
-  const coordinator = new EnrollmentCoordinatorModel();
-  coordinator.verified("cookie", 40);
-  assert.deepEqual(coordinator.completions, []);
-  coordinator.verified("password", 41);
-  assert.deepEqual(coordinator.completions, []);
-  assert.equal(coordinator.refreshes, 1);
-
-  coordinator.verified("password", 42);
-  coordinator.verified("cookie", 42);
-  assert.deepEqual(coordinator.completions, [42]);
-});
-
-test("service wires both pending bridges to one fail-closed coordinator", () => {
+test("pending enrollment promotes only a verified native password cursor", () => {
   assert.match(service, /enrollment->phase == "pending"/);
-  assert.match(service, /OnCookieBaselineVerified/);
   assert.match(service, /OnPasswordBaselineVerified/);
+  assert.doesNotMatch(service, /OnCookieBaselineVerified|cookie_bridge_/);
 
   const coordinate = service.slice(
     service.indexOf("void HeliumSyncService::MaybeCompleteEnrollment"),
     service.indexOf("void HeliumSyncService::OnEnrollmentComplete"),
   );
-  const equal = coordinate.indexOf(
-    "*cookie_verified_sequence_ != *password_verified_sequence_");
   const acknowledge = coordinate.indexOf("AcknowledgeApplied");
   const complete = coordinate.indexOf("enrollment_client_->CompleteEnrollment");
-  assert.ok(equal >= 0 && acknowledge > equal && complete > acknowledge);
-  assert.match(coordinate, /cookie_bridge_->PullAndApply\(\)/);
-  assert.match(coordinate, /password_bridge_->PullAndApply\(\)/);
+  assert.ok(acknowledge >= 0 && complete > acknowledge);
+  assert.match(coordinate, /verified_sequence = \*password_verified_sequence_/);
 });
 
-test("each bridge reports readiness only after durable readback and cursor acknowledgement", () => {
-  const passwordFinish = passwords.slice(
+test("password readiness follows durable readback and cursor acknowledgement", () => {
+  const finish = passwords.slice(
     passwords.indexOf("void HeliumPasswordSyncBridge::FinishReconcile"),
     passwords.indexOf("bool HeliumPasswordSyncBridge::LoadState"),
   );
-  assert.ok(passwordFinish.indexOf("SaveState()") >= 0);
-  assert.ok(passwordFinish.indexOf("AcknowledgeApplied") >
-    passwordFinish.indexOf("SaveState()"));
-  assert.ok(passwordFinish.indexOf("verified_baseline_callback_.Run") >
-    passwordFinish.indexOf("AcknowledgeApplied"));
-
-  const cookieFinish = cookies.slice(
-    cookies.indexOf("bool FinishVerifiedInventory"),
-    cookies.indexOf("void BeginRemoteApply"),
-  );
-  assert.ok(cookieFinish.indexOf("SaveState()") >= 0);
-  assert.ok(cookieFinish.indexOf("AcknowledgeApplied") >
-    cookieFinish.indexOf("SaveState()"));
-  assert.ok(cookieFinish.indexOf("verified_baseline_callback_.Run") >
-    cookieFinish.indexOf("AcknowledgeApplied"));
+  assert.ok(finish.indexOf("SaveState()") >= 0);
+  assert.ok(finish.indexOf("AcknowledgeApplied") > finish.indexOf("SaveState()"));
+  assert.ok(finish.indexOf("verified_baseline_callback_.Run") >
+    finish.indexOf("AcknowledgeApplied"));
 });
 
-test("activation reloads immutable client identity before either bridge resumes", () => {
+test("activation reloads immutable identity before password publication resumes", () => {
   const reload = client.slice(
     client.indexOf("bool HeliumSyncClient::ReloadEnrollmentState"),
     client.indexOf("void HeliumSyncClient::CompleteEnrollment"),
@@ -99,23 +53,14 @@ test("activation reloads immutable client identity before either bridge resumes"
   const activated = service.slice(
     service.indexOf("void HeliumSyncService::OnEnrollmentComplete"),
   );
-  const cookieReload = activated.indexOf("cookie_bridge_->EnrollmentActivated");
-  const passwordReload = activated.indexOf(
-    "password_bridge_->EnrollmentActivated");
-  const failureGate = activated.indexOf("!cookie_active || !password_active");
-  const cookiePull = activated.indexOf("cookie_bridge_->PullAndApply");
-  const passwordPull = activated.indexOf("password_bridge_->PullAndApply");
-  assert.ok(cookieReload >= 0 && passwordReload > cookieReload);
-  assert.ok(failureGate > passwordReload);
-  assert.ok(cookiePull > failureGate && passwordPull > cookiePull);
+  assert.match(activated, /password_bridge_->EnrollmentActivated/);
+  assert.match(activated, /password_bridge_->PullAndApply/);
+  assert.doesNotMatch(activated, /cookie_bridge_/);
 });
 
-test("bridge code cannot independently publish or complete pending enrollment", () => {
+test("normal cookie code is backup-only and never uses the Tailnet client", () => {
+  assert.doesNotMatch(cookies, /HeliumSyncClient|Latest\(|Push\(|AcknowledgeApplied/);
+  assert.match(cookies, /HeliumCookieAcceptanceFixture/);
+  assert.match(cookies, /GetCookieManagerForBrowserProcess/);
   assert.doesNotMatch(passwords, /CompleteEnrollment/);
-  assert.doesNotMatch(cookies, /CompleteEnrollment/);
-  for (const source of [passwords, cookies]) {
-    const pending = source.indexOf('enrollment_phase() == "pending"');
-    const push = source.indexOf("client_->Push", pending);
-    assert.ok(pending >= 0 && push > pending);
-  }
 });

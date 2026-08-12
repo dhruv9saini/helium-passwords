@@ -5,7 +5,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../.." && pwd)
 acceptance=${HELIUM_NATIVE_RECOVERY_ACCEPTANCE:-$script_dir/acceptance.mjs}
 android_boundary=$repo_root/scripts/android-media/disposable-browser.sh
-package=computer.helium.sync.test
+package=computer.helium.passwords.test
 profile_marker=.helium-native-recovery-disposable-profile-v1
 profile_marker_content=helium-native-recovery-disposable-profile-v1
 desktop_root_marker=.helium-native-recovery-drill-root-v1
@@ -22,7 +22,7 @@ usage:
 
 Desktop DRILL-PROFILE must be a new direct child of a private directory marked
 .helium-native-recovery-drill-root-v1. Android operates only inside the exact
-checksum-admitted computer.helium.sync.test sandbox. Both modes launch a fresh
+checksum-admitted computer.helium.passwords.test sandbox. Both modes launch a fresh
 marked profile, wait for Chromium's native readback receipt, and never touch a
 personal profile or the production Android package.
 EOF

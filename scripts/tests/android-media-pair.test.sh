@@ -28,7 +28,7 @@ make_generation() {
   local package socket archive_sha apk_sha
   case "$role" in
     sync)
-      package=computer.helium.sync.test
+      package=computer.helium.passwords.test
       socket=helium_sync_test_devtools_remote
       archive_sha=$(printf 'a%.0s' {1..64})
       apk_sha=$(printf 'b%.0s' {1..64})

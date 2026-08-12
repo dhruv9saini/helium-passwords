@@ -480,7 +480,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
       writePrivate(fullStatus, originalFullStatus
         .replace("platform=desktop", "platform=android")
         .replace("package_id=desktop",
-          "package_id=computer.helium.sync.test"));
+          "package_id=computer.helium.passwords.test"));
       const mixedPlatform = JSON.parse(failRun(health,
         [statusRoot, desktopDevice, "default"]).stdout);
       assert.equal(mixedPlatform.healthy, false);
@@ -520,7 +520,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
       const androidRejected = failRun("node", [runtime, "native",
         "--browser", "/does/not/exist",
         "--browser-sha256", "0".repeat(64),
-        "--package-id", "computer.helium.sync.test",
+        "--package-id", "computer.helium.passwords.test",
         "--display-mode", "headless",
         "--profile-dir", path.join(temporary, "unused", "drill-android"),
         "--source-device", "oneplus",

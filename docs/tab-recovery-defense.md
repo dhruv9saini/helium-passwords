@@ -122,7 +122,7 @@ Fault injection corrupts one source, newest generation, retention plan,
 recipient, or destination at a time. Acceptance fails if one injected fault
 damages a sibling mechanism or if any restore tool targets a live profile.
 The orchestration and evidence path supports desktop plus the exact
-checksum-admitted `computer.helium.sync.test` Android package. Android stages
+checksum-admitted `computer.helium.passwords.test` Android package. Android stages
 only round-trip-verified synthetic drill profiles below real, fully resolved
 package paths and binds the exact local marker or restore receipt before any
 admitted removal. It launches through the sole disposable boundary and binds

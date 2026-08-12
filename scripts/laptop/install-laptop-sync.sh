@@ -103,7 +103,7 @@ install_release() {
 
   if [[ ! -d "$release" ]]; then
     mkdir "$staging"
-    bundle_root=helium-sync-linux-x86_64
+    bundle_root=helium-passwords-linux-x86_64
     while IFS= read -r member; do
       case "$member" in /*|..|../*|*/../*|*/..) echo "unsafe artifact member: $member" >&2; exit 1 ;; esac
     done < <(tar -tf "$artifact")

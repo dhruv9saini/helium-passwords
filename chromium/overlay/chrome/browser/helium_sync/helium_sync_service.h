@@ -15,7 +15,6 @@ class Profile;
 
 namespace helium_sync {
 class HeliumCookieAcceptanceFixture;
-class HeliumCookieSyncBridge;
 class HeliumNativeRecoveryBridge;
 class HeliumPasswordSyncBridge;
 class HeliumSyncClient;
@@ -34,20 +33,17 @@ public:
   void Shutdown() override;
 
 private:
-  void OnCookieBaselineVerified(int64_t sequence);
   void OnPasswordBaselineVerified(int64_t sequence);
   void MaybeCompleteEnrollment();
   void OnEnrollmentComplete(bool ok, std::string error);
 
   std::unique_ptr<helium_sync::HeliumCookieAcceptanceFixture>
       cookie_acceptance_fixture_;
-  std::unique_ptr<helium_sync::HeliumCookieSyncBridge> cookie_bridge_;
   std::unique_ptr<helium_sync::HeliumNativeRecoveryBridge> recovery_bridge_;
   std::unique_ptr<helium_sync::HeliumPasswordSyncBridge> password_bridge_;
   std::unique_ptr<helium_sync::HeliumSyncClient> enrollment_client_;
   std::unique_ptr<helium_sync::HeliumTabRestoreBridge> tab_restore_bridge_;
   std::unique_ptr<helium_sync::HeliumTabSnapshotBridge> tab_snapshot_bridge_;
-  std::optional<int64_t> cookie_verified_sequence_;
   std::optional<int64_t> password_verified_sequence_;
   bool enrollment_completion_in_flight_ = false;
   bool enrollment_complete_ = false;

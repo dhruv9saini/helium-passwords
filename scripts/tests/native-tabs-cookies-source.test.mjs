@@ -28,21 +28,10 @@ test("native cookie identity includes partition, host/domain form, scheme, and p
   assert.match(identity, /cookie\.SourcePort\(\)/);
 });
 
-test("native cookie reconciliation pulls first and publishes only local mutations", () => {
-  const reconcile = cookie.slice(
-    cookie.indexOf("void Reconcile()"),
-    cookie.indexOf("void OnLatest"),
-  );
-  assert.match(reconcile, /client_->Latest\(\s*\{kCookieKind\}/);
-
-  const publish = cookie.slice(
-    cookie.indexOf("void PublishLocalMutations"),
-    cookie.indexOf("void OnPushComplete"),
-  );
-  assert.match(publish, /baseline_cookie_fingerprint/);
-  assert.match(publish, /expected_revision/);
-  assert.match(publish, /mutation\.deleted = true/);
-  assert.equal((publish.match(/client_->Push/g) ?? []).length, 1);
+test("cookie code has no live transport or normal-profile reconciler", () => {
+  assert.doesNotMatch(cookie,
+    /HeliumCookieSyncBridge|HeliumSyncClient|Latest\(|Push\(|AcknowledgeApplied/);
+  assert.doesNotMatch(service, /cookie_bridge_|cookie-state|cookie-rollback/);
 });
 
 test("native cookie apply uses Chromium CookieManager and rejects malformed authority", () => {
@@ -50,13 +39,10 @@ test("native cookie apply uses Chromium CookieManager and rejects malformed auth
   assert.match(cookie, /GetAllCookies/);
   assert.match(cookie, /SetCanonicalCookie/);
   assert.match(cookie, /DeleteCanonicalCookie/);
-  assert.match(cookie, /record\.device_id\.empty\(\)/);
-  assert.doesNotMatch(cookie, /key_id|active_key_id|key-epoch/);
   assert.match(cookie, /CookiePartitionKey::FromUntrustedInput/);
-  assert.match(cookie, /CookieRecordKey\(\*cookie\)/);
-  assert.match(cookie, /root\.Set\("payload", std::move\(\*payload\)\)/);
+  assert.match(cookie, /CookieRecordKey\(cookie\)/);
+  assert.match(cookie, /fixture-requires-debuggable-sync-test-package/);
   assert.doesNotMatch(cookie, /SealLocalPayload|OpenLocalPayload|sealed_payload/);
-  assert.match(cookie, /destination-set-rejected/);
 });
 
 test("native tab export matches the independent store schema and is atomic", () => {

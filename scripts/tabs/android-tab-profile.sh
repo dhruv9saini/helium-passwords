@@ -11,7 +11,7 @@ usage:
   android-tab-profile.sh remove ACCEPTANCE_DIRECTORY ADB_SERIAL \
     native|neutral|full-profile LOCAL_DRILL_PROFILE
 
-Operate only on an exact checksum-admitted computer.helium.sync.test package.
+Operate only on an exact checksum-admitted computer.helium.passwords.test package.
 The native profile is the fresh package's app_chrome tree so the existing
 stopped Android full-profile producer can back it up. Neutral and full-profile
 drills use new fixed package-private user-data roots. No package is cleared or
@@ -25,7 +25,7 @@ acceptance_input=$2
 serial=$3
 mode=$4
 profile_input=$5
-package=computer.helium.sync.test
+package=computer.helium.passwords.test
 
 case "$operation" in stage|fetch-neutral|remove) ;; *) usage; exit 64 ;; esac
 case "$mode" in native|neutral|full-profile) ;; *) usage; exit 64 ;; esac
@@ -77,7 +77,7 @@ profile=$profile_input
 (cd "$acceptance" && sha256sum -c PACKAGE_SHA256SUMS >/dev/null)
 [[ "$(sed -n 's/^package=//p' "$acceptance/acceptance.env")" == "$package" &&
     "$(grep -c '^package=' "$acceptance/acceptance.env")" -eq 1 ]] || {
-  echo "tab profile adapter admits only computer.helium.sync.test" >&2
+  echo "tab profile adapter admits only computer.helium.passwords.test" >&2
   exit 1
 }
 [[ -d "$profile" && ! -L "$profile" &&

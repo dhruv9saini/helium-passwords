@@ -68,7 +68,7 @@ cp "$repo_root/helium-chromium/flags.gn" \
 } > "$test_root/input/build-provenance/args.gn"
 {
   sed 's/=/ = /' "$repo_root/helium-chromium/flags.gn"
-  printf '%s\n' 'chrome_public_manifest_package = "computer.helium.sync.test"'
+  printf '%s\n' 'chrome_public_manifest_package = "computer.helium.passwords.test"'
   printf 'android_override_version_code = "%s"\n' "$HELIUM_ANDROID_VERSION_CODE"
   printf 'android_override_version_name = "%s"\n' "$HELIUM_ANDROID_VERSION_NAME"
   printf '%s\n' 'is_debug = false' 'dcheck_always_on = false' \
@@ -114,7 +114,7 @@ helium_sync_commit=$commit
 runtime_kit_commit=$HELIUM_ANDROID_RUNTIME_KIT_COMMIT
 runtime_kit_source_sha256=$HELIUM_ANDROID_RUNTIME_KIT_SOURCE_SHA256
 chromium_commit=$HELIUM_ANDROID_CHROMIUM_COMMIT
-manifest_package=computer.helium.sync.test
+manifest_package=computer.helium.passwords.test
 version_code=$HELIUM_ANDROID_VERSION_CODE
 version_name=$HELIUM_ANDROID_VERSION_NAME
 target_cpu=arm64
@@ -133,8 +133,8 @@ cat > "$test_root/aapt2" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1" == dump && -f "$3" ]]
 case "$2" in
-  packagename) printf '%s\n' computer.helium.sync.test ;;
-  badging) printf "package: name='computer.helium.sync.test' versionCode='787500005' versionName='150.0.7871.181'\napplication-debuggable\n" ;;
+  packagename) printf '%s\n' computer.helium.passwords.test ;;
+  badging) printf "package: name='computer.helium.passwords.test' versionCode='787500005' versionName='150.0.7871.181'\napplication-debuggable\n" ;;
   *) exit 1 ;;
 esac
 EOF
@@ -142,10 +142,10 @@ chmod +x "$test_root/aapt2"
 
 AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/artifact.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > "$test_root/result"
-grep -qx 'package=computer.helium.sync.test' "$test_root/result"
+grep -qx 'package=computer.helium.passwords.test' "$test_root/result"
 grep -qx "version_code=$HELIUM_ANDROID_VERSION_CODE" "$test_root/result"
 grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$test_root/result"
 grep -qx "helium_sync_commit=$commit" "$test_root/result"
@@ -169,7 +169,7 @@ tar -C "$test_root/missing-boundary-input" \
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
   "$test_root/missing-boundary-artifact.tar.xz" \
-  computer.helium.sync.test "$commit" "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
+  computer.helium.passwords.test "$commit" "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "Android artifact without its disposable boundary unexpectedly passed" >&2
   exit 1
@@ -177,10 +177,10 @@ fi
 
 cp -a "$test_root/input" "$test_root/production-input"
 sed -i \
-  -e 's/computer\.helium\.sync\.test/computer.helium.sync/' \
+  -e 's/computer\.helium\.sync\.test/computer.helium.passwords/' \
   -e 's/debuggable_apks = true/debuggable_apks = false/' \
   "$test_root/production-input/build-provenance/gn-args-resolved.txt"
-sed -i 's/computer\.helium\.sync\.test/computer.helium.sync/' \
+sed -i 's/computer\.helium\.sync\.test/computer.helium.passwords/' \
   "$test_root/production-input/runtime-acceptance/kit.env"
 checksum_provenance "$test_root/production-input/build-provenance"
 (
@@ -195,24 +195,24 @@ cat > "$test_root/production-aapt2" <<'EOF'
 #!/usr/bin/env bash
 [[ "$1" == dump && -f "$3" ]]
 case "$2" in
-  packagename) printf '%s\n' computer.helium.sync ;;
-  badging) printf "package: name='computer.helium.sync' versionCode='787500005' versionName='150.0.7871.181'\n" ;;
+  packagename) printf '%s\n' computer.helium.passwords ;;
+  badging) printf "package: name='computer.helium.passwords' versionCode='787500005' versionName='150.0.7871.181'\n" ;;
   *) exit 1 ;;
 esac
 EOF
 chmod +x "$test_root/production-aapt2"
 AAPT2="$test_root/production-aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/production-artifact.tar.xz" computer.helium.sync "$commit" \
+  "$test_root/production-artifact.tar.xz" computer.helium.passwords "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > "$test_root/production-result"
-grep -qx 'package=computer.helium.sync' "$test_root/production-result"
+grep -qx 'package=computer.helium.passwords' "$test_root/production-result"
 sed '/badging)/s/\\n"/\\napplication-debuggable\\n"/' \
   "$test_root/production-aapt2" > "$test_root/debuggable-production-aapt2"
 chmod +x "$test_root/debuggable-production-aapt2"
 if AAPT2="$test_root/debuggable-production-aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/production-artifact.tar.xz" computer.helium.sync "$commit" \
+  "$test_root/production-artifact.tar.xz" computer.helium.passwords "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "debuggable production Android manifest unexpectedly passed" >&2
@@ -226,7 +226,7 @@ checksum_provenance "$test_root/foreign-lock-input/build-provenance"
 tar -C "$test_root/foreign-lock-input" -caf "$test_root/foreign-lock.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/foreign-lock.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/foreign-lock.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "self-consistent foreign Android build lock unexpectedly passed" >&2
@@ -301,7 +301,7 @@ checksum_provenance "$test_root/foreign-flags-input/build-provenance"
 tar -C "$test_root/foreign-flags-input" -caf "$test_root/foreign-flags.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/foreign-flags.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/foreign-flags.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "Android artifact with foreign flags.gn unexpectedly passed" >&2
@@ -316,7 +316,7 @@ tar -C "$test_root/reassigned-flags-input" \
   -caf "$test_root/reassigned-flags.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/reassigned-flags.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/reassigned-flags.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "Android artifact with a locked-key args.gn reassignment unexpectedly passed" >&2
@@ -325,11 +325,11 @@ fi
 
 AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
-  "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/artifact.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   "$test_root/prepared" \
   > "$test_root/prepared-result"
-grep -qx 'package=computer.helium.sync.test' "$test_root/prepared/acceptance.env"
+grep -qx 'package=computer.helium.passwords.test' "$test_root/prepared/acceptance.env"
 grep -qx "helium_sync_commit=$commit" "$test_root/prepared/acceptance.env"
 grep -qx "version_code=$HELIUM_ANDROID_VERSION_CODE" "$test_root/prepared/acceptance.env"
 grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$test_root/prepared/acceptance.env"
@@ -344,7 +344,7 @@ grep -qx "version_name=$HELIUM_ANDROID_VERSION_NAME" "$test_root/prepared/accept
 )
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/android-media/prepare-disposable-acceptance.sh" \
-  "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/artifact.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   "$test_root/prepared" \
   > /dev/null 2>&1; then
@@ -357,7 +357,7 @@ sed 's/versionCode=\x27787500005\x27/versionCode=\x27787500004\x27/' \
 chmod +x "$test_root/stale-version-aapt2"
 if AAPT2="$test_root/stale-version-aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/artifact.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/artifact.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "stale APK versionCode unexpectedly passed" >&2
@@ -366,7 +366,7 @@ fi
 
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/artifact.tar.xz" computer.helium.sync "$commit" \
+  "$test_root/artifact.tar.xz" computer.helium.passwords "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "mismatched package unexpectedly passed" >&2
@@ -379,7 +379,7 @@ checksum_provenance "$test_root/input/build-provenance"
 tar -C "$test_root/input" -caf "$test_root/mutated-depot.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/mutated-depot.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/mutated-depot.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "mutated depot_tools provenance unexpectedly passed" >&2
@@ -393,7 +393,7 @@ printf 'tampered\n' >> "$test_root/input/runtime-acceptance/fixture-server.mjs"
 tar -C "$test_root/input" -caf "$test_root/tampered-runtime.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/tampered-runtime.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/tampered-runtime.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "tampered runtime acceptance kit unexpectedly passed" >&2
@@ -408,7 +408,7 @@ checksum_provenance "$test_root/input/build-provenance"
 tar -C "$test_root/input" -caf "$test_root/dirty.tar.xz" .
 if AAPT2="$test_root/aapt2" \
   "$repo_root/scripts/chromium/verify-android-artifact.sh" \
-  "$test_root/dirty.tar.xz" computer.helium.sync.test "$commit" \
+  "$test_root/dirty.tar.xz" computer.helium.passwords.test "$commit" \
   "$HELIUM_ANDROID_RUNTIME_KIT_COMMIT" \
   > /dev/null 2>&1; then
   echo "dirty source provenance unexpectedly passed" >&2

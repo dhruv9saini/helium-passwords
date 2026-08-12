@@ -15,8 +15,8 @@ profile or the production Android package.
 
 The fleet finalizer requires these exact build outputs:
 
-- one `helium-sync-linux-x86_64.tar.xz`, its schema-2 build-produced deployment
-  receipt, and the sibling private `helium-sync-linux-x86_64.full-graph/`
+- one `helium-passwords-linux-x86_64.tar.xz`, its schema-2 build-produced deployment
+  receipt, and the sibling private `helium-passwords-linux-x86_64.full-graph/`
   evidence directory;
 - the separately returned Sync and no-patch control Android archives; and
 - both prepared Android acceptance directories.
@@ -52,7 +52,7 @@ runtime kit, build tooling, `flags.gn`, and locked GN args.
    validator, rehashes both full acceptance/evidence inventories, and binds
    both runs to one physical OnePlus identity.
 3. Use `reset-disposable-package.sh` to clear only
-   `computer.helium.sync.test` from `media-cookie` to `password-sync`. The
+   `computer.helium.passwords.test` from `media-cookie` to `password-sync`. The
    physical-USB receipt must prove the production package and Android global
    browser state did not change.
 4. Run the three-client gate with the same admitted x86_64 runtime for d and

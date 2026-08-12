@@ -173,7 +173,6 @@ value() {
 }
 
 build_config="${product_root}/helium-passwords.conf"
-[ ! -f "${product_root}/go.mod" ] || build_config="${product_root}/helium-sync.conf"
 # shellcheck source=/dev/null
 . "${build_config}"
 expected_nix_source=$(sha256sum "${product_root}/chromium/nix/chromiumer-shell.nix" | awk '{ print $1 }')

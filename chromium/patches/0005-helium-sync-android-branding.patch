@@ -18,7 +18,7 @@ diff --git a/chrome/android/chrome_public_apk_tmpl.gni b/chrome/android/chrome_p
    # (chrome_public_apk, trichrome_chrome_bundle, etc. as well as the
    # *_bundle variants). This defaults to the Chromium browser package name.
 -  chrome_public_manifest_package = "org.chromium.chrome"
-+  chrome_public_manifest_package = "computer.helium.sync"
++  chrome_public_manifest_package = "computer.helium.passwords"
    if (use_stable_package_name_for_trichrome) {
      chrome_public_manifest_package += ".stable"
    } else if (android_channel != "default") {
@@ -27,7 +27,7 @@ diff --git a/chrome/android/chrome_public_apk_tmpl.gni b/chrome/android/chrome_p
  }
  
 -chrome_public_test_manifest_package = "org.chromium.chrome.tests"
-+chrome_public_test_manifest_package = "computer.helium.sync.tests"
++chrome_public_test_manifest_package = "computer.helium.passwords.tests"
  
  default_chrome_public_jinja_variables = [
    "channel=$android_channel",
@@ -41,10 +41,10 @@ diff --git a/chrome/android/java/res_chromium_base/values/channel_constants.xml 
 -    <string name="bookmark_widget_title" translatable="false">Chromium bookmarks</string>
 -    <string name="search_widget_title" translatable="false">Chromium search</string>
 -    <string name="quick_action_search_widget_title" translatable="false">Chromium quick action search</string>
-+    <string name="app_name" translatable="false">Helium Sync</string>
-+    <string name="bookmark_widget_title" translatable="false">Helium Sync bookmarks</string>
-+    <string name="search_widget_title" translatable="false">Helium Sync search</string>
-+    <string name="quick_action_search_widget_title" translatable="false">Helium Sync quick action search</string>
++    <string name="app_name" translatable="false">Helium Passwords</string>
++    <string name="bookmark_widget_title" translatable="false">Helium Passwords bookmarks</string>
++    <string name="search_widget_title" translatable="false">Helium Passwords search</string>
++    <string name="quick_action_search_widget_title" translatable="false">Helium Passwords quick action search</string>
  </resources>
 diff --git a/chrome/app/chromium_strings.grd b/chrome/app/chromium_strings.grd
 --- a/chrome/app/chromium_strings.grd
@@ -54,11 +54,11 @@ diff --git a/chrome/app/chromium_strings.grd b/chrome/app/chromium_strings.grd
          <else>
            <message name="IDS_PRODUCT_NAME" desc="The Chrome application name" translateable="false">
 -            Chromium
-+            Helium Sync
++            Helium Passwords
            </message>
            <message name="IDS_SHORT_PRODUCT_NAME" desc="The Chrome application short name." translateable="false">
 -            Chromium
-+            Helium Sync
++            Helium Passwords
            </message>
          </else>
        </if>

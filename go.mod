@@ -1,4 +1,4 @@
-module github.com/dhruv9saini/helium-sync
+module github.com/dhruv9saini/helium-passwords
 
 go 1.25.0
 
