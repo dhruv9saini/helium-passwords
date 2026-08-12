@@ -338,6 +338,38 @@ grep -Fqx 'command_mode=retained-linux-build' \
     "${state_root}/${linux_timeout_child}/resume.env"
 grep -Fqx 'parent_terminal_mode=timeout' \
     "${state_root}/${linux_timeout_child}/resume.env"
+
+# An atomic ThinLTO link gets one longer bounded segment only after both the
+# fresh Linux segment and its exact retained segment consumed their complete
+# eight-hour limits. Every resource, watchdog, disk, and one-job bound remains
+# unchanged; only this third segment's wall clock is 24 hours.
+resume_start "${linux_timeout_child}" -- \
+    "${linux_retained_command[@]}" >"${test_root}/linux-timeout-start.out"
+exec 9>&-
+cat >"${state_root}/${linux_timeout_child}/terminal.env" <<'EOF'
+state=terminal
+result=timeout
+exit_code=124
+started_at_epoch=1
+finished_at_epoch=28801
+duration_seconds=28800
+reason=systemd stopped the job at its wall-time limit
+EOF
+linux_final_child=resume-linux-final-child
+resume_init "${linux_timeout_child}" "${linux_final_child}" -- \
+    "${linux_retained_command[@]}" >"${test_root}/linux-final-child.out"
+exec 9>&-
+grep -Fqx 'command_mode=exact' \
+    "${state_root}/${linux_final_child}/resume.env"
+resume_start "${linux_final_child}" -- \
+    "${linux_retained_command[@]}" >"${test_root}/linux-final-start.out"
+exec 9>&-
+grep -Fqx 'wall_seconds=86400' \
+    "${state_root}/${linux_final_child}/policy.env"
+grep -Fqx 'wall_class=extended-linux-final-link' \
+    "${state_root}/${linux_final_child}/policy.env"
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=RuntimeMaxSec=86400'
 grep -Fqx 'source_build_jobs=1' \
     "${state_root}/${linux_timeout_child}/resume.env"
 

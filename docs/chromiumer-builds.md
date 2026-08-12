@@ -461,10 +461,21 @@ The child records both commands and either `command_mode=retained-build` or
 `command_mode=retained-linux-build`.
 
 This keeps the executable build plan explicit while letting Ninja reuse its
-dependency log and completed objects. The continuation is not a longer unit:
-it gets a new unique
+dependency log and completed objects. The first continuation keeps the normal
+eight-hour limit and gets a new unique
 `helium-job-<job>.service`, watchdog, state directory, journal, terminal
 record, Mailbridge event key, and exact eight-hour `RuntimeMaxSec`.
+
+Linux has one narrowly admitted exception for an atomic final ThinLTO link.
+If the fresh Linux segment times out at exactly eight hours, its retained
+Linux continuation also times out at exactly eight hours, and the third
+request is byte-for-byte identical to that retained command, the third segment
+gets `wall_class=extended-linux-final-link` and an exact 24-hour
+`RuntimeMaxSec`. It keeps the same one-job, CPU, memory, swap-denial, I/O,
+task, disk, root-floor, and watchdog policy. Android and every first
+continuation remain eight-hour segments. A cancellation, watchdog stop,
+non-timeout exit, command change, incomplete duration, or non-Linux phase
+prevents the longer admission.
 
 Admission fails closed unless all of these statements are true:
 

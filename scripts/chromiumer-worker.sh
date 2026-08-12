@@ -52,6 +52,7 @@ profile() {
             min_mem_available_bytes=$(gib 2)
             watchdog_mem_floor_bytes=$(gib 1)
             wall_seconds=28800
+            wall_class='standard'
             watchdog_interval=30
             watchdog_memory_high=64M
             watchdog_memory_max=128M
@@ -69,6 +70,7 @@ profile() {
             min_mem_available_bytes=$((256 * 1024 * 1024))
             watchdog_mem_floor_bytes=$((64 * 1024 * 1024))
             wall_seconds=120
+            wall_class='test'
             watchdog_interval=1
             watchdog_memory_high=64M
             watchdog_memory_max=128M
@@ -886,6 +888,7 @@ write_policy() {
         printf 'watchdog_ready_seconds=%s\n' "${watchdog_ready_seconds}"
         printf 'supervisor_interval=%s\n' "${supervisor_interval}"
         printf 'wall_seconds=%s\n' "${wall_seconds}"
+        printf 'wall_class=%s\n' "${wall_class}"
         printf 'command=%s\n' "${command_text}"
         printf 'started_at_epoch=%s\n' "$(date +%s)"
         printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
@@ -943,6 +946,24 @@ start_job() {
         parent=${continuation_state_parent}
         source_jobs=$(exact_value "${state_dir}/resume.env" \
             source_build_jobs)
+        local continuation_mode parent_mode parent_terminal parent_wall
+        continuation_mode=$(exact_value "${state_dir}/resume.env" command_mode)
+        if [ "${continuation_mode}" = exact ] && \
+            [ -f "${state_root}/${parent}/resume.env" ]; then
+            parent_mode=$(exact_value \
+                "${state_root}/${parent}/resume.env" command_mode)
+            parent_terminal="${state_root}/${parent}/terminal.env"
+            parent_wall=$(exact_value \
+                "${state_root}/${parent}/policy.env" wall_seconds)
+            if [ "${parent_mode}" = retained-linux-build ] && \
+                [ "${parent_wall}" = 28800 ] && \
+                [ "$(exact_value "${parent_terminal}" result)" = timeout ] && \
+                [ "$(exact_value "${parent_terminal}" exit_code)" = 124 ] && \
+                [ "$(exact_value "${parent_terminal}" duration_seconds)" = 28800 ]; then
+                wall_seconds=86400
+                wall_class=extended-linux-final-link
+            fi
+        fi
         [ "${continuation_state_owner}" = "${owner}" ] || {
             echo "continuation workspace owner changed" >&2
             exit 1
