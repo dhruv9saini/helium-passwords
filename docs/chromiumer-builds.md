@@ -395,7 +395,7 @@ records. Neither path consumes lm's quota-bound bulk `/tmp` tmpfs.
 For the private repository, invoke the same inherited wrapper from Sync:
 
 ```sh
-cd /home/d/coding/helium/helium-sync
+cd /home/d/coding/helium/helium-passwords
 scripts/dev.sh check
 
 job=hs-android-150-sync-01
@@ -583,16 +583,15 @@ scripts/chromiumer-job.sh start "$job" \
     --next "Fetch and verify the packaged artifact, then run the disposable password gate." -- \
     scripts/chromiumer-nix.sh run -- env HELIUM_LINUX_PHASE=fresh \
       bash scripts/build-chromiumer-linux.sh \
-        helium-sync x86_64 linux-x86_64 "$job"
+        helium-passwords x86_64 linux-x86_64 "$job"
 ```
 
 Product, architecture, deployment target, and build job ID are mandatory;
-there is no inferred product or host-architecture default. The private binding
-in `linux-product.conf` requires `helium-sync`, maps `x86_64` to
-`linux-x86_64` and `arm64` to `linux-arm64-chroot`, binds the shared Passwords
-source to its exact public ancestor, and binds the private Sync commit to the
-repository `HEAD`. A different product or product/architecture target fails
-before source preparation.
+there is no inferred product or host-architecture default. The public binding
+in `linux-product.conf` requires `helium-passwords`, maps `x86_64` to
+`linux-x86_64` and `arm64` to `linux-arm64-chroot`, binds Passwords source to
+the repository `HEAD`, and fixes the retired private Sync slot to forty zeroes.
+A different product or product/architecture target fails before preparation.
 
 The driver writes one archive and its build-produced deployment receipt:
 
@@ -619,7 +618,7 @@ scripts/chromiumer-job.sh start "$arm_job" \
     --next "Fetch both files and verify the arm64 runtime receipt." -- \
     scripts/chromiumer-nix.sh run -- env HELIUM_LINUX_PHASE=fresh \
       bash scripts/build-chromiumer-linux.sh \
-        helium-sync arm64 linux-arm64-chroot "$arm_job"
+        helium-passwords arm64 linux-arm64-chroot "$arm_job"
 ```
 
 Source support and synthetic packaging checks do not substitute for a
@@ -663,7 +662,7 @@ builders record the realized Nix closure and exact command inside their
 artifact provenance, so invoke them through `chromiumer-nix.sh run`:
 
 ```sh
-cd /home/d/coding/helium/helium-sync
+cd /home/d/coding/helium/helium-passwords
 scripts/dev.sh check
 sync_commit=$(git rev-parse HEAD)
 runtime_kit_commit=$(sed -n 's/^HELIUM_ANDROID_RUNTIME_KIT_COMMIT=//p' \
@@ -864,7 +863,7 @@ HELIUM_BUILD_OPERATOR=/home/d/.local/state/helium-agent/eac8a57-linux-full-graph
 HELIUM_NINJA_SHIM=/home/d/.local/libexec/helium-ninja-full-graph-node22/ninja \
 HELIUM_REAL_NINJA=/nix/store/...-ninja-.../bin/ninja \
 scripts/finalize-retained-linux-full-graph.sh \
-  helium-sync x86_64 linux-x86_64 "$job" \
+  helium-passwords x86_64 linux-x86_64 "$job" \
   "$frozen_product_checkout" \
   "$frozen_product_checkout/build/platforms/linux" \
   "/home/d/.local/state/helium-builds/$job/full-graph-boundary.env" \
@@ -898,7 +897,7 @@ HELIUM_BUILD_OPERATOR=/home/d/.local/state/helium-agent/eac8a57-linux-full-graph
 HELIUM_NINJA_SHIM=/home/d/.local/libexec/helium-ninja-full-graph-node22/ninja \
 HELIUM_REAL_NINJA=/nix/store/...-ninja-.../bin/ninja \
 scripts/continue-retained-linux-full-graph-failure.sh \
-  helium-sync x86_64 linux-x86_64 hs-linux-x64-eac8a57-20 \
+  helium-passwords x86_64 linux-x86_64 hp-linux-x64-verified-01 \
   "$frozen_product_checkout" \
   "$frozen_product_checkout/build/platforms/linux" \
   /home/d/.local/state/helium-builds/hs-linux-x64-eac8a57-20/graph-gate-failure.env \
@@ -941,7 +940,7 @@ from the same public commit that was staged:
 
 ```sh
 scripts/verify-linux-runtime.sh \
-  helium-sync x86_64 linux-x86_64 \
+  helium-passwords x86_64 linux-x86_64 \
   /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.tar.xz \
   /srv/nas/helium-builds/"$job"/helium-passwords-linux-x86_64.receipt.env \
   /srv/nas/helium-builds/"$job"/verified
