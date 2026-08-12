@@ -18,11 +18,11 @@ product_root=$(realpath -e "${HELIUM_PRODUCT_SOURCE_ROOT:-$tool_root}")
 source_root="$checkout/build/src"
 out="$source_root/out/Default"
 
-[[ "$product" == helium-sync &&
+[[ ("$product" == helium-passwords || "$product" == helium-sync) &&
     (("$arch" == x86_64 && "$target" == linux-x86_64) ||
      ("$arch" == arm64 && "$target" == linux-arm64-chroot)) &&
     "$job" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
-  echo "full-graph capture requires a supported Helium Sync Linux target" >&2
+  echo "full-graph capture requires a supported Helium Linux target" >&2
   exit 64
 }
 [[ -f "$boundary" && ! -L "$boundary" && ! -e "$output" ]] || {

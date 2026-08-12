@@ -24,11 +24,12 @@ preflight="$output_parent/${job}.retained-graph-repair-preflight.env"
 boundary="$output_parent/${job}.retained-graph-repair-boundary.env"
 repair_failure="$output_parent/${job}.retained-graph-repair-failure.env"
 
-[[ "$product" == helium-sync && "$arch" == x86_64 &&
+[[ ("$product" == helium-passwords || "$product" == helium-sync) &&
+    "$arch" == x86_64 &&
     "$target" == linux-x86_64 &&
     "$job" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ &&
     "$expected_failure_sha" =~ ^[0-9a-f]{64}$ ]] || {
-  echo "retained graph repair requires an explicit Linux x86_64 Helium Sync job and failure hash" >&2
+  echo "retained graph repair requires an explicit Linux x86_64 Helium job and failure hash" >&2
   exit 64
 }
 [[ -d "$output_parent" && ! -L "$output_parent" &&

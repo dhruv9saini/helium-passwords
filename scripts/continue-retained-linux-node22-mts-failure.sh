@@ -40,10 +40,11 @@ action_output="$out/$action_output_relative"
 action_source="$source_root/components/helium_onboarding/util/generate-i18n.mts"
 onboarding_build="$source_root/components/helium_onboarding/BUILD.gn"
 
-[[ "$product" == helium-sync && "$arch" == x86_64 &&
+[[ ("$product" == helium-passwords || "$product" == helium-sync) &&
+    "$arch" == x86_64 &&
     "$target" == linux-x86_64 &&
     "$job" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
-  echo "retained Node repair requires the Linux x86_64 Helium Sync product" >&2
+  echo "retained Node repair requires a Linux x86_64 Helium product" >&2
   exit 64
 }
 for value in "$expected_graph_failure_sha" "$expected_first_preflight_sha" \
