@@ -34,7 +34,7 @@ const cookieKey = "d".repeat(64);
 const keyID = "a1b2c3d4e5f60708";
 const TRAIN = Object.freeze({
   source_commit: "1".repeat(40),
-  passwords_commit: "5".repeat(40),
+  passwords_commit: "1".repeat(40),
   core_commit: "2".repeat(40),
   chromium_commit: "3".repeat(40),
   chromium_version: "150.0.7871.181",
@@ -139,14 +139,14 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
     path.join(provenance, "full-graph"));
   const manifestRaw = [
     "schema_version=4",
-    "product=helium-sync",
+    "product=helium-passwords",
     "platform=linux",
     `arch=${arch}`,
     "target=linux-x86_64",
     `source_commit=${TRAIN.source_commit}`,
     `source_tree=${"7".repeat(64)}`,
     `helium_passwords_commit=${TRAIN.passwords_commit}`,
-    `helium_sync_commit=${TRAIN.source_commit}`,
+    `helium_sync_commit=${"0".repeat(40)}`,
     `helium_core_commit=${TRAIN.core_commit}`,
     `chromium_version=${TRAIN.chromium_version}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
@@ -173,7 +173,7 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
     `artifact_sha256=${archiveHash}`,
     `artifact_size=${archiveStat.size}`,
     "target=linux-x86_64",
-    `helium_sync_commit=${TRAIN.source_commit}`,
+    `helium_sync_commit=${"0".repeat(40)}`,
     `helium_passwords_commit=${TRAIN.passwords_commit}`,
     `helium_core_commit=${TRAIN.core_commit}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
@@ -187,7 +187,7 @@ async function writeLinuxArtifactReceipt(root, artifact, arch, label = arch) {
   const receipt = path.join(receiptRoot, "artifact-receipt.env");
   await fsp.writeFile(receipt, [
     "schema_version=3",
-    "product=helium-sync",
+    "product=helium-passwords",
     "platform=linux",
     `arch=${arch}`,
     `source_commit=${TRAIN.source_commit}`,
@@ -1106,7 +1106,7 @@ test("initialization rejects the wrong per-device target and a split source trai
     await assert.rejects(initializeThreeClientRun({
       ...splitTrain,
       output: path.join(splitTrainRoot, "run"),
-    }), /deployment receipt or provenance|shared source train|full-graph helium_sync_commit/);
+    }), /deployment receipt or provenance|shared source train|full-graph helium_passwords_commit/);
   } finally {
     await fsp.rm(wrongTargetRoot, {recursive: true, force: true});
     await fsp.rm(splitTrainRoot, {recursive: true, force: true});

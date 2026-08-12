@@ -7,7 +7,7 @@ const COMMIT = Object.freeze({
   core: "2".repeat(40),
   chromium: "3".repeat(40),
   platform: "4".repeat(40),
-  passwords: "5".repeat(40),
+  passwords: "1".repeat(40),
 });
 
 const GRAPH_FILES = Object.freeze([
@@ -137,12 +137,12 @@ export async function writeFullGraphFixture(graph) {
   };
   const receipt = {
     schema: "helium-linux-full-graph-evidence-v3",
-    product: "helium-sync",
+    product: "helium-passwords",
     arch: "x86_64",
     target: "linux-x86_64",
     job: "synthetic-linux-fixture",
     captured_at: "2026-07-20T00:00:01Z",
-    helium_sync_commit: COMMIT.source,
+    helium_sync_commit: "0".repeat(40),
     helium_passwords_commit: COMMIT.passwords,
     helium_core_commit: COMMIT.core,
     chromium_commit: COMMIT.chromium,
@@ -184,7 +184,7 @@ export async function writeLinuxArtifactReceipt(root, artifact) {
   const graphRelative = "helium-passwords-linux-x86_64/provenance/full-graph";
   await writePrivate(receipt, [
     "schema_version=3",
-    "product=helium-sync",
+    "product=helium-passwords",
     "platform=linux",
     "arch=x86_64",
     `source_commit=${COMMIT.source}`,

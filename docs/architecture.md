@@ -220,94 +220,38 @@ password-store writer, extension, `chrome.passwordsPrivate`, or raw database
 reader. Both are source-tested and ready when an artifact exists; no runtime
 receipt exists yet.
 
-## Cookie and login-session convergence
+## Cookie backup and restore boundary
 
-Every live, structurally valid, non-expired cookie returned by
-`CookieManager::GetAllCookies` participates by default. There is no guessed
-authentication-cookie list and no default domain allowlist. Identity is a
-length-framed hash over name, path, exact host/domain form, source scheme,
-source port, and the complete partition key including top-level site and
-cross-site-ancestor bit. Payloads preserve session/no-expiry state, Secure,
-HttpOnly, SameSite, priority, source type, timestamps, and partitioning.
+Cookies never enter the Tailnet revision protocol. The server accepts and
+returns only password records, and the browser service has no cookie polling,
+publication, conflict, tombstone, or enrollment path. This deliberately avoids
+attempting to converge rotating login sessions, device-bound sessions, or
+site-specific state between active browsers.
 
-Before any remote apply, the bridge builds a complete target preview, writes
-the readable destination snapshot to a private pending rollback
-journal, applies through `SetCanonicalCookie`/`DeleteCanonicalCookie`, reads
-the complete cookie store back, and commits only on an exact validated match.
-A rejection restores the saved destination state. Expected revisions,
-authenticated source device IDs, durable pending-publication state, and
-fingerprints stop token-rotation ping-pong and stale overwrites.
-During pending pull-only enrollment, a remote cookie with the same canonical
-identity as a different joiner-local cookie is the seed-authoritative value:
-it follows the same preview/apply/readback/rollback transaction instead
-of blocking enrollment. Active devices retain the stricter concurrent-change
-stop. Joiner-only cookies are recorded as local baselines and are not bulk
-published after promotion. Publications are deterministic batches of at most
-32 cookie records, and the native HTTP client refuses a serialized request
-above 4 MiB before network I/O; this keeps the matching response
-below its 5 MiB per-response ceiling.
+Cookie recovery is offline and operator-triggered. The neutral mechanism asks
+`network::mojom::CookieManager::GetAllCookies` for the complete disposable
+profile store, preserves the full canonical identity and attributes including
+partition keys, and atomically writes a mode-0600 checksum-bound snapshot
+outside the profile. Restore is allowed only into a new marked disposable
+profile. It applies records through `SetCanonicalCookie`, requires exact native
+readback, rolls back a rejected batch to the pre-apply snapshot, and emits a
+content-free receipt. Nonce partition keys, duplicates, unknown fields,
+checksum changes, rejected sets, or mismatched readback fail closed.
 
-Destination exceptions are exact and temporary. The record-state map scopes
-one exception to the canonical cookie record key, rejected remote revision,
-and authenticated payload fingerprint. The DBSC manager exposes schemeful-site
-and session-ID keys but no authoritative cookie-to-session mapping, so its
-inventory is recorded only as same-site evidence in the local reauthentication
-signal; it never marks every cookie on a site non-clonable and never enters the
-synced cookie payload. After verified rollback, the rejected revision is not
-retried unchanged. A later remote revision is eligible for a new
-transaction. A local cookie change alone is not proof that a password login
-succeeded: while the exception remains, the bridge records that change as
-unverified, holds it locally, and excludes it from publication. This prevents a
-background token rotation from becoming a cross-device ping-pong loop.
-Verified destination readback of a later authoritative revision clears the old
-exception. A future browser flow may clear it only after exact-origin,
-user-visible native password reauthentication is independently verified. This
-is source/model behavior, not evidence that a destination authenticated
-successfully.
+Two whole-profile mechanisms provide separate cookie recovery formats. The
+first is a stopped checksum-stable compressed profile archive. The second is
+an independently encrypted, authenticated restic repository with its own
+snapshot inventory, retention, integrity check, and restore command. Both
+require the browser to be stopped, restore only into a new marked drill
+directory, and use synthetic disposable cookies for acceptance. Copies at two
+destinations improve availability but do not increase the mechanism count.
 
-Cookie bridge state schema 5 is the single accepted schema. It keeps authority
-revisions, payload and local fingerprints, deletion state, pending CAS
-publications, and exact record/revision/payload-scoped destination exceptions.
-There is no legacy state fallback or content-key metadata.
-
-The build-independent disposable model exercises the same identity dimensions,
-exact set/delete preview, successful target verification, and a partial apply
-followed by verified rollback. That is executable synthetic proof, not
-browser-runtime proof: the C++ bridge still needs the bounded chromiumer
-compile and a new disposable-profile run before deployment.
-
-The same protocol has run through lm's supervised synthetic Tailnet endpoint using
-the real da host and oneplus Arch chroot. Four fixture records proved distinct
-host/domain and two partition-key identities, pending pull-only authorization,
-readable readback on both architectures, authenticated source metadata, two token
-rotations, stale-CAS rejection, zero-publication restarts, tombstone
-convergence, resurrection rejection, revoked-credential rejection, and a
-readable journal containing the synthetic fixtures. A synthetic-only reconciler requests
-the complete unfiltered password-and-cookie inventory and advances the applied
-cursor only after exact kind, metadata, and payload-hash verification. It
-requires an explicit private `synthetic-only-v1` marker. All test clients were
-revoked, all live fixture cookies were tombstoned, remote temporary credentials
-were removed, and the post-test NAS restore drill passed. This is still not
-CookieManager or authenticated-site portability evidence.
-
-Chromium device-bound sessions are observed through its device-bound-session
-manager. Only an actual exact-cookie destination rejection creates a
-revision-scoped local exception and fail-closed reauthentication intent;
-observed same-site session keys are supporting evidence, not a portability or
-authentication claim. The cookie supplies a schemeful site, not a verified
-exact origin or login entry, and Chromium's password manager operates on a
-concrete tab and discovered form. The intent therefore forbids guessed
-navigation and automatic submission until disposable evidence supplies those
-missing inputs. The metadata-only origin-state audit binds controlled
-cookie/auth/DBSC outcomes and storage requirements to an exact target and
-synthetic or disposable artifact hash, rejects secret-bearing fields, and
-prevents synthetic evidence from creating a concrete portability claim. Its
-schema-2 transfer contract requires separate preview, apply, readback, and
-rollback results, but its source-registered adapter set is empty. It does not
-collect or transfer localStorage, IndexedDB, service-worker storage, Cache
-Storage, or other per-origin state. Those stores require site-specific
-disposable-profile evidence and an origin-scoped adapter; arbitrary
-application databases will never be live-merged.
+No cookie acceptance path reads a personal Google profile or personal Google
+cookies. No source test claims that a restored cookie authenticates a user,
+and no mechanism copies localStorage, IndexedDB, service-worker storage, Cache
+Storage, or other origin databases. The fixed native fixture proves snapshot,
+import, exact readback, rejection, and rollback using synthetic disposable
+records only.
 
 ## Device-local durable tabs
 

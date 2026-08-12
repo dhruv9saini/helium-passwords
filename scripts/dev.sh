@@ -9,7 +9,7 @@ usage: scripts/dev.sh <check|status|smoke> [platform] [arch]
 
 Commands:
   check   Run every lightweight, local check. Never downloads Chromium.
-  status  Show repository, backbone, and pinned Helium/Chromium state.
+  status  Show repository and pinned Helium/Chromium state.
   smoke   Check platform overlay injection; requires platform and arch.
 EOF
 }
@@ -62,32 +62,27 @@ check_go() {
 
 check_backbone() {
     [ -f "${root_dir}/go.mod" ] || return 0
-    local passwords_repo=${HELIUM_PASSWORDS_REPO:-"${root_dir}/../helium-passwords"}
-    [ -d "${passwords_repo}/.git" ] || {
-        echo "missing Helium Passwords sibling: ${passwords_repo}" >&2
-        return 1
-    }
-
-    local passwords_head
-    passwords_head="$(git -C "${passwords_repo}" rev-parse main)"
-    # The private artifact receipt must identify the current public base, not
-    # merely any older ancestor that happens to remain in this history.
     # shellcheck source=../linux-product.conf
     # shellcheck disable=SC1091
     . "${root_dir}/linux-product.conf"
-    [ "${HELIUM_LINUX_PASSWORDS_REF}" = "${passwords_head}" ] || {
-        echo "Linux artifact Passwords pin is not current: ${HELIUM_LINUX_PASSWORDS_REF}" >&2
+    [ "${HELIUM_LINUX_PRODUCT}" = helium-passwords ] || {
+        echo "Linux artifact product is not helium-passwords" >&2
         return 1
     }
-    git -C "${root_dir}" merge-base --is-ancestor "${passwords_head}" HEAD || {
-        echo "Helium Sync does not contain Helium Passwords main ${passwords_head}" >&2
+    [ "${HELIUM_LINUX_PASSWORDS_REF}" = HEAD ] || {
+        echo "Linux artifact Passwords source is not this checkout" >&2
         return 1
     }
-
-    cmp "${passwords_repo}/patches/helium-passwords/restore-password-autofill.patch" \
-        "${root_dir}/patches/helium-passwords/restore-password-autofill.patch"
-    cmp "${passwords_repo}/patches/helium-passwords/restore-password-ui.patch" \
-        "${root_dir}/patches/helium-passwords/restore-password-ui.patch"
+    [ "${HELIUM_LINUX_SYNC_REF}" = \
+        0000000000000000000000000000000000000000 ] || {
+        echo "public artifact unexpectedly identifies a private Sync source" >&2
+        return 1
+    }
+    [ "$(cd "${root_dir}" && go list -m -f '{{.Path}}' 2>/dev/null)" = \
+        github.com/dhruv9saini/helium-passwords ] || {
+        echo "Go module is not bound to the public Helium Passwords product" >&2
+        return 1
+    }
 }
 
 check_all() {
@@ -114,16 +109,12 @@ show_status() {
     printf 'helium_submodule=%s\n' "$(git -C "${root_dir}" rev-parse HEAD:helium-chromium)"
     printf 'chromium_version=%s\n' "$(tr -d '\r\n' <"${root_dir}/helium-chromium/chromium_version.txt")"
 
-    local passwords_repo=${HELIUM_PASSWORDS_REPO:-"${root_dir}/../helium-passwords"}
-    if [ -f "${root_dir}/go.mod" ] && [ -d "${passwords_repo}/.git" ]; then
-        printf 'passwords_main=%s\n' "$(git -C "${passwords_repo}" rev-parse main)"
-        if git -C "${root_dir}" merge-base --is-ancestor \
-            "$(git -C "${passwords_repo}" rev-parse main)" HEAD; then
-            printf 'passwords_backbone=contained\n'
-        else
-            printf 'passwords_backbone=behind\n'
-        fi
-    fi
+    # shellcheck source=../linux-product.conf
+    # shellcheck disable=SC1091
+    . "${root_dir}/linux-product.conf"
+    printf 'linux_product=%s\n' "${HELIUM_LINUX_PRODUCT}"
+    printf 'passwords_source=%s\n' "${HELIUM_LINUX_PASSWORDS_REF}"
+    printf 'private_sync_source=%s\n' "${HELIUM_LINUX_SYNC_REF}"
 }
 
 smoke_target() {

@@ -481,9 +481,9 @@ async function auditThreeClient(runRoot, sync, expectedSourceCommit,
       deploymentValue("artifact_sha256") !== archiveSHA256 ||
       deploymentValue("artifact_size") !== String(archive.stat.size) ||
       deploymentValue("target") !== "linux-x86_64" ||
-      deploymentValue("helium_sync_commit") !== expectedSourceCommit ||
-      deploymentValue("helium_passwords_commit") !==
-        audited.receipt.source_train.passwords_commit ||
+      deploymentValue("helium_sync_commit") !== "0".repeat(40) ||
+      deploymentValue("helium_passwords_commit") !== expectedSourceCommit ||
+      audited.receipt.source_train.passwords_commit !== expectedSourceCommit ||
       deploymentValue("helium_core_commit") !== sync.helium_core_commit ||
       deploymentValue("chromium_commit") !== sync.chromium_commit ||
       !COMMIT.test(deploymentValue("helium_passwords_commit")) ||

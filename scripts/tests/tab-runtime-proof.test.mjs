@@ -255,8 +255,8 @@ test("runtime proof source is observation-only and fail-closed", () => {
   assert.doesNotMatch(runner,
     /Network\.setCookie|CookieManager|PasswordStore|HeliumSyncClient|Latest\(|Push\(/);
   assert.match(runner,
-    /const ANDROID_PACKAGE = "computer\.helium\.sync\.test"/);
-  assert.doesNotMatch(runner, /computer\.helium\.sync["']/);
+    /const ANDROID_PACKAGE = "computer\.helium\.passwords\.test"/);
+  assert.doesNotMatch(runner, /computer\.helium\.passwords["']/);
   assert.match(runner, /--helium-restore-disposable-tabs=/);
   assert.match(emitter,
     /mechanism === "chromium-native-session" \? 1 : 2/);

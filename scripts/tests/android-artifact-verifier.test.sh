@@ -177,10 +177,10 @@ fi
 
 cp -a "$test_root/input" "$test_root/production-input"
 sed -i \
-  -e 's/computer\.helium\.sync\.test/computer.helium.passwords/' \
+  -e 's/computer\.helium\.passwords\.test/computer.helium.passwords/' \
   -e 's/debuggable_apks = true/debuggable_apks = false/' \
   "$test_root/production-input/build-provenance/gn-args-resolved.txt"
-sed -i 's/computer\.helium\.sync\.test/computer.helium.passwords/' \
+sed -i 's/computer\.helium\.passwords\.test/computer.helium.passwords/' \
   "$test_root/production-input/runtime-acceptance/kit.env"
 checksum_provenance "$test_root/production-input/build-provenance"
 (
@@ -236,7 +236,7 @@ fi
 cp -a "$test_root/input" "$test_root/control-input"
 find "$test_root/control-input/out/HeliumSync.apk" -delete
 : > "$test_root/control-input/out/ChromiumControl.apk"
-sed -i 's/computer\.helium\.sync\.test/computer.helium.control.test/' \
+sed -i 's/computer\.helium\.passwords\.test/computer.helium.control.test/' \
   "$test_root/control-input/build-provenance/gn-args-resolved.txt" \
   "$test_root/control-input/runtime-acceptance/kit.env"
 : > "$test_root/control-input/build-provenance/chromium-source-status.txt"

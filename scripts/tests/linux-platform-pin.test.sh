@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 if [[ -f "$repo_root/go.mod" ]]; then
-  build_config="$repo_root/helium-sync.conf"
+  build_config="$repo_root/helium-passwords.conf"
 else
   build_config="$repo_root/helium-passwords.conf"
 fi

@@ -374,7 +374,7 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
   const receipt = parseEnv(receiptRaw, RECEIPT_FIELDS,
     "Linux full-graph receipt");
   if (receipt.get("schema") !== "helium-linux-full-graph-evidence-v3" ||
-      receipt.get("product") !== "helium-sync" ||
+      receipt.get("product") !== "helium-passwords" ||
       receipt.get("arch") !== "x86_64" ||
       receipt.get("target") !== "linux-x86_64" ||
       !JOB.test(receipt.get("job") || "") ||
@@ -546,7 +546,7 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
   requireCommit(concreteCommits.sourceCommit, "full-graph product commit");
   requireCommit(concreteCommits.chromiumCommit, "full-graph Chromium commit");
   requireCommit(concreteCommits.platformCommit, "full-graph platform commit");
-  if (concreteCommits.sourceCommit !== receipt.get("helium_sync_commit") ||
+  if (concreteCommits.sourceCommit !== receipt.get("helium_passwords_commit") ||
       concreteCommits.chromiumCommit !== receipt.get("chromium_commit") ||
       concreteCommits.platformCommit !== receipt.get("platform_commit")) {
     throw new Error("Linux full-graph concrete checkout commits disagree with its receipt");
@@ -554,7 +554,7 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
 
   const expectedFields = {
     job: "job",
-    sourceCommit: "helium_sync_commit",
+    sourceCommit: "helium_passwords_commit",
     passwordsCommit: "helium_passwords_commit",
     coreCommit: "helium_core_commit",
     chromiumCommit: "chromium_commit",

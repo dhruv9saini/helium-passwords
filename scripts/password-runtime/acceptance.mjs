@@ -14,7 +14,7 @@ const SCREENSHOT_MAX_BYTES = 32 * 1024 * 1024;
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const ANDROID_TEST_PACKAGE = /^(?:[a-z][a-z0-9_]*\.){2,}[a-z][a-z0-9_]*\.test$/;
 const RUN_NONCE = /^[0-9a-f]{64}$/;
-const LINUX_PRODUCT = "helium-sync";
+const LINUX_PRODUCT = "helium-passwords";
 const LINUX_ARCH = "x86_64";
 const LINUX_BUNDLE = `${LINUX_PRODUCT}-linux-${LINUX_ARCH}`;
 const PNG_CRC_TABLE = Object.freeze(Array.from({length: 256}, (_, value) => {

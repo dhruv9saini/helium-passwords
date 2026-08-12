@@ -325,7 +325,7 @@ async function describeAdmittedDevice(run, device, executionIdentity) {
       platformCommit,
     });
     if (receipt.values.get("schema_version") !== "3" ||
-        receipt.values.get("product") !== "helium-sync" ||
+        receipt.values.get("product") !== "helium-passwords" ||
         receipt.values.get("platform") !== "linux" ||
         receipt.values.get("full_graph_receipt") !==
           `helium-passwords-linux-${spec.arch}/provenance/full-graph/receipt.env` ||
@@ -347,7 +347,8 @@ async function describeAdmittedDevice(run, device, executionIdentity) {
           graph.receiptSha256 ||
         deployment.values.get("full_graph_inventory_sha256") !==
           graph.inventorySha256 ||
-        deployment.values.get("helium_sync_commit") !== sourceCommit ||
+        deployment.values.get("helium_sync_commit") !== "0".repeat(40) ||
+        deployment.values.get("helium_passwords_commit") !== sourceCommit ||
         deployment.values.get("helium_core_commit") !== coreCommit ||
         deployment.values.get("chromium_commit") !== chromiumCommit ||
         deployment.values.get("build_job_id") !==
@@ -357,13 +358,14 @@ async function describeAdmittedDevice(run, device, executionIdentity) {
         !/^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$/.test(
           deployment.values.get("created_at") || "") ||
         manifest.values.get("schema_version") !== "4" ||
-        manifest.values.get("product") !== "helium-sync" ||
+        manifest.values.get("product") !== "helium-passwords" ||
         manifest.values.get("platform") !== "linux" ||
         manifest.values.get("arch") !== spec.arch ||
         manifest.values.get("target") !== spec.target ||
         manifest.values.get("source_commit") !== sourceCommit ||
-        manifest.values.get("helium_sync_commit") !== sourceCommit ||
-        manifest.values.get("helium_passwords_commit") !== passwordsCommit ||
+        manifest.values.get("helium_sync_commit") !== "0".repeat(40) ||
+        manifest.values.get("helium_passwords_commit") !== sourceCommit ||
+        passwordsCommit !== sourceCommit ||
         manifest.values.get("helium_core_commit") !== coreCommit ||
         manifest.values.get("chromium_commit") !== chromiumCommit ||
         manifest.values.get("chromium_version") !==

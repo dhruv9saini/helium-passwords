@@ -1,0 +1,9 @@
+version=1
+source_device=da
+profile_id=default
+source_path=/home/d/.local/share/helium-cookie-backup-staging/da/default
+repository=/home/d/.local/share/helium-encrypted-profile-backups/da/default
+password_file=/home/d/.config/helium-passwords/restic-cookie-backup.password
+keep_last=12
+keep_daily=14
+keep_weekly=12

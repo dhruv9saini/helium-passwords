@@ -10,7 +10,7 @@ const COMMIT_PATTERN = /^[0-9a-f]{40}$/;
 const SPKI_PATTERN = /^[A-Za-z0-9+/]{43}=$/;
 const SPKI_SWITCH = "--ignore-certificate-errors-spki-list=";
 const SOCKET_SWITCH = "--remote-debugging-socket-name=";
-const PACKAGE_PATTERN = /^computer\.helium\.(?:sync|control)\.test$/;
+const PACKAGE_PATTERN = /^computer\.helium\.(?:passwords|control)\.test$/;
 const SOCKET_PATTERN = /^helium_(?:sync|control)_test_devtools_remote$/;
 
 export function validateFixtureBrowserCommandLine(argumentsList, expectedSPKI) {

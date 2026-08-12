@@ -265,5 +265,5 @@ test("Android admission requires a prepared artifact and matching non-production
 test("public runtime harness has no password-store writer, extension, or Sync journal path", async () => {
   const source = await fsp.readFile(new URL("../password-runtime/acceptance.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(source, /passwordsPrivate|AddLogin|UpdateLogin|chrome\.extension|load-extension|cdp-password-sync/);
-  assert.doesNotMatch(source, /password-state|journal|tombstone|computer\.helium\.sync/);
+  assert.doesNotMatch(source, /password-state|journal|tombstone|computer\.helium\.passwords/);
 });
