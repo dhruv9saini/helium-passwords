@@ -41,9 +41,14 @@ grep -Fqx 'integrity=verified' "$temporary/check.env"
 grep -Fqx 'snapshots=1' "$temporary/check.env"
 
 target=$temporary/restores/drill-cookie-restic
-"$tool" restore "$temporary/config" "$snapshot" "$target" \
+restore_receipt=$temporary/restores/c3-restore.env
+"$tool" restore "$temporary/config" "$snapshot" "$target" "$restore_receipt" \
   >"$temporary/restore.env"
 grep -Fqx 'restore=verified' "$temporary/restore.env"
+grep -Fqx 'mechanism=encrypted-restic-profile' "$restore_receipt"
+grep -Fqx "snapshot=$snapshot" "$restore_receipt"
+grep -Eq '^repository_config_sha256=[0-9a-f]{64}$' "$restore_receipt"
+grep -Eq '^restored_tree_sha256=[0-9a-f]{64}$' "$restore_receipt"
 cmp "$temporary/source/default/Default/Cookies" "$target/Default/Cookies"
 grep -Fqx 'helium-cookie-backup-disposable-v1' \
   "$target/.helium-cookie-backup-disposable-v1"
@@ -52,6 +57,7 @@ grep -Fqx 'helium-cookie-backup-disposable-v1' \
 grep -Fqx 'retention=verified' "$temporary/retention.out"
 
 if "$tool" restore "$temporary/config" "$snapshot" "$target" \
+  "$temporary/restores/repeated.env" \
   >/dev/null 2>&1; then
   echo 'encrypted restore replaced an existing target' >&2
   exit 1

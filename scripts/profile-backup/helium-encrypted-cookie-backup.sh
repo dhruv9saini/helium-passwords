@@ -4,7 +4,7 @@ umask 077
 
 usage() {
   cat >&2 <<'EOF'
-usage: helium-encrypted-cookie-backup.sh <init|backup|check|retention|restore> CONFIG [SNAPSHOT NEW-DIRECTORY]
+usage: helium-encrypted-cookie-backup.sh <init|backup|check|retention|restore> CONFIG [SNAPSHOT NEW-DIRECTORY NEW-RECEIPT]
 
 Create and restore the independent C3 encrypted disposable-profile repository.
 Real repositories are owned by da below
@@ -131,11 +131,14 @@ apply_retention() {
 }
 
 restore_profile() {
-  [[ $# -eq 2 ]] || { usage; exit 64; }
-  local snapshot=$1 target=$2 parent incoming source_name
+  [[ $# -eq 3 ]] || { usage; exit 64; }
+  local snapshot=$1 target=$2 receipt=$3 parent incoming source_name
+  local tree_sha repository_config_sha restic_version completed_at temporary_receipt
   [[ "$snapshot" =~ ^[0-9a-f]{64}$ ]] || die "snapshot must be an exact full ID"
   absolute_safe "$target" || die "restore target must be safe and absolute"
+  absolute_safe "$receipt" || die "restore receipt must be safe and absolute"
   [[ ! -e "$target" && ! -L "$target" ]] || die "restore target already exists"
+  [[ ! -e "$receipt" && ! -L "$receipt" ]] || die "restore receipt already exists"
   parent=$(dirname "$target")
   [[ -d "$parent" && ! -L "$parent" &&
     -f "$parent/.helium-disposable-profile-restore-root" &&
@@ -151,7 +154,33 @@ restore_profile() {
   find "$incoming" -depth -delete
   trap - EXIT
   restic_run check --read-data-subset=10%
-  printf 'restore=verified\nsnapshot=%s\ntarget=%s\n' "$snapshot" "$target"
+  tree_sha=$(tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+    --format=posix --pax-option=delete=atime,delete=ctime -cf - -C "$target" . \
+    | sha256sum | cut -d' ' -f1)
+  repository_config_sha=$(sha256sum "$C3_REPOSITORY/config" | cut -d' ' -f1)
+  restic_version=$(restic version | awk 'NR == 1 {print $2}')
+  [[ "$restic_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+    die "restic emitted an invalid version"
+  completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  mkdir -p "$(dirname "$receipt")"
+  temporary_receipt=$(mktemp "$(dirname "$receipt")/.helium-cookie-c3-receipt.XXXXXX")
+  {
+    printf 'schema_version=1\n'
+    printf 'mechanism=encrypted-restic-profile\n'
+    printf 'source_device=%s\n' "$C3_DEVICE"
+    printf 'profile_id=%s\n' "$C3_PROFILE"
+    printf 'snapshot=%s\n' "$snapshot"
+    printf 'repository_config_sha256=%s\n' "$repository_config_sha"
+    printf 'restored_tree_sha256=%s\n' "$tree_sha"
+    printf 'restic_version=%s\n' "$restic_version"
+    printf 'integrity_check=read-data-subset-10-percent-after-restore\n'
+    printf 'completed_at=%s\n' "$completed_at"
+  } >"$temporary_receipt"
+  chmod 0600 "$temporary_receipt"
+  ln "$temporary_receipt" "$receipt"
+  find "$temporary_receipt" -delete
+  printf 'restore=verified\nsnapshot=%s\ntarget=%s\nreceipt=%s\nrestored_tree_sha256=%s\n' \
+    "$snapshot" "$target" "$receipt" "$tree_sha"
 }
 
 [[ $# -ge 2 ]] || { usage; exit 64; }
