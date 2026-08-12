@@ -12,6 +12,7 @@ const tabs = repoFile(
 const service = repoFile(
   "chromium/overlay/chrome/browser/helium_sync/helium_sync_service.cc");
 const tabExporter = repoFile("scripts/tabs/helium-tab-exporter.sh");
+const tabProof = repoFile("scripts/tabs/tab-proof-lib.mjs");
 
 test("native cookie identity includes partition, host/domain form, scheme, and port", () => {
   const identity = cookie.slice(
@@ -79,6 +80,13 @@ test("tab snapshots stay independent of remote-sync credentials and profile file
   assert.doesNotMatch(tabs, /Session_|Tabs_|Login Data|Network\/Cookies/);
   assert.doesNotMatch(tabs, /HeliumSyncClient|Latest\(|Push\(|AcknowledgeApplied/);
   assert.doesNotMatch(tabs, /base_url|token|client\.json|syncstore/i);
+});
+
+test("Android tab proof admits only the public disposable package sandbox", () => {
+  assert.ok(tabProof.includes(
+    "computer\\\\.helium\\\\.passwords\\\\.test"));
+  assert.ok(!tabProof.includes(
+    "computer\\\\.helium\\\\.sync\\\\.test"));
 });
 
 test("tab export adapter rejects stale or mutable source boundaries", () => {

@@ -467,7 +467,7 @@ export function validateEvidence(value) {
   if (value.platform === "android") {
     if (typeof value.disposable_profile.device_path !== "string" ||
         !new RegExp(
-          "^/data/(?:user/0|data)/computer\\.helium\\.sync\\.test/(?:app_chrome|helium-tab-runtime-(?:neutral|full-profile)/drill-[a-z0-9][a-z0-9._-]{0,57})$",
+          "^/data/(?:user/0|data)/computer\\.helium\\.passwords\\.test/(?:app_chrome|helium-tab-runtime-(?:neutral|full-profile)/drill-[a-z0-9][a-z0-9._-]{0,57})$",
         ).test(value.disposable_profile.device_path)) {
       fail("Android disposable profile device path is invalid");
     }
