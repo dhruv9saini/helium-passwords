@@ -12,7 +12,7 @@ Environment=HELIUM_SERVER_SERVICE_SCOPE=user
 Environment=XDG_RUNTIME_DIR=%t
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
 Environment=HELIUM_SYNC_CLI=%h/.local/share/helium-sync-disposable/bin/helium-sync
-ExecStart=%h/.local/share/helium-sync-disposable/bin/helium-sync-server-backup backup /srv/nas/helium-sync-server-disposable
+ExecStart=%h/.local/share/helium-sync-disposable/bin/helium-sync-server-backup backup /srv/nas/helium-passwords-server-disposable
 UMask=0077
 Nice=10
 IOSchedulingClass=idle
@@ -27,7 +27,7 @@ ProtectSystem=strict
 ProtectHome=tmpfs
 BindReadOnlyPaths=%h/.local/share/helium-sync-disposable/bin
 BindReadOnlyPaths=%h/.local/state/helium-sync-disposable/server
-BindPaths=/srv/nas/helium-sync-server-disposable
+BindPaths=/srv/nas/helium-passwords-server-disposable
 ProtectHostname=yes
 ProtectKernelTunables=yes
 ProtectKernelModules=yes

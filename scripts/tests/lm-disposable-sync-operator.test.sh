@@ -29,7 +29,7 @@ grep -Fqx 'Environment=HELIUM_SERVER_SERVICE_SCOPE=user' "$backup_service"
 grep -Fqx 'Environment=XDG_RUNTIME_DIR=%t' "$backup_service"
 grep -Fqx 'Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus' \
   "$backup_service"
-grep -Fqx 'BindPaths=/srv/nas/helium-sync-server-disposable' "$backup_service"
+grep -Fqx 'BindPaths=/srv/nas/helium-passwords-server-disposable' "$backup_service"
 grep -Fq 'synthetic-only-v1' "$installer"
 grep -Fq 'wait_live_endpoint' "$installer"
 grep -Fq 'perform_backup_drill >/dev/null' "$installer"

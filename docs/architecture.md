@@ -326,7 +326,7 @@ tailnet-only BPF rule, no capabilities, strict system and process isolation,
 and `ProtectHome=tmpfs`; only its executable directory, endpoint state, and
 one writable readable server directory are bound into the mount namespace.
 Its independent user timer stops the service, writes a private generation to
-`/srv/nas/helium-sync-server-disposable`, and restarts it. Activation always
+`/srv/nas/helium-passwords-server-disposable`, and restarts it. Activation always
 performs a fresh disposable restore drill and waits for the Tailnet listener.
 `scripts/install-lm-disposable-sync-service.sh disable` is the complete
 rollback command and preserves every generation.

@@ -468,7 +468,7 @@ scripts/install-lm-disposable-sync-service.sh status
 Initialization accepts the hash-only `server-bootstrap.json` emitted by a
 temporary `helium-sync seed-init`. The matching client directory is disposable
 test state. The independent user backup timer writes private readable server
-archives to `/srv/nas/helium-sync-server-disposable` and proves restore before
+archives to `/srv/nas/helium-passwords-server-disposable` and proves restore before
 activation. `disable` stops and disables the service and timer but preserves
 all generations.
 

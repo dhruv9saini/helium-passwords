@@ -147,7 +147,7 @@ nine-path runtime gate is not being reported as complete prematurely:
 
 - lm's disposable Tailnet journal service is live only on
   `100.100.105.47:44719`; its stopped archive/restore drill passes against
-  `/srv/nas/helium-sync-server-disposable`.
+  `/srv/nas/helium-passwords-server-disposable`.
 - The P3/C1 six-hour native-recovery schedulers are installed on d, da, and lm
   for OnePlus, but remain disabled until the returned browser artifacts create
   both fresh neutral snapshots. Enabling a scheduler first requires one
