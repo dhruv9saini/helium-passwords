@@ -8,14 +8,14 @@ product source and build-provenance authority.
 The product contract and current implementation boundary are
 [docs/architecture.md](docs/architecture.md). The executable release gates are
 [docs/acceptance.md](docs/acceptance.md), and [TODO.md](TODO.md) is the
-canonical private issue ledger. The shared artifact-bound native password
+canonical public issue ledger. The shared artifact-bound native password
 protocol is [docs/password-runtime-acceptance.md](docs/password-runtime-acceptance.md);
 its password-convergence evidence extension is
 [docs/password-runtime-sync-acceptance.md](docs/password-runtime-sync-acceptance.md),
-and the disposable native cookie backup and restore gate is
-[docs/cookie-runtime-acceptance.md](docs/cookie-runtime-acceptance.md).
-The sole complete d/da/OnePlus fleet launch and terminal receipt are specified in
-[docs/android-full-e2e-acceptance.md](docs/android-full-e2e-acceptance.md).
+and the exact password, cookie, and tab recovery mechanisms are in
+[docs/nine-path-recovery.md](docs/nine-path-recovery.md). Historical
+mixed-kind cookie-sync and OnePlus-CDP gates are retained only to audit old
+synthetic receipts and are not current execution paths.
 
 ## Invariants
 
@@ -30,7 +30,7 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
   accounts and disposable profiles through Chromium's native `CookieManager`.
 - The Tailnet is the confidentiality boundary. The lm server stores readable
   authenticated JSON records and only hashed device bearer credentials. Do not
-  add content encryption, a private inner TLS CA, a public Funnel, or a
+  add an inner record-encryption protocol, a private inner TLS CA, a public Funnel, or a
   Tailscale Serve listener on the Sync port. Unrelated tailnet-only Serve
   routes may coexist and Helium operators leave them unchanged.
 - Tabs never enter sync. They remain device-local and are protected by local
@@ -69,16 +69,15 @@ The sole complete d/da/OnePlus fleet launch and terminal receipt are specified i
   acceptance files implicitly.
 - `scripts/password-runtime/`: shared artifact-bound native password fixture
   and UI receipt plus the private Sync state/journal receipt extension.
-- `scripts/cookie-runtime/`: disposable native CookieManager backup, restore,
-  rollback, and immutable receipt gate.
+- `scripts/cookie-runtime/`: historical mixed-kind receipt auditor; current
+  cookie recovery is the native neutral path, stopped compressed profile, and
+  encrypted restic profile repository.
 - `scripts/native-recovery/`: browser-API password/cookie neutral snapshots,
   fixed NAS-plus-peer backup scheduling, fresh marked desktop and
   checksum-admitted `.test`-only Android restore drills, and the per-device
   two-destination receipt gate.
-- `scripts/android-acceptance/`: the guarded `.test`-only phase reset, exact
-  backup configuration template, and create-new fleet E2E receipt that also
-  binds the Linux/Android artifacts, native password/cookie recovery, and
-  independent d/da/OnePlus tab-recovery gates.
+- `scripts/android-acceptance/`: guarded `.test`-only package admission,
+  physical-device identity receipts, and historical fleet-receipt auditors.
 - `systemd/helium-syncd.service`: least-privilege HTTP service bound only to
   lm's Tailscale IPv4 address.
 - `scripts/install-lm-sync-service.sh`: install/initialize/activation gates;

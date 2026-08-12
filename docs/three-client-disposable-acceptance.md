@@ -1,4 +1,11 @@
-# Three-client disposable password and session gate
+# Retired mixed-kind three-client acceptance
+
+> This gate is retained only to audit historical synthetic evidence. It is not
+> a current Helium Passwords execution path. The password-only server rejects
+> every cookie push and excludes legacy cookie records from pull/latest, so the
+> mixed password/cookie receipt described below cannot pass against the current
+> product. Current acceptance uses per-artifact native password receipts and a
+> common password-only journal as specified in `acceptance.md`.
 
 This gate joins the existing artifact-bound native password protocol, the
 canonical Helium Sync protocol, the native cookie manager, and the metadata-only

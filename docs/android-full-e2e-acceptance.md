@@ -1,4 +1,10 @@
-# Fleet full end-to-end acceptance
+# Retired Android mixed-kind end-to-end acceptance
+
+> This historical gate combines live cookie convergence and OnePlus CDP
+> browser control, so it is not a current Helium Passwords execution path. The
+> server is password-only, cookies use the three offline recovery mechanisms,
+> tabs remain local, and current acceptance does not use OnePlus or lm for
+> assistant browser control. Retain this document only for old receipt audits.
 
 This is the sole complete Helium Sync fleet test. A partial probe or a device
 tested alone is not a pass. One invocation of

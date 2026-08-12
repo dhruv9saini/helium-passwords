@@ -1,4 +1,10 @@
-# Desktop native cookie runtime acceptance
+# Retired desktop live-cookie transport acceptance
+
+> Historical audit only. Helium Passwords has no live cookie transport. The
+> current server rejects cookie pushes, normal Chromium startup has no cookie
+> reconciler, and cookie acceptance uses C1 neutral CookieManager restore, C2
+> stopped compressed-profile restore, and C3 encrypted restic-profile restore
+> with synthetic disposable records.
 
 This is the executable desktop transport gate for the native Chromium
 `CookieManager` bridge. It runs only after a private Linux artifact has passed

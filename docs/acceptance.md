@@ -106,19 +106,19 @@ For the native lifecycle, run the private extension in
 Its receipt binds secret-free bridge state and readable-journal metadata to the
 public screenshots and enforces save/update/tombstone revisions plus three
 byte-identical no-op restart snapshots.
-The consolidated artifact-bound flow and final receipt are defined in
-[`three-client-disposable-acceptance.md`](three-client-disposable-acceptance.md).
-Its fake-file tests validate only receipt admission; the real Go sync-store
-tests remain the protocol proof, and a compiled-browser run remains mandatory.
-The d/da/OnePlus device matrix becomes one pass only through the ordered fleet receipt in
-[`android-full-e2e-acceptance.md`](android-full-e2e-acceptance.md).
+Run the lifecycle independently on each admitted artifact and bind each
+content-free receipt to the same password-only server journal. The former
+mixed password/cookie three-client and Android fleet receipts are retired;
+they cannot pass because the current server rejects cookie records. The real
+Go sync-store tests remain the protocol proof, and compiled-browser receipts
+remain mandatory for native behavior.
 
 - d is explicitly created as the sole seed. da and oneplus start pending and
   pull d's inventory without publishing any pre-existing local credential.
-- Native promotion occurs only after password and cookie bridges independently
-  apply, read back, persist, and acknowledge the same current server cursor;
-  mismatched cursors trigger another pull and publish nothing. The offline
-  completion command proves the equivalent stopped-profile gate.
+- Native promotion occurs only after the password bridge applies, reads back,
+  persists, and acknowledges the current server cursor. A mismatch triggers
+  another pull and publishes nothing. Cookies and tabs cannot affect
+  enrollment because neither is part of the Tailnet protocol.
 - Restarting an unchanged profile publishes zero password records.
 - Two password forms that differ only in username element or password element
   remain distinct. Password state accepts only schema 6 and has no legacy
@@ -148,94 +148,45 @@ The d/da/OnePlus device matrix becomes one pass only through the ordered fleet r
 
 ## Gate 3: Cookies and Login State
 
-The fixture server issues controlled cookies and rotating synthetic tokens.
-The Linux d/da transport lifecycle and immutable receipt are specified in
-[`cookie-runtime-acceptance.md`](cookie-runtime-acceptance.md). It proves one
-real host-only HttpOnly cookie create/update/tombstone round trip through two
-returned-browser disposable profiles; it does not substitute for the Android
-transaction fixture or the broader attribute and partition matrix below.
-Before the networked three-client cases, the Android Sync test package must
-pass its browser-native CookieManager fixture. Prepare only a stopped,
-hash-admitted `computer.helium.passwords.test` package with the artifact-carried
-`prepare-cookie-acceptance-profile.sh`. It refuses an existing `Default`
-directory, writes one mode-0600 marker, and never clears or force-stops an app.
-On the next launch the native service sees that marker before enrollment,
-requires the debuggable test package and an otherwise empty cookie store, and
-returns without starting normal password or cookie sync.
-The browser opens the marker with `O_NOFOLLOW|O_NONBLOCK`, then requires a
-regular file with the exact mode, size, and contents before the first
-CookieManager read. The output directory must not exist. An unsafe marker or
-output path suppresses normal sync but deliberately writes no report through
-that untrusted path; the package-scoped log is the only failure signal.
+Cookies are recovery data only. The Go server rejects non-password pushes and
+filters non-password legacy records from every pull/latest response. The
+normal browser service has no CookieManager bridge, timer, publication,
+tombstone, conflict, or enrollment path. No acceptance test reads a personal
+profile or a personal Google cookie.
 
-The fixed synthetic transaction creates a known destination cookie, persists
-its complete snapshot before apply, imports a three-record target through
-`network::mojom::CookieManager`, and reads the whole store back. The target
-covers session and persistent, HttpOnly, Secure, SameSite, host-only, domain,
-partitioned, and unpartitioned records. The fixture requires partitioned and
-unpartitioned canonical keys to remain distinct. It then submits a valid
-Secure cookie against an HTTP source, requires Chromium to reject it, restores
-the destination snapshot through CookieManager, verifies rollback, and cleans
-the synthetic store. Its report contains only counts, booleans, and
-fingerprints. It reports zero origin-state adapters and `not-tested` rather
-than inventing localStorage, IndexedDB, or service-worker portability. A pass
-proves CookieManager transaction mechanics only; it does not claim that a
-destination is authenticated or that any site session is portable.
+Prove the following three mechanisms with synthetic cookies in marked
+disposable profiles. Copies of one generation never count as an additional
+mechanism.
 
-- Host-only and domain cookies remain distinct.
-- Secure, HttpOnly, SameSite, priority, path, expiry, source scheme/port, and
-  session/persistent behavior round-trip where CDP/Chromium supports them.
-- Partitioned and unpartitioned cookies with identical domain/path/name remain
-  separate across two top-level sites.
-- All live cookies are selected by default, including session, persistent,
-  HttpOnly, Secure, SameSite, host-only, domain, and partitioned cookies. Only
-  expired/malformed records or an exact destination-rejected revision are
-  absent from the destination after verified rollback.
-- One authenticated device rotates a token twice; destinations receive each
-  revision and never ping-pong the previous token. A concurrent local edit and
-  newer remote revision stops without discarding the last good local session.
-- A higher CAS revision applies and advances the cookie record. Same-revision
-  payload substitution and stale expected revisions fail closed.
-- Expired cookies are not recreated. A verified local deletion creates a
-  revisioned tombstone.
-- A device-bound-session fixture or known DBSC test site never classifies all
-  cookies on the site. An actual destination rejection records the exact
-  canonical cookie key, remote revision and payload fingerprint plus exact
-  same-site session keys observed locally, without claiming a session-to-cookie
-  binding or successful destination authentication.
-- Cookie state accepts only schema 5. Revisions, fingerprints, deletion state,
-  pending CAS state, and exact destination exceptions are atomic; legacy
-  schemas and content-key fields fail closed.
-- Every apply records a destination preview and private readable rollback first. A
-  rejected set or verification mismatch restores the destination snapshot.
-- A pending join with a different local cookie at the same canonical identity
-  transactionally applies d's authoritative value under that rollback; its
-  unrelated local cookies remain unpublished during initial enrollment.
-- More than 32 local cookie changes drain over multiple deterministic
-  publication batches, and no serialized native request exceeds 4 MiB.
-- The same rejected revision is not retried every cycle. A higher
-  remote revision retries transactionally. A local cookie change while the
-  exception remains is marked unverified, held locally, and never published as
-  proof of reauthentication. Successful readback clears the prior exception
-  without overwriting the last-good rollback state.
-- The local reauthentication intent contains the schemeful site but no guessed
-  origin or login path, forbids navigation and automatic form submission, and
-  cannot claim browser-native reauthentication until a disposable run provides
-  the exact origin, entry, tab, and discovered password form.
-- Android browser suspension and process restart recover without overwriting a
-  newer remote record. No DevTools path participates.
-- Cookie payload corruption is detected before apply.
-- For each target site, audit localStorage, IndexedDB, service-worker storage,
-  and other origin state in disposable profiles. Transfer only an evidenced,
-  origin-scoped export; never live-merge an application database.
-- Bind the metadata-only audit to the exact disposable artifact and target:
-  `node scripts/session-state/origin-state-audit.mjs EVIDENCE.json ARTIFACT`.
-  Synthetic evidence must produce only synthetic/unknown classifications;
-  a missing, symlinked, or hash-mismatched artifact and any secret-bearing
-  evidence field must fail.
-- Origin-state evidence schema 2 requires separate preview, apply, readback,
-  and rollback results. Because no source-registered adapter exists, any
-  evidence that names one or reports a transfer result fails closed.
+- C1, native neutral snapshot: Chromium captures the complete synthetic store
+  through `network::mojom::CookieManager::GetAllCookies`, including host/domain
+  form, path, source scheme/port, expiry/session state, Secure, HttpOnly,
+  SameSite, priority, and complete partition key. Restore requires an empty
+  marked profile, applies with `SetCanonicalCookie`, compares complete native
+  readback, and rolls back to a saved destination snapshot after any rejected
+  set. Duplicate identities, nonce partition keys, unknown fields, checksum
+  changes, and mismatched readback fail closed.
+- C2, stopped compressed profile: close the browser, create the independent
+  checksum-stable Zstandard full-profile generation, restore it only below a
+  new marked `drill-*` root, and prove the exact synthetic store after the
+  first and second starts. Corrupt generations are quarantined and a known-good
+  generation remains available.
+- C3, encrypted repository: require the stopped profile's
+  `.helium-cookie-backup-disposable-v1` marker, back it up with
+  `helium-encrypted-cookie-backup.sh` into da's restic repository, run an
+  authenticated data check, select an exact 64-character snapshot ID, restore
+  into a new marked root, and bind the repository config and normalized tree
+  hashes in a mode-0600 receipt. Launch twice and prove the same synthetic
+  cookie set. Damage to repository data or a wrong password must fail before
+  browser launch.
+
+The fixed native transaction fixture covers session and persistent, HttpOnly,
+Secure, SameSite, host-only, domain, partitioned, and unpartitioned records,
+plus rejection and rollback. Its report contains counts, booleans, and hashes,
+not values. It proves CookieManager mechanics only; it never claims that a
+restored cookie authenticates a user or that a provider session is portable.
+localStorage, IndexedDB, service-worker storage, Cache Storage, DBSC state, and
+arbitrary site databases stay outside this product.
 
 ## Gate 4: Durable Tabs
 
@@ -259,13 +210,12 @@ destination is authenticated or that any site session is portable.
 - A restore drill into a disposable profile checks counts and representative
   state, restarts a second time, and records success.
 - Android runs the same three mechanisms only in the checksum-admitted
-  `computer.helium.passwords.test` package. Its native proof uses a fresh synthetic
-  `app_chrome` tree so the current stopped Android profile producer can stream
-  that exact generation to NAS plus da. Neutral and full-profile restores are
-  round-trip fingerprinted into new fixed package-private `drill-*` paths.
-  Every launch uses `disposable-browser.sh`; clean exit is `Browser.close`,
-  crash is same-UID `SIGKILL`, and command-line evidence must bind the exact
-  socket, user-data path, and native-or-neutral restore switch.
+  `computer.helium.passwords.test` package and a fresh synthetic `app_chrome`
+  tree. Automated browser-control proofs run in da's disposable Android
+  emulator. OnePlus package installation, version/signature admission, native
+  service health, and enrollment may be inspected without CDP or UI control;
+  a OnePlus browser-visible proof requires a user-observed manual run. The
+  historical `disposable-browser.sh` CDP path is not used on OnePlus or lm.
 - Before any browser preparation, the standalone `validate-restore` command
   independently rechecks the receipt's source binding, session hash and size,
   strict schemas, permissions, symlink rejection, and exact two-file
