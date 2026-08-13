@@ -53,6 +53,9 @@ preflight() {
     [ "$2" = 1 ]
     [ "$3" = "$4" ]
     [ -d "$3" ]
+    # The production preflight reloads the base profile. Keep this behavior in
+    # the fixture so extended continuation policy must survive it.
+    profile "$1"
     printf 'preflight=ok\nworkspace=%s\n' "$3" \
         >>"${test_root}/preflight-calls"
 }

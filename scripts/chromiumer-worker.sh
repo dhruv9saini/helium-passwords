@@ -971,10 +971,17 @@ start_job() {
     else
         source_jobs=${build_jobs}
     fi
+    local admitted_wall_seconds=${wall_seconds}
+    local admitted_wall_class=${wall_class}
     if ! preflight "${profile_name}" "${disk_budget_gib}" \
         "${job_root}" "${job_root}"; then
         exit 1
     fi
+    # preflight reloads the base isolation profile. Restore the continuation
+    # wall class admitted from immutable parent receipts before policy and unit
+    # creation.
+    wall_seconds=${admitted_wall_seconds}
+    wall_class=${admitted_wall_class}
     [ ! -e "${state_dir}/policy.env" ] && [ ! -e "${state_dir}/result.env" ] || {
         echo "job has already been started: ${job}" >&2
         exit 1
