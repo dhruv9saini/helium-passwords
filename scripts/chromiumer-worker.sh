@@ -47,6 +47,7 @@ profile() {
             cpu_weight=10
             memory_high=4G
             memory_max=5G
+            memory_swap_max=0
             tasks_max=1024
             min_mem_total_bytes=$(gib 7)
             min_mem_available_bytes=$(gib 2)
@@ -65,6 +66,7 @@ profile() {
             cpu_weight=10
             memory_high=128M
             memory_max=256M
+            memory_swap_max=0
             tasks_max=32
             min_mem_total_bytes=$(gib 1)
             min_mem_available_bytes=$((256 * 1024 * 1024))
@@ -331,6 +333,45 @@ source_build_jobs() {
     printf '%s\n' "${value}"
 }
 
+retained_linux_swap_recovery_parent() {
+    local parent=$1
+    local requested_command=$2
+    local parent_state="${state_root}/${parent}"
+    local terminal="${parent_state}/terminal.env"
+    local watchdog_stop="${parent_state}/watchdog-stop.env"
+    local policy="${parent_state}/policy.env"
+    local resume="${parent_state}/resume.env"
+    local marker='HELIUM_LINUX_PHASE=retained '
+    local suffix
+
+    [ -f "${resume}" ] && [ ! -L "${resume}" ] && \
+        [ -f "${watchdog_stop}" ] && [ ! -L "${watchdog_stop}" ] ||
+        return 1
+    [ "$(exact_value "${terminal}" state)" = terminal ] && \
+        [ "$(exact_value "${terminal}" result)" = failure ] && \
+        [ "$(exact_value "${terminal}" exit_code)" = 1 ] && \
+        [ "$(exact_value "${terminal}" reason)" = \
+            "host available-memory floor breached" ] && \
+        [ "$(exact_value "${watchdog_stop}" reason)" = \
+            "host available-memory floor breached" ] || return 1
+    [ "$(exact_value "${policy}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" command)" = "${requested_command}" ] && \
+        [ "$(exact_value "${policy}" build_jobs)" = 1 ] && \
+        [ "$(source_build_jobs "${parent}")" = 1 ] && \
+        [ "$(exact_value "${policy}" memory_high)" = 4G ] && \
+        [ "$(exact_value "${policy}" memory_max)" = 5G ] && \
+        [ "$(exact_value "${policy}" memory_swap_max)" = 0 ] && \
+        [ "$(exact_value "${policy}" wall_seconds)" = 28800 ] && \
+        [ "$(exact_value "${policy}" wall_class)" = standard ] && \
+        [ "$(exact_value "${resume}" command_mode)" = exact ] && \
+        [ "$(exact_value "${resume}" parent_terminal_mode)" = timeout ] ||
+        return 1
+
+    suffix=${requested_command#*"${marker}"}
+    [ "${suffix}" != "${requested_command}" ] && \
+        [[ "${suffix}" != *"${marker}"* ]]
+}
+
 validate_continuation_state() {
     local child=$1
     shift
@@ -372,8 +413,18 @@ validate_continuation_state() {
     [ "${actual_sha}" = "${manifest_sha}" ] && \
         cmp --silent "${child_state}/source.manifest" \
             "${state_root}/${owner}/source.manifest" || return 1
-    [ ! -e "${state_root}/${parent}/watchdog-stop.env" ] && \
-        [ ! -e "${state_root}/${parent}/cancel.env" ] && \
+    local parent_terminal_mode
+    parent_terminal_mode=$(exact_value "${child_state}/resume.env" \
+        parent_terminal_mode) || return 1
+    if [ -e "${state_root}/${parent}/watchdog-stop.env" ]; then
+        [ "${parent_terminal_mode}" = retained-linux-final-link-swap-recovery ] && \
+            retained_linux_swap_recovery_parent \
+                "${parent}" "${requested_command}" || return 1
+    else
+        [ "${parent_terminal_mode}" != \
+            retained-linux-final-link-swap-recovery ] || return 1
+    fi
+    [ ! -e "${state_root}/${parent}/cancel.env" ] && \
         [ ! -e "${state_root}/${parent}/cleanup.env" ] && \
         [ ! -e "${state_root}/${owner}/workspace-cleaned-by.env" ] || return 1
 
@@ -603,11 +654,20 @@ validate_resume_parent() {
     }
 
     local terminal_mode=timeout
-    if ! [ "$(exact_value "${terminal}" state)" = terminal ] || \
-        ! [ "$(exact_value "${terminal}" result)" = timeout ] || \
-        ! [ "$(exact_value "${terminal}" exit_code)" = 124 ] || \
-        ! [ "$(exact_value "${terminal}" reason)" = \
+    if [ "$(exact_value "${terminal}" state)" = terminal ] && \
+        [ "$(exact_value "${terminal}" result)" = timeout ] && \
+        [ "$(exact_value "${terminal}" exit_code)" = 124 ] && \
+        [ "$(exact_value "${terminal}" reason)" = \
             "systemd stopped the job at its wall-time limit" ]; then
+        :
+    elif retained_linux_swap_recovery_parent \
+        "${parent}" "${requested_command}"; then
+        [ "${command_mode}" = exact ] || {
+            echo "retained Linux swap recovery requires the exact parent command" >&2
+            return 1
+        }
+        terminal_mode=retained-linux-final-link-swap-recovery
+    else
         [ "$(exact_value "${terminal}" state)" = terminal ] && \
             [ "$(exact_value "${terminal}" result)" = failure ] && \
             [ "$(exact_value "${terminal}" exit_code)" = 1 ] && \
@@ -695,6 +755,11 @@ validate_resume_parent() {
         return 1
     }
     for forbidden in watchdog-stop.env cancel.env cleanup.env continued-by.env; do
+        if [ "${forbidden}" = watchdog-stop.env ] && \
+            [ "${terminal_mode}" = \
+                retained-linux-final-link-swap-recovery ]; then
+            continue
+        fi
         [ ! -e "${parent_state}/${forbidden}" ] || {
             echo "continuation parent has disqualifying state: ${forbidden}" >&2
             return 1
@@ -875,7 +940,7 @@ write_policy() {
         printf 'cpu_weight=%s\n' "${cpu_weight}"
         printf 'memory_high=%s\n' "${memory_high}"
         printf 'memory_max=%s\n' "${memory_max}"
-        printf 'memory_swap_max=0\n'
+        printf 'memory_swap_max=%s\n' "${memory_swap_max}"
         printf 'io_weight=10\n'
         printf 'io_scheduling_class=idle\n'
         printf 'nice=15\n'
@@ -947,7 +1012,16 @@ start_job() {
         source_jobs=$(exact_value "${state_dir}/resume.env" \
             source_build_jobs)
         local continuation_mode parent_mode parent_terminal parent_wall
+        local continuation_terminal_mode
         continuation_mode=$(exact_value "${state_dir}/resume.env" command_mode)
+        continuation_terminal_mode=$(exact_value \
+            "${state_dir}/resume.env" parent_terminal_mode)
+        if [ "${continuation_terminal_mode}" = \
+            retained-linux-final-link-swap-recovery ]; then
+            memory_high=5G
+            memory_max=6G
+            memory_swap_max=2G
+        fi
         if [ "${continuation_mode}" = exact ] && \
             [ -f "${state_root}/${parent}/resume.env" ]; then
             parent_mode=$(exact_value \
@@ -973,6 +1047,9 @@ start_job() {
     fi
     local admitted_wall_seconds=${wall_seconds}
     local admitted_wall_class=${wall_class}
+    local admitted_memory_high=${memory_high}
+    local admitted_memory_max=${memory_max}
+    local admitted_memory_swap_max=${memory_swap_max}
     if ! preflight "${profile_name}" "${disk_budget_gib}" \
         "${job_root}" "${job_root}"; then
         exit 1
@@ -982,6 +1059,9 @@ start_job() {
     # creation.
     wall_seconds=${admitted_wall_seconds}
     wall_class=${admitted_wall_class}
+    memory_high=${admitted_memory_high}
+    memory_max=${admitted_memory_max}
+    memory_swap_max=${admitted_memory_swap_max}
     [ ! -e "${state_dir}/policy.env" ] && [ ! -e "${state_dir}/result.env" ] || {
         echo "job has already been started: ${job}" >&2
         exit 1
@@ -1013,7 +1093,7 @@ start_job() {
         --property="CPUWeight=${cpu_weight}" \
         --property="MemoryHigh=${memory_high}" \
         --property="MemoryMax=${memory_max}" \
-        --property=MemorySwapMax=0 \
+        --property="MemorySwapMax=${memory_swap_max}" \
         --property=IOWeight=10 \
         --property=IOSchedulingClass=idle \
         --property=Nice=15 \

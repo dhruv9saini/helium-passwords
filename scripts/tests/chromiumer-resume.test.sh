@@ -209,6 +209,7 @@ exec 9>&-
 grep -Fq -- '--property=RuntimeMaxSec=28800' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--property=CPUQuota=200%' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--property=MemoryMax=5G' "${RESUME_TEST_SYSTEMD_RUNS}"
+grep -Fq -- '--property=MemorySwapMax=0' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--property=TasksMax=1024' "${RESUME_TEST_SYSTEMD_RUNS}"
 grep -Fq -- '--setenv=HELIUM_BUILD_JOBS=1' \
     "${RESUME_TEST_SYSTEMD_RUNS}"
@@ -375,6 +376,101 @@ tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq -- '--property=RuntimeMaxSec=86400'
 grep -Fqx 'source_build_jobs=1' \
     "${state_root}/${linux_timeout_child}/resume.env"
+
+# A retained Linux final link that reaches the protected host-memory floor may
+# get one exact-command recovery. It keeps the one-GiB host floor, adds bounded
+# build swap, and cannot change any other production job class.
+prepare_linux_swap_parent() {
+    local root=$1
+    local parent=$2
+    write_parent "${root}" "$(command_text "${linux_retained_command[@]}")"
+    resume_init "${root}" "${parent}" -- \
+        "${linux_retained_command[@]}" >/dev/null
+    exec 9>&-
+    resume_start "${parent}" -- \
+        "${linux_retained_command[@]}" >/dev/null
+    exec 9>&-
+    cat >"${state_root}/${parent}/watchdog-ready.env" <<'EOF'
+watchdog_ready_at=2026-07-23T08:00:00+00:00
+EOF
+    cat >"${state_root}/${parent}/watchdog-stop.env" <<'EOF'
+watchdog_stopped_at=2026-07-23T08:04:00+00:00
+reason=host available-memory floor breached
+EOF
+    cat >"${state_root}/${parent}/terminal.env" <<'EOF'
+state=terminal
+result=failure
+exit_code=1
+started_at_epoch=1784793360
+finished_at_epoch=1784793840
+duration_seconds=480
+reason=host available-memory floor breached
+EOF
+}
+
+swap_root=resume-linux-swap-root
+swap_parent=resume-linux-swap-parent
+swap_child=resume-linux-swap-child
+prepare_linux_swap_parent "${swap_root}" "${swap_parent}"
+resume_init "${swap_parent}" "${swap_child}" -- \
+    "${linux_retained_command[@]}" >"${test_root}/linux-swap-child.out"
+exec 9>&-
+grep -Fqx 'command_mode=exact' \
+    "${state_root}/${swap_child}/resume.env"
+grep -Fqx \
+    'parent_terminal_mode=retained-linux-final-link-swap-recovery' \
+    "${state_root}/${swap_child}/resume.env"
+resume_start "${swap_child}" -- \
+    "${linux_retained_command[@]}" >"${test_root}/linux-swap-start.out"
+exec 9>&-
+grep -Fqx 'memory_high=5G' "${state_root}/${swap_child}/policy.env"
+grep -Fqx 'memory_max=6G' "${state_root}/${swap_child}/policy.env"
+grep -Fqx 'memory_swap_max=2G' "${state_root}/${swap_child}/policy.env"
+grep -Fqx 'watchdog_mem_floor_bytes=1073741824' \
+    "${state_root}/${swap_child}/policy.env"
+grep -Fqx 'wall_seconds=28800' "${state_root}/${swap_child}/policy.env"
+grep -Fqx 'wall_class=standard' "${state_root}/${swap_child}/policy.env"
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemoryHigh=5G'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemoryMax=6G'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemorySwapMax=2G'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq ' 1073741824 '
+
+swap_missing_root=resume-linux-swap-missing-root
+swap_missing_parent=resume-linux-swap-missing-parent
+prepare_linux_swap_parent "${swap_missing_root}" "${swap_missing_parent}"
+find "${state_root}/${swap_missing_parent}/watchdog-stop.env" -delete
+if (resume_init "${swap_missing_parent}" resume-linux-swap-missing-child -- \
+    "${linux_retained_command[@]}") >"${test_root}/swap-missing.out" \
+    2>"${test_root}/swap-missing.error"; then
+    echo "Linux swap recovery omitted the watchdog-stop receipt" >&2
+    exit 1
+fi
+
+swap_reason_root=resume-linux-swap-reason-root
+swap_reason_parent=resume-linux-swap-reason-parent
+prepare_linux_swap_parent "${swap_reason_root}" "${swap_reason_parent}"
+sed -i 's/host available-memory floor breached/synthetic watchdog failure/' \
+    "${state_root}/${swap_reason_parent}/watchdog-stop.env" \
+    "${state_root}/${swap_reason_parent}/terminal.env"
+if (resume_init "${swap_reason_parent}" resume-linux-swap-reason-child -- \
+    "${linux_retained_command[@]}") >"${test_root}/swap-reason.out" \
+    2>"${test_root}/swap-reason.error"; then
+    echo "Linux swap recovery admitted a different watchdog reason" >&2
+    exit 1
+fi
+
+if (resume_init "${swap_parent}" resume-linux-swap-second-child -- \
+    "${linux_retained_command[@]}") >"${test_root}/swap-second.out" \
+    2>"${test_root}/swap-second.error"; then
+    echo "Linux swap recovery admitted two children" >&2
+    exit 1
+fi
+grep -Fq 'disqualifying state: continued-by.env' \
+    "${test_root}/swap-second.error"
 
 # Older exact continuations re-entered source preparation and failed at the
 # expected dirty-worktree gate. Admit the same all-to-build transition only

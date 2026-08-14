@@ -477,6 +477,29 @@ continuation remain eight-hour segments. A cancellation, watchdog stop,
 non-timeout exit, command change, incomplete duration, or non-Linux phase
 prevents the longer admission.
 
+One final-link recovery is narrower than the longer wall-time admission. A
+retained Linux child can stop at the unchanged one-GiB host available-memory
+floor after its exact final link begins. The next child is admitted only when
+the parent has all of these records and properties:
+
+- an exact retained Linux command with one `HELIUM_LINUX_PHASE=retained`
+  token and one build job;
+- a parent continuation whose command mode is `exact` and whose parent
+  terminal mode is `timeout`;
+- the standard eight-hour policy with `memory_high=4G`, `memory_max=5G`, and
+  `memory_swap_max=0` recorded before any live correction;
+- matching `terminal.env` and `watchdog-stop.env` reasons of
+  `host available-memory floor breached`;
+- no cancellation, cleanup, existing child claim, or cleaned workspace.
+
+That one exact-command child keeps the one-GiB host floor and the standard
+eight-hour wall. It changes only the build cgroup to `MemoryHigh=5G`,
+`MemoryMax=6G`, and `MemorySwapMax=2G`. The build stays serialized. The hard
+memory and swap limits remain independent and bounded. Every other production
+and test job keeps zero build swap. A different watchdog reason, missing
+watchdog receipt, changed command, different Linux phase, different source-job
+count, or second child fails admission.
+
 Admission fails closed unless all of these statements are true:
 
 - the parent has one complete terminal record with `result=timeout` and
@@ -484,8 +507,9 @@ Admission fails closed unless all of these statements are true:
 - it was a production job with a complete source manifest, matching owner
   manifest, internally consistent policy/stage disk budget, and the exact
   requested command;
-- no cancellation, watchdog stop, cleanup, or prior continuation exists (a
-  returned timeout-evidence artifact is permitted and remains recorded);
+- no cancellation, cleanup, or prior continuation exists. A watchdog stop is
+  permitted only for the exact final-link swap recovery above. A returned
+  timeout-evidence artifact is permitted and remains recorded;
 - the parent units are inactive, the preserved workspace is present and
   contained under the work root, no other Helium unit is active, and the new
   job ID has no state or workspace collision;
