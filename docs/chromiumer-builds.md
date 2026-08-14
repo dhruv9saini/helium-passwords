@@ -501,14 +501,44 @@ watchdog receipt, changed command, different Linux phase, different source-job
 count, or second child fails admission.
 
 If that exact swap recovery also stops at the same one-GiB host floor before
-either cgroup cap, one final lower-high child is admitted. Its parent must
+either cgroup cap, one lower-high child is admitted. Its parent must
 record `parent_terminal_mode=retained-linux-final-link-swap-recovery`, the
 exact retained command, one build job, the standard eight-hour wall,
 `memory_high=5G`, `memory_max=6G`, `memory_swap_max=2G`, and matching host-floor
 terminal and watchdog receipts. The child changes only `MemoryHigh` to `4G`.
 It keeps `MemoryMax=6G`, `MemorySwapMax=2G`, the one-GiB host floor, zero
-parallelism changes, and every other production limit. No further watchdog
-recovery class is admitted.
+parallelism changes, and every other production limit.
+
+If the lower-high child reaches the same host floor, one final link-only child
+is admitted. This child does not repeat the parent command. It adds exactly
+this environment argument after the one retained Linux phase argument:
+
+```text
+CCC_OVERRIDE_OPTIONS=# +-Wl,--threads=1
+```
+
+Clang documents `CCC_OVERRIDE_OPTIONS` as a command-line edit mechanism. The
+`+` edit appends `-Wl,--threads=1`; the `#` edit suppresses only the edit
+diagnostic. LLD documents `--threads=1` as disabling its general
+multithreading. The existing release edge already has `--thinlto-jobs=1`, so
+the recovery also keeps one ThinLTO backend. These controls change link work
+scheduling only. They do not change the retained source, objects, Ninja graph,
+response-file inputs, optimization flags, product configuration, or output
+targets.
+
+The child keeps `MemoryHigh=4G`, `MemoryMax=6G`, `MemorySwapMax=2G`, one build
+job, and the one-GiB host floor. It gets
+`wall_class=extended-linux-single-thread-link` and a 24-hour wall limit because
+the single-thread link can take longer. The exact command transition is
+recorded as `command_mode=retained-linux-single-thread-link`. Admission
+requires the lower-high parent to have the exact standard eight-hour policy,
+matching host-floor terminal and watchdog receipts, and
+`parent_terminal_mode=retained-linux-final-link-lower-high-recovery`.
+
+The requested argument must be byte-for-byte exact. A different thread count,
+another Clang override, a repeated retained command, a missing receipt, or a
+second child fails admission. No further automatic watchdog recovery class is
+admitted after this single-thread child.
 
 Admission fails closed unless all of these statements are true:
 
@@ -518,7 +548,7 @@ Admission fails closed unless all of these statements are true:
   manifest, internally consistent policy/stage disk budget, and the exact
   requested command;
 - no cancellation, cleanup, or prior continuation exists. A watchdog stop is
-  permitted only for the exact final-link swap recovery above. A returned
+  permitted only for an exact final-link recovery above. A returned
   timeout-evidence artifact is permitted and remains recorded;
 - the parent units are inactive, the preserved workspace is present and
   contained under the work root, no other Helium unit is active, and the new

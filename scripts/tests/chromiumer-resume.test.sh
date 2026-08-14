@@ -331,6 +331,9 @@ linux_fresh_command=(env HELIUM_LINUX_PHASE=fresh AUTONINJA_JOBS=1 \
     sh -c 'printf "Linux phase fixture\n"')
 linux_retained_command=(env HELIUM_LINUX_PHASE=retained AUTONINJA_JOBS=1 \
     sh -c 'printf "Linux phase fixture\n"')
+linux_single_thread_command=(env HELIUM_LINUX_PHASE=retained \
+    'CCC_OVERRIDE_OPTIONS=# +-Wl,--threads=1' AUTONINJA_JOBS=1 \
+    sh -c 'printf "Linux phase fixture\n"')
 linux_timeout_parent=resume-linux-timeout-parent
 linux_timeout_child=resume-linux-timeout-child
 write_parent "${linux_timeout_parent}" \
@@ -436,6 +439,7 @@ tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq -- '--property=MemoryMax=6G'
 tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq -- '--property=MemorySwapMax=2G'
+
 tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq ' 1073741824 '
 
@@ -480,6 +484,82 @@ tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq -- '--property=MemoryMax=6G'
 tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq -- '--property=MemorySwapMax=2G'
+
+# The lower-high child can admit one final-link-only transition. Clang appends
+# --threads=1 to LLD while Ninja keeps the same graph, response file, release
+# flags, inputs, and one-job execution. The host floor and bounded swap remain.
+cat >"${state_root}/${lower_high_child}/watchdog-stop.env" <<'EOF'
+watchdog_stopped_at=2026-07-23T08:16:00+00:00
+reason=host available-memory floor breached
+EOF
+cat >"${state_root}/${lower_high_child}/terminal.env" <<'EOF'
+state=terminal
+result=failure
+exit_code=1
+started_at_epoch=1784794320
+finished_at_epoch=1784794800
+duration_seconds=480
+reason=host available-memory floor breached
+EOF
+lower_high_command_text=$(command_text "${linux_retained_command[@]}")
+single_thread_command_text=$(command_text "${linux_single_thread_command[@]}")
+retained_linux_single_thread_recovery_parent \
+    "${lower_high_child}" "${lower_high_command_text}" \
+    "${single_thread_command_text}"
+if retained_linux_single_thread_recovery_parent \
+    "${lower_high_child}" "${lower_high_command_text}" \
+    "${lower_high_command_text}"; then
+    echo "Linux single-thread recovery repeated the lower-high command" >&2
+    exit 1
+fi
+single_thread_child=resume-linux-single-thread-child
+resume_init "${lower_high_child}" "${single_thread_child}" -- \
+    "${linux_single_thread_command[@]}" \
+    >"${test_root}/linux-single-thread-child.out"
+exec 9>&-
+grep -Fqx 'command_mode=retained-linux-single-thread-link' \
+    "${state_root}/${single_thread_child}/resume.env"
+grep -Fqx \
+    'parent_terminal_mode=retained-linux-final-link-single-thread-recovery' \
+    "${state_root}/${single_thread_child}/resume.env"
+resume_start "${single_thread_child}" -- \
+    "${linux_single_thread_command[@]}" \
+    >"${test_root}/linux-single-thread-start.out"
+exec 9>&-
+grep -Fqx 'memory_high=4G' \
+    "${state_root}/${single_thread_child}/policy.env"
+grep -Fqx 'memory_max=6G' \
+    "${state_root}/${single_thread_child}/policy.env"
+grep -Fqx 'memory_swap_max=2G' \
+    "${state_root}/${single_thread_child}/policy.env"
+grep -Fqx 'watchdog_mem_floor_bytes=1073741824' \
+    "${state_root}/${single_thread_child}/policy.env"
+grep -Fqx 'wall_seconds=86400' \
+    "${state_root}/${single_thread_child}/policy.env"
+grep -Fqx 'wall_class=extended-linux-single-thread-link' \
+    "${state_root}/${single_thread_child}/policy.env"
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=RuntimeMaxSec=86400'
+
+if (resume_init "${lower_high_child}" resume-linux-single-thread-second -- \
+    "${linux_single_thread_command[@]}") \
+    >"${test_root}/single-thread-second.out" \
+    2>"${test_root}/single-thread-second.error"; then
+    echo "Linux single-thread recovery admitted two children" >&2
+    exit 1
+fi
+grep -Fq 'disqualifying state: continued-by.env' \
+    "${test_root}/single-thread-second.error"
+
+single_thread_wrong=(env HELIUM_LINUX_PHASE=retained \
+    'CCC_OVERRIDE_OPTIONS=# +-Wl,--threads=2' AUTONINJA_JOBS=1 \
+    sh -c 'printf "Linux phase fixture\n"')
+if continuation_command_mode \
+    "$(command_text "${linux_retained_command[@]}")" \
+    "$(command_text "${single_thread_wrong[@]}")" >/dev/null; then
+    echo "Linux single-thread recovery admitted --threads=2" >&2
+    exit 1
+fi
 
 if (resume_init "${swap_child}" resume-linux-lower-high-second -- \
     "${linux_retained_command[@]}") >"${test_root}/lower-high-second.out" \

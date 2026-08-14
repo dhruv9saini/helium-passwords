@@ -250,6 +250,18 @@ continuation_command_mode() {
         return
     fi
 
+    marker='HELIUM_LINUX_PHASE=retained '
+    local single_thread_marker='CCC_OVERRIDE_OPTIONS=#\ +-Wl\,--threads=1 '
+    suffix=${parent_command#*"${marker}"}
+    if [ "${suffix}" != "${parent_command}" ] && \
+        [[ "${suffix}" != *"${marker}"* ]] && \
+        [[ "${parent_command}" != *"${single_thread_marker}"* ]] && \
+        [ "${requested_command}" = \
+            "${parent_command/"${marker}"/"${marker}${single_thread_marker}"}" ]; then
+        printf 'retained-linux-single-thread-link\n'
+        return
+    fi
+
     marker='HELIUM_LINUX_PHASE=fresh '
     suffix=${parent_command#*"${marker}"}
     [ "${suffix}" != "${parent_command}" ] && \
@@ -411,6 +423,50 @@ retained_linux_lower_high_recovery_parent() {
         [[ "${suffix}" != *"${marker}"* ]]
 }
 
+retained_linux_single_thread_recovery_parent() {
+    local parent=$1
+    local parent_command=$2
+    local requested_command=$3
+    local parent_state="${state_root}/${parent}"
+    local terminal="${parent_state}/terminal.env"
+    local watchdog_stop="${parent_state}/watchdog-stop.env"
+    local policy="${parent_state}/policy.env"
+    local resume="${parent_state}/resume.env"
+    local marker='HELIUM_LINUX_PHASE=retained '
+    local single_thread_marker='CCC_OVERRIDE_OPTIONS=#\ +-Wl\,--threads=1 '
+    local suffix
+
+    [ -f "${resume}" ] && [ ! -L "${resume}" ] && \
+        [ -f "${watchdog_stop}" ] && [ ! -L "${watchdog_stop}" ] ||
+        return 1
+    [ "$(exact_value "${terminal}" state)" = terminal ] && \
+        [ "$(exact_value "${terminal}" result)" = failure ] && \
+        [ "$(exact_value "${terminal}" exit_code)" = 1 ] && \
+        [ "$(exact_value "${terminal}" reason)" = \
+            "host available-memory floor breached" ] && \
+        [ "$(exact_value "${watchdog_stop}" reason)" = \
+            "host available-memory floor breached" ] || return 1
+    [ "$(exact_value "${policy}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" command)" = "${parent_command}" ] && \
+        [ "$(exact_value "${policy}" build_jobs)" = 1 ] && \
+        [ "$(source_build_jobs "${parent}")" = 1 ] && \
+        [ "$(exact_value "${policy}" memory_high)" = 4G ] && \
+        [ "$(exact_value "${policy}" memory_max)" = 6G ] && \
+        [ "$(exact_value "${policy}" memory_swap_max)" = 2G ] && \
+        [ "$(exact_value "${policy}" wall_seconds)" = 28800 ] && \
+        [ "$(exact_value "${policy}" wall_class)" = standard ] && \
+        [ "$(exact_value "${resume}" command_mode)" = exact ] && \
+        [ "$(exact_value "${resume}" parent_terminal_mode)" = \
+            retained-linux-final-link-lower-high-recovery ] || return 1
+
+    suffix=${parent_command#*"${marker}"}
+    [ "${suffix}" != "${parent_command}" ] && \
+        [[ "${suffix}" != *"${marker}"* ]] && \
+        [[ "${parent_command}" != *"${single_thread_marker}"* ]] && \
+        [ "${requested_command}" = \
+            "${parent_command/"${marker}"/"${marker}${single_thread_marker}"}" ]
+}
+
 validate_continuation_state() {
     local child=$1
     shift
@@ -465,12 +521,18 @@ validate_continuation_state() {
                 retained_linux_lower_high_recovery_parent \
                     "${parent}" "${requested_command}" || return 1
                 ;;
+            retained-linux-final-link-single-thread-recovery)
+                retained_linux_single_thread_recovery_parent \
+                    "${parent}" "${parent_command}" \
+                    "${requested_command}" || return 1
+                ;;
             *) return 1 ;;
         esac
     else
         case "${parent_terminal_mode}" in
             retained-linux-final-link-swap-recovery|\
-            retained-linux-final-link-lower-high-recovery) return 1 ;;
+            retained-linux-final-link-lower-high-recovery|\
+            retained-linux-final-link-single-thread-recovery) return 1 ;;
         esac
     fi
     [ ! -e "${state_root}/${parent}/cancel.env" ] && \
@@ -698,7 +760,7 @@ validate_resume_parent() {
     requested_command=$(command_text "$@")
     command_mode=$(continuation_command_mode \
         "${expected_command}" "${requested_command}") || {
-        echo "continuation command must match its parent, only reduce AUTONINJA_JOBS from 2 to 1, change CHROMIUM_ANDROID_PHASE from all to build, or change HELIUM_LINUX_PHASE from fresh to retained" >&2
+        echo "continuation command must match its parent, only reduce AUTONINJA_JOBS from 2 to 1, change CHROMIUM_ANDROID_PHASE from all to build, change HELIUM_LINUX_PHASE from fresh to retained, or add the exact single-thread LLD override" >&2
         return 1
     }
 
@@ -723,6 +785,13 @@ validate_resume_parent() {
             return 1
         }
         terminal_mode=retained-linux-final-link-lower-high-recovery
+    elif retained_linux_single_thread_recovery_parent \
+        "${parent}" "${expected_command}" "${requested_command}"; then
+        [ "${command_mode}" = retained-linux-single-thread-link ] || {
+            echo "retained Linux single-thread link recovery requires the exact Clang override" >&2
+            return 1
+        }
+        terminal_mode=retained-linux-final-link-single-thread-recovery
     else
         [ "$(exact_value "${terminal}" state)" = terminal ] && \
             [ "$(exact_value "${terminal}" result)" = failure ] && \
@@ -815,7 +884,9 @@ validate_resume_parent() {
             { [ "${terminal_mode}" = \
                 retained-linux-final-link-swap-recovery ] || \
               [ "${terminal_mode}" = \
-                retained-linux-final-link-lower-high-recovery ]; }; then
+                retained-linux-final-link-lower-high-recovery ] || \
+              [ "${terminal_mode}" = \
+                retained-linux-final-link-single-thread-recovery ]; }; then
                 continue
         fi
         [ ! -e "${parent_state}/${forbidden}" ] || {
@@ -1084,6 +1155,13 @@ start_job() {
             memory_high=4G
             memory_max=6G
             memory_swap_max=2G
+        elif [ "${continuation_terminal_mode}" = \
+            retained-linux-final-link-single-thread-recovery ]; then
+            memory_high=4G
+            memory_max=6G
+            memory_swap_max=2G
+            wall_seconds=86400
+            wall_class=extended-linux-single-thread-link
         fi
         if [ "${continuation_mode}" = exact ] && \
             [ -f "${state_root}/${parent}/resume.env" ]; then
