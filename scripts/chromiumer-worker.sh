@@ -467,6 +467,47 @@ retained_linux_single_thread_recovery_parent() {
             "${parent_command/"${marker}"/"${marker}${single_thread_marker}"}" ]
 }
 
+retained_linux_three_gib_high_recovery_parent() {
+    local parent=$1
+    local requested_command=$2
+    local parent_state="${state_root}/${parent}"
+    local terminal="${parent_state}/terminal.env"
+    local watchdog_stop="${parent_state}/watchdog-stop.env"
+    local policy="${parent_state}/policy.env"
+    local resume="${parent_state}/resume.env"
+    local marker='CCC_OVERRIDE_OPTIONS=#\ +-Wl\,--threads=1 '
+    local suffix
+
+    [ -f "${resume}" ] && [ ! -L "${resume}" ] && \
+        [ -f "${watchdog_stop}" ] && [ ! -L "${watchdog_stop}" ] ||
+        return 1
+    [ "$(exact_value "${terminal}" state)" = terminal ] && \
+        [ "$(exact_value "${terminal}" result)" = failure ] && \
+        [ "$(exact_value "${terminal}" exit_code)" = 1 ] && \
+        [ "$(exact_value "${terminal}" reason)" = \
+            "host available-memory floor breached" ] && \
+        [ "$(exact_value "${watchdog_stop}" reason)" = \
+            "host available-memory floor breached" ] || return 1
+    [ "$(exact_value "${policy}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" command)" = "${requested_command}" ] && \
+        [ "$(exact_value "${policy}" build_jobs)" = 1 ] && \
+        [ "$(source_build_jobs "${parent}")" = 1 ] && \
+        [ "$(exact_value "${policy}" memory_high)" = 4G ] && \
+        [ "$(exact_value "${policy}" memory_max)" = 6G ] && \
+        [ "$(exact_value "${policy}" memory_swap_max)" = 2G ] && \
+        [ "$(exact_value "${policy}" wall_seconds)" = 86400 ] && \
+        [ "$(exact_value "${policy}" wall_class)" = \
+            extended-linux-single-thread-link ] && \
+        [ "$(exact_value "${resume}" command_mode)" = \
+            retained-linux-single-thread-link ] && \
+        [ "$(exact_value "${resume}" parent_terminal_mode)" = \
+            retained-linux-final-link-single-thread-recovery ] || return 1
+
+    suffix=${requested_command#*"${marker}"}
+    [ "${suffix}" != "${requested_command}" ] && \
+        [[ "${suffix}" != *"${marker}"* ]]
+}
+
 validate_continuation_state() {
     local child=$1
     shift
@@ -526,13 +567,18 @@ validate_continuation_state() {
                     "${parent}" "${parent_command}" \
                     "${requested_command}" || return 1
                 ;;
+            retained-linux-final-link-three-gib-high-recovery)
+                retained_linux_three_gib_high_recovery_parent \
+                    "${parent}" "${requested_command}" || return 1
+                ;;
             *) return 1 ;;
         esac
     else
         case "${parent_terminal_mode}" in
             retained-linux-final-link-swap-recovery|\
             retained-linux-final-link-lower-high-recovery|\
-            retained-linux-final-link-single-thread-recovery) return 1 ;;
+            retained-linux-final-link-single-thread-recovery|\
+            retained-linux-final-link-three-gib-high-recovery) return 1 ;;
         esac
     fi
     [ ! -e "${state_root}/${parent}/cancel.env" ] && \
@@ -792,6 +838,13 @@ validate_resume_parent() {
             return 1
         }
         terminal_mode=retained-linux-final-link-single-thread-recovery
+    elif retained_linux_three_gib_high_recovery_parent \
+        "${parent}" "${requested_command}"; then
+        [ "${command_mode}" = exact ] || {
+            echo "retained Linux three-GiB-high recovery requires the exact single-thread command" >&2
+            return 1
+        }
+        terminal_mode=retained-linux-final-link-three-gib-high-recovery
     else
         [ "$(exact_value "${terminal}" state)" = terminal ] && \
             [ "$(exact_value "${terminal}" result)" = failure ] && \
@@ -886,7 +939,9 @@ validate_resume_parent() {
               [ "${terminal_mode}" = \
                 retained-linux-final-link-lower-high-recovery ] || \
               [ "${terminal_mode}" = \
-                retained-linux-final-link-single-thread-recovery ]; }; then
+                retained-linux-final-link-single-thread-recovery ] || \
+              [ "${terminal_mode}" = \
+                retained-linux-final-link-three-gib-high-recovery ]; }; then
                 continue
         fi
         [ ! -e "${parent_state}/${forbidden}" ] || {
@@ -1162,6 +1217,13 @@ start_job() {
             memory_swap_max=2G
             wall_seconds=86400
             wall_class=extended-linux-single-thread-link
+        elif [ "${continuation_terminal_mode}" = \
+            retained-linux-final-link-three-gib-high-recovery ]; then
+            memory_high=3G
+            memory_max=6G
+            memory_swap_max=3G
+            wall_seconds=86400
+            wall_class=extended-linux-three-gib-high-link
         fi
         if [ "${continuation_mode}" = exact ] && \
             [ -f "${state_root}/${parent}/resume.env" ]; then

@@ -536,9 +536,30 @@ matching host-floor terminal and watchdog receipts, and
 `parent_terminal_mode=retained-linux-final-link-lower-high-recovery`.
 
 The requested argument must be byte-for-byte exact. A different thread count,
-another Clang override, a repeated retained command, a missing receipt, or a
-second child fails admission. No further automatic watchdog recovery class is
-admitted after this single-thread child.
+another Clang override, a repeated lower-high command, a missing receipt, or a
+second child fails admission.
+
+If the single-thread child also reaches the host floor, one physical-residency
+recovery is admitted. The child repeats the exact single-thread command. It
+changes only these cgroup and wall policy values:
+
+```text
+MemoryHigh=3G
+MemoryMax=6G
+MemorySwapMax=3G
+RuntimeMaxSec=86400
+wall_class=extended-linux-three-gib-high-link
+```
+
+The lower soft boundary moves one GiB of linker residency from physical memory
+to bounded swap. The six-GiB hard physical cap, one-GiB host floor, one Ninja
+job, single LLD thread, single ThinLTO job, I/O policy, source, objects, graph,
+and release flags do not change. Admission requires the parent to record the
+exact single-thread command, `MemoryHigh=4G`, `MemoryMax=6G`,
+`MemorySwapMax=2G`, the 24-hour single-thread wall class, and matching
+host-floor terminal and watchdog receipts. A different parent or command and a
+second child fail admission. No further automatic watchdog recovery class is
+admitted after this three-GiB-high child.
 
 Admission fails closed unless all of these statements are true:
 

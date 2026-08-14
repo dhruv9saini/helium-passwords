@@ -377,6 +377,7 @@ grep -Fqx 'wall_class=extended-linux-final-link' \
     "${state_root}/${linux_final_child}/policy.env"
 tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq -- '--property=RuntimeMaxSec=86400'
+
 grep -Fqx 'source_build_jobs=1' \
     "${state_root}/${linux_timeout_child}/resume.env"
 
@@ -540,6 +541,66 @@ grep -Fqx 'wall_class=extended-linux-single-thread-link' \
     "${state_root}/${single_thread_child}/policy.env"
 tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq -- '--property=RuntimeMaxSec=86400'
+
+# If the single-thread link still reaches the host floor, one last child keeps
+# that exact command and moves one GiB from physical residency into bounded
+# swap. The hard memory cap and host floor do not change.
+cat >"${state_root}/${single_thread_child}/watchdog-stop.env" <<'EOF'
+watchdog_stopped_at=2026-07-23T08:24:00+00:00
+reason=host available-memory floor breached
+EOF
+cat >"${state_root}/${single_thread_child}/terminal.env" <<'EOF'
+state=terminal
+result=failure
+exit_code=1
+started_at_epoch=1784794800
+finished_at_epoch=1784795280
+duration_seconds=480
+reason=host available-memory floor breached
+EOF
+three_gib_child=resume-linux-three-gib-high-child
+resume_init "${single_thread_child}" "${three_gib_child}" -- \
+    "${linux_single_thread_command[@]}" \
+    >"${test_root}/linux-three-gib-high-child.out"
+exec 9>&-
+grep -Fqx 'command_mode=exact' \
+    "${state_root}/${three_gib_child}/resume.env"
+grep -Fqx \
+    'parent_terminal_mode=retained-linux-final-link-three-gib-high-recovery' \
+    "${state_root}/${three_gib_child}/resume.env"
+resume_start "${three_gib_child}" -- \
+    "${linux_single_thread_command[@]}" \
+    >"${test_root}/linux-three-gib-high-start.out"
+exec 9>&-
+grep -Fqx 'memory_high=3G' \
+    "${state_root}/${three_gib_child}/policy.env"
+grep -Fqx 'memory_max=6G' \
+    "${state_root}/${three_gib_child}/policy.env"
+grep -Fqx 'memory_swap_max=3G' \
+    "${state_root}/${three_gib_child}/policy.env"
+grep -Fqx 'watchdog_mem_floor_bytes=1073741824' \
+    "${state_root}/${three_gib_child}/policy.env"
+grep -Fqx 'wall_seconds=86400' \
+    "${state_root}/${three_gib_child}/policy.env"
+grep -Fqx 'wall_class=extended-linux-three-gib-high-link' \
+    "${state_root}/${three_gib_child}/policy.env"
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemoryHigh=3G'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemoryMax=6G'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemorySwapMax=3G'
+
+if (resume_init "${single_thread_child}" \
+    resume-linux-three-gib-high-second -- \
+    "${linux_single_thread_command[@]}") \
+    >"${test_root}/three-gib-high-second.out" \
+    2>"${test_root}/three-gib-high-second.error"; then
+    echo "Linux three-GiB-high recovery admitted two children" >&2
+    exit 1
+fi
+grep -Fq 'disqualifying state: continued-by.env' \
+    "${test_root}/three-gib-high-second.error"
 
 if (resume_init "${lower_high_child}" resume-linux-single-thread-second -- \
     "${linux_single_thread_command[@]}") \
