@@ -372,6 +372,45 @@ retained_linux_swap_recovery_parent() {
         [[ "${suffix}" != *"${marker}"* ]]
 }
 
+retained_linux_lower_high_recovery_parent() {
+    local parent=$1
+    local requested_command=$2
+    local parent_state="${state_root}/${parent}"
+    local terminal="${parent_state}/terminal.env"
+    local watchdog_stop="${parent_state}/watchdog-stop.env"
+    local policy="${parent_state}/policy.env"
+    local resume="${parent_state}/resume.env"
+    local marker='HELIUM_LINUX_PHASE=retained '
+    local suffix
+
+    [ -f "${resume}" ] && [ ! -L "${resume}" ] && \
+        [ -f "${watchdog_stop}" ] && [ ! -L "${watchdog_stop}" ] ||
+        return 1
+    [ "$(exact_value "${terminal}" state)" = terminal ] && \
+        [ "$(exact_value "${terminal}" result)" = failure ] && \
+        [ "$(exact_value "${terminal}" exit_code)" = 1 ] && \
+        [ "$(exact_value "${terminal}" reason)" = \
+            "host available-memory floor breached" ] && \
+        [ "$(exact_value "${watchdog_stop}" reason)" = \
+            "host available-memory floor breached" ] || return 1
+    [ "$(exact_value "${policy}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" command)" = "${requested_command}" ] && \
+        [ "$(exact_value "${policy}" build_jobs)" = 1 ] && \
+        [ "$(source_build_jobs "${parent}")" = 1 ] && \
+        [ "$(exact_value "${policy}" memory_high)" = 5G ] && \
+        [ "$(exact_value "${policy}" memory_max)" = 6G ] && \
+        [ "$(exact_value "${policy}" memory_swap_max)" = 2G ] && \
+        [ "$(exact_value "${policy}" wall_seconds)" = 28800 ] && \
+        [ "$(exact_value "${policy}" wall_class)" = standard ] && \
+        [ "$(exact_value "${resume}" command_mode)" = exact ] && \
+        [ "$(exact_value "${resume}" parent_terminal_mode)" = \
+            retained-linux-final-link-swap-recovery ] || return 1
+
+    suffix=${requested_command#*"${marker}"}
+    [ "${suffix}" != "${requested_command}" ] && \
+        [[ "${suffix}" != *"${marker}"* ]]
+}
+
 validate_continuation_state() {
     local child=$1
     shift
@@ -417,12 +456,22 @@ validate_continuation_state() {
     parent_terminal_mode=$(exact_value "${child_state}/resume.env" \
         parent_terminal_mode) || return 1
     if [ -e "${state_root}/${parent}/watchdog-stop.env" ]; then
-        [ "${parent_terminal_mode}" = retained-linux-final-link-swap-recovery ] && \
-            retained_linux_swap_recovery_parent \
-                "${parent}" "${requested_command}" || return 1
+        case "${parent_terminal_mode}" in
+            retained-linux-final-link-swap-recovery)
+                retained_linux_swap_recovery_parent \
+                    "${parent}" "${requested_command}" || return 1
+                ;;
+            retained-linux-final-link-lower-high-recovery)
+                retained_linux_lower_high_recovery_parent \
+                    "${parent}" "${requested_command}" || return 1
+                ;;
+            *) return 1 ;;
+        esac
     else
-        [ "${parent_terminal_mode}" != \
-            retained-linux-final-link-swap-recovery ] || return 1
+        case "${parent_terminal_mode}" in
+            retained-linux-final-link-swap-recovery|\
+            retained-linux-final-link-lower-high-recovery) return 1 ;;
+        esac
     fi
     [ ! -e "${state_root}/${parent}/cancel.env" ] && \
         [ ! -e "${state_root}/${parent}/cleanup.env" ] && \
@@ -667,6 +716,13 @@ validate_resume_parent() {
             return 1
         }
         terminal_mode=retained-linux-final-link-swap-recovery
+    elif retained_linux_lower_high_recovery_parent \
+        "${parent}" "${requested_command}"; then
+        [ "${command_mode}" = exact ] || {
+            echo "retained Linux lower-high recovery requires the exact parent command" >&2
+            return 1
+        }
+        terminal_mode=retained-linux-final-link-lower-high-recovery
     else
         [ "$(exact_value "${terminal}" state)" = terminal ] && \
             [ "$(exact_value "${terminal}" result)" = failure ] && \
@@ -756,9 +812,11 @@ validate_resume_parent() {
     }
     for forbidden in watchdog-stop.env cancel.env cleanup.env continued-by.env; do
         if [ "${forbidden}" = watchdog-stop.env ] && \
-            [ "${terminal_mode}" = \
-                retained-linux-final-link-swap-recovery ]; then
-            continue
+            { [ "${terminal_mode}" = \
+                retained-linux-final-link-swap-recovery ] || \
+              [ "${terminal_mode}" = \
+                retained-linux-final-link-lower-high-recovery ]; }; then
+                continue
         fi
         [ ! -e "${parent_state}/${forbidden}" ] || {
             echo "continuation parent has disqualifying state: ${forbidden}" >&2
@@ -1019,6 +1077,11 @@ start_job() {
         if [ "${continuation_terminal_mode}" = \
             retained-linux-final-link-swap-recovery ]; then
             memory_high=5G
+            memory_max=6G
+            memory_swap_max=2G
+        elif [ "${continuation_terminal_mode}" = \
+            retained-linux-final-link-lower-high-recovery ]; then
+            memory_high=4G
             memory_max=6G
             memory_swap_max=2G
         fi

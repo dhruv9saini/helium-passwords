@@ -500,6 +500,16 @@ and test job keeps zero build swap. A different watchdog reason, missing
 watchdog receipt, changed command, different Linux phase, different source-job
 count, or second child fails admission.
 
+If that exact swap recovery also stops at the same one-GiB host floor before
+either cgroup cap, one final lower-high child is admitted. Its parent must
+record `parent_terminal_mode=retained-linux-final-link-swap-recovery`, the
+exact retained command, one build job, the standard eight-hour wall,
+`memory_high=5G`, `memory_max=6G`, `memory_swap_max=2G`, and matching host-floor
+terminal and watchdog receipts. The child changes only `MemoryHigh` to `4G`.
+It keeps `MemoryMax=6G`, `MemorySwapMax=2G`, the one-GiB host floor, zero
+parallelism changes, and every other production limit. No further watchdog
+recovery class is admitted.
+
 Admission fails closed unless all of these statements are true:
 
 - the parent has one complete terminal record with `result=timeout` and

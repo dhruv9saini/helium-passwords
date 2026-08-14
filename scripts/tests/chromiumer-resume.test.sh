@@ -439,6 +439,57 @@ tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
 tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
     grep -Fq ' 1073741824 '
 
+cat >"${state_root}/${swap_child}/watchdog-stop.env" <<'EOF'
+watchdog_stopped_at=2026-07-23T08:08:00+00:00
+reason=host available-memory floor breached
+EOF
+cat >"${state_root}/${swap_child}/terminal.env" <<'EOF'
+state=terminal
+result=failure
+exit_code=1
+started_at_epoch=1784793840
+finished_at_epoch=1784794320
+duration_seconds=480
+reason=host available-memory floor breached
+EOF
+lower_high_child=resume-linux-lower-high-child
+resume_init "${swap_child}" "${lower_high_child}" -- \
+    "${linux_retained_command[@]}" >"${test_root}/linux-lower-high-child.out"
+exec 9>&-
+grep -Fqx 'command_mode=exact' \
+    "${state_root}/${lower_high_child}/resume.env"
+grep -Fqx \
+    'parent_terminal_mode=retained-linux-final-link-lower-high-recovery' \
+    "${state_root}/${lower_high_child}/resume.env"
+resume_start "${lower_high_child}" -- \
+    "${linux_retained_command[@]}" >"${test_root}/linux-lower-high-start.out"
+exec 9>&-
+grep -Fqx 'memory_high=4G' \
+    "${state_root}/${lower_high_child}/policy.env"
+grep -Fqx 'memory_max=6G' \
+    "${state_root}/${lower_high_child}/policy.env"
+grep -Fqx 'memory_swap_max=2G' \
+    "${state_root}/${lower_high_child}/policy.env"
+grep -Fqx 'watchdog_mem_floor_bytes=1073741824' \
+    "${state_root}/${lower_high_child}/policy.env"
+grep -Fqx 'wall_seconds=28800' \
+    "${state_root}/${lower_high_child}/policy.env"
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemoryHigh=4G'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemoryMax=6G'
+tail -n 2 "${RESUME_TEST_SYSTEMD_RUNS}" |
+    grep -Fq -- '--property=MemorySwapMax=2G'
+
+if (resume_init "${swap_child}" resume-linux-lower-high-second -- \
+    "${linux_retained_command[@]}") >"${test_root}/lower-high-second.out" \
+    2>"${test_root}/lower-high-second.error"; then
+    echo "Linux lower-high recovery admitted two children" >&2
+    exit 1
+fi
+grep -Fq 'disqualifying state: continued-by.env' \
+    "${test_root}/lower-high-second.error"
+
 swap_missing_root=resume-linux-swap-missing-root
 swap_missing_parent=resume-linux-swap-missing-parent
 prepare_linux_swap_parent "${swap_missing_root}" "${swap_missing_parent}"
