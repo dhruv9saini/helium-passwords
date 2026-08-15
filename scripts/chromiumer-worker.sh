@@ -1825,11 +1825,17 @@ extend_active_three_gib_wall() {
     local watch_dropin="${runtime_root}/${watch_unit}.d"
     local unit_override="${unit_dropin}/50-helium-wall-extension.conf"
     local watch_override="${watch_dropin}/50-helium-wall-extension.conf"
-    [ -d "${runtime_root}" ] && [ ! -L "${runtime_root}" ] && \
+    { [ ! -e "${runtime_root}" ] || \
+        { [ -d "${runtime_root}" ] && [ ! -L "${runtime_root}" ]; }; } && \
         { [ ! -e "${unit_dropin}" ] || [ ! -L "${unit_dropin}" ]; } && \
         { [ ! -e "${watch_dropin}" ] || [ ! -L "${watch_dropin}" ]; } && \
         [ ! -e "${unit_override}" ] && [ ! -e "${watch_override}" ] || {
         echo "unsafe or existing runtime wall-extension path" >&2
+        exit 1
+    }
+    mkdir -p "${runtime_root}"
+    [ -d "${runtime_root}" ] && [ ! -L "${runtime_root}" ] || {
+        echo "runtime wall-extension root is unsafe" >&2
         exit 1
     }
     mkdir -p "${unit_dropin}" "${watch_dropin}"

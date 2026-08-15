@@ -9,8 +9,7 @@ trap 'find "${test_root}" -depth -delete' EXIT
 # shellcheck source=../chromiumer-worker.sh
 source "${worker}"
 state_root="${test_root}/state"
-mkdir -p "${state_root}/wall-extension-job" "${test_root}/bin" \
-    "${test_root}/runtime-control"
+mkdir -p "${state_root}/wall-extension-job" "${test_root}/bin"
 export HELIUM_SYSTEMD_USER_CONTROL_ROOT="${test_root}/runtime-control"
 export WALL_EXTENSION_RELOADED="${test_root}/reloaded"
 export WALL_EXTENSION_ACTIVE="${test_root}/active"
