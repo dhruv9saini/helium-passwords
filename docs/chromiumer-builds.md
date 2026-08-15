@@ -561,6 +561,23 @@ host-floor terminal and watchdog receipts. A different parent or command and a
 second child fail admission. No further automatic watchdog recovery class is
 admitted after this three-GiB-high child.
 
+If this child remains healthy near its first 24-hour wall, one operator action
+can preserve the same live linker process for a second 24-hour segment:
+
+```sh
+scripts/chromiumer-job.sh extend-wall "$job"
+```
+
+The action admits only the active production three-GiB-high child with the
+exact single-thread command, healthy watchdog state, and no terminal,
+watchdog-stop, cancellation, or earlier extension receipt. It adds runtime
+drop-ins for exact 48-hour build and 48-hour-plus-five-minute watchdog limits.
+It reloads the user manager without restarting either unit. It then proves
+that both invocation IDs and active-entry timestamps are unchanged. The
+immutable original policy remains recorded, while `wall-extension.env`
+records the effective limits and live process identities. A second extension
+fails closed.
+
 Admission fails closed unless all of these statements are true:
 
 - the parent has one complete terminal record with `result=timeout` and

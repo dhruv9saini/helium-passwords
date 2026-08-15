@@ -1743,6 +1743,146 @@ watch_job() {
     cleanup_scan
 }
 
+extend_active_three_gib_wall() {
+    local job=$1
+    validate_job "${job}"
+    local state_dir="${state_root}/${job}"
+    local stage="${state_dir}/stage.env"
+    local policy="${state_dir}/policy.env"
+    local resume="${state_dir}/resume.env"
+    local health="${state_dir}/health.env"
+    local receipt="${state_dir}/wall-extension.env"
+    local unit="helium-job-${job}.service"
+    local watch_unit="helium-watch-${job}.service"
+
+    [ -d "${state_dir}" ] && [ ! -L "${state_dir}" ] && \
+        [ -f "${stage}" ] && [ ! -L "${stage}" ] && \
+        [ -f "${policy}" ] && [ ! -L "${policy}" ] && \
+        [ -f "${resume}" ] && [ ! -L "${resume}" ] && \
+        [ -f "${health}" ] && [ ! -L "${health}" ] || {
+        echo "three-GiB active wall extension has incomplete state" >&2
+        exit 1
+    }
+    [ ! -e "${receipt}" ] && [ ! -e "${state_dir}/terminal.env" ] && \
+        [ ! -e "${state_dir}/watchdog-stop.env" ] && \
+        [ ! -e "${state_dir}/cancel.env" ] || {
+        echo "three-GiB active wall extension has disqualifying state" >&2
+        exit 1
+    }
+    [ "$(exact_value "${stage}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" build_jobs)" = 1 ] && \
+        [ "$(exact_value "${policy}" source_build_jobs)" = 1 ] && \
+        [ "$(exact_value "${policy}" memory_high)" = 3G ] && \
+        [ "$(exact_value "${policy}" memory_max)" = 6G ] && \
+        [ "$(exact_value "${policy}" memory_swap_max)" = 3G ] && \
+        [ "$(exact_value "${policy}" wall_seconds)" = 86400 ] && \
+        [ "$(exact_value "${policy}" wall_class)" = \
+            extended-linux-three-gib-high-link ] && \
+        [ "$(exact_value "${resume}" command_mode)" = exact ] && \
+        [ "$(exact_value "${resume}" parent_terminal_mode)" = \
+            retained-linux-final-link-three-gib-high-recovery ] && \
+        [[ "$(exact_value "${policy}" command)" == \
+            *'CCC_OVERRIDE_OPTIONS=#\ +-Wl\,--threads=1 '* ]] || {
+        echo "job is not the exact three-GiB single-thread link" >&2
+        exit 1
+    }
+    [ "$(exact_value "${health}" status)" = ok ] || {
+        echo "three-GiB active wall extension requires healthy watchdog state" >&2
+        exit 1
+    }
+    systemctl --user --quiet is-active "${unit}" && \
+        systemctl --user --quiet is-active "${watch_unit}" || {
+        echo "three-GiB active wall extension requires both active units" >&2
+        exit 1
+    }
+
+    local unit_invocation watch_invocation unit_active_enter watch_active_enter
+    local unit_runtime watch_runtime
+    unit_invocation=$(systemctl --user show "${unit}" \
+        --property=InvocationID --value)
+    watch_invocation=$(systemctl --user show "${watch_unit}" \
+        --property=InvocationID --value)
+    unit_active_enter=$(systemctl --user show "${unit}" \
+        --property=ActiveEnterTimestampMonotonic --value)
+    watch_active_enter=$(systemctl --user show "${watch_unit}" \
+        --property=ActiveEnterTimestampMonotonic --value)
+    unit_runtime=$(systemctl --user show "${unit}" \
+        --property=RuntimeMaxUSec --value)
+    watch_runtime=$(systemctl --user show "${watch_unit}" \
+        --property=RuntimeMaxUSec --value)
+    [[ "${unit_invocation}" =~ ^[0-9a-f]{32}$ ]] && \
+        [[ "${watch_invocation}" =~ ^[0-9a-f]{32}$ ]] && \
+        [[ "${unit_active_enter}" =~ ^[1-9][0-9]*$ ]] && \
+        [[ "${watch_active_enter}" =~ ^[1-9][0-9]*$ ]] && \
+        [ "${unit_runtime}" = 1d ] && [ "${watch_runtime}" = '1d 5min' ] || {
+        echo "three-GiB active wall extension found unexpected live properties" >&2
+        exit 1
+    }
+
+    local runtime_root=${HELIUM_SYSTEMD_USER_CONTROL_ROOT:-"/run/user/$(id -u)/systemd/user.control"}
+    local unit_dropin="${runtime_root}/${unit}.d"
+    local watch_dropin="${runtime_root}/${watch_unit}.d"
+    local unit_override="${unit_dropin}/50-helium-wall-extension.conf"
+    local watch_override="${watch_dropin}/50-helium-wall-extension.conf"
+    [ -d "${runtime_root}" ] && [ ! -L "${runtime_root}" ] && \
+        { [ ! -e "${unit_dropin}" ] || [ ! -L "${unit_dropin}" ]; } && \
+        { [ ! -e "${watch_dropin}" ] || [ ! -L "${watch_dropin}" ]; } && \
+        [ ! -e "${unit_override}" ] && [ ! -e "${watch_override}" ] || {
+        echo "unsafe or existing runtime wall-extension path" >&2
+        exit 1
+    }
+    mkdir -p "${unit_dropin}" "${watch_dropin}"
+    local unit_temp watch_temp
+    unit_temp=$(mktemp "${unit_dropin}/.helium-wall-extension.XXXXXX")
+    watch_temp=$(mktemp "${watch_dropin}/.helium-wall-extension.XXXXXX")
+    printf '[Service]\nRuntimeMaxSec=172800\n' >"${unit_temp}"
+    printf '[Service]\nRuntimeMaxSec=173100\n' >"${watch_temp}"
+    chmod 600 "${unit_temp}" "${watch_temp}"
+    mv "${unit_temp}" "${unit_override}"
+    mv "${watch_temp}" "${watch_override}"
+    systemctl --user daemon-reload
+
+    systemctl --user --quiet is-active "${unit}" && \
+        systemctl --user --quiet is-active "${watch_unit}" && \
+        [ "$(systemctl --user show "${unit}" \
+            --property=InvocationID --value)" = "${unit_invocation}" ] && \
+        [ "$(systemctl --user show "${watch_unit}" \
+            --property=InvocationID --value)" = "${watch_invocation}" ] && \
+        [ "$(systemctl --user show "${unit}" \
+            --property=ActiveEnterTimestampMonotonic --value)" = \
+            "${unit_active_enter}" ] && \
+        [ "$(systemctl --user show "${watch_unit}" \
+            --property=ActiveEnterTimestampMonotonic --value)" = \
+            "${watch_active_enter}" ] && \
+        [ "$(systemctl --user show "${unit}" \
+            --property=RuntimeMaxUSec --value)" = 2d ] && \
+        [ "$(systemctl --user show "${watch_unit}" \
+            --property=RuntimeMaxUSec --value)" = '2d 5min' ] || {
+        echo "three-GiB active wall extension verification failed" >&2
+        exit 1
+    }
+
+    local receipt_temp
+    receipt_temp=$(mktemp "${state_dir}/.wall-extension.XXXXXX")
+    {
+        printf 'extended_at=%s\n' "$(date --iso-8601=seconds)"
+        printf 'reason=preserve active single-thread final link CPU progress\n'
+        printf 'original_wall_seconds=86400\n'
+        printf 'effective_wall_seconds=172800\n'
+        printf 'original_watchdog_wall_seconds=86700\n'
+        printf 'effective_watchdog_wall_seconds=173100\n'
+        printf 'unit_invocation_id=%s\n' "${unit_invocation}"
+        printf 'watch_invocation_id=%s\n' "${watch_invocation}"
+        printf 'unit_active_enter_monotonic=%s\n' "${unit_active_enter}"
+        printf 'watch_active_enter_monotonic=%s\n' "${watch_active_enter}"
+    } >"${receipt_temp}"
+    chmod 600 "${receipt_temp}"
+    mv "${receipt_temp}" "${receipt}"
+    printf 'job=%s\nstate=active\neffective_wall_seconds=172800\n' \
+        "${job}"
+}
+
 status_job() {
     local job=$1
     validate_job "${job}"
@@ -1759,7 +1899,7 @@ status_job() {
         "${state_dir}" "${unit}"
     for file in stage.env resume.env policy.env continued-by.env \
         watchdog-ready.env health.env disk-scan-retry.env result.env \
-        terminal.env watchdog-stop.env cancel.env artifact-returned.env \
+        terminal.env watchdog-stop.env cancel.env wall-extension.env artifact-returned.env \
         cleanup.env workspace-cleaned-by.env; do
         if [ -f "${state_dir}/${file}" ]; then
             printf -- '--- %s ---\n' "${file}"
@@ -1986,6 +2126,7 @@ case "${command}" in
     run) run_job "$@" ;;
     watch) watch_job "$@" ;;
     status) status_job "$@" ;;
+    extend-wall) extend_active_three_gib_wall "$@" ;;
     limits) limits_job "$@" ;;
     logs) logs_job "$@" ;;
     claim) claim_job_ownership "$@" ;;

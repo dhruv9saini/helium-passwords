@@ -23,6 +23,7 @@ Commands:
   stage <job-id> <disk-budget-gib> [repository]
   start <job-id> --summary <text> --next <success-action> -- <command> [arguments...]
   resume <timed-out-job> <new-job-id> --summary <text> --next <success-action> -- <command> [arguments...]
+  extend-wall <job-id>
   status <job-id>
   terminal <job-id>
   limits <job-id>
@@ -384,6 +385,13 @@ resume() (
     trap - EXIT
 )
 
+extend_wall() {
+    local job=$1
+    validate_job "${job}"
+    install_worker
+    remote_exec "${remote_worker}" extend-wall "${job}"
+}
+
 status() {
     install_worker
     remote_exec "${remote_worker}" status "$1"
@@ -539,6 +547,7 @@ case "${command}" in
     stage) [ "$#" -ge 2 ] && [ "$#" -le 3 ] || exit 2; stage "$@" ;;
     start) [ "$#" -ge 7 ] || exit 2; start "$@" ;;
     resume) [ "$#" -ge 8 ] || exit 2; resume "$@" ;;
+    extend-wall) [ "$#" -eq 1 ] || exit 2; extend_wall "$@" ;;
     status) [ "$#" -eq 1 ] || exit 2; status "$@" ;;
     terminal) [ "$#" -eq 1 ] || exit 2; terminal "$@" ;;
     limits) [ "$#" -eq 1 ] || exit 2; limits "$@" ;;
