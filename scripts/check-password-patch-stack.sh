@@ -34,6 +34,7 @@ files=(
     chrome/browser/password_manager/chrome_password_manager_client.cc
     chrome/browser/password_manager/factories/profile_password_store_factory.cc
     components/autofill/core/common/autofill_prefs.cc
+    components/password_manager/core/browser/password_feature_manager_impl.cc
     components/password_manager/core/browser/password_manager.cc
     components/payments/core/payment_prefs.cc
     chrome/browser/resources/settings/settings_menu/settings_menu.html
@@ -96,6 +97,16 @@ grep -q 'kCredentialsEnableService, true' \
     "${fixture}/components/password_manager/core/browser/password_manager.cc"
 grep -q 'kCredentialsEnableAutosignin, true' \
     "${fixture}/components/password_manager/core/browser/password_manager.cc"
+grep -A3 -F 'bool PasswordFeatureManagerImpl::IsGenerationEnabled() const {' \
+    "${fixture}/components/password_manager/core/browser/password_feature_manager_impl.cc" | \
+    grep -Fq '  return true;'
+if sed -n \
+    '/bool PasswordFeatureManagerImpl::IsGenerationEnabled() const {/,/^}/p' \
+    "${fixture}/components/password_manager/core/browser/password_feature_manager_impl.cc" | \
+    grep -q 'GetPasswordSyncState'; then
+    echo "native password generation still depends on Google Sync" >&2
+    exit 1
+fi
 grep -q 'ChromePasswordManagerClient::IsSavingAndFillingEnabled' \
     "${fixture}/chrome/browser/password_manager/chrome_password_manager_client.cc"
 grep -q 'ChromePasswordManagerClient::PromptUserToSaveOrUpdatePassword' \
