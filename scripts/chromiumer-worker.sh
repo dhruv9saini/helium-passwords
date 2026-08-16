@@ -223,6 +223,133 @@ command_text() {
     printf '%s\n' "${text}"
 }
 
+retained_password_generation_correction_command() {
+    local owner=$1
+    shift
+    [ "$#" -eq 14 ] && \
+        [ "$1" = scripts/chromiumer-nix.sh ] && \
+        [ "$2" = run ] && [ "$3" = -- ] && [ "$4" = env ] && \
+        [ "$5" = HELIUM_LINUX_PHASE=retained ] && \
+        [ "$6" = 'CCC_OVERRIDE_OPTIONS=# +-Wl,--threads=1' ] && \
+        [ "$7" = bash ] && \
+        [ "$8" = scripts/correct-retained-linux-password-generation.sh ] && \
+        [ "$9" = helium-passwords ] && [ "${10}" = x86_64 ] && \
+        [ "${11}" = linux-x86_64 ] && [ "${12}" = "${owner}" ] && \
+        [[ "${13}" =~ ^[a-z0-9][a-z0-9-]{0,47}$ ]] && \
+        [[ "${14}" =~ ^[a-z0-9][a-z0-9-]{0,47}$ ]] && \
+        [ "${13}" != "${14}" ] && [ "${13}" != "${owner}" ] && \
+        [ "${14}" != "${owner}" ]
+}
+
+apply_retained_password_generation_correction_policy() {
+    memory_high=3328M
+    memory_max=6G
+    memory_swap_max=3G
+    wall_seconds=172800
+    wall_class=retained-password-generation-correction
+}
+
+admit_retained_password_generation_correction() {
+    local job=$1
+    local owner=$2
+    shift 2
+    retained_password_generation_correction_command "${owner}" "$@" || return 1
+    local baseline_build=${13}
+    local baseline_return=${14}
+    local baseline_owner baseline_root current_root artifact receipt returned
+    local terminal relief manifest baseline_manifest target source_state
+    baseline_owner=$(workspace_owner "${baseline_build}") || return 1
+    [ "$(workspace_owner "${baseline_return}")" = "${baseline_owner}" ] && \
+        [ "${baseline_owner}" != "${owner}" ] || return 1
+    baseline_root="${work_root}/${baseline_owner}/source"
+    current_root="${work_root}/${owner}/source"
+    [ -d "${baseline_root}" ] && [ ! -L "${baseline_root}" ] && \
+        [ -d "${current_root}" ] && [ ! -L "${current_root}" ] || return 1
+    baseline_root=$(realpath -e "${baseline_root}") || return 1
+    current_root=$(realpath -e "${current_root}") || return 1
+    require_contained_path "${baseline_root}" "$(realpath -e "${work_root}")"
+    require_contained_path "${current_root}" "$(realpath -e "${work_root}")"
+
+    manifest="${state_root}/${owner}/source.manifest"
+    baseline_manifest="${state_root}/${baseline_owner}/source.manifest"
+    validate_source_manifest "${manifest}" && \
+        validate_source_manifest "${baseline_manifest}" || return 1
+    [ "$(exact_value "${manifest}" commit)" = \
+        "$(git -C "${current_root}" rev-parse HEAD)" ] && \
+        [ "$(exact_value "${manifest}" tree)" = \
+        "$(git -C "${current_root}" rev-parse 'HEAD^{tree}')" ] && \
+        [ "$(exact_value "${manifest}" commit)" != \
+        77ecad17303225cbfdf9043a4bab040f411402b7 ] && \
+        [ "$(exact_value "${manifest}" helium_submodule)" = \
+        81bb0219ad6df2adefd12f42ca79198f049f1497 ] && \
+        [ "$(exact_value "${baseline_manifest}" commit)" = \
+        77ecad17303225cbfdf9043a4bab040f411402b7 ] && \
+        [ "$(exact_value "${baseline_manifest}" tree)" = \
+        f434ae597adc7a4bb297a79e985785c39107e80b ] && \
+        [ "$(exact_value "${baseline_manifest}" helium_submodule)" = \
+        81bb0219ad6df2adefd12f42ca79198f049f1497 ] && \
+        [ -z "$(git -C "${current_root}" status \
+            --porcelain --untracked-files=all)" ] && \
+        [ -z "$(git -C "${baseline_root}" status \
+            --porcelain --untracked-files=no)" ] || return 1
+
+    terminal="${state_root}/${baseline_return}/terminal.env"
+    returned="${state_root}/${baseline_return}/artifact-returned.env"
+    relief="${state_root}/${baseline_return}/link-memory-relief.env"
+    artifact="${baseline_root}/.build/artifacts/helium-passwords-linux-x86_64.tar.xz"
+    receipt="${baseline_root}/.build/artifacts/helium-passwords-linux-x86_64.receipt.env"
+    [ "$(exact_value "${terminal}" state)" = terminal ] && \
+        [ "$(exact_value "${terminal}" result)" = success ] && \
+        [ "$(exact_value "${terminal}" exit_code)" = 0 ] && \
+        [ "$(exact_value "${relief}" effective_memory_high_bytes)" = \
+        3489660928 ] && \
+        [ "$(exact_value "${relief}" memory_max_bytes)" = 6442450944 ] && \
+        [ "$(exact_value "${relief}" memory_swap_max_bytes)" = \
+        3221225472 ] && \
+        [ -f "${artifact}" ] && [ ! -L "${artifact}" ] && \
+        [ -f "${receipt}" ] && [ ! -L "${receipt}" ] && \
+        [ "$(exact_value "${returned}" sha256)" = \
+        "$(sha256sum "${artifact}" | awk '{print $1}')" ] && \
+        [ "$(exact_value "${receipt}" artifact_sha256)" = \
+        "$(exact_value "${returned}" sha256)" ] && \
+        [ "$(exact_value "${receipt}" build_job_id)" = \
+        "${baseline_build}" ] && \
+        [ "$(exact_value "${receipt}" helium_passwords_commit)" = \
+        77ecad17303225cbfdf9043a4bab040f411402b7 ] && \
+        [ -f "${state_root}/${baseline_build}/full-graph-boundary.env" ] && \
+        [ "$(stat -c %a \
+            "${state_root}/${baseline_build}/full-graph-boundary.env")" = 400 ] ||
+        return 1
+    ! systemctl --user --quiet is-active \
+        "helium-job-${baseline_return}.service" || return 1
+    [ -x "${current_root}/scripts/correct-retained-linux-password-generation.sh" ] && \
+        [ "$(sha256sum \
+            "${current_root}/patches/helium-passwords/enable-password-generation-without-google-sync.patch" |
+            awk '{print $1}')" = \
+        64e81e3a1315b831f1aa1cb4da54b78bf2082bef7da72c894a9f2f7c29249383 ] ||
+        return 1
+
+    source_state="${state_root}/${owner}"
+    target="${baseline_root}/build/platforms/linux/build/src/components/password_manager/core/browser/password_feature_manager_impl.cc"
+    [ -f "${target}" ] && [ ! -L "${target}" ] || return 1
+    if [ -f "${source_state}/password-generation-correction-preflight.env" ]; then
+        [ "$(sha256sum "${target}" | awk '{print $1}')" = \
+            fb547a2df142dbe6ae5838fcfa172e86b966214e869e6cbe4f876f6e4cb399d0 ] ||
+            return 1
+    elif [ -f "${source_state}/password-generation-correction-intent.env" ]; then
+        case "$(sha256sum "${target}" | awk '{print $1}')" in
+            35d0a50bcb4f5eeb86a56133d80f8500c49b8691c7e955c9236753e98c5037a9|\
+            fb547a2df142dbe6ae5838fcfa172e86b966214e869e6cbe4f876f6e4cb399d0) ;;
+            *) return 1 ;;
+        esac
+    else
+        [ "$(sha256sum "${target}" | awk '{print $1}')" = \
+            35d0a50bcb4f5eeb86a56133d80f8500c49b8691c7e955c9236753e98c5037a9 ] ||
+            return 1
+    fi
+    [ "${job}" = "${owner}" ] || [ -f "${state_root}/${job}/resume.env" ]
+}
+
 continuation_command_mode() {
     local parent_command=$1
     local requested_command=$2
@@ -1248,6 +1375,14 @@ start_job() {
         }
     else
         source_jobs=${build_jobs}
+    fi
+    if retained_password_generation_correction_command "${owner}" "$@"; then
+        admit_retained_password_generation_correction \
+            "${job}" "${owner}" "$@" || {
+            echo "retained password generation correction admission failed" >&2
+            exit 1
+        }
+        apply_retained_password_generation_correction_policy
     fi
     local admitted_wall_seconds=${wall_seconds}
     local admitted_wall_class=${wall_class}

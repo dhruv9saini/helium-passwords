@@ -60,7 +60,8 @@ boundary_value() {
 boundary_schema=$(boundary_value schema)
 [[ "$boundary_schema" == helium-fresh-full-graph-boundary-v1 ||
     "$boundary_schema" == helium-retained-full-graph-repair-boundary-v1 ||
-    "$boundary_schema" == helium-retained-full-graph-node-repair-boundary-v1 ]] || {
+    "$boundary_schema" == helium-retained-full-graph-node-repair-boundary-v1 ||
+    "$boundary_schema" == helium-retained-password-generation-correction-boundary-v1 ]] || {
   echo "unsupported graph boundary receipt" >&2
   exit 1
 }

@@ -151,6 +151,33 @@ const NODE_REPAIR_BOUNDARY_FIELDS = Object.freeze([
   "node_repair_completed_at",
 ]);
 
+const PASSWORD_GENERATION_CORRECTION_BOUNDARY_FIELDS = Object.freeze([
+  ...FRESH_BOUNDARY_FIELDS,
+  "baseline_artifact_sha256",
+  "baseline_boundary_sha256",
+  "baseline_browser_sha256",
+  "baseline_build_job",
+  "baseline_deployment_receipt_sha256",
+  "baseline_full_graph_receipt_sha256",
+  "baseline_return_job",
+  "baseline_source_commit",
+  "baseline_source_tree",
+  "baseline_verification_receipt_sha256",
+  "build_completed_at",
+  "build_exit_code",
+  "build_started_at",
+  "corrected_browser_sha256",
+  "corrected_source_commit",
+  "corrected_source_tree",
+  "correction_after_sha256",
+  "correction_before_sha256",
+  "correction_patch",
+  "correction_patch_sha256",
+  "correction_target",
+  "correction_validation",
+  "reuse_scope",
+]);
+
 const HASH_BINDINGS = Object.freeze({
   build_ninja_sha256: "build.ninja",
   toolchain_ninja_sha256: "toolchain.ninja",
@@ -417,7 +444,10 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
       ? REPAIR_BOUNDARY_FIELDS
       : boundarySchema === "helium-retained-full-graph-node-repair-boundary-v1"
         ? NODE_REPAIR_BOUNDARY_FIELDS
-      : null;
+        : boundarySchema ===
+            "helium-retained-password-generation-correction-boundary-v1"
+          ? PASSWORD_GENERATION_CORRECTION_BOUNDARY_FIELDS
+          : null;
   if (!boundaryFields) throw new Error("Linux full-graph boundary schema is unsupported");
   const boundary = parseEnv(boundaryRaw, boundaryFields,
     "Linux full-graph boundary receipt");
@@ -517,6 +547,66 @@ export async function auditLinuxFullGraphEvidence(directory, expected = {}) {
             Date.parse(boundary.get("build_started_at"))) {
         throw new Error("retained Linux Node repair provenance is invalid");
       }
+    }
+  } else if (boundarySchema ===
+      "helium-retained-password-generation-correction-boundary-v1") {
+    for (const field of [
+      "baseline_artifact_sha256", "baseline_boundary_sha256",
+      "baseline_browser_sha256", "baseline_deployment_receipt_sha256",
+      "baseline_full_graph_receipt_sha256",
+      "baseline_verification_receipt_sha256", "corrected_browser_sha256",
+      "correction_after_sha256", "correction_before_sha256",
+      "correction_patch_sha256",
+    ]) requireHash(boundary.get(field), `password generation correction ${field}`);
+    for (const field of [
+      "baseline_source_commit", "corrected_source_commit",
+    ]) requireCommit(boundary.get(field), `password generation correction ${field}`);
+    for (const field of ["baseline_source_tree", "corrected_source_tree"]) {
+      if (!COMMIT.test(boundary.get(field) || "")) {
+        throw new Error(`password generation correction ${field} is not a Git tree`);
+      }
+    }
+    if (!JOB.test(boundary.get("baseline_build_job") || "") ||
+        !JOB.test(boundary.get("baseline_return_job") || "") ||
+        boundary.get("baseline_build_job") === boundary.get("job") ||
+        boundary.get("baseline_return_job") === boundary.get("job") ||
+        boundary.get("baseline_build_job") ===
+          boundary.get("baseline_return_job") ||
+        boundary.get("baseline_source_commit") ===
+          boundary.get("corrected_source_commit") ||
+        boundary.get("baseline_source_tree") ===
+          boundary.get("corrected_source_tree") ||
+        boundary.get("baseline_browser_sha256") ===
+          boundary.get("corrected_browser_sha256") ||
+        boundary.get("corrected_source_commit") !==
+          receipt.get("helium_passwords_commit") ||
+        boundary.get("correction_before_sha256") ===
+          boundary.get("correction_after_sha256") ||
+        boundary.get("correction_patch") !==
+          "patches/helium-passwords/enable-password-generation-without-google-sync.patch" ||
+        boundary.get("correction_target") !==
+          "components/password_manager/core/browser/password_feature_manager_impl.cc" ||
+        boundary.get("baseline_source_commit") !==
+          "77ecad17303225cbfdf9043a4bab040f411402b7" ||
+        boundary.get("baseline_source_tree") !==
+          "f434ae597adc7a4bb297a79e985785c39107e80b" ||
+        boundary.get("correction_before_sha256") !==
+          "35d0a50bcb4f5eeb86a56133d80f8500c49b8691c7e955c9236753e98c5037a9" ||
+        boundary.get("correction_after_sha256") !==
+          "fb547a2df142dbe6ae5838fcfa172e86b966214e869e6cbe4f876f6e4cb399d0" ||
+        boundary.get("correction_patch_sha256") !==
+          "64e81e3a1315b831f1aa1cb4da54b78bf2082bef7da72c894a9f2f7c29249383" ||
+        boundary.get("correction_validation") !== "passed" ||
+        boundary.get("reuse_scope") !==
+          "one-source-file-existing-completed-graph" ||
+        boundary.get("build_exit_code") !== "0" ||
+        !TIMESTAMP.test(boundary.get("build_started_at") || "") ||
+        !TIMESTAMP.test(boundary.get("build_completed_at") || "") ||
+        Date.parse(boundary.get("build_started_at")) >=
+          Date.parse(boundary.get("build_completed_at")) ||
+        Date.parse(boundary.get("build_completed_at")) >
+          Date.parse(receipt.get("captured_at"))) {
+      throw new Error("retained password generation correction provenance is invalid");
     }
   }
   const query = await fsp.readFile(path.join(root, "ninja-query.txt"), "utf8");
