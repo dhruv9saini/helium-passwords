@@ -24,6 +24,7 @@ Commands:
   start <job-id> --summary <text> --next <success-action> -- <command> [arguments...]
   resume <timed-out-job> <new-job-id> --summary <text> --next <success-action> -- <command> [arguments...]
   extend-wall <job-id>
+  relieve-link-memory <job-id>
   status <job-id>
   terminal <job-id>
   limits <job-id>
@@ -392,6 +393,13 @@ extend_wall() {
     remote_exec "${remote_worker}" extend-wall "${job}"
 }
 
+relieve_link_memory() {
+    local job=$1
+    validate_job "${job}"
+    install_worker
+    remote_exec "${remote_worker}" relieve-link-memory "${job}"
+}
+
 status() {
     install_worker
     remote_exec "${remote_worker}" status "$1"
@@ -548,6 +556,7 @@ case "${command}" in
     start) [ "$#" -ge 7 ] || exit 2; start "$@" ;;
     resume) [ "$#" -ge 8 ] || exit 2; resume "$@" ;;
     extend-wall) [ "$#" -eq 1 ] || exit 2; extend_wall "$@" ;;
+    relieve-link-memory) [ "$#" -eq 1 ] || exit 2; relieve_link_memory "$@" ;;
     status) [ "$#" -eq 1 ] || exit 2; status "$@" ;;
     terminal) [ "$#" -eq 1 ] || exit 2; terminal "$@" ;;
     limits) [ "$#" -eq 1 ] || exit 2; limits "$@" ;;

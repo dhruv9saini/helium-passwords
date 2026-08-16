@@ -578,6 +578,23 @@ immutable original policy remains recorded, while `wall-extension.env`
 records the effective limits and live process identities. A second extension
 fails closed.
 
+If that preserved linker remains above its three-GiB soft memory limit, the
+operator can remove only the active `memory.high` throttle:
+
+```sh
+scripts/chromiumer-job.sh relieve-link-memory "$job"
+```
+
+This action requires the same active single-thread process, the successful
+wall-extension receipt, a healthy watchdog, zero memory-max or OOM events, and
+at least 1.375 GiB of live host available memory. It changes only
+`MemoryHigh` from 3 GiB to 3.25 GiB. The 6 GiB hard memory limit, 3 GiB swap
+limit, 1 GiB host floor, command, graph, job count, LLD thread count, and wall
+limit stay unchanged. The 256 MiB increase leaves at least a 128 MiB arithmetic
+margin above the host floor at admission. The action proves both invocation
+IDs and active-entry timestamps are unchanged, then writes
+`link-memory-relief.env`. A second action or any changed identity fails closed.
+
 Admission fails closed unless all of these statements are true:
 
 - the parent has one complete terminal record with `result=timeout` and

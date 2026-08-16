@@ -88,7 +88,8 @@ profile() {
 
 meminfo_bytes() {
     local field=$1
-    awk -v field="${field}:" '$1 == field { print $2 * 1024; exit }' /proc/meminfo
+    awk -v field="${field}:" '$1 == field { print $2 * 1024; exit }' \
+        "${HELIUM_MEMINFO_PATH:-/proc/meminfo}"
 }
 
 disk_usage_bytes() {
@@ -1889,6 +1890,199 @@ extend_active_three_gib_wall() {
         "${job}"
 }
 
+relieve_active_three_gib_link_memory() {
+    local job=$1
+    validate_job "${job}"
+    local state_dir="${state_root}/${job}"
+    local stage="${state_dir}/stage.env"
+    local policy="${state_dir}/policy.env"
+    local resume="${state_dir}/resume.env"
+    local health="${state_dir}/health.env"
+    local wall_receipt="${state_dir}/wall-extension.env"
+    local receipt="${state_dir}/link-memory-relief.env"
+    local unit="helium-job-${job}.service"
+    local watch_unit="helium-watch-${job}.service"
+
+    [ -d "${state_dir}" ] && [ ! -L "${state_dir}" ] && \
+        [ -f "${stage}" ] && [ ! -L "${stage}" ] && \
+        [ -f "${policy}" ] && [ ! -L "${policy}" ] && \
+        [ -f "${resume}" ] && [ ! -L "${resume}" ] && \
+        [ -f "${health}" ] && [ ! -L "${health}" ] && \
+        [ -f "${wall_receipt}" ] && [ ! -L "${wall_receipt}" ] || {
+        echo "three-GiB link memory relief has incomplete state" >&2
+        exit 1
+    }
+    [ ! -e "${receipt}" ] && [ ! -e "${state_dir}/terminal.env" ] && \
+        [ ! -e "${state_dir}/watchdog-stop.env" ] && \
+        [ ! -e "${state_dir}/cancel.env" ] && \
+        [ ! -e "${state_dir}/cleanup.env" ] || {
+        echo "three-GiB link memory relief has disqualifying state" >&2
+        exit 1
+    }
+    [ "$(exact_value "${stage}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" profile)" = production ] && \
+        [ "$(exact_value "${policy}" build_jobs)" = 1 ] && \
+        [ "$(exact_value "${policy}" source_build_jobs)" = 1 ] && \
+        [ "$(exact_value "${policy}" memory_high)" = 3G ] && \
+        [ "$(exact_value "${policy}" memory_max)" = 6G ] && \
+        [ "$(exact_value "${policy}" memory_swap_max)" = 3G ] && \
+        [ "$(exact_value "${policy}" wall_seconds)" = 86400 ] && \
+        [ "$(exact_value "${policy}" wall_class)" = \
+            extended-linux-three-gib-high-link ] && \
+        [ "$(exact_value "${resume}" command_mode)" = exact ] && \
+        [ "$(exact_value "${resume}" parent_terminal_mode)" = \
+            retained-linux-final-link-three-gib-high-recovery ] && \
+        [[ "$(exact_value "${policy}" command)" == \
+            *'CCC_OVERRIDE_OPTIONS=#\ +-Wl\,--threads=1 '* ]] || {
+        echo "job is not the exact three-GiB single-thread link" >&2
+        exit 1
+    }
+    [ "$(exact_value "${health}" status)" = ok ] || {
+        echo "three-GiB link memory relief requires healthy watchdog state" >&2
+        exit 1
+    }
+    systemctl --user --quiet is-active "${unit}" && \
+        systemctl --user --quiet is-active "${watch_unit}" || {
+        echo "three-GiB link memory relief requires both active units" >&2
+        exit 1
+    }
+
+    local unit_invocation watch_invocation unit_active_enter watch_active_enter
+    local unit_runtime watch_runtime memory_high memory_max memory_swap_max
+    local control_group cgroup_root cgroup_dir memory_current
+    local host_available admission_available high_events max_events oom_events
+    local oom_kill_events
+    unit_invocation=$(systemctl --user show "${unit}" \
+        --property=InvocationID --value)
+    watch_invocation=$(systemctl --user show "${watch_unit}" \
+        --property=InvocationID --value)
+    unit_active_enter=$(systemctl --user show "${unit}" \
+        --property=ActiveEnterTimestampMonotonic --value)
+    watch_active_enter=$(systemctl --user show "${watch_unit}" \
+        --property=ActiveEnterTimestampMonotonic --value)
+    unit_runtime=$(systemctl --user show "${unit}" \
+        --property=RuntimeMaxUSec --value)
+    watch_runtime=$(systemctl --user show "${watch_unit}" \
+        --property=RuntimeMaxUSec --value)
+    memory_high=$(systemctl --user show "${unit}" \
+        --property=MemoryHigh --value)
+    memory_max=$(systemctl --user show "${unit}" \
+        --property=MemoryMax --value)
+    memory_swap_max=$(systemctl --user show "${unit}" \
+        --property=MemorySwapMax --value)
+    control_group=$(systemctl --user show "${unit}" \
+        --property=ControlGroup --value)
+    [[ "${unit_invocation}" =~ ^[0-9a-f]{32}$ ]] && \
+        [[ "${watch_invocation}" =~ ^[0-9a-f]{32}$ ]] && \
+        [[ "${unit_active_enter}" =~ ^[1-9][0-9]*$ ]] && \
+        [[ "${watch_active_enter}" =~ ^[1-9][0-9]*$ ]] && \
+        [ "${unit_runtime}" = 2d ] && [ "${watch_runtime}" = '2d 5min' ] && \
+        [ "${memory_high}" = 3221225472 ] && \
+        [ "${memory_max}" = 6442450944 ] && \
+        [ "${memory_swap_max}" = 3221225472 ] && \
+        [[ "${control_group}" == */"${unit}" ]] && \
+        [[ "${control_group}" != *".."* && "${control_group}" != *$'\n'* ]] || {
+        echo "three-GiB link memory relief found unexpected live properties" >&2
+        exit 1
+    }
+    [ "$(exact_value "${wall_receipt}" unit_invocation_id)" = \
+        "${unit_invocation}" ] && \
+        [ "$(exact_value "${wall_receipt}" watch_invocation_id)" = \
+            "${watch_invocation}" ] && \
+        [ "$(exact_value "${wall_receipt}" unit_active_enter_monotonic)" = \
+            "${unit_active_enter}" ] && \
+        [ "$(exact_value "${wall_receipt}" watch_active_enter_monotonic)" = \
+            "${watch_active_enter}" ] || {
+        echo "three-GiB link memory relief found changed wall-extension identity" >&2
+        exit 1
+    }
+
+    cgroup_root=${HELIUM_CGROUP_ROOT:-/sys/fs/cgroup}
+    [ -d "${cgroup_root}" ] && [ ! -L "${cgroup_root}" ] || {
+        echo "three-GiB link memory relief found an unsafe cgroup root" >&2
+        exit 1
+    }
+    cgroup_dir="${cgroup_root}${control_group}"
+    [ -d "${cgroup_dir}" ] && [ ! -L "${cgroup_dir}" ] && \
+        [ -f "${cgroup_dir}/memory.current" ] && \
+        [ -f "${cgroup_dir}/memory.events" ] || {
+        echo "three-GiB link memory relief cannot inspect the build cgroup" >&2
+        exit 1
+    }
+    link_memory_event() {
+        awk -v key="$1" '$1 == key {count++; value=$2}
+            END {if (count == 1 && value ~ /^[0-9]+$/) print value; else exit 1}' \
+            "${cgroup_dir}/memory.events"
+    }
+    memory_current=$(<"${cgroup_dir}/memory.current")
+    high_events=$(link_memory_event high)
+    max_events=$(link_memory_event max)
+    oom_events=$(link_memory_event oom)
+    oom_kill_events=$(link_memory_event oom_kill)
+    host_available=$(meminfo_bytes MemAvailable)
+    admission_available=$((11 * 1024 * 1024 * 1024 / 8))
+    [[ "${memory_current}" =~ ^[0-9]+$ ]] && \
+        [[ "${host_available}" =~ ^[0-9]+$ ]] && \
+        [ "${memory_current}" -gt 3221225472 ] && \
+        [ "${high_events}" -gt 0 ] && [ "${max_events}" -eq 0 ] && \
+        [ "${oom_events}" -eq 0 ] && [ "${oom_kill_events}" -eq 0 ] && \
+        [ "${host_available}" -ge "${admission_available}" ] || {
+        echo "three-GiB link memory relief lacks safe live pressure evidence" >&2
+        exit 1
+    }
+
+    if ! systemctl --user set-property --runtime "${unit}" MemoryHigh=3328M || \
+        ! systemctl --user --quiet is-active "${unit}" || \
+        ! systemctl --user --quiet is-active "${watch_unit}" || \
+        [ "$(systemctl --user show "${unit}" \
+            --property=InvocationID --value)" != "${unit_invocation}" ] || \
+        [ "$(systemctl --user show "${watch_unit}" \
+            --property=InvocationID --value)" != "${watch_invocation}" ] || \
+        [ "$(systemctl --user show "${unit}" \
+            --property=ActiveEnterTimestampMonotonic --value)" != \
+            "${unit_active_enter}" ] || \
+        [ "$(systemctl --user show "${watch_unit}" \
+            --property=ActiveEnterTimestampMonotonic --value)" != \
+            "${watch_active_enter}" ] || \
+        [ "$(systemctl --user show "${unit}" \
+            --property=MemoryHigh --value)" != 3489660928 ] || \
+        [ "$(systemctl --user show "${unit}" \
+            --property=MemoryMax --value)" != 6442450944 ] || \
+        [ "$(systemctl --user show "${unit}" \
+            --property=MemorySwapMax --value)" != 3221225472 ]; then
+        systemctl --user set-property --runtime "${unit}" MemoryHigh=3G \
+            >/dev/null 2>&1 || true
+        echo "three-GiB link memory relief verification failed" >&2
+        exit 1
+    fi
+
+    local receipt_temp
+    receipt_temp=$(mktemp "${state_dir}/.link-memory-relief.XXXXXX")
+    {
+        printf 'relieved_at=%s\n' "$(date --iso-8601=seconds)"
+        printf 'reason=remove active memory.high throttle without restarting final link\n'
+        printf 'original_memory_high_bytes=3221225472\n'
+        printf 'effective_memory_high_bytes=3489660928\n'
+        printf 'memory_max_bytes=6442450944\n'
+        printf 'memory_swap_max_bytes=3221225472\n'
+        printf 'memory_current_before_bytes=%s\n' "${memory_current}"
+        printf 'host_available_before_bytes=%s\n' "${host_available}"
+        printf 'host_available_admission_bytes=%s\n' "${admission_available}"
+        printf 'memory_high_events_before=%s\n' "${high_events}"
+        printf 'memory_max_events_before=%s\n' "${max_events}"
+        printf 'memory_oom_events_before=%s\n' "${oom_events}"
+        printf 'memory_oom_kill_events_before=%s\n' "${oom_kill_events}"
+        printf 'unit_invocation_id=%s\n' "${unit_invocation}"
+        printf 'watch_invocation_id=%s\n' "${watch_invocation}"
+        printf 'unit_active_enter_monotonic=%s\n' "${unit_active_enter}"
+        printf 'watch_active_enter_monotonic=%s\n' "${watch_active_enter}"
+    } >"${receipt_temp}"
+    chmod 600 "${receipt_temp}"
+    mv "${receipt_temp}" "${receipt}"
+    printf 'job=%s\nstate=active\neffective_memory_high_bytes=3489660928\n' \
+        "${job}"
+}
+
 status_job() {
     local job=$1
     validate_job "${job}"
@@ -1906,7 +2100,7 @@ status_job() {
     for file in stage.env resume.env policy.env continued-by.env \
         watchdog-ready.env health.env disk-scan-retry.env result.env \
         terminal.env watchdog-stop.env cancel.env wall-extension.env artifact-returned.env \
-        cleanup.env workspace-cleaned-by.env; do
+        link-memory-relief.env cleanup.env workspace-cleaned-by.env; do
         if [ -f "${state_dir}/${file}" ]; then
             printf -- '--- %s ---\n' "${file}"
             cat "${state_dir}/${file}"
@@ -2133,6 +2327,7 @@ case "${command}" in
     watch) watch_job "$@" ;;
     status) status_job "$@" ;;
     extend-wall) extend_active_three_gib_wall "$@" ;;
+    relieve-link-memory) relieve_active_three_gib_link_memory "$@" ;;
     limits) limits_job "$@" ;;
     logs) logs_job "$@" ;;
     claim) claim_job_ownership "$@" ;;
