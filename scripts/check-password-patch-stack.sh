@@ -88,6 +88,7 @@ done <"${root_dir}/helium-chromium/patches/series"
 
 for patch_path in \
     helium-passwords/restore-password-autofill.patch \
+    helium-passwords/enable-password-generation-without-google-sync.patch \
     helium-passwords/restore-password-ui.patch; do
     git -C "${fixture}" apply --check "${root_dir}/patches/${patch_path}"
     git -C "${fixture}" apply "${root_dir}/patches/${patch_path}"

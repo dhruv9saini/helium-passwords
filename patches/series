@@ -1,4 +1,5 @@
 helium-passwords/restore-password-autofill.patch
+helium-passwords/enable-password-generation-without-google-sync.patch
 helium-passwords/restore-password-ui.patch
 helium-passwords/declare-devtools-css-tsconfig-output.patch
 helium-passwords/devtools-node22-entrypoints.patch

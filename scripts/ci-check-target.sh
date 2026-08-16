@@ -124,6 +124,8 @@ done
 
 grep -q 'r.PAYMENTS = r.AUTOFILL.createChild' \
     "${checkout}/patches/helium/passwords/restore-password-autofill.patch"
+grep -q 'native password bridge does not activate Google Sync' \
+    "${checkout}/patches/helium/passwords/enable-password-generation-without-google-sync.patch"
 grep -q 'chrome::ShowPaymentMethods' \
     "${checkout}/patches/helium/passwords/restore-password-ui.patch"
 [ "$(grep -c '\.SetEnabled(!is_guest_session)' \
