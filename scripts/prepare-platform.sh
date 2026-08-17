@@ -183,6 +183,58 @@ if [ ! -f "${platform_series}" ]; then
 fi
 
 if [ "${platform}" = "linux" ]; then
+    linux_flags="${destination}/flags.linux.gn"
+    [ -f "${linux_flags}" ] || {
+        echo "missing Linux GN flags: ${linux_flags}" >&2
+        exit 1
+    }
+    if ! grep -Fqx '# HELIUM_CHROMIUMER_LOW_MEMORY_LINK_V1' \
+        "${linux_flags}"; then
+        [ "$(grep -Fxc 'symbol_level=1' "${linux_flags}")" -eq 1 ] || {
+            echo "unexpected Linux symbol level before low-memory setup" >&2
+            exit 1
+        }
+        sed -i 's/^symbol_level=1$/symbol_level=0/' "${linux_flags}"
+        cat >>"${linux_flags}" <<'EOF'
+# HELIUM_CHROMIUMER_LOW_MEMORY_LINK_V1
+v8_symbol_level=0
+use_thin_lto=false
+is_cfi=false
+EOF
+    fi
+    for low_memory_arg in \
+        'symbol_level=0' \
+        'blink_symbol_level=0' \
+        'v8_symbol_level=0' \
+        'use_thin_lto=false' \
+        'is_cfi=false'; do
+        [ "$(grep -Fxc "${low_memory_arg}" "${linux_flags}")" -eq 1 ] || {
+            echo "invalid low-memory Linux GN argument: ${low_memory_arg}" >&2
+            exit 1
+        }
+    done
+
+    linux_build_script="${destination}/scripts/build.sh"
+    if ! grep -Fq 'HELIUM_LINUX_PREFLIGHT_HOOK_V1' \
+        "${linux_build_script}"; then
+        tmp_linux_build="$(mktemp)"
+        awk '
+            $0 == "build" {
+                print "# HELIUM_LINUX_PREFLIGHT_HOOK_V1"
+                print "if [ -n \"${HELIUM_LINUX_PREFLIGHT_HOOK:-}\" ]; then"
+                print "    \"${HELIUM_LINUX_PREFLIGHT_HOOK}\" \"${_root_dir}\" \"${_src_dir}\" \"${_out_dir}\""
+                print "fi"
+            }
+            { print }
+        ' "${linux_build_script}" >"${tmp_linux_build}"
+        mv "${tmp_linux_build}" "${linux_build_script}"
+    fi
+    [ "$(grep -Fc 'HELIUM_LINUX_PREFLIGHT_HOOK_V1' \
+        "${linux_build_script}")" -eq 1 ] || {
+        echo "invalid Linux preflight hook boundary" >&2
+        exit 1
+    }
+
     rust_arm64_patch="${destination}/patches/ungoogled-chromium/portablelinux/fix-compiling-on-arm64.patch"
     if [ -f "${rust_arm64_patch}" ]; then
         sed -i \

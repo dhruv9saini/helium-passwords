@@ -88,6 +88,7 @@ if [ "${linux_phase}" = fresh ]; then
     (
         cd "${checkout}"
         env -u CI ARCH="${arch}" HELIUM_BUILD_JOBS=1 \
+            HELIUM_LINUX_PREFLIGHT_HOOK="${root_dir}/scripts/create-chromiumer-linux-preflight.sh" \
             HELIUM_REAL_NINJA="${real_ninja}" \
             HELIUM_FULL_GRAPH_JOB="${build_job_id}" \
             HELIUM_FULL_GRAPH_BOUNDARY_EPOCH="${graph_boundary_epoch}" \
