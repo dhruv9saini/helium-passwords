@@ -1,0 +1,178 @@
+name: Android Chromium Sync
+
+on:
+  workflow_dispatch:
+    inputs:
+      chromium_ref:
+        description: Optional immutable Chromium commit; empty uses chromium/android-build.lock
+        required: false
+        default: ''
+      chromium_url:
+        description: Chromium source repository URL
+        required: true
+        default: https://chromium.googlesource.com/chromium/src.git
+      target:
+        description: Android GN target
+        required: true
+        default: chrome_public_apk
+      target_cpu:
+        description: Android target CPU
+        required: true
+        default: arm64
+      runner:
+        description: Runner label
+        required: true
+        default: ubuntu-24.04-16core
+      build_timeout_minutes:
+        description: Soft build timeout before cache save
+        required: true
+        default: '300'
+      ccache_max_size:
+        description: Max ccache size for this workflow run
+        required: true
+        default: 5G
+      build_state_cache:
+        description: Restore and save Ninja build output state
+        required: true
+        default: 'true'
+      allow_legacy_build_state_cache:
+        description: Allow restore from older Android build-state keys without source SHA
+        required: true
+        default: 'false'
+
+jobs:
+  build:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 360
+    permissions:
+      contents: read
+    env:
+      CHROMIUM_REF: ${{ inputs.chromium_ref }}
+      CHROMIUM_URL: ${{ inputs.chromium_url }}
+      CHROMIUM_TARGET: ${{ inputs.target }}
+      TARGET_CPU: ${{ inputs.target_cpu }}
+      BUILD_TIMEOUT_MINUTES: ${{ inputs.build_timeout_minutes }}
+      CCACHE_DIR: ${{ github.workspace }}/chromium-ccache/android-${{ inputs.target_cpu }}
+      CCACHE_MAXSIZE: ${{ inputs.ccache_max_size }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_CPP2: yes
+      CCACHE_SLOPPINESS: time_macros
+      USE_CCACHE: true
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          path: helium-sync
+          submodules: recursive
+      - name: Free runner space
+        run: |
+          set -euxo pipefail
+          df -h
+          docker system prune -af || true
+          sudo rm -rf /usr/local/lib/android \
+            /usr/local/share/android \
+            /usr/local/share/boost \
+            /usr/local/share/chromium \
+            /usr/local/share/edge_driver \
+            /usr/local/share/firefox \
+            /usr/local/share/gecko_driver \
+            /usr/local/share/google-cloud-sdk \
+            /usr/local/share/powershell \
+            /usr/local/share/selenium \
+            /usr/local/aws-cli \
+            /usr/local/julia* \
+            /usr/share/dotnet \
+            /usr/share/google-cloud-sdk \
+            /usr/share/swift \
+            /usr/lib/jvm \
+            /opt/az \
+            /opt/ghc \
+            /opt/hostedtoolcache/CodeQL \
+            /opt/hostedtoolcache/go \
+            /opt/hostedtoolcache/node \
+            /opt/microsoft \
+            /opt/pipx
+          sudo apt-get clean
+          df -h
+      - name: Install build cache tooling
+        run: |
+          set -euxo pipefail
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ccache
+      - name: Restore ccache
+        id: ccache-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: chromium-android-${{ runner.os }}-${{ inputs.target_cpu }}-${{ inputs.target }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            chromium-android-${{ runner.os }}-${{ inputs.target_cpu }}-${{ inputs.target }}-
+            chromium-android-${{ runner.os }}-${{ inputs.target_cpu }}-
+      - name: Prepare Chromium Android source
+        env:
+          CHROMIUM_ANDROID_PHASE: prepare
+        run: bash "$GITHUB_WORKSPACE/helium-sync/scripts/chromium/build-android-ci.sh"
+      - name: Resolve Android build state refs
+        id: state-refs
+        run: |
+          set -euo pipefail
+          chromium_sha="$(git -C "$GITHUB_WORKSPACE/chromium-android/src" rev-parse HEAD)"
+          echo "chromium_sha=$chromium_sha" >> "$GITHUB_OUTPUT"
+      - name: Restore Android build state
+        if: inputs.build_state_cache == 'true'
+        id: build-state-restore
+        uses: actions/cache/restore@v5
+        with:
+          path: chromium-android/src/out/Default
+          key: chromium-android-state-${{ runner.os }}-${{ inputs.target_cpu }}-${{ inputs.target }}-${{ steps.state-refs.outputs.chromium_sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            chromium-android-state-${{ runner.os }}-${{ inputs.target_cpu }}-${{ inputs.target }}-${{ steps.state-refs.outputs.chromium_sha }}-
+      - name: Restore Android legacy build state
+        if: inputs.build_state_cache == 'true' && inputs.allow_legacy_build_state_cache == 'true' && steps.build-state-restore.outputs.cache-hit == ''
+        uses: actions/cache/restore@v5
+        with:
+          path: chromium-android/src/out/Default
+          key: chromium-android-state-${{ runner.os }}-${{ inputs.target_cpu }}-${{ inputs.target }}-legacy-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            chromium-android-state-${{ runner.os }}-${{ inputs.target_cpu }}-${{ inputs.target }}-
+      - name: Build Android Chromium Sync remotely
+        id: build
+        env:
+          HELIUM_SYNC_HEARTBEAT_INTERVAL: '30'
+          CHROMIUM_ANDROID_PHASE: build
+          HELIUM_SYNC_TOUCH_RESTORED_OUT: ${{ inputs.build_state_cache }}
+        run: |
+          "$GITHUB_WORKSPACE/helium-sync/scripts/chromium/run-soft-timeout.sh" "$BUILD_TIMEOUT_MINUTES" \
+            "$GITHUB_WORKSPACE/helium-sync/scripts/chromium/with-heartbeat.sh" \
+            bash "$GITHUB_WORKSPACE/helium-sync/scripts/chromium/build-android-ci.sh"
+      - name: Show ccache stats
+        if: always()
+        run: ccache -sv || true
+      - name: Show Android build state size
+        if: always()
+        run: du -sh chromium-android/src/out/Default || true
+      - uses: actions/upload-artifact@v7
+        if: steps.build.outputs.build_status == 'success'
+        with:
+          name: android-chromium-sync-${{ inputs.target_cpu }}
+          path: android-artifacts/*.tar.xz
+          if-no-files-found: error
+          archive: false
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache-restore.outputs.cache-primary-key }}
+      - name: Save Android build state
+        if: always() && inputs.build_state_cache == 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v5
+        with:
+          path: chromium-android/src/out/Default
+          key: ${{ steps.build-state-restore.outputs.cache-primary-key }}
+      - name: Fail if build did not complete
+        if: steps.build.outputs.build_status != 'success'
+        run: |
+          echo "Android Chromium Sync build ended as ${{ steps.build.outputs.build_status }} (exit ${{ steps.build.outputs.exit_status }})."
+          echo "ccache/build state was saved so rerunning this workflow can continue warming the remote build cache."
+          exit 1
