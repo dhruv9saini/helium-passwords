@@ -115,7 +115,8 @@ require_false_method "$history" 'public boolean shouldDisplayHistorySync()'
 require_false_method "$history" 'public boolean isDeclinedOften()'
 grep -Fqx '    public void recordHistorySyncDeclinedPrefs() {}' "$history"
 grep -Fqx '    public void clearHistorySyncDeclinedPrefs() {}' "$history"
-if rg -n 'setSelectedType\(UserSelectableType\.TABS, (true|turnTypesOn)\)' "$history" >&2; then
+if grep -En 'setSelectedType\(UserSelectableType\.TABS, (true|turnTypesOn)\)' \
+  "$history" >&2; then
   echo 'Android history helper can enable cross-device tab sync' >&2
   exit 1
 fi
@@ -127,7 +128,7 @@ cloud_debug_block=$(sed -n \
   "$cloud_upload")
 grep -Fq 'void CloudBinaryUploadServiceBase::LogResponseDebugInfo(' \
   <<<"$cloud_debug_block"
-if rg -n 'WebUIContentInfoSingleton|AddToDeepScan(Requests|Responses)' \
+if grep -En 'WebUIContentInfoSingleton|AddToDeepScan(Requests|Responses)' \
   <<<"$cloud_debug_block" >&2; then
   echo 'disabled Safe Browsing retains an enterprise deep-scan WebUI call' >&2
   exit 1
