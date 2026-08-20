@@ -297,7 +297,7 @@ public:
     }
     output_paths_admitted_ = true;
     if (base::android::apk_info::package_name() !=
-            "computer.helium.passwords.test" ||
+            "computer.helium.sync.test" ||
         !base::android::apk_info::is_debug_app()) {
       Fail("fixture-requires-debuggable-sync-test-package");
       return;

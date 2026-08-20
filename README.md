@@ -59,7 +59,7 @@ synthetic receipts and are not current execution paths.
 - `internal/tabsnapshot/` and `scripts/tabs/`: device-local generations,
   validation, retention, private two-destination backup, quarantine, and
   disposable restore. The runtime proof adapter supports marked desktop drills
-  and only the checksum-admitted `computer.helium.passwords.test` Android sandbox;
+  and only the checksum-admitted `computer.helium.sync.test` Android sandbox;
   Android profile bytes are round-trip fingerprinted and every launch remains
   inside the guarded disposable browser boundary.
 - `scripts/chromium/`: pinned Android composition, codec/streaming provenance,

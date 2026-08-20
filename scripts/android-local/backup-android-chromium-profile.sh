@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 adb_bin=${ADB:-adb}
 adb_serial=${ANDROID_ADB_SERIAL:-}
-package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.passwords}
+package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync}
 
 usage() {
   cat >&2 <<'EOF'
@@ -17,7 +17,7 @@ EOF
 }
 
 [[ $# -ge 1 && $# -le 2 ]] || { usage; exit 64; }
-[[ "$package" == computer.helium.passwords || "$package" == computer.helium.passwords.test ]] || {
+[[ "$package" == computer.helium.sync || "$package" == computer.helium.sync.test ]] || {
   echo "unsupported Android package" >&2
   exit 64
 }
@@ -60,7 +60,7 @@ if "${adb_device[@]}" shell "pidof '$package'" | grep -q '[0-9]'; then
   echo "Android package is still running after force-stop" >&2
   exit 1
 fi
-if [[ "$package" == computer.helium.passwords.test ]]; then
+if [[ "$package" == computer.helium.sync.test ]]; then
   run_as_dir=$("${adb_device[@]}" exec-out run-as "$package" pwd | tr -d '\r\n')
   [[ "$run_as_dir" == "$data_dir" ]] || {
     echo "disposable package is not available through its debuggable sandbox" >&2
@@ -75,7 +75,7 @@ fi
 archive_parent=${profile_path%/*}
 archive_root=${profile_path##*/}
 stream_profile() {
-  if [[ "$package" == computer.helium.passwords.test ]]; then
+  if [[ "$package" == computer.helium.sync.test ]]; then
     "${adb_device[@]}" exec-out run-as "$package" sh -c \
       "cd '$archive_parent' && exec /system/bin/tar -cf - '$archive_root'"
   else

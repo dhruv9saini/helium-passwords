@@ -23,7 +23,7 @@ expected_runtime_kit_commit=$4
 aapt2=${AAPT2:-aapt2}
 
 case "$expected_package" in
-  computer.helium.passwords|computer.helium.passwords.test)
+  computer.helium.sync|computer.helium.sync.test)
     expected_apk=HeliumSync.apk
     ;;
   computer.helium.control.test)
@@ -284,10 +284,10 @@ grep -qx 'dcheck_always_on = false' "$provenance/gn-args-resolved.txt" || {
   exit 1
 }
 case "$expected_package" in
-  computer.helium.passwords)
+  computer.helium.sync)
     expected_debuggable=false
     ;;
-  computer.helium.passwords.test|computer.helium.control.test)
+  computer.helium.sync.test|computer.helium.control.test)
     expected_debuggable=true
     ;;
 esac

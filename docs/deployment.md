@@ -65,13 +65,13 @@ The oneplus disposable APK must use the parallel package identity; it may not
 replace the installed personal package:
 
 ```sh
-CHROMIUM_ANDROID_MANIFEST_PACKAGE=computer.helium.passwords.test
+CHROMIUM_ANDROID_MANIFEST_PACKAGE=computer.helium.sync.test
 ```
 
 Confirm the returned APK manifest and `build-provenance/gn-args-resolved.txt`
-both name `computer.helium.passwords.test` before installation. Android then gives
+both name `computer.helium.sync.test` before installation. Android then gives
 the fixture browser an independent app-data directory. The later production
-artifact is a separate clean build with the default `computer.helium.passwords`;
+artifact is a separate clean build with the default `computer.helium.sync`;
 back up that app's complete existing data before installing it. The `.test`
 artifact explicitly has `debuggable_apks = true` for rootless synthetic
 instrumentation; the production artifact explicitly has
@@ -91,7 +91,7 @@ Make that check executable on lm (the current SDK tool path is explicit):
 AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
   scripts/chromium/verify-android-artifact.sh \
   /srv/nas/helium-builds/JOB/chrome_public_apk-arm64.tar.xz \
-  computer.helium.passwords.test HELIUM_SYNC_COMMIT RUNTIME_KIT_COMMIT
+  computer.helium.sync.test HELIUM_SYNC_COMMIT RUNTIME_KIT_COMMIT
 ```
 
 The verifier also checks the relocatable provenance manifest, pinned Chromium
@@ -116,7 +116,7 @@ directory from that verified archive:
 AAPT2="$HOME/Android/Sdk/build-tools/36.0.0/aapt2" \
   scripts/android-media/prepare-disposable-acceptance.sh \
   /srv/nas/helium-builds/JOB/chrome_public_apk-arm64.tar.xz \
-  computer.helium.passwords.test \
+  computer.helium.sync.test \
   HELIUM_SYNC_COMMIT \
   RUNTIME_KIT_COMMIT \
   /srv/nas/helium-acceptance/JOB
@@ -143,7 +143,7 @@ serial=ONEPLUS_ADB_SERIAL
 The boundary rechecks the complete prepared-directory inventory before any ADB
 call, streams only its exact `Browser-test.apk` to user 0, and then re-reads the
 installed monolithic `base.apk` to require the same SHA-256, version, and
-package identity. It admits only `computer.helium.passwords.test` and
+package identity. It admits only `computer.helium.sync.test` and
 `computer.helium.control.test`; it has no normal-package selector, uninstall,
 or profile-clearing operation.
 
@@ -156,7 +156,7 @@ native-cookie fixture profile:
 ```
 
 The command requires the exact installed APK hash and debuggable
-`computer.helium.passwords.test`, refuses a running package, and refuses any
+`computer.helium.sync.test`, refuses a running package, and refuses any
 existing `app_chrome/Default`; it does not clear, stop, install, or inspect
 another app. The next admitted launch runs the fixed native CookieManager
 fixture before normal sync. Do not prepare the control package. The Sync
@@ -347,7 +347,7 @@ fixture_receipt="$HOME/.local/state/helium-media-fixtures/config/fixture-provena
 (cd "$evidence" && sha256sum -c EVIDENCE_SHA256SUMS)
 ```
 
-The test app must already be the hash-verified `computer.helium.passwords.test` APK;
+The test app must already be the hash-verified `computer.helium.sync.test` APK;
 the local fixture and CDP endpoints stay on loopback. The runner verifies the
 complete prepared-directory inventory, requires the installed package's
 versionCode and versionName to match the admitted artifact, refuses existing

@@ -53,7 +53,7 @@ index 0000000..14882cc
 +}
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
 new file mode 100644
-index 0000000..adfccdd
+index 0000000..6d78f39
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.cc
 @@ -0,0 +1,780 @@
@@ -356,7 +356,7 @@ index 0000000..adfccdd
 +    }
 +    output_paths_admitted_ = true;
 +    if (base::android::apk_info::package_name() !=
-+            "computer.helium.passwords.test" ||
++            "computer.helium.sync.test" ||
 +        !base::android::apk_info::is_debug_app()) {
 +      Fail("fixture-requires-debuggable-sync-test-package");
 +      return;
@@ -839,7 +839,7 @@ index 0000000..adfccdd
 +} // namespace helium_sync
 diff --git a/chrome/browser/helium_sync/helium_cookie_sync_bridge.h b/chrome/browser/helium_sync/helium_cookie_sync_bridge.h
 new file mode 100644
-index 0000000..5db2c48
+index 0000000..8794889
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_cookie_sync_bridge.h
 @@ -0,0 +1,35 @@
@@ -855,7 +855,7 @@ index 0000000..5db2c48
 +namespace helium_sync {
 +
 +// Runs a fixed, synthetic CookieManager transaction only in a newly marked
-+// computer.helium.passwords.test profile. It never participates in normal sync and
++// computer.helium.sync.test profile. It never participates in normal sync and
 +// emits content-free acceptance evidence at a fixed profile-local path.
 +class HeliumCookieAcceptanceFixture {
 +public:
@@ -880,7 +880,7 @@ index 0000000..5db2c48
 +#endif // CHROME_BROWSER_HELIUM_SYNC_HELIUM_COOKIE_SYNC_BRIDGE_H_
 diff --git a/chrome/browser/helium_sync/helium_native_recovery_bridge.cc b/chrome/browser/helium_sync/helium_native_recovery_bridge.cc
 new file mode 100644
-index 0000000..886b114
+index 0000000..ef08f52
 --- /dev/null
 +++ b/chrome/browser/helium_sync/helium_native_recovery_bridge.cc
 @@ -0,0 +1,1115 @@
@@ -1809,7 +1809,7 @@ index 0000000..886b114
 +#if BUILDFLAG(IS_ANDROID)
 +    if (profile_->GetPath().BaseName().AsUTF8Unsafe() != "Default" ||
 +        base::android::apk_info::package_name() !=
-+            "computer.helium.passwords.test" ||
++            "computer.helium.sync.test" ||
 +        !base::android::apk_info::is_debug_app()) {
 +      return false;
 +    }

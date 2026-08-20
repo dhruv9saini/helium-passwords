@@ -19,7 +19,7 @@ expected_runtime_kit_commit=$4
 output=$(realpath -m "$5")
 
 case "$expected_package" in
-  computer.helium.passwords.test) expected_apk=HeliumSync.apk ;;
+  computer.helium.sync.test) expected_apk=HeliumSync.apk ;;
   computer.helium.control.test) expected_apk=ChromiumControl.apk ;;
   *) echo "expected package must be a disposable Sync or control identity" >&2; exit 64 ;;
 esac

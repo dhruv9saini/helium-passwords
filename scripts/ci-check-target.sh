@@ -151,7 +151,7 @@ grep -q 'HeliumSyncServiceFactory::GetForProfile(profile)' \
     "${root_dir}/chromium/patches/0003-helium-sync-android-profile-startup.patch"
 grep -q 'PosixKeyProvider' \
     "${root_dir}/chromium/patches/0004-helium-sync-android-oscrypt-provider.patch"
-grep -q 'computer.helium.passwords' \
+grep -q 'computer.helium.sync' \
     "${root_dir}/chromium/patches/0005-helium-sync-android-branding.patch"
 grep -q 'Helium Sync' \
     "${root_dir}/chromium/patches/0005-helium-sync-android-branding.patch"

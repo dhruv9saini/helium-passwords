@@ -255,8 +255,8 @@ test("runtime proof source is observation-only and fail-closed", () => {
   assert.doesNotMatch(runner,
     /Network\.setCookie|CookieManager|PasswordStore|HeliumSyncClient|Latest\(|Push\(/);
   assert.match(runner,
-    /const ANDROID_PACKAGE = "computer\.helium\.passwords\.test"/);
-  assert.doesNotMatch(runner, /computer\.helium\.passwords["']/);
+    /const ANDROID_PACKAGE = "computer\.helium\.sync\.test"/);
+  assert.doesNotMatch(runner, /computer\.helium\.sync["']/);
   assert.match(runner, /--helium-restore-disposable-tabs=/);
   assert.match(emitter,
     /mechanism === "chromium-native-session" \? 1 : 2/);
@@ -480,7 +480,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
       writePrivate(fullStatus, originalFullStatus
         .replace("platform=desktop", "platform=android")
         .replace("package_id=desktop",
-          "package_id=computer.helium.passwords.test"));
+          "package_id=computer.helium.sync.test"));
       const mixedPlatform = JSON.parse(failRun(health,
         [statusRoot, desktopDevice, "default"]).stdout);
       assert.equal(mixedPlatform.healthy, false);
@@ -520,7 +520,7 @@ test("three runtime mechanisms emit health only from authenticated drills",
       const androidRejected = failRun("node", [runtime, "native",
         "--browser", "/does/not/exist",
         "--browser-sha256", "0".repeat(64),
-        "--package-id", "computer.helium.passwords.test",
+        "--package-id", "computer.helium.sync.test",
         "--display-mode", "headless",
         "--profile-dir", path.join(temporary, "unused", "drill-android"),
         "--source-device", "oneplus",

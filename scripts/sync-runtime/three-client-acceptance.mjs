@@ -44,7 +44,7 @@ const DEVICE_SPECS = Object.freeze({
     platform: "android",
     target: "android-arm64",
     arch: "arm64",
-    packageName: "computer.helium.passwords.test",
+    packageName: "computer.helium.sync.test",
   }),
 });
 const HASH = /^[0-9a-f]{64}$/;

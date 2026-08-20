@@ -55,7 +55,7 @@ const ANDROID_PROFILE_ADAPTER = path.join(SCRIPT_DIRECTORY,
   "android-tab-profile.sh");
 const ANDROID_BROWSER_BOUNDARY = path.join(SCRIPT_DIRECTORY, "..",
   "android-media", "disposable-browser.sh");
-const ANDROID_PACKAGE = "computer.helium.passwords.test";
+const ANDROID_PACKAGE = "computer.helium.sync.test";
 const ANDROID_SOCKET = "helium_sync_test_devtools_remote";
 
 function usage() {
@@ -67,7 +67,7 @@ function usage() {
 
 COMMON:
   --browser ABSOLUTE-FILE --browser-sha256 HEX
-  --package-id desktop|computer.helium.passwords.test
+  --package-id desktop|computer.helium.sync.test
   --display-mode headless|headed|device
   --profile-dir ABSOLUTE-DRILL-DIR
   --source-device d|da|oneplus --profile SLUG
@@ -78,7 +78,7 @@ For Android, --browser is the exact Browser-test.apk and these additional
 options are required:
   --acceptance-dir ABSOLUTE-DIRECTORY --adb-serial SERIAL
 
-Android admits only computer.helium.passwords.test, oneplus, and device display.
+Android admits only computer.helium.sync.test, oneplus, and device display.
 Every install/launch remains inside the checksum-bound disposable boundary.`);
   process.exitCode = 64;
 }

@@ -107,9 +107,9 @@ set -euo pipefail
 printf '%s\n' "\$*" >>'$test_root/adb.log'
 if [[ \${1:-} == shell ]]; then
   case \${2:-} in
-    *'dumpsys package'*) echo '  dataDir=/data/user/0/computer.helium.passwords' ;;
-    *'cmd package list packages'*) echo 'package:computer.helium.passwords uid:10234' ;;
-    *'pidof computer.helium.passwords'*) exit 1 ;;
+    *'dumpsys package'*) echo '  dataDir=/data/user/0/computer.helium.sync' ;;
+    *'cmd package list packages'*) echo 'package:computer.helium.sync uid:10234' ;;
+    *'pidof computer.helium.sync'*) exit 1 ;;
     *'uname -m'*) echo x86_64 ;;
   esac
 elif [[ \${1:-} == exec-out ]]; then
@@ -237,7 +237,7 @@ EOF
 chmod 600 "$test_root/enrollment/token" "$test_root/enrollment/client.json"
 android_config=$test_root/android-backup.conf
 android_generation=20260722T120100Z-bbbbbbbbbbbbbbbb
-android_receipt=$(make_backup_receipt /data/user/0/computer.helium.passwords/app_chrome \
+android_receipt=$(make_backup_receipt /data/user/0/computer.helium.sync/app_chrome \
   "$android_config" "$android_generation" android)
 ADB="$test_root/bin/adb" "$repo_root/scripts/android-local/configure-android-chromium-sync.sh" \
   install "$test_root/enrollment" "$android_config" "$android_receipt" \

@@ -90,7 +90,7 @@ status_result() {
 			! [[ "$platform" =~ ^(desktop|android)$ ]] ||
 			{ [ "$platform" = desktop ] && [ "$package_id" != desktop ]; } ||
 			{ [ "$platform" = android ] &&
-			  [ "$package_id" != computer.helium.passwords.test ]; } ||
+			  [ "$package_id" != computer.helium.sync.test ]; } ||
 			! [[ "$browser_sha256" =~ ^[0-9a-f]{64}$ ]] ||
 			! [[ "$source_generation" =~ ^[0-9a-f]{64}$ ]] ||
 			! [[ "$completed" =~ ^[0-9]+$ ]] ||

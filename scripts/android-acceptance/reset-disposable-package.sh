@@ -9,7 +9,7 @@ usage:
   reset-disposable-package.sh ACCEPTANCE_DIRECTORY ADB_SERIAL \
     password-sync tab-recovery NEW_RECEIPT
 
-Clear only the checksum-admitted computer.helium.passwords.test sandbox between
+Clear only the checksum-admitted computer.helium.sync.test sandbox between
 phases of one full Android end-to-end acceptance. The production package,
 installed APK, global debug selection, and Chromium command-line files must be
 unchanged. A network ADB serial is rejected.
@@ -22,8 +22,8 @@ serial=$2
 from_phase=$3
 to_phase=$4
 receipt_input=$5
-package=computer.helium.passwords.test
-production_package=computer.helium.passwords
+package=computer.helium.sync.test
+production_package=computer.helium.sync
 
 case "$from_phase:$to_phase" in
   media-cookie:password-sync|password-sync:tab-recovery) ;;

@@ -229,7 +229,7 @@ async function writeAndroidAdmission(root) {
     `runtime_kit_commit=${"7".repeat(40)}`,
     `runtime_kit_source_sha256=${"8".repeat(64)}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
-    "manifest_package=computer.helium.passwords.test",
+    "manifest_package=computer.helium.sync.test",
     "version_code=787500005",
     `version_name=${TRAIN.chromium_version}`,
     "target_cpu=arm64",
@@ -245,7 +245,7 @@ async function writeAndroidAdmission(root) {
   const artifactHash = digest(await fsp.readFile(artifact));
   await fsp.writeFile(path.join(prepared, "acceptance.env"), [
     "schema_version=2",
-    "package=computer.helium.passwords.test",
+    "package=computer.helium.sync.test",
     `helium_sync_commit=${TRAIN.source_commit}`,
     `chromium_commit=${TRAIN.chromium_commit}`,
     "version_code=787500005",
@@ -1001,7 +1001,7 @@ function manifestFixture() {
       oneplus: device({
         platform: "android",
         target: "android-arm64",
-        packageName: "computer.helium.passwords.test",
+        packageName: "computer.helium.sync.test",
         artifact: "0".repeat(64),
         receipt: "1".repeat(64),
         inventory: "2".repeat(64),
@@ -1134,7 +1134,7 @@ test("three-client gate binds native UI, pull-only joins, conflicts, sessions, a
     assert.equal(manifest.devices.d.target, "linux-x86_64");
     assert.equal(manifest.devices.da.target, "linux-x86_64");
     assert.equal(manifest.devices.oneplus.target, "android-arm64");
-    assert.equal(manifest.devices.oneplus.package, "computer.helium.passwords.test");
+    assert.equal(manifest.devices.oneplus.package, "computer.helium.sync.test");
     assert.equal(manifest.devices.oneplus.profile_path, null);
     assert.equal(manifest.devices.oneplus.profile_marker_sha256, null);
     assert.match(manifest.devices.oneplus.admission.inventory_sha256,

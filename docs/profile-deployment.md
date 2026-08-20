@@ -162,7 +162,7 @@ The browser-native password/cookie neutral mechanism uses the same authenticated
 backup format for its independent API-produced snapshot directory, then uses
 `scripts/native-recovery/runtime-drill.sh` for exact browser readback. That
 runner admits only a fresh marked desktop profile or the checksum-admitted
-`computer.helium.passwords.test` sandbox; it cannot target the production Android
+`computer.helium.sync.test` sandbox; it cannot target the production Android
 package. See [nine-path-recovery.md](nine-path-recovery.md) for its two-replica
 drill and terminal fleet receipt.
 
@@ -228,13 +228,13 @@ must match the local archive-stream hash before either generation becomes
 active.
 
 Disposable Android gates set
-`CHROMIUM_ANDROID_PACKAGE=computer.helium.passwords.test` and
+`CHROMIUM_ANDROID_PACKAGE=computer.helium.sync.test` and
 `ANDROID_ADB_SERIAL=oneplus:5555`. For that exact debuggable package, both the
 full-profile producer and enrollment installer reconnect and bind the fixed
 serial, then use Android `run-as` instead of Magisk. The profile archive and
 enrollment tar stream directly across ADB; the enrollment bundle is never
 published under `/data/local/tmp`. This rootless path cannot name the
-production package. The production `computer.helium.passwords` boundary remains a
+production package. The production `computer.helium.sync` boundary remains a
 separate stopped-profile, rooted operation and still requires explicit review
 of its admitted two-copy backup before any mutation.
 

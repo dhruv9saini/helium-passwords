@@ -10,7 +10,7 @@ class Profile;
 namespace helium_sync {
 
 // Runs a fixed, synthetic CookieManager transaction only in a newly marked
-// computer.helium.passwords.test profile. It never participates in normal sync and
+// computer.helium.sync.test profile. It never participates in normal sync and
 // emits content-free acceptance evidence at a fixed profile-local path.
 class HeliumCookieAcceptanceFixture {
 public:

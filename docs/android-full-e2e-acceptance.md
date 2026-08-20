@@ -58,7 +58,7 @@ runtime kit, build tooling, `flags.gn`, and locked GN args.
    validator, rehashes both full acceptance/evidence inventories, and binds
    both runs to one physical OnePlus identity.
 3. Use `reset-disposable-package.sh` to clear only
-   `computer.helium.passwords.test` from `media-cookie` to `password-sync`. The
+   `computer.helium.sync.test` from `media-cookie` to `password-sync`. The
    physical-USB receipt must prove the production package and Android global
    browser state did not change.
 4. Run the three-client gate with the same admitted x86_64 runtime for d and

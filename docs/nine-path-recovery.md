@@ -113,10 +113,10 @@ node scripts/native-recovery/acceptance.mjs verify-restore \
 
 For OnePlus, restore the selected generation on lm, then stage and launch only
 the checksum-admitted disposable Sync APK. The runner creates sibling input and
-profile namespaces under `computer.helium.passwords.test`, verifies the staged
+profile namespaces under `computer.helium.sync.test`, verifies the staged
 snapshot hash, delegates temporary command-line ownership to the disposable
 browser boundary, fetches the private browser receipt, and force-stops the test
-package. It never names or opens `computer.helium.passwords`:
+package. It never names or opens `computer.helium.sync`:
 
 ```sh
 scripts/native-recovery/runtime-drill.sh android "$sync_acceptance" \
@@ -158,11 +158,11 @@ nine-path runtime gate is not being reported as complete prematurely:
   active config, enable marker, or `service.d` runner exists.
 - OnePlus is reachable through its Tailnet address and authorized ADB. The
   P3/C1 producer reconnects only `oneplus:5555`, binds every command to that
-  serial, and reads only the debuggable `computer.helium.passwords.test` sandbox
+  serial, and reads only the debuggable `computer.helium.sync.test` sandbox
   through Android `run-as`; it does not need Magisk root or an unlocked screen.
   Its installed production packages are outside this disposable gate and have
   not been opened or changed. Device execution must use a newly built,
-  checksum-admitted `computer.helium.passwords.test` package. The separate T2
+  checksum-admitted `computer.helium.sync.test` package. The separate T2
   Arch-chroot runner remains disabled and root-gated until its native export
   and live route preflight both pass.
 

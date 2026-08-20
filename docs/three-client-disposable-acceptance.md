@@ -37,7 +37,7 @@ Use the exact artifact for each execution environment:
 - `d` and `da`: separate verifications and executions of the same returned
   Linux x86_64 archive and build-produced deployment receipt; and
 - `oneplus`: `Browser-test.apk` from the prepared
-  `computer.helium.passwords.test` directory. Its `acceptance.env`,
+  `computer.helium.sync.test` directory. Its `acceptance.env`,
   `PACKAGE_SHA256SUMS`, and every inventoried runtime/provenance member are the
   Android admission.
 

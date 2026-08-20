@@ -204,7 +204,7 @@ test("Android admission requires a prepared artifact and matching non-production
     const apkHash = crypto.createHash("sha256").update("synthetic test apk").digest("hex");
     await fsp.writeFile(path.join(prepared, "acceptance.env"), [
       "schema_version=2",
-      "package=computer.helium.passwords.test",
+      "package=computer.helium.sync.test",
       `helium_sync_commit=${"1".repeat(40)}`,
       `chromium_commit=${"2".repeat(40)}`,
       "version_code=787500005",
@@ -233,7 +233,7 @@ test("Android admission requires a prepared artifact and matching non-production
       artifact: apk,
       output: path.join(root, "production-package"),
       platform: "android",
-      packageName: "computer.helium.passwords",
+      packageName: "computer.helium.sync",
     }), /ending in \.test/);
     await assert.rejects(initializeRun({
       artifact: apk,
@@ -245,7 +245,7 @@ test("Android admission requires a prepared artifact and matching non-production
       artifact: apk,
       output: path.join(root, "admitted"),
       platform: "android",
-      packageName: "computer.helium.passwords.test",
+      packageName: "computer.helium.sync.test",
     });
     assert.equal(run.artifact_sha256, apkHash);
     assert.equal(run.profile_path, null);
@@ -255,7 +255,7 @@ test("Android admission requires a prepared artifact and matching non-production
       artifact: apk,
       output: path.join(root, "tampered-inventory-member"),
       platform: "android",
-      packageName: "computer.helium.passwords.test",
+      packageName: "computer.helium.sync.test",
     }), /changed after preparation/);
   } finally {
     await fsp.rm(root, {recursive: true, force: true});
@@ -265,5 +265,5 @@ test("Android admission requires a prepared artifact and matching non-production
 test("public runtime harness has no password-store writer, extension, or Sync journal path", async () => {
   const source = await fsp.readFile(new URL("../password-runtime/acceptance.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(source, /passwordsPrivate|AddLogin|UpdateLogin|chrome\.extension|load-extension|cdp-password-sync/);
-  assert.doesNotMatch(source, /password-state|journal|tombstone|computer\.helium\.passwords/);
+  assert.doesNotMatch(source, /password-state|journal|tombstone|computer\.helium\.sync/);
 });

@@ -68,7 +68,7 @@ which keeps the acceptance app separate from a production installation:
 "${node_runtime[@]}" scripts/password-runtime/acceptance.mjs init \
   --artifact /srv/nas/helium-acceptance/JOB/Browser-test.apk \
   --platform android \
-  --package computer.helium.passwords.test \
+  --package computer.helium.sync.test \
   --output "$run"
 ```
 

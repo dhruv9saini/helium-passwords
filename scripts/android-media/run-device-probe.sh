@@ -7,7 +7,7 @@ usage: run-device-probe.sh ACCEPTANCE_DIRECTORY ADB_SERIAL NEW_EVIDENCE_DIRECTOR
 
 The admitted .test APK must already be installed and running with exactly one
 --enable-automation switch and its package-specific DevTools socket:
-  computer.helium.passwords.test     helium_sync_test_devtools_remote
+  computer.helium.sync.test     helium_sync_test_devtools_remote
   computer.helium.control.test  helium_control_test_devtools_remote
 The runner verifies the installed base.apk hash, CDP Android-Package and source
 revision, and the effective --remote-debugging-socket-name before probing.
@@ -76,7 +76,7 @@ metadata() {
 (cd "$acceptance" && sha256sum -c PACKAGE_SHA256SUMS)
 package=$(metadata package "$acceptance/acceptance.env")
 case "$package" in
-  computer.helium.passwords.test|computer.helium.control.test) ;;
+  computer.helium.sync.test|computer.helium.control.test) ;;
   *) echo "device probe requires a disposable package" >&2; exit 1 ;;
 esac
 artifact_sha256=$(metadata source_archive_sha256 "$acceptance/acceptance.env")
@@ -98,7 +98,7 @@ version_name=$(metadata version_name "$acceptance/acceptance.env")
 }
 
 case "$package" in
-  computer.helium.passwords.test)
+  computer.helium.sync.test)
     device_socket=helium_sync_test_devtools_remote
     cookie_acceptance=true
     ;;

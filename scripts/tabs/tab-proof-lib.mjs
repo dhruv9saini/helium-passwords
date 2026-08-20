@@ -365,7 +365,7 @@ export function validateEvidence(value) {
       !new Set(["desktop", "android"]).has(value.platform) ||
       (value.platform === "desktop" && value.package_id !== "desktop") ||
       (value.platform === "android" &&
-       value.package_id !== "computer.helium.passwords.test")) {
+       value.package_id !== "computer.helium.sync.test")) {
     fail("runtime evidence identity is invalid");
   }
   validDevice(value.source_device);

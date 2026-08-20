@@ -8,7 +8,7 @@ fi
 
 acceptance=$(realpath "$1")
 serial=$2
-package=computer.helium.passwords.test
+package=computer.helium.sync.test
 marker=app_chrome/Default/.helium-cookie-disposable-profile-v1
 
 command -v adb >/dev/null

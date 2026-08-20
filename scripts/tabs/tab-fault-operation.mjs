@@ -108,7 +108,7 @@ export function validateFaultOperation(value) {
       fail("desktop fault operation identity is invalid");
     }
   } else if (value.source_device !== "oneplus" ||
-      value.package_id !== "computer.helium.passwords.test") {
+      value.package_id !== "computer.helium.sync.test") {
     fail("Android fault operation identity is invalid");
   }
   if (value.fault === "neutral-corrupt-newest-generation") {

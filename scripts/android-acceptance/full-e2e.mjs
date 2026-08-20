@@ -26,7 +26,7 @@ import {readAuthenticatedFaultOperation} from
 
 const HASH = /^[0-9a-f]{64}$/;
 const COMMIT = /^[0-9a-f]{40}$/;
-const TEST_PACKAGE = "computer.helium.passwords.test";
+const TEST_PACKAGE = "computer.helium.sync.test";
 const CONTROL_PACKAGE = "computer.helium.control.test";
 const LINUX_DEPOT_TOOLS_COMMIT =
   "980d6af16e06ff993a52029019dc0628c0a0e1f0";
@@ -1003,7 +1003,7 @@ async function auditPhaseResets(files, sync) {
         value("apk_sha256") !== sync.apk_sha256 ||
         value("version_code") !== sync.version_code ||
         value("version_name") !== sync.version_name ||
-        value("production_package") !== "computer.helium.passwords" ||
+        value("production_package") !== "computer.helium.sync" ||
         !new Set(["present", "absent"]).has(value("production_state")) ||
         value("reset_boundary_sha256") !== boundarySHA256 ||
         !Number.isFinite(Date.parse(value("cleared_at")))) {

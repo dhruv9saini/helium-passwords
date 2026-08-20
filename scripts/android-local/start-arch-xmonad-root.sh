@@ -42,7 +42,7 @@ if [ -x "$ROOT/android-ui-preferences-root.sh" ]; then
 fi
 
 keep_android_helium_awake() {
-  package=${HELIUM_ANDROID_PACKAGE:-computer.helium.passwords}
+  package=${HELIUM_ANDROID_PACKAGE:-computer.helium.sync}
 
   cmd activity set-inactive "$package" false >/dev/null 2>&1 || true
   cmd activity set-standby-bucket "$package" active >/dev/null 2>&1 || true

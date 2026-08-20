@@ -923,7 +923,7 @@ private:
 #if BUILDFLAG(IS_ANDROID)
     if (profile_->GetPath().BaseName().AsUTF8Unsafe() != "Default" ||
         base::android::apk_info::package_name() !=
-            "computer.helium.passwords.test" ||
+            "computer.helium.sync.test" ||
         !base::android::apk_info::is_debug_app()) {
       return false;
     }

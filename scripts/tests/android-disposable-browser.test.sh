@@ -193,7 +193,7 @@ case "$command" in
         [[ $# -eq 1 && "$1" == /proc/net/unix ]]
         if [[ -f "$running_file" ]]; then
           case "$(<"$running_file")" in
-            computer.helium.passwords.test) socket=helium_sync_test_devtools_remote ;;
+            computer.helium.sync.test) socket=helium_sync_test_devtools_remote ;;
             computer.helium.control.test) socket=helium_control_test_devtools_remote ;;
             *) exit 1 ;;
           esac
@@ -259,7 +259,7 @@ assert_clean_globals() {
 }
 
 acceptance_sync="$test_root/acceptance-sync"
-make_acceptance "$acceptance_sync" computer.helium.passwords.test
+make_acceptance "$acceptance_sync" computer.helium.sync.test
 device_sync="$test_root/device-sync"
 new_device "$device_sync"
 printf 'old tmp\0command\n' > "$device_sync/data/local/tmp/chrome-command-line"
@@ -271,10 +271,10 @@ chmod 0640 "$device_sync/data/local/chrome-command-line"
 
 export HELIUM_TEST_DEVICE_ROOT=$device_sync
 export HELIUM_TEST_ADB_LOG="$test_root/sync-adb.log"
-export HELIUM_TEST_PACKAGE=computer.helium.passwords.test
+export HELIUM_TEST_PACKAGE=computer.helium.sync.test
 run_boundary install "$acceptance_sync" USB-SERIAL > "$test_root/sync-install.out"
 grep -qx 'operation=install' "$test_root/sync-install.out"
-grep -qx 'package=computer.helium.passwords.test' "$test_root/sync-install.out"
+grep -qx 'package=computer.helium.sync.test' "$test_root/sync-install.out"
 cmp "$acceptance_sync/Browser-test.apk" "$device_sync/data/app/test/base.apk"
 
 run_boundary launch "$acceptance_sync" USB-SERIAL > "$test_root/sync-launch.out"
@@ -295,7 +295,7 @@ cmp "$test_root/original-local" \
 [[ "$(stat -c %a "$device_sync/data/local/tmp/chrome-command-line")" == 600 ]]
 [[ "$(stat -c %a "$device_sync/data/local/chrome-command-line")" == 640 ]]
 assert_clean_globals "$device_sync"
-[[ "$(<"$device_sync/running-package")" == computer.helium.passwords.test ]]
+[[ "$(<"$device_sync/running-package")" == computer.helium.sync.test ]]
 grep -Fq "install -r --user 0 $acceptance_sync/Browser-test.apk" \
   "$test_root/sync-adb.log"
 if grep -Fq -- '--ignore-certificate-errors' \
@@ -341,7 +341,7 @@ printf 'restore tmp\n' > "$device_failure/data/local/tmp/chrome-command-line"
 printf 'restore local\n' > "$device_failure/data/local/chrome-command-line"
 export HELIUM_TEST_DEVICE_ROOT=$device_failure
 export HELIUM_TEST_ADB_LOG="$test_root/launch-failure-adb.log"
-export HELIUM_TEST_PACKAGE=computer.helium.passwords.test
+export HELIUM_TEST_PACKAGE=computer.helium.sync.test
 run_boundary install "$acceptance_sync" USB-SERIAL >/dev/null
 export HELIUM_TEST_MONKEY_FAIL=true
 if run_boundary launch "$acceptance_sync" USB-SERIAL \
@@ -354,7 +354,7 @@ grep -qx 'restore tmp' "$device_failure/data/local/tmp/chrome-command-line"
 grep -qx 'restore local' "$device_failure/data/local/chrome-command-line"
 assert_clean_globals "$device_failure"
 [[ ! -e "$device_failure/running-package" ]]
-grep -Fq 'shell am force-stop computer.helium.passwords.test' \
+grep -Fq 'shell am force-stop computer.helium.sync.test' \
   "$test_root/launch-failure-adb.log"
 
 device_partial="$test_root/device-partial-push"
@@ -438,7 +438,7 @@ fi
 [[ ! -s "$test_root/no-adb.log" ]]
 
 acceptance_production="$test_root/acceptance-production"
-make_acceptance "$acceptance_production" computer.helium.passwords
+make_acceptance "$acceptance_production" computer.helium.sync
 : > "$test_root/no-adb.log"
 if run_boundary install "$acceptance_production" USB-SERIAL \
   >"$test_root/production.out" 2>&1; then
@@ -464,7 +464,7 @@ grep -q 'invalid or mismatched SPKI override' "$test_root/bad-fixture.out"
 
 bash -n "$boundary"
 shellcheck "$boundary" "$repo_root/scripts/tests/android-disposable-browser.test.sh"
-grep -Fq 'computer.helium.passwords.test)' "$boundary"
+grep -Fq 'computer.helium.sync.test)' "$boundary"
 grep -Fq 'computer.helium.control.test)' "$boundary"
 grep -Fq -- '--enable-automation --remote-debugging-socket-name=%s' "$boundary"
 grep -Fq -- '--ignore-certificate-errors-spki-list=' "$boundary"

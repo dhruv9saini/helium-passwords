@@ -1,7 +1,7 @@
 version=3
 source_device=oneplus
 profile_id=native-recovery-default
-source_path=/data/user/0/computer.helium.passwords.test/files/helium-native-recovery/oneplus/default
+source_path=/data/user/0/computer.helium.sync.test/files/helium-native-recovery/oneplus/default
 ssh_user=d
 ssh_identity=/home/d/.ssh/helium_profile_backup_ed25519
 ssh_known_hosts=/home/d/.ssh/helium_profile_backup_known_hosts

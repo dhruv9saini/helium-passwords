@@ -6,7 +6,7 @@ backup_tool=${HELIUM_PROFILE_BACKUP_TOOL:-$repo_root/scripts/profile-backup/heli
 acceptance=${HELIUM_NATIVE_RECOVERY_ACCEPTANCE:-$repo_root/scripts/native-recovery/acceptance.mjs}
 adb_bin=${ADB:-adb}
 adb_serial=${ANDROID_ADB_SERIAL:-}
-package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.passwords.test}
+package=${CHROMIUM_ANDROID_PACKAGE:-computer.helium.sync.test}
 
 usage() {
   cat >&2 <<'EOF'
@@ -21,7 +21,7 @@ EOF
 }
 
 [[ $# -ge 1 && $# -le 2 ]] || { usage; exit 64; }
-[[ "$package" == computer.helium.passwords.test ]] || {
+[[ "$package" == computer.helium.sync.test ]] || {
   echo "native recovery backup is disposable .test-package only" >&2
   exit 64
 }

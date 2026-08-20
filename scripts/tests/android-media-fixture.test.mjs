@@ -35,16 +35,16 @@ test("Android CDP identity is bound to the admitted package, source, and socket"
   const heliumSyncCommit = "d".repeat(40);
   const artifactSha256 = "a".repeat(64);
   const browserInfo = {
-    "Android-Package": "computer.helium.passwords.test",
+    "Android-Package": "computer.helium.sync.test",
     "WebKit-Version": `537.36 (@${chromiumCommit})`,
   };
   assert.deepEqual(validateAndroidBrowserIdentity(browserInfo, {
-    expectedPackage: "computer.helium.passwords.test",
+    expectedPackage: "computer.helium.sync.test",
     expectedChromiumCommit: chromiumCommit,
     expectedHeliumSyncCommit: heliumSyncCommit,
     expectedArtifactSha256: artifactSha256,
   }), {
-    package: "computer.helium.passwords.test",
+    package: "computer.helium.sync.test",
     artifact_sha256: artifactSha256,
     chromium_commit: chromiumCommit,
     helium_sync_commit: heliumSyncCommit,
@@ -52,7 +52,7 @@ test("Android CDP identity is bound to the admitted package, source, and socket"
   assert.throws(() => validateAndroidBrowserIdentity({
     ...browserInfo, "Android-Package": "computer.helium.control.test",
   }, {
-    expectedPackage: "computer.helium.passwords.test",
+    expectedPackage: "computer.helium.sync.test",
     expectedChromiumCommit: chromiumCommit,
     expectedHeliumSyncCommit: heliumSyncCommit,
     expectedArtifactSha256: artifactSha256,
@@ -60,13 +60,13 @@ test("Android CDP identity is bound to the admitted package, source, and socket"
   assert.throws(() => validateAndroidBrowserIdentity({
     ...browserInfo, "WebKit-Version": `537.36 (@${"d".repeat(40)})`,
   }, {
-    expectedPackage: "computer.helium.passwords.test",
+    expectedPackage: "computer.helium.sync.test",
     expectedChromiumCommit: chromiumCommit,
     expectedHeliumSyncCommit: heliumSyncCommit,
     expectedArtifactSha256: artifactSha256,
   }), /revision does not match/);
   assert.throws(() => validateAndroidBrowserIdentity(browserInfo, {
-    expectedPackage: "computer.helium.passwords.test",
+    expectedPackage: "computer.helium.sync.test",
     expectedChromiumCommit: chromiumCommit,
     expectedArtifactSha256: artifactSha256,
   }), /identity is invalid/);
@@ -264,7 +264,7 @@ test("CDP result validation fails closed on buffered, reordered, or failed playb
       browser_product: "Chrome/148",
       browser_protocol_version: "1.3",
       browser_webkit_version: "537.36 (@synthetic)",
-      android_package: "computer.helium.passwords.test",
+      android_package: "computer.helium.sync.test",
       artifact_sha256: "a".repeat(64),
       chromium_commit: "b".repeat(40),
       helium_sync_commit: "c".repeat(40),
@@ -440,7 +440,7 @@ test("ChatGPT timing evidence is artifact-bound and cannot contain content", () 
     firstUpdateMs: "850",
     observationMs: "4200",
     visibleUpdateCount: "4",
-    package: "computer.helium.passwords.test",
+    package: "computer.helium.sync.test",
     artifactSha256: "a".repeat(64),
     heliumSyncCommit: "b".repeat(40),
     chromiumCommit: "c".repeat(40),
@@ -457,7 +457,7 @@ test("ChatGPT timing evidence is artifact-bound and cannot contain content", () 
     firstUpdateMs: 850,
     observationMs: 4200,
     visibleUpdateCount: 4,
-    package: "computer.helium.passwords.test",
+    package: "computer.helium.sync.test",
     artifactSha256: "a".repeat(64),
     heliumSyncCommit: "b".repeat(40),
     chromiumCommit: "c".repeat(40),

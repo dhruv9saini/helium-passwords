@@ -15,7 +15,7 @@ printf 'admitted disposable APK\n' > "$acceptance/Browser-test.apk"
 apk_sha256=$(sha256sum "$acceptance/Browser-test.apk" | cut -d' ' -f1)
 cat > "$acceptance/acceptance.env" <<EOF
 schema_version=2
-package=computer.helium.passwords.test
+package=computer.helium.sync.test
 helium_sync_commit=1111111111111111111111111111111111111111
 chromium_commit=2222222222222222222222222222222222222222
 version_code=787500005
@@ -45,12 +45,12 @@ case "$*" in
   *' shell getprop ro.product.name') printf 'CPH2655\n' ;;
   *' shell getprop ro.product.manufacturer') printf 'OnePlus\n' ;;
   *' shell getprop ro.build.fingerprint') printf 'OnePlus/CPH2655/dodge:15/fixture:user/release-keys\n' ;;
-  *' shell pm path computer.helium.passwords.test') printf 'package:/data/app/test/base.apk\n' ;;
+  *' shell pm path computer.helium.sync.test') printf 'package:/data/app/test/base.apk\n' ;;
   *' exec-out cat /data/app/test/base.apk') cat "$HELIUM_TEST_INSTALLED_APK" ;;
-  *' shell dumpsys package computer.helium.passwords.test')
+  *' shell dumpsys package computer.helium.sync.test')
     printf '  userId=10123\n  versionCode=787500005 minSdk=29 targetSdk=36\n  versionName=150.0.7871.181\n'
     ;;
-  *' shell pidof computer.helium.passwords.test') printf '1234\n' ;;
+  *' shell pidof computer.helium.sync.test') printf '1234\n' ;;
   *' shell cat /proc/net/unix')
     printf '00000000: 00000002 00000000 00010000 0001 01 12345 @helium_sync_test_devtools_remote\n'
     ;;
@@ -61,7 +61,7 @@ case "$*" in
     trap 'exit 0' TERM INT
     while :; do sleep 1; done
     ;;
-  *' exec-out run-as computer.helium.passwords.test cat app_chrome/Default/helium-sync/cookie-native-acceptance.json')
+  *' exec-out run-as computer.helium.sync.test cat app_chrome/Default/helium-sync/cookie-native-acceptance.json')
     cat "$HELIUM_TEST_COOKIE_REPORT"
     ;;
 esac
@@ -156,10 +156,10 @@ jq -e '.source == "CDP Media domain" and .player_count == 1' \
   sha256sum -c EVIDENCE_SHA256SUMS
 )
 grep -q 'shell input keyevent KEYCODE_HOME' "$test_root/adb.log"
-grep -q 'shell monkey -p computer.helium.passwords.test' "$test_root/adb.log"
+grep -q 'shell monkey -p computer.helium.sync.test' "$test_root/adb.log"
 grep -q 'shell svc wifi disable' "$test_root/adb.log"
 grep -q 'shell svc wifi enable' "$test_root/adb.log"
-grep -q 'shell dumpsys package computer.helium.passwords.test' "$test_root/adb.log"
+grep -q 'shell dumpsys package computer.helium.sync.test' "$test_root/adb.log"
 grep -q 'exec-out cat /data/app/test/base.apk' "$test_root/adb.log"
 grep -q 'localabstract:helium_sync_test_devtools_remote' "$test_root/adb.log"
 grep -q 'logcat --uid=10123' "$test_root/adb.log"
