@@ -1,5 +1,3 @@
-name: Windows staged build
-
 on:
   workflow_call:
     inputs:
@@ -101,34 +99,7 @@ jobs:
     if: ${{ needs.build-02.outputs.finished == 'false' }}
     outputs:
       finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Enable Windows long paths
-        shell: pwsh
-        run: |
-          git config --global core.longpaths true
-          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
-      - name: Prepare Windows platform checkout
-        shell: bash
-        run: |
-          rm -rf "${HELIUM_WINDOWS_ROOT_BASH}"
-          bash scripts/prepare-platform.sh windows "${HELIUM_WINDOWS_ROOT_BASH}"
-          rm -rf .github/actions/stage
-          mkdir -p .github/actions
-          cp -R "${HELIUM_WINDOWS_ROOT_BASH}/.github/actions/stage" .github/actions/stage
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install stage action dependencies
-        shell: bash
-        run: npm install
-        working-directory: ./.github/actions/stage
-      - name: Run Stage
-        id: stage
-        uses: ./.github/actions/stage
-        with:
-          arm: ${{ inputs.arch == 'arm64' }}
-          from_artifact: true
+    steps: *windows_staged_steps
 
   build-04:
     name: build_part_04
@@ -137,34 +108,7 @@ jobs:
     if: ${{ needs.build-03.outputs.finished == 'false' }}
     outputs:
       finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Enable Windows long paths
-        shell: pwsh
-        run: |
-          git config --global core.longpaths true
-          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
-      - name: Prepare Windows platform checkout
-        shell: bash
-        run: |
-          rm -rf "${HELIUM_WINDOWS_ROOT_BASH}"
-          bash scripts/prepare-platform.sh windows "${HELIUM_WINDOWS_ROOT_BASH}"
-          rm -rf .github/actions/stage
-          mkdir -p .github/actions
-          cp -R "${HELIUM_WINDOWS_ROOT_BASH}/.github/actions/stage" .github/actions/stage
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install stage action dependencies
-        shell: bash
-        run: npm install
-        working-directory: ./.github/actions/stage
-      - name: Run Stage
-        id: stage
-        uses: ./.github/actions/stage
-        with:
-          arm: ${{ inputs.arch == 'arm64' }}
-          from_artifact: true
+    steps: *windows_staged_steps
 
   build-05:
     name: build_part_05
@@ -173,34 +117,7 @@ jobs:
     if: ${{ needs.build-04.outputs.finished == 'false' }}
     outputs:
       finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Enable Windows long paths
-        shell: pwsh
-        run: |
-          git config --global core.longpaths true
-          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
-      - name: Prepare Windows platform checkout
-        shell: bash
-        run: |
-          rm -rf "${HELIUM_WINDOWS_ROOT_BASH}"
-          bash scripts/prepare-platform.sh windows "${HELIUM_WINDOWS_ROOT_BASH}"
-          rm -rf .github/actions/stage
-          mkdir -p .github/actions
-          cp -R "${HELIUM_WINDOWS_ROOT_BASH}/.github/actions/stage" .github/actions/stage
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install stage action dependencies
-        shell: bash
-        run: npm install
-        working-directory: ./.github/actions/stage
-      - name: Run Stage
-        id: stage
-        uses: ./.github/actions/stage
-        with:
-          arm: ${{ inputs.arch == 'arm64' }}
-          from_artifact: true
+    steps: *windows_staged_steps
 
   build-06:
     name: build_part_06
@@ -209,34 +126,7 @@ jobs:
     if: ${{ needs.build-05.outputs.finished == 'false' }}
     outputs:
       finished: ${{ steps.stage.outputs.finished }}
-    steps:
-      - uses: actions/checkout@v6
-      - name: Enable Windows long paths
-        shell: pwsh
-        run: |
-          git config --global core.longpaths true
-          New-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled -PropertyType DWord -Value 1 -Force
-      - name: Prepare Windows platform checkout
-        shell: bash
-        run: |
-          rm -rf "${HELIUM_WINDOWS_ROOT_BASH}"
-          bash scripts/prepare-platform.sh windows "${HELIUM_WINDOWS_ROOT_BASH}"
-          rm -rf .github/actions/stage
-          mkdir -p .github/actions
-          cp -R "${HELIUM_WINDOWS_ROOT_BASH}/.github/actions/stage" .github/actions/stage
-      - uses: actions/setup-python@v6
-        with:
-          python-version: '3.12'
-      - name: Install stage action dependencies
-        shell: bash
-        run: npm install
-        working-directory: ./.github/actions/stage
-      - name: Run Stage
-        id: stage
-        uses: ./.github/actions/stage
-        with:
-          arm: ${{ inputs.arch == 'arm64' }}
-          from_artifact: true
+    steps: *windows_staged_steps
 
   build-07:
     name: build_part_07
@@ -346,6 +236,294 @@ jobs:
       finished: ${{ steps.stage.outputs.finished }}
     steps: *windows_staged_steps
 
+  build-19:
+    name: build_part_19
+    runs-on: windows-2025
+    needs: build-18
+    if: ${{ needs.build-18.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-20:
+    name: build_part_20
+    runs-on: windows-2025
+    needs: build-19
+    if: ${{ needs.build-19.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-21:
+    name: build_part_21
+    runs-on: windows-2025
+    needs: build-20
+    if: ${{ needs.build-20.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-22:
+    name: build_part_22
+    runs-on: windows-2025
+    needs: build-21
+    if: ${{ needs.build-21.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-23:
+    name: build_part_23
+    runs-on: windows-2025
+    needs: build-22
+    if: ${{ needs.build-22.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-24:
+    name: build_part_24
+    runs-on: windows-2025
+    needs: build-23
+    if: ${{ needs.build-23.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-25:
+    name: build_part_25
+    runs-on: windows-2025
+    needs: build-24
+    if: ${{ needs.build-24.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-26:
+    name: build_part_26
+    runs-on: windows-2025
+    needs: build-25
+    if: ${{ needs.build-25.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-27:
+    name: build_part_27
+    runs-on: windows-2025
+    needs: build-26
+    if: ${{ needs.build-26.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-28:
+    name: build_part_28
+    runs-on: windows-2025
+    needs: build-27
+    if: ${{ needs.build-27.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-29:
+    name: build_part_29
+    runs-on: windows-2025
+    needs: build-28
+    if: ${{ needs.build-28.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-30:
+    name: build_part_30
+    runs-on: windows-2025
+    needs: build-29
+    if: ${{ needs.build-29.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-31:
+    name: build_part_31
+    runs-on: windows-2025
+    needs: build-30
+    if: ${{ needs.build-30.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-32:
+    name: build_part_32
+    runs-on: windows-2025
+    needs: build-31
+    if: ${{ needs.build-31.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-33:
+    name: build_part_33
+    runs-on: windows-2025
+    needs: build-32
+    if: ${{ needs.build-32.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-34:
+    name: build_part_34
+    runs-on: windows-2025
+    needs: build-33
+    if: ${{ needs.build-33.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-35:
+    name: build_part_35
+    runs-on: windows-2025
+    needs: build-34
+    if: ${{ needs.build-34.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-36:
+    name: build_part_36
+    runs-on: windows-2025
+    needs: build-35
+    if: ${{ needs.build-35.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-37:
+    name: build_part_37
+    runs-on: windows-2025
+    needs: build-36
+    if: ${{ needs.build-36.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-38:
+    name: build_part_38
+    runs-on: windows-2025
+    needs: build-37
+    if: ${{ needs.build-37.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-39:
+    name: build_part_39
+    runs-on: windows-2025
+    needs: build-38
+    if: ${{ needs.build-38.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-40:
+    name: build_part_40
+    runs-on: windows-2025
+    needs: build-39
+    if: ${{ needs.build-39.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-41:
+    name: build_part_41
+    runs-on: windows-2025
+    needs: build-40
+    if: ${{ needs.build-40.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-42:
+    name: build_part_42
+    runs-on: windows-2025
+    needs: build-41
+    if: ${{ needs.build-41.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-43:
+    name: build_part_43
+    runs-on: windows-2025
+    needs: build-42
+    if: ${{ needs.build-42.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-44:
+    name: build_part_44
+    runs-on: windows-2025
+    needs: build-43
+    if: ${{ needs.build-43.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-45:
+    name: build_part_45
+    runs-on: windows-2025
+    needs: build-44
+    if: ${{ needs.build-44.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-46:
+    name: build_part_46
+    runs-on: windows-2025
+    needs: build-45
+    if: ${{ needs.build-45.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-47:
+    name: build_part_47
+    runs-on: windows-2025
+    needs: build-46
+    if: ${{ needs.build-46.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-48:
+    name: build_part_48
+    runs-on: windows-2025
+    needs: build-47
+    if: ${{ needs.build-47.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-49:
+    name: build_part_49
+    runs-on: windows-2025
+    needs: build-48
+    if: ${{ needs.build-48.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
+  build-50:
+    name: build_part_50
+    runs-on: windows-2025
+    needs: build-49
+    if: ${{ needs.build-49.outputs.finished == 'false' }}
+    outputs:
+      finished: ${{ steps.stage.outputs.finished }}
+    steps: *windows_staged_steps
+
   exhausted:
     name: fail if build needs more stages
     runs-on: windows-2025
@@ -368,11 +546,43 @@ jobs:
       - build-16
       - build-17
       - build-18
-    if: ${{ always() && !cancelled() && !failure() && needs.build-18.outputs.finished == 'false' }}
+      - build-19
+      - build-20
+      - build-21
+      - build-22
+      - build-23
+      - build-24
+      - build-25
+      - build-26
+      - build-27
+      - build-28
+      - build-29
+      - build-30
+      - build-31
+      - build-32
+      - build-33
+      - build-34
+      - build-35
+      - build-36
+      - build-37
+      - build-38
+      - build-39
+      - build-40
+      - build-41
+      - build-42
+      - build-43
+      - build-44
+      - build-45
+      - build-46
+      - build-47
+      - build-48
+      - build-49
+      - build-50
+    if: ${{ always() && !cancelled() && !failure() && needs.build-50.outputs.finished == 'false' }}
     steps:
       - shell: bash
         run: |
-          echo "Windows ${ARCH} build did not finish within eighteen staged jobs" >&2
+          echo "Windows ${ARCH} build did not finish within 50 staged jobs" >&2
           exit 1
 
   package:
@@ -397,6 +607,38 @@ jobs:
       - build-16
       - build-17
       - build-18
+      - build-19
+      - build-20
+      - build-21
+      - build-22
+      - build-23
+      - build-24
+      - build-25
+      - build-26
+      - build-27
+      - build-28
+      - build-29
+      - build-30
+      - build-31
+      - build-32
+      - build-33
+      - build-34
+      - build-35
+      - build-36
+      - build-37
+      - build-38
+      - build-39
+      - build-40
+      - build-41
+      - build-42
+      - build-43
+      - build-44
+      - build-45
+      - build-46
+      - build-47
+      - build-48
+      - build-49
+      - build-50
     if: >-
       ${{
         always() &&
@@ -420,7 +662,39 @@ jobs:
           needs.build-15.outputs.finished == 'true' ||
           needs.build-16.outputs.finished == 'true' ||
           needs.build-17.outputs.finished == 'true' ||
-          needs.build-18.outputs.finished == 'true'
+          needs.build-18.outputs.finished == 'true' ||
+          needs.build-19.outputs.finished == 'true' ||
+          needs.build-20.outputs.finished == 'true' ||
+          needs.build-21.outputs.finished == 'true' ||
+          needs.build-22.outputs.finished == 'true' ||
+          needs.build-23.outputs.finished == 'true' ||
+          needs.build-24.outputs.finished == 'true' ||
+          needs.build-25.outputs.finished == 'true' ||
+          needs.build-26.outputs.finished == 'true' ||
+          needs.build-27.outputs.finished == 'true' ||
+          needs.build-28.outputs.finished == 'true' ||
+          needs.build-29.outputs.finished == 'true' ||
+          needs.build-30.outputs.finished == 'true' ||
+          needs.build-31.outputs.finished == 'true' ||
+          needs.build-32.outputs.finished == 'true' ||
+          needs.build-33.outputs.finished == 'true' ||
+          needs.build-34.outputs.finished == 'true' ||
+          needs.build-35.outputs.finished == 'true' ||
+          needs.build-36.outputs.finished == 'true' ||
+          needs.build-37.outputs.finished == 'true' ||
+          needs.build-38.outputs.finished == 'true' ||
+          needs.build-39.outputs.finished == 'true' ||
+          needs.build-40.outputs.finished == 'true' ||
+          needs.build-41.outputs.finished == 'true' ||
+          needs.build-42.outputs.finished == 'true' ||
+          needs.build-43.outputs.finished == 'true' ||
+          needs.build-44.outputs.finished == 'true' ||
+          needs.build-45.outputs.finished == 'true' ||
+          needs.build-46.outputs.finished == 'true' ||
+          needs.build-47.outputs.finished == 'true' ||
+          needs.build-48.outputs.finished == 'true' ||
+          needs.build-49.outputs.finished == 'true' ||
+          needs.build-50.outputs.finished == 'true'
         )
       }}
     steps:
